@@ -316,3 +316,79 @@ export function AboutIcon() {
     </svg>
   );
 }
+
+/** Enter immersive = Maximize2; exit = Minimize2 (lucide-style). */
+export function ImmersiveChatIcon({ immersive }: { immersive: boolean }) {
+  if (immersive) {
+    // Minimize2 — exit fullscreen / restore sidebar
+    return (
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" aria-hidden>
+        <path
+          d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    );
+  }
+  // Maximize2 — enter immersive / expand chat
+  return (
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" aria-hidden>
+      <path
+        d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+
+/** Lucide-style ChevronsRight — collapse / close right drawer. */
+export function ChevronsRightIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden>
+      <path
+        d="m6 17 5-5-5-5M13 17l5-5-5-5"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** Lucide-style ChevronsDown — expand avatar picker. */
+export function ChevronsDownIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden>
+      <path
+        d="m7 6 5 5 5-5M7 13l5 5 5-5"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** Lucide-style ChevronsUp — collapse avatar picker. */
+export function ChevronsUpIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden>
+      <path
+        d="m17 11-5-5-5 5M17 18l-5-5-5 5"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}

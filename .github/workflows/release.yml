@@ -155,9 +155,9 @@ jobs:
           OkBot **${VERSION}**
 
           ## Downloads
-          - **macOS**: DMG / ZIP（arm64 + x64）
-          - **Windows**: NSIS installer（x64）
-          - **Linux**: AppImage（x64）
+          - **macOS**: DMG / ZIP (arm64 + x64)
+          - **Windows**: NSIS installer (x64)
+          - **Linux**: AppImage (x64)
 
           Auto-update uses these GitHub Release assets via electron-updater.
           MD

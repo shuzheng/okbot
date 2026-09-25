@@ -331,6 +331,8 @@ export const SessionSidebar = memo(function SessionSidebar({
               e.stopPropagation();
               onOpenSessionMenu({ kind: 'squad', x: e.clientX, y: e.clientY, squad: g });
             };
+            const preview = stripThinkContent(g.lastReplyPreview || '').trim();
+            const squadPreview = preview || g.description || t(lang, 'squadDesc');
             const squadRow = (
               <div className={`session-item ${active ? 'active' : ''}`} title={narrow ? undefined : g.name}>
                 <span
@@ -364,7 +366,7 @@ export const SessionSidebar = memo(function SessionSidebar({
                       ) : null}
                     </span>
                   )}
-                  <span className="session-desc">{g.description || t(lang, 'squadDesc')}</span>
+                  <span className="session-desc">{squadPreview}</span>
                 </span>
               </div>
             );

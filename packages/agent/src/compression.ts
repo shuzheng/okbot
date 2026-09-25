@@ -85,7 +85,8 @@ export async function compressSessionHistory(input: {
     input.signal ? { signal: input.signal } : undefined,
   );
 
-  let raw = completion.choices[0]?.message?.content?.trim() ?? '';
+  // Strip CoT so rolling session summaries never persist model thinking.
+  let raw = stripThinkContent(completion.choices[0]?.message?.content ?? '').trim();
   if (raw.startsWith('```')) {
     raw = raw.replace(/^```(?:\w+)?\s*/i, '').replace(/\s*```$/, '').trim();
   }

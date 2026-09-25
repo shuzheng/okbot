@@ -212,14 +212,18 @@ app.whenReady().then(() => {
   });
 
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
-    if (permission === 'media') {
+    // media: getUserMedia / VoiceBeam / MediaRecorder.
+    // Keep allowing speech-* strings if Chromium still asks (legacy).
+    const name = String(permission);
+    if (permission === 'media' || permission === 'mediaKeySystem' || /speech/i.test(name)) {
       callback(true);
       return;
     }
     callback(false);
   });
   session.defaultSession.setPermissionCheckHandler((_wc, permission) => {
-    return permission === 'media';
+    const name = String(permission);
+    return permission === 'media' || permission === 'mediaKeySystem' || /speech/i.test(name);
   });
 
   registerAllIpc({

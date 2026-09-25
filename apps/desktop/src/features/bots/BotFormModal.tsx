@@ -16,6 +16,7 @@ import {
 import { t } from '../../i18n';
 import type { BotFormValues } from '../../types';
 import { FlatAvatar } from '../../components/ui/avatars';
+import { ChevronsRightIcon, ChevronsDownIcon, ChevronsUpIcon } from '../../components/ui/icons';
 import { updateScrollFade } from '../../utils/scrollFade';
 import { ModelRefSelect } from '../settings/ModelRefSelect';
 import { BotAdvancedSection } from './BotAdvancedSection';
@@ -377,7 +378,7 @@ export function BotFormModal({
         <div className="modal-head form-drawer-head">
           <h2>{title}</h2>
           <button type="button" className="modal-close" onClick={onCancel} aria-label={t(lang, 'close')}>
-            ×
+            <ChevronsRightIcon />
           </button>
         </div>
         <div
@@ -412,7 +413,7 @@ export function BotFormModal({
               botAvatarType={botAvatarType}
             />
             <span className="avatar-preview-mask" aria-hidden>
-              {pickerOpen ? t(lang, 'avatarPickerCollapse') : t(lang, 'avatarPickerExpand')}
+              {pickerOpen ? <ChevronsUpIcon /> : <ChevronsDownIcon />}
             </span>
           </button>
           <div className="field field-name">

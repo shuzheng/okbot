@@ -561,7 +561,10 @@ export function SettingsModal({
                     </select>
                   </div>
                   <div className="settings-row" data-settings-id="sidebarDockMagnify">
-                    <span className="settings-row-label">{t(lang, 'sidebarDockMagnify')}</span>
+                    <span className="settings-row-label">
+                      <span className="settings-row-label-text">{t(lang, 'sidebarDockMagnify')}</span>
+                      <SettingsHelpTip text={t(lang, 'sidebarDockMagnifyHint')} />
+                    </span>
                     <SettingsToggle
                       checked={sidebarDockMagnify}
                       onChange={() => setSidebarDockMagnify((v) => !v)}
@@ -574,7 +577,10 @@ export function SettingsModal({
                 </div>
                 <div className="settings-card">
                   <div className="settings-row" data-settings-id="microphone">
-                    <span className="settings-row-label">{t(lang, 'microphone')}</span>
+                    <span className="settings-row-label">
+                      <span className="settings-row-label-text">{t(lang, 'microphone')}</span>
+                      <SettingsHelpTip text={t(lang, 'micSpeechDeviceHint')} />
+                    </span>
                     <select
                       value={microphoneId}
                       onChange={(e) => setMicrophoneId(e.target.value)}

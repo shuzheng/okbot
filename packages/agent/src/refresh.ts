@@ -83,7 +83,8 @@ export async function refreshAgentsMd(input: {
   // Truncated completions are unsafe to treat as a full AGENTS.md rewrite.
   if (choice?.finish_reason === 'length') return null;
 
-  let next = choice?.message?.content?.trim() ?? '';
+  // Model CoT (<think>…</think>) must never land in AGENTS.md.
+  let next = stripThinkContent(choice?.message?.content ?? '').trim();
   if (next.startsWith('```')) {
     next = next.replace(/^```(?:markdown|md)?\s*/i, '').replace(/\s*```$/, '').trim();
   }
@@ -180,7 +181,8 @@ export async function refreshBotSkills(input: {
 
   const skillChoice = completion.choices[0];
   if (skillChoice?.finish_reason === 'length') return { action: 'none' };
-  let raw = skillChoice?.message?.content?.trim() ?? '';
+  // Strip CoT before JSON parse so think wrappers do not break / pollute skills.
+  let raw = stripThinkContent(skillChoice?.message?.content ?? '').trim();
   if (!raw) return { action: 'none' };
   if (raw.startsWith('```')) {
     raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
@@ -198,9 +200,9 @@ export async function refreshBotSkills(input: {
       .replace(/^-+|-+$/g, '');
     if (slug && !slug.startsWith('okbot-')) slug = `okbot-${slug}`;
     slug = slug.slice(0, 64);
-    const name = String(parsed.skill.name || slug).trim();
-    const description = String(parsed.skill.description || name).trim();
-    const body = String(parsed.skill.body || '').trim();
+    const name = stripThinkContent(String(parsed.skill.name || slug)).trim();
+    const description = stripThinkContent(String(parsed.skill.description || name)).trim();
+    const body = stripThinkContent(String(parsed.skill.body || '')).trim();
     if (!slug || !body) return { action: 'none' };
     return {
       action: 'upsert',
@@ -302,7 +304,7 @@ export async function refreshMemories(input: {
 
   const memChoice = completion.choices[0];
   if (memChoice?.finish_reason === 'length') return { action: 'none' };
-  let raw = memChoice?.message?.content?.trim() ?? '';
+  let raw = stripThinkContent(memChoice?.message?.content ?? '').trim();
   if (!raw) return { action: 'none' };
   if (raw.startsWith('```')) {
     raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
@@ -317,7 +319,7 @@ export async function refreshMemories(input: {
     }
     const entries: Array<{ scope: 'global' | 'bot'; memory: string; expires: string | null }> = [];
     for (const e of parsed.entries) {
-      const memory = String(e.memory || '').trim();
+      const memory = stripThinkContent(String(e.memory || '')).trim();
       if (!memory) continue;
       const scope = e.scope === 'global' ? 'global' : 'bot';
       let expires: string | null = null;

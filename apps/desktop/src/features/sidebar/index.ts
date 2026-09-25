@@ -13,5 +13,7 @@ export {
   loadSidebarWidth,
   loadLastSelection,
   saveLastSelection,
+  loadImmersiveChat,
+  saveImmersiveChat,
 } from './sidebarPersistence';
 export { useSessionListFlip } from './useSessionListFlip';

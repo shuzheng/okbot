@@ -17,9 +17,9 @@ export const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
     id: 'sidebarDockMagnify',
     tab: 'general',
     labelKey: 'sidebarDockMagnify',
-    keywords: ['dock', 'magnify', '放大', '侧边栏', 'sidebar', 'collapsed'],
+    keywords: ['dock', 'magnify', 'zoom', '缩放', '缩放特效', '放大', '侧边栏', 'sidebar', 'collapsed'],
   },
-  { id: 'microphone', tab: 'general', labelKey: 'microphone', keywords: ['mic', '语音', 'voice'] },
+  { id: 'microphone', tab: 'general', labelKey: 'microphone', keywords: ['mic', '语音', 'voice', 'whisper', '麦克风'] },
   {
     id: 'hardwareAcceleration',
     tab: 'general',

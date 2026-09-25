@@ -1,10 +1,6 @@
 import { BrowserWindow, clipboard, ipcMain, shell, systemPreferences, app } from 'electron';
 import path from 'node:path';
-import {
-  IpcChannels,
-  resolveModelConfig,
-} from '@okbot/shared';
-import { transcribeAudio } from '@okbot/agent';
+import { IpcChannels } from '@okbot/shared';
 import type { IpcContext } from './context';
 import {
   checkForUpdates,
@@ -13,7 +9,7 @@ import {
   installUpdate,
 } from '../updater';
 
-export function registerSystemIpc(ctx: IpcContext): void {
+export function registerSystemIpc(_ctx: IpcContext): void {
   ipcMain.handle(
     IpcChannels.setTrafficLightPosition,
     (_e, pos: { x: number; y: number }) => {
@@ -117,24 +113,6 @@ export function registerSystemIpc(ctx: IpcContext): void {
     }
     return true;
   });
-
-  ipcMain.handle(
-    IpcChannels.transcribeAudio,
-    async (
-      _e,
-      payload: { bytes: Uint8Array | number[]; filename: string; mimeType?: string },
-    ) => {
-      const settings = ctx.storage.getSettings();
-      const bytes = Buffer.from(payload.bytes ?? []);
-      const text = await transcribeAudio({
-        model: resolveModelConfig(settings.model),
-        bytes,
-        filename: payload.filename || 'voice.webm',
-        mimeType: payload.mimeType,
-      });
-      return { text };
-    },
-  );
 
   ipcMain.handle(IpcChannels.copyText, (_e, text: string) => {
     clipboard.writeText(typeof text === 'string' ? text : String(text ?? ''));

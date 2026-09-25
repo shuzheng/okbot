@@ -188,8 +188,6 @@ const api = {
     electronAppPath?: string;
   }>,
   openMicrophoneSettings: () => ipcRenderer.invoke(IpcChannels.openMicrophoneSettings) as Promise<boolean>,
-  transcribeAudio: (payload: { bytes: Uint8Array; filename: string; mimeType?: string }) =>
-    ipcRenderer.invoke(IpcChannels.transcribeAudio, payload) as Promise<{ text: string }>,
   getAppInfo: () => ipcRenderer.invoke(IpcChannels.getAppInfo) as Promise<AppInfo>,
   getRecentErrorLog: (limit?: number) =>
     ipcRenderer.invoke(IpcChannels.getRecentErrorLog, limit) as Promise<{

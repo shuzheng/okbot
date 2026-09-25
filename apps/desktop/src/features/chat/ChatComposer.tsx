@@ -21,6 +21,8 @@ export type ChatComposerProps = {
   draft: string;
   quote: ComposerQuoteDraft | null;
   micStream: MediaStream | null;
+  /** Overrides placeholder while listening (e.g. recording / recognizing). */
+  voiceStatusLabel?: string;
   placeholder: string;
   composerRef: RefObject<HTMLTextAreaElement | null>;
   onDraftChange: (value: string) => void;
@@ -42,6 +44,7 @@ export function ChatComposer({
   draft,
   quote,
   micStream,
+  voiceStatusLabel,
   placeholder,
   composerRef,
   onDraftChange,
@@ -72,7 +75,7 @@ export function ChatComposer({
         spellCheck={false}
         ref={composerRef}
         readOnly={listening}
-        placeholder={listening ? t(lang, 'listening') : placeholder}
+        placeholder={listening ? (voiceStatusLabel || t(lang, 'listeningRecord')) : placeholder}
         value={draft}
         rows={1}
         onChange={listening ? () => undefined : (e) => onDraftChange(e.target.value)}
@@ -143,7 +146,7 @@ export function ChatComposer({
           </button>
         </div>
       ) : null}
-      {listening ? (
+      {listening && micStream ? (
         <VoiceBeam
           className="composer-beam"
           type="default"
@@ -155,6 +158,8 @@ export function ChatComposer({
         >
           {inner}
         </VoiceBeam>
+      ) : listening ? (
+        <div className="composer-beam composer-beam-static">{inner}</div>
       ) : busy ? (
         <BorderBeam
           className="composer-beam"

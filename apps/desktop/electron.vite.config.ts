@@ -37,7 +37,19 @@ export default defineConfig({
     server: {
       host: '127.0.0.1',
       strictPort: false,
+      // Serve bundled Whisper ONNX + ORT wasm during dev (public/ + vendor).
+      fs: { allow: [resolve('.'), resolve('vendor'), resolve('resources'), resolve('public')] },
     },
+    resolve: {
+      alias: {
+        // Browser webpack bundle (self-contained); avoid package "main" → src/.
+        '@xenova/transformers': resolve('vendor/xenova-transformers/transformers.js'),
+      },
+    },
+    optimizeDeps: {
+      exclude: ['@xenova/transformers'],
+    },
+    assetsInclude: ['**/*.wasm', '**/*.onnx'],
     build: {
       rollupOptions: {
         input: {

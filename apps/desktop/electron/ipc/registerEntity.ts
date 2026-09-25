@@ -25,7 +25,7 @@ export function registerEntityIpc(ctx: IpcContext): void {
     const settingsLoadWarning = ctx.storage.takeSettingsLoadWarning() ?? undefined;
     return {
       bots: ctx.storage.withReplyPreviews(ctx.storage.listBots()),
-      squads: ctx.storage.listSquads(),
+      squads: ctx.storage.withReplyPreviews(ctx.storage.listSquads()),
       settings,
       hardwareAccelerationActive: ctx.hardwareAccelerationActive,
       dataDir: ctx.storage.root,
@@ -90,7 +90,7 @@ export function registerEntityIpc(ctx: IpcContext): void {
   });
   ipcMain.handle(IpcChannels.listGlobalAgentsSkills, () => ctx.storage.listGlobalAgentsSkills());
 
-  ipcMain.handle(IpcChannels.listSquads, () => ctx.storage.listSquads());
+  ipcMain.handle(IpcChannels.listSquads, () => ctx.storage.withReplyPreviews(ctx.storage.listSquads()));
   ipcMain.handle(IpcChannels.createSquad, (_e, input) => ctx.storage.createSquad(input));
   ipcMain.handle(IpcChannels.updateSquad, (_e, id: string, patch) => ctx.storage.updateSquad(id, patch));
   ipcMain.handle(IpcChannels.deleteSquad, (_e, id: string) => {

@@ -4,7 +4,7 @@ import { SQUAD_CAPTAIN_SPEAKER_ID, type Bot, type ChatMessage, type Squad } from
 import { t, type UiLang } from '../../i18n';
 import type { ToolCard, TurnPhase } from '../../types';
 import { FlatAvatar } from '../../components/ui/avatars';
-import { CopyIcon } from '../../components/ui/icons';
+import { CopyIcon, ImmersiveChatIcon } from '../../components/ui/icons';
 import { BotOnboarding } from '../bots/BotOnboarding';
 import { AssistantContent } from './AssistantContent';
 import { ToolCardView } from './ToolCardView';
@@ -39,6 +39,8 @@ export type ChatTranscriptProps = {
   onDenyTool: (requestId: string) => void;
   onApproveToolForever: (card: ToolCard) => void;
   composerSlot: ReactNode;
+  immersiveChat: boolean;
+  onToggleImmersiveChat: () => void;
   /** Per resolved model: show `<think>` as collapsible (default true). */
   showThinking?: boolean;
 };
@@ -73,6 +75,8 @@ export const ChatTranscript = memo(function ChatTranscript({
   onDenyTool,
   onApproveToolForever,
   composerSlot,
+  immersiveChat,
+  onToggleImmersiveChat,
   showThinking = true,
 }: ChatTranscriptProps) {
   const renderToolCard = (card: ToolCard) => (
@@ -286,6 +290,16 @@ export const ChatTranscript = memo(function ChatTranscript({
             {t(lang, 'scrollToBottom')}
           </button>
         ) : null}
+        <button
+          type="button"
+          className="immersive-chat-fab"
+          title={t(lang, immersiveChat ? 'immersiveChatExit' : 'immersiveChatEnable')}
+          aria-label={t(lang, immersiveChat ? 'immersiveChatExit' : 'immersiveChatEnable')}
+          aria-pressed={immersiveChat}
+          onClick={onToggleImmersiveChat}
+        >
+          <ImmersiveChatIcon immersive={immersiveChat} />
+        </button>
       </div>
       {busy ? (
         <div className="chat-turn-status" aria-live="polite" aria-label={turnStatusText}>

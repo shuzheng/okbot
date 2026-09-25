@@ -34,7 +34,6 @@ export {
   type RunSquadChatInput,
 } from './squad.js';
 export { runChat } from './runChat.js';
-export { transcribeAudio, type TranscribeAudioInput } from './transcribe.js';
 export {
   refreshAgentsMd,
   refreshBotSkills,

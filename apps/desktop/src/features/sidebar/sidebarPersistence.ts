@@ -49,3 +49,21 @@ export function saveLastSelection(selection: Selection) {
     /* ignore */
   }
 }
+
+export function loadImmersiveChat(): boolean {
+  try {
+    return localStorage.getItem('okbot.immersiveChat') === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function saveImmersiveChat(value: boolean) {
+  try {
+    if (value) localStorage.setItem('okbot.immersiveChat', '1');
+    else localStorage.removeItem('okbot.immersiveChat');
+  } catch {
+    /* ignore */
+  }
+}
+

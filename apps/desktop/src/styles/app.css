@@ -18,6 +18,8 @@
   --sidebar-w: 250px;
   --sidebar-icon: 80px;
   --traffic-pad: 40px; /* center band with trafficLightPosition y:14 */
+  /* Left safe area when sidebar is gone (trafficLightPosition x:14 + 3 lights + gap). */
+  --traffic-lights-inset: 76px;
   --hairline: 0.5px;
   --hairline-color: #4a4a4a;
   font-family:
@@ -121,6 +123,17 @@ input, textarea { user-select: text; }
 }
 .app.is-resizing {
   transition: none;
+}
+.app.immersive {
+  grid-template-columns: 1fr;
+}
+.app.immersive .sidebar,
+.app.immersive .sidebar-resize {
+  display: none;
+}
+/* macOS: without sidebar, push avatar/title clear of traffic lights. */
+:root[data-platform='darwin'] .app.immersive .main-header {
+  padding-left: var(--traffic-lights-inset);
 }
 
 .sidebar.menu-open,
@@ -447,6 +460,11 @@ input, textarea { user-select: text; }
   opacity: 0;
   transition: opacity 0.12s ease;
   pointer-events: none;
+}
+.avatar-preview-mask svg {
+  width: 16px;
+  height: 16px;
+  display: block;
 }
 .avatar-preview-hit:hover .avatar-preview-mask,
 .avatar-preview-hit:focus-visible .avatar-preview-mask {
@@ -971,6 +989,62 @@ input, textarea { user-select: text; }
   }
 }
 .main-header > * { -webkit-app-region: no-drag; }
+
+/* Chat column: header + transcript + composer. */
+.chat-pane {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Bottom-right immersive toggle: fade in on message-area hover; no hit-target when hidden. */
+.immersive-chat-fab {
+  position: absolute;
+  right: 18px;
+  bottom: 16px;
+  z-index: 8;
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel, #1c1c1e) 90%, transparent);
+  color: var(--muted);
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.16);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  -webkit-app-region: no-drag;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease, background 0.15s ease, color 0.15s ease;
+}
+.immersive-chat-fab svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+.messages-shell:hover .immersive-chat-fab,
+.immersive-chat-fab:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+.immersive-chat-fab:hover {
+  background: color-mix(in srgb, var(--panel, #1c1c1e) 98%, var(--accent, #6366f1) 8%);
+  color: var(--text);
+}
+.immersive-chat-fab:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent, #6366f1) 55%, transparent);
+  outline-offset: 2px;
+}
+
 .header-actions {
   margin-left: auto;
   display: flex;
@@ -2103,7 +2177,7 @@ input, textarea { user-select: text; }
   margin: 0;
   padding: 14px 14px 10px;
   background: inherit;
-  border-bottom: var(--hairline) solid var(--hairline-color);
+  border-bottom: none;
 }
 .form-drawer-body {
   flex: 1 1 0;
@@ -2841,6 +2915,9 @@ input, textarea { user-select: text; }
   font-weight: 500;
   color: var(--text);
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 .settings-row select,
 .settings-row input {
@@ -2890,7 +2967,7 @@ input, textarea { user-select: text; }
   width: 120px;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
 }
 .settings-card-model .settings-row-label-text {
   min-width: 0;
@@ -2924,7 +3001,7 @@ input, textarea { user-select: text; }
 .settings-section-label-with-help {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 
 .settings-help {
@@ -4300,7 +4377,7 @@ input, textarea { user-select: text; }
   width: 120px;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
 }
 .settings-card-security .settings-row-label-text {
   min-width: 0;

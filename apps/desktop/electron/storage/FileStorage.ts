@@ -29,6 +29,7 @@ import {
   normalizeToolRunSettings,
   normalizeSquad,
   clampSessionSummary,
+  stripThinkContent,
   type BotRosterEntry,
   type ChatMessage,
   type Squad,
@@ -192,7 +193,9 @@ export class FileStorage {
   writeAgentsMd(botId: string, content: string): void {
     this.assertKnownBotId(botId);
     this.ensureBotLayout(botId);
-    const text = content.endsWith('\n') ? content : `${content}\n`;
+    // Never persist model CoT into system instructions (refresh / UI / sync).
+    const stripped = stripThinkContent(typeof content === 'string' ? content : '').trimEnd();
+    const text = stripped.endsWith('\n') ? stripped : `${stripped}\n`;
     fs.writeFileSync(this.agentsMdPath(botId), text, 'utf8');
   }
 
@@ -288,7 +291,7 @@ export class FileStorage {
     const next: MemoryEntry = {
       id: entry.id,
       bot_id: entry.bot_id,
-      memory: entry.memory.trim(),
+      memory: stripThinkContent(entry.memory).trim(),
       expires: entry.expires,
     };
     if (idx >= 0) list[idx] = next;
@@ -334,7 +337,7 @@ export class FileStorage {
       this.getSettings().contextCompression,
     ).summaryMaxChars;
     const next: SessionSummary = {
-      summary: clampSessionSummary(entry.summary, maxChars),
+      summary: clampSessionSummary(stripThinkContent(entry.summary), maxChars),
       coveredThroughId: entry.coveredThroughId,
       updatedAt: entry.updatedAt || new Date().toISOString(),
     };
@@ -473,15 +476,16 @@ export class FileStorage {
     if (!slug) throw new Error('invalid skill slug');
     this.ensureBotLayout(botId);
     ensureDir(this.skillDir(botId, slug));
-    const nm = (skill.name.trim() || slug).replace(/"/g, "'");
-    const desc = (skill.description.trim() || nm).replace(/"/g, "'");
+    const nm = (stripThinkContent(skill.name).trim() || slug).replace(/"/g, "'");
+    const desc = (stripThinkContent(skill.description).trim() || nm).replace(/"/g, "'");
+    const body = stripThinkContent(skill.body).trim();
     const md = [
       '---',
       `name: "${nm}"`,
       `description: "${desc}"`,
       '---',
       '',
-      skill.body.trim(),
+      body,
       '',
     ].join('\n');
     fs.writeFileSync(this.skillFile(botId, slug), md, 'utf8');
@@ -1605,8 +1609,8 @@ export class FileStorage {
 
 
   /** Newest assistant message text for sidebar subtitle; empty if none. */
-  getLastReplyPreview(botId: string): string {
-    const page = this.getMessagesPage(botId, { limit: 30 });
+  getLastReplyPreview(ownerId: string): string {
+    const page = this.getMessagesPage(ownerId, { limit: 30 });
     for (let i = page.messages.length - 1; i >= 0; i--) {
       const m = page.messages[i]!;
       if (m.role !== 'assistant') continue;
@@ -1616,10 +1620,10 @@ export class FileStorage {
     return '';
   }
 
-  withReplyPreviews(bots: Bot[]): Bot[] {
-    return bots.map((b) => ({
-      ...b,
-      lastReplyPreview: this.getLastReplyPreview(b.id),
+  withReplyPreviews<T extends { id: string }>(owners: T[]): Array<T & { lastReplyPreview?: string }> {
+    return owners.map((owner) => ({
+      ...owner,
+      lastReplyPreview: this.getLastReplyPreview(owner.id),
     }));
   }
 

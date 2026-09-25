@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { Bot, ModelProvider } from '@okbot/shared';
 import { t } from '../../i18n';
+import { ChevronsRightIcon } from '../../components/ui/icons';
 import type { SquadWizardState } from '../../types';
 import { FlatAvatar } from '../../components/ui/avatars';
 import { BotSearchSelect } from '../bots/BotSearchSelect';
@@ -81,7 +82,7 @@ export function SquadWizardModal({
             onClick={() => onClose()}
             aria-label={t(lang, 'close')}
           >
-            ×
+            <ChevronsRightIcon />
           </button>
         </div>
         <div

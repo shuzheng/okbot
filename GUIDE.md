@@ -1,8 +1,6 @@
 # OkBot 产品与开发指南
 
 > 本文档描述 **当前已实现** 的产品能力与 UI 细节，供开发与联调对照。  
-> **规则：新功能或重要 UI 变更必须同步更新 `GUIDE.md` 与 `README.md`。**
-
 ---
 
 ## 1. 产品定位
@@ -32,6 +30,7 @@ okbot/
       features/
         sidebar/                # SessionSidebar、宽度持久化、FLIP
         chat/                   # ChatTranscript、ChatComposer、Markdown、ToolCard
+        voice/                  # MediaRecorder + on-device Whisper STT
         bots/                   # 新建/编辑助手、两步 onboarding
         squads/                 # 创建小队向导
         settings/               # SettingsModal、UsagePanel、AAR、模型编辑
@@ -55,13 +54,13 @@ okbot/
 - **Windows**：`titleBarStyle: 'hidden'`（无系统标题栏），主顶栏操作区在「关于」右侧放自定义最小化 / 最大化(还原) / 关闭（`WindowControls`，仅 `platform === 'win32'`）。无会话时按钮浮在主区右上角。IPC：`windowMinimize` / `windowMaximizeToggle` / `windowClose` / `windowIsMaximized`（及 `windowMaximizedChanged` 推送）。
 - **Linux**：保持改动前行为（既有 `titleBarStyle` + `autoHideMenuBar` / 隐藏应用菜单）；不加 Windows 式自定义窗口控件。
 - **Windows / Linux** 均设 `autoHideMenuBar: true` 隐藏系统原生 File/Edit/View 菜单栏。 Windows 用最小 **Edit** 子菜单（undo/redo/cut/copy/paste/selectAll；**不要** `null`——会破坏 IME；空 `[]` 在部分 Electron 上仍缺 Edit role）； Linux 仍 `Menu.setApplicationMenu(null)`。
-- **BotFormModal / SquadWizardModal**：右侧抽屉（`.drawer-backdrop` + `.form-drawer` / `.modal.form-drawer`），与左侧边栏同为**通高**：贴齐视口上/下/右缘、无浮动短面板边距与圆角；标题+关闭粘性固定，正文滚动。autoApply：名称/描述在 IME `composition` 期间不 `onApply`，结束后/失焦再持久化，并 350ms 防抖；Windows 聚焦名称不 `select()`。backdrop / drawer / 表单控件显式 `-webkit-app-region: no-drag`。
+- **BotFormModal / SquadWizardModal**：右侧抽屉（`.drawer-backdrop` + `.form-drawer` / `.modal.form-drawer`），与左侧边栏同为**通高**：贴齐视口上/下/右缘、无浮动短面板边距与圆角；标题栏粘性固定（**无**底部分割线），关闭钮为 **»** 形双 chevron（`ChevronsRightIcon`，指向右=收起抽屉），正文滚动。autoApply：名称/描述在 IME `composition` 期间不 `onApply`，结束后/失焦再持久化，并 350ms 防抖；Windows 聚焦名称不 `select()`。backdrop / drawer / 表单控件显式 `-webkit-app-region: no-drag`。
 - **删除确认**：助手/小队/供应商/模型删除使用应用内 `ConfirmHost` + `requestConfirm`（`components/ui/ConfirmModal`），不用系统 `window.confirm`；主进程 `dialog.showMessageBox` 仅用于自动更新/退出等 OS 流程。
 
 ### 3.1 侧栏（`features/sidebar`）
 
 - **展开态**：搜索、会话列表（助手 + 小队）、底部 FAB（搜索 / 设置 / 创建菜单）。会话行名称右上角显示**上次更新时间**（`formatSessionUpdatedAt`，用 `SessionItem.updatedAt`）：当天 `HH:mm`；昨天 `昨天 HH:mm`（EN: `Yesterday HH:mm`）；一周内为星期（`星期x` / EN 本地化短星期）；一月内为 `MM/DD`；更早为 `YYYY/MM/DD`。次要 muted 文案，不挤占标题/未读。  
-- **折叠态**：窄轨头像列表；悬停约 **500ms** 后显示 dock tip；底部紧凑 FAB。Mac Dock 式头像放大动效默认**关闭**（`settings.sidebarDockMagnify`，设置 → 通用 →「侧边栏缩起时的放大动效」）；仅开关打开时才缩放。  
+- **折叠态**：窄轨头像列表；悬停约 **500ms** 后显示 dock tip；底部紧凑 FAB。Mac Dock 式头像放大动效默认**关闭**（`settings.sidebarDockMagnify`，设置 → 通用 →「缩放特效」）；仅开关打开时才缩放。  
 - **宽度**：可拖拽，上限约 **400px**；点击 splitter 可折叠/展开；宽度持久化（`sidebarPersistence`）。  
 - **创建菜单**：创建助手 / 创建小队（独立图标）。  
 - **会话项**：头像 + 名称 + 最近回复预览；右键：置顶 / 改名 / 资料 / 删除。  
@@ -74,6 +73,8 @@ okbot/
 - **关于**：主题按钮右侧打开 `AboutModal`（应用信息、构建日期、复制信息）。  
 - **窗口控件（仅 Windows）**：关于按钮右侧为最小化 / 最大化(还原) / 关闭；macOS 仍用系统红绿灯，Linux 不加这组控件。  
 - **下载更新**：有可用/下载中/已下载更新时，主题按钮左侧出现更新按钮（见 §10）。
+- **沉浸式对话**：控制不在顶栏，而在消息/转录区域（`.messages-shell`）**右下角**悬停浮层按钮（Maximize2 / Minimize2 图标）。鼠标进入消息/转录区域时淡入，离开时淡出（`opacity` 过渡；不可见时 `pointer-events: none` 不挡点击）。点击隐藏侧栏与 splitter（聊天区全宽）；再点还原侧栏（保留进入前的宽度/折叠轨态）。偏好持久化 `localStorage` 键 `okbot.immersiveChat`。文案：`开启沉浸式对话` / `关闭沉浸式对话`（EN: Enable / Exit immersive chat）。
+- **macOS 沉浸式顶栏 inset**：沉浸且侧栏隐藏时，对话顶栏在 darwin 上增加左侧安全区（`--traffic-lights-inset: 76px`），避免助手头像/名称与系统红绿灯重叠；Windows / Linux 不加该左 padding。
 
 ### 3.3 消息列表（`ChatTranscript`）
 
@@ -96,7 +97,7 @@ okbot/
 
 - 多行输入；空闲时描边强调。  
 - **引用草稿**：上方 quote 条（可关闭）；发送时写入 `quoteMessageId` + `quotePreview`（**不**把 `>` 拼进正文）。  
-- **麦克风**：按住/点击语音；`VoiceBeam` 可视化；转写走 agent `transcribe`（配置的 provider `baseURL` + `/audio/transcriptions`，Whisper 系模型）+ 系统麦克风权限。若服务商不支持该端点（常见 404），UI 显示明确中文错误，不假装成功。  
+- **麦克风**：点击开始录音，再点停止；`MediaRecorder` 采集音频 → 渲染进程 **本地 Whisper**（`@xenova/transformers` + 内置 `whisper-tiny`）转写写入 Composer；`VoiceBeam` 可视化。**不**走 Google Web Speech，也**不**走 provider `/audio/transcriptions`。需系统麦克风权限；识别可离线。失败时有模型加载 / 识别错误的中英提示。  
 - **发送 / 停止（中途改向）**：忙碌时输入框仍可编辑；有草稿时可继续发送（中途改向），Enter 同样可发送（尊重 IME）。**停止**保持独立：忙碌且草稿为空只显示停止；忙碌且有草稿时 **停止 + 发送** 同时显示。发送不会仅因忙碌而灰掉。BorderBeam / busy 一直保持到**最外层**运行真正结束（改向中途不会提前熄灭）。
 - **发送失败重试**：乐观用户气泡带渲染期 `sendStatus`（`pending` | `sent` | `failed`，不落盘）。`chatStart` / `chatStartSquad`（含中途改向）拒绝或抛错时，气泡保留并在**右下角**显示红色重试按钮（i18n `retrySend`）；点击以原文 + 引用（若有）重发。失败时不再用 `getMessagesPage` 整页替换把本地气泡冲掉。
 
@@ -119,7 +120,7 @@ okbot/
 | `bot-avatar`（**默认**，切换条左侧） | libraries.dev **bot-avatars** 立体造型 | 18 种 shape（clover/flower/…/puddle），可选颜色覆盖（含纯白）；工作态可用 `state="working"` |
 | `emoji`（可选，切换条右侧） | Emoji + 可选背景色 | `FlatAvatar`；「默认」= 无色块（透明） |
 
-创建/编辑为**右侧抽屉**（粘性标题栏 + 可滚动正文）：立体头像默认；emoji 预设、「更多」全量选择器、颜色板（一行，**「默认」打头** + 预设色含 `#FFFFFF`）；`avatarKind` 切换与 `botAvatarType` 选择。两边的「默认」均存空字符串 `color === ''`（立体头像→库默认色；emoji→无背景）。从立体头像「默认」切到 emoji **不**再 hash 出随机色。缺省 / 未知 `avatarKind` 读时归一为 `bot-avatar`（无双格式 shim）。新建助手时立体头像随机一种形状，颜色用库默认（不预选色板）。
+创建/编辑为**右侧抽屉**（粘性标题栏 + 可滚动正文）：立体头像默认；悬停头像预览显示 **»** 形双 chevron（收起态向下 / 展开态向上，无文字）；emoji 预设、「更多」全量选择器、颜色板（一行，**「默认」打头** + 预设色含 `#FFFFFF`）；`avatarKind` 切换与 `botAvatarType` 选择。两边的「默认」均存空字符串 `color === ''`（立体头像→库默认色；emoji→无背景）。从立体头像「默认」切到 emoji **不**再 hash 出随机色。缺省 / 未知 `avatarKind` 读时归一为 `bot-avatar`（无双格式 shim）。新建助手时立体头像随机一种形状，颜色用库默认（不预选色板）。
 
 立体头像：`.flat-avatar-bot` **不**裁剪库的 1.5× overscan（跳动/翻转要画到布局盒外）。侧栏 `session-list` 加大上下 padding，会话行 `overflow: visible` + 提高 z-index，避免被列表/`sidebar` 的 overflow 或邻行背景切掉（误看起来像头像框裁切）。`bot-avatars` 经 pnpm patch：去掉「不可见即停动画」的 IntersectionObserver（侧栏 overflow 会误判 overscan canvas），挂载期间保持闲置/工作动画。
 
@@ -148,7 +149,7 @@ okbot/
 
 | Tab（侧栏文案） | 内容 |
 |-----|------|
-| **通用设置** | 主题（系统/浅/深）、语言（系统/中/英）、侧边栏缩起放大动效（默认关）、麦克风、硬件加速（改后需重启）、数据目录说明（**不含**更新控件） |
+| **通用设置** | 主题（系统/浅/深）、语言（系统/中/英）、缩放特效（默认关；? 说明仿 MacOS Dock 动效）、麦克风、硬件加速（改后需重启）、数据目录说明（**不含**更新控件） |
 | **工具授权** | 五工具启用 + 审批策略（自动允许 / 询问；含 `read_skill`）；**自动审批规则（AAR）** 列表（允许/先询问、关键词、失焦自动保存草稿；空规则丢弃；重名校验；列表限高滚动）；**运行限制**（`settings.toolRun`：单轮最大工具调用 / 最大时长秒 / 记录运行轨迹，见下） |
 | **安全防护** | 总开关、拦截模式（reject / tripwire）、限制在家目录、允许/拒绝路径前缀、危险 shell 正则；与审批关系说明 |
 | **模型接入** | **自定义供应商**（可多条：名称 / BaseURL / API Format / API Key / 每供应商模型目录）；模型行**连通测试**（按该供应商 baseURL/apiKey/apiFormat 对模型 id 发最小探针，IPC `testModelConnection`）；全局**默认模型**（下方下拉，供应商→模型；列表行不再用星标设默认）；列表顺序稳定（存盘数组序，启停不重排）；助手/小队覆盖同为 `providerId`+`modelId`；上下文压缩（自动换题、比例、保留上下限默认 5、摘要字数）、**单次运行最大回合**（1:1 `maxTurns`，默认 50） |
@@ -334,9 +335,11 @@ HITL UI：工具卡上「允许 / 永久允许 / 拒绝」。
 
 ## 11. 语音
 
-- 设置可选麦克风设备；首次需系统权限（`ensureMicrophoneAccess` / 打开系统设置）。  
-- 录音 → IPC `transcribeAudio` → agent `transcribe.ts`（依赖已配置的模型/API）。  
-- Composer 听写态禁用发送，展示 VoiceBeam。
+- **录制 → 本地转写**：`MediaRecorder` 在渲染进程按所选麦克风录音；停止后用 **`@xenova/transformers` + 内置量化 `Xenova/whisper-tiny`**（ONNX / WASM）转写，文本写入 Composer。  
+- **不**使用 Google Web Speech（Electron / 国内常出现假 `network` 错误）；**不**调用 provider `/audio/transcriptions` / `okbot:transcribe-audio`。  
+- 模型文件在 `apps/desktop/public/models/Xenova/whisper-tiny/`（与 `resources/models` 同源），随应用打包，可离线识别；ORT WASM 在 `public/wasm/`。  
+- 设置里的麦克风 `deviceId` 用于 `getUserMedia`（录音 + VoiceBeam）。UI locale `zh`→chinese、`en`→english。  
+- 首次加载模型 / 识别中会显示「正在加载语音模型…」「正在识别…」。不支持 MediaRecorder、拒权、无麦、模型或识别失败有明确中英提示。
 
 ---
 
@@ -413,8 +416,9 @@ Preload 暴露 `window.okbot.*`；渲染进程不直连 Node fs。
 ## 16. 文档维护
 
 1. 合并功能或重要 UI 变更时：**同一 PR/提交或紧随提交** 更新本文件对应章节。  
-2. 根 `README.md` 保持短述 + 指向本指南；README 中须保留同步更新规则。  
-3. 以代码与近期 commit 为准，避免凭记忆写「计划中」能力。
+2. 根目录用户文档：`README.md`（英文）与 `README_zh.md`（中文）保持短述 + 指向本指南；文首保留 `English | 中文` 相对链接，两边结构同步；勿在用户 README 写技术栈 / 当前范围 / `run_shell` 诚实边界等开发向内容（边界说明留在本指南对应章节）。  
+3. 本指南**不要**写死产品版本号（版本以 Releases / `package.json` 为准）。  
+4. 以代码与近期 commit 为准，避免凭记忆写「计划中」能力。
 
 ## 已知限制（小队冷启动审批）
 

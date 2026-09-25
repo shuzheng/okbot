@@ -1348,6 +1348,8 @@ export interface Squad {
   modelId?: string;
   createdAt: string;
   updatedAt: string;
+  /** Latest assistant reply preview for the sidebar (not persisted). */
+  lastReplyPreview?: string;
   /** True when a squad reply finished while this session was not selected. */
   hasUnreadReply?: boolean;
 }
@@ -1619,7 +1621,6 @@ export const IpcChannels = {
   nativeThemeUpdated: 'okbot:native-theme-updated',
   ensureMicrophoneAccess: 'okbot:ensure-microphone-access',
   openMicrophoneSettings: 'okbot:open-microphone-settings',
-  transcribeAudio: 'okbot:transcribe-audio',
   getAppInfo: 'okbot:get-app-info',
   updaterGetStatus: 'okbot:updater-get-status',
   updaterCheck: 'okbot:updater-check',

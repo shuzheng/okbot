@@ -1,8 +1,8 @@
 {
   "name": "okbot",
   "private": true,
-  "version": "0.1.0",
-  "description": "OkBot \u2014 personal desktop AI assistant",
+  "version": "0.2.0",
+  "description": "OkBot — personal desktop AI assistant",
   "packageManager": "pnpm@11.15.1",
   "scripts": {
     "dev": "pnpm --filter @okbot/shared build && pnpm --filter @okbot/agent build && pnpm --filter @okbot/desktop dev",

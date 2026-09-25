@@ -1,0 +1,27 @@
+{
+  "name": "@xenova/transformers",
+  "version": "2.17.2",
+  "description": "State-of-the-art Machine Learning for the web. Run \ud83e\udd17 Transformers directly in your browser, with no need for a server!",
+  "main": "./transformers.js",
+  "type": "module",
+  "scripts": {},
+  "author": "Xenova",
+  "license": "Apache-2.0",
+  "dependencies": {},
+  "optionalDependencies": {},
+  "devDependencies": {},
+  "browser": {
+    "fs": false,
+    "path": false,
+    "url": false,
+    "sharp": false,
+    "onnxruntime-node": false
+  },
+  "module": "./transformers.js",
+  "exports": {
+    ".": {
+      "default": "./transformers.js"
+    }
+  },
+  "peerDependencies": {}
+}

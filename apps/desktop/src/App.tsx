@@ -21,6 +21,8 @@ import {
   loadSidebarWidth,
   loadLastSelection,
   saveLastSelection,
+  loadImmersiveChat,
+  saveImmersiveChat,
   useSessionListFlip,
   SIDEBAR_DEFAULT,
   SIDEBAR_MIN,
@@ -35,6 +37,12 @@ import { WindowControls } from './features/window';
 import { useScrollFade } from './hooks/useScrollFade';
 import { applyTheme, subscribeSystemTheme } from './utils/theme';
 import { updateScrollFade } from './utils/scrollFade';
+import {
+  blobToWhisperAudio,
+  openMicStream as openMicStreamHelper,
+  pickRecorderMimeType,
+  transcribeWithLocalWhisper,
+} from './voice';
 import { formatSystemError } from './utils/formatSystemError';
 import { isAbortLikeError } from '@okbot/shared';
 import { toast, ToastHost, requestConfirm, ConfirmHost } from './components/ui';
@@ -152,6 +160,9 @@ export function App() {
   const skipRenameCommitRef = useRef(false);
   const [error, setError] = useState('');
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
+  const [immersiveChat, setImmersiveChat] = useState(loadImmersiveChat);
+  const immersiveChatRef = useRef(immersiveChat);
+  immersiveChatRef.current = immersiveChat;
   const [resizing, setResizing] = useState(false);
   const [dockScales, setDockScales] = useState<Record<string, number>>({});
   const [dockTip, setDockTip] = useState<null | {
@@ -190,11 +201,12 @@ export function App() {
   /** Show jump button only when clearly scrolled up past this (hysteresis vs slack). */
   const JUMP_BUTTON_PX = 80;
   const composerRef = useRef<HTMLTextAreaElement>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaChunksRef = useRef<Blob[]>([]);
   const voiceBusyRef = useRef(false);
   const startingVoiceRef = useRef(false);
+  const [voiceStatusLabel, setVoiceStatusLabel] = useState('');
   const streamingPreviewRef = useRef<Record<string, string>>({});
   const lastDockYRef = useRef<number | null>(null);
   /** Pending show delay for collapsed-sidebar dock tip (avatar + name + desc). */
@@ -530,6 +542,10 @@ export function App() {
   }, [sidebarWidth]);
 
   useEffect(() => {
+    saveImmersiveChat(immersiveChat);
+  }, [immersiveChat]);
+
+  useEffect(() => {
     if (!selection) return;
     saveLastSelection(selection);
   }, [selection]);
@@ -583,6 +599,7 @@ export function App() {
   useEffect(() => {
     let raf = 0;
     const check = () => {
+      if (immersiveChatRef.current) return;
       if (manualCollapsedRef.current) return;
       const winW = window.innerWidth;
       const expanded = Math.max(lastExpandedWidthRef.current, SIDEBAR_NARROW_AT + 1);
@@ -1192,12 +1209,18 @@ export function App() {
 
   useEffect(() => {
     return () => {
-      try {
-        mediaRecorderRef.current?.stop();
-      } catch {
-        /* ignore */
+      listeningRef.current = false;
+      const recorder = mediaRecorderRef.current;
+      mediaRecorderRef.current = null;
+      if (recorder && recorder.state !== 'inactive') {
+        try {
+          recorder.stop();
+        } catch {
+          /* ignore */
+        }
       }
       mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
+      mediaStreamRef.current = null;
     };
   }, []);
 
@@ -1939,11 +1962,46 @@ async function handleSend(retry?: {
     setMicStream(null);
   }
 
+  function micPermissionHint() {
+    const p = electronAppPathRef.current;
+    return t(lang, 'micPermissionHint', { path: p ? ` ${p}` : '' });
+  }
+
+  async function openMicStream(): Promise<MediaStream | null> {
+    if (typeof window.okbot.ensureMicrophoneAccess === 'function') {
+      try {
+        const access = await window.okbot.ensureMicrophoneAccess();
+        if (access.electronAppPath) electronAppPathRef.current = access.electronAppPath;
+      } catch {
+        /* continue */
+      }
+    }
+
+    const result = await openMicStreamHelper(settings?.microphoneId);
+    if (result.ok) return result.stream;
+    if (result.kind === 'unavailable') {
+      setError(t(lang, 'micUnavailable'));
+      return null;
+    }
+    if (result.kind === 'no-device') {
+      setError(t(lang, 'micNoDevice'));
+      return null;
+    }
+    if (result.kind === 'permission') {
+      setError(micPermissionHint());
+      void window.okbot.openMicrophoneSettings?.();
+      return null;
+    }
+    setError(result.message || t(lang, 'micOpenFailed'));
+    return null;
+  }
+
   async function stopVoiceRecording(transcribe: boolean) {
     const recorder = mediaRecorderRef.current;
     if (!recorder) {
       listeningRef.current = false;
       setListening(false);
+      setVoiceStatusLabel('');
       releaseMicStream();
       return;
     }
@@ -1979,124 +2037,67 @@ async function handleSend(retry?: {
         window.setTimeout(() => resolve(new Blob(chunks, { type: mime })), 1200);
       }),
     ]);
-    if (!transcribe) return;
-    if (blob.size < 64) {
-      setError(lang === 'en' ? 'Recording too short — hold a bit longer.' : '录音太短，请再说一会儿后再点停止');
+
+    if (!transcribe) {
+      setVoiceStatusLabel('');
       return;
     }
-    if (typeof window.okbot.transcribeAudio !== 'function') {
-      setError(
-        lang === 'en'
-          ? 'Voice API missing — fully quit and rerun pnpm --filter @okbot/desktop dev'
-          : '语音转写接口未加载，请完全退出后重新运行 pnpm --filter @okbot/desktop dev',
-      );
+    if (blob.size < 64) {
+      setVoiceStatusLabel('');
+      setError(t(lang, 'speechTooShort'));
       return;
     }
 
-    // Transcribe in background — do not block the next mic press.
     voiceBusyRef.current = true;
     setError('');
+    setVoiceStatusLabel(t(lang, 'speechModelLoading'));
+    // Keep composer locked while recognizing (reuse listening UI chrome).
+    setListening(true);
     try {
-      const bytes = new Uint8Array(await blob.arrayBuffer());
-      const ext = blob.type.includes('mp4') ? 'mp4' : blob.type.includes('ogg') ? 'ogg' : 'webm';
-      const { text } = await window.okbot.transcribeAudio({
-        bytes,
-        filename: `voice.${ext}`,
-        mimeType: blob.type || `audio/${ext}`,
+      setVoiceStatusLabel(t(lang, 'speechRecognizing'));
+      const audio = await blobToWhisperAudio(blob);
+      const text = await transcribeWithLocalWhisper(audio, lang, (prog) => {
+        if (prog.status === 'progress' || prog.status === 'download') {
+          setVoiceStatusLabel(t(lang, 'speechModelLoading'));
+        }
       });
-      const next = ((draftRef.current || '') + (draftRef.current ? ' ' : '') + text).trim();
-      updateDraft(next);
+      if (!text) {
+        setError(t(lang, 'speechEmpty'));
+      } else {
+        const next = ((draftRef.current || '') + (draftRef.current ? ' ' : '') + text).trim();
+        updateDraft(next);
+      }
       requestAnimationFrame(() => composerRef.current?.focus());
     } catch (err) {
-      toast.error(formatSystemError(err));
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(t(lang, 'speechRecognizeFailed', { error: msg }));
     } finally {
       voiceBusyRef.current = false;
-    }
-  }
-
-  function micPermissionHint() {
-    const p = electronAppPathRef.current;
-    return t(lang, 'micPermissionHint', { path: p ? ` ${p}` : '' });
-  }
-
-  async function openMicStream(): Promise<MediaStream | null> {
-    if (typeof window.okbot.ensureMicrophoneAccess === 'function') {
-      try {
-        const access = await window.okbot.ensureMicrophoneAccess();
-        if (access.electronAppPath) electronAppPathRef.current = access.electronAppPath;
-      } catch {
-        /* continue */
-      }
-    }
-
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setError(t(lang, 'micUnavailable'));
-      return null;
-    }
-
-    let inputs: MediaDeviceInfo[] = [];
-    try {
-      inputs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'audioinput');
-    } catch {
-      inputs = [];
-    }
-    if (inputs.length === 0) {
-      setError(
-t(lang, 'micNoDevice'),
-      );
-      return null;
-    }
-
-    const preferredId = settings?.microphoneId?.trim() || '';
-    const audioConstraint: MediaTrackConstraints | true = preferredId
-      ? { deviceId: { ideal: preferredId } }
-      : true;
-
-    try {
-      return await navigator.mediaDevices.getUserMedia({ audio: audioConstraint });
-    } catch (err) {
-      const name = err instanceof DOMException ? err.name : '';
-      if (name === 'NotAllowedError' || name === 'SecurityError') {
-        setError(micPermissionHint());
-        void window.okbot.openMicrophoneSettings?.();
-        return null;
-      }
-      for (const d of inputs) {
-        if (!d.deviceId) continue;
-        try {
-          return await navigator.mediaDevices.getUserMedia({
-            audio: { deviceId: { exact: d.deviceId } },
-          });
-        } catch {
-          /* next */
-        }
-      }
-      setError(err instanceof Error ? err.message : t(lang, 'micOpenFailed'));
-      return null;
+      setListening(false);
+      setVoiceStatusLabel('');
     }
   }
 
   async function startVoiceRecording() {
-    if (listeningRef.current || mediaRecorderRef.current) return;
+    if (listeningRef.current || mediaRecorderRef.current || voiceBusyRef.current) return;
+    if (typeof MediaRecorder === 'undefined') {
+      setError(t(lang, 'speechUnsupported'));
+      return;
+    }
+
     const stream = await openMicStream();
     if (!stream) return;
 
     mediaStreamRef.current = stream;
     setMicStream(stream);
     mediaChunksRef.current = [];
-    const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-      ? 'audio/webm;codecs=opus'
-      : MediaRecorder.isTypeSupported('audio/webm')
-        ? 'audio/webm'
-        : MediaRecorder.isTypeSupported('audio/mp4')
-          ? 'audio/mp4'
-          : '';
+    const mime = pickRecorderMimeType();
     let recorder: MediaRecorder;
     try {
       recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
     } catch (err) {
       releaseMicStream();
-      setError(err instanceof Error ? err.message : '当前环境不支持录音');
+      setError(err instanceof Error ? err.message : t(lang, 'speechUnsupported'));
       return;
     }
 
@@ -2106,6 +2107,7 @@ t(lang, 'micNoDevice'),
     mediaRecorderRef.current = recorder;
     listeningRef.current = true;
     setListening(true);
+    setVoiceStatusLabel(t(lang, 'listeningRecord'));
     setError('');
     recorder.start(250);
   }
@@ -2115,7 +2117,7 @@ t(lang, 'micNoDevice'),
       await stopVoiceRecording(true);
       return;
     }
-    if (startingVoiceRef.current) return;
+    if (voiceBusyRef.current || startingVoiceRef.current) return;
     startingVoiceRef.current = true;
     try {
       await startVoiceRecording();
@@ -2178,7 +2180,7 @@ t(lang, 'micNoDevice'),
       id: squad.id,
       name: squad.name,
       members: target.members,
-      preview: (squad.description || t(lang, 'squadDesc')).trim(),
+      preview: (stripThinkContent(squad.lastReplyPreview || '').trim() || squad.description || t(lang, 'squadDesc')).trim(),
       top,
       left,
     };
@@ -2249,6 +2251,7 @@ t(lang, 'micNoDevice'),
 
   // Stable identities for memo(SessionSidebar) / memo(ChatTranscript).
   const onOpenSearch = useCallback(() => setSearchOpen(true), []);
+  const onToggleImmersiveChat = useCallback(() => setImmersiveChat((v) => !v), []);
   const onStartCreateBot = useCallback(() => {
     void startCreateBot();
   }, [lang]);
@@ -2353,6 +2356,7 @@ t(lang, 'micNoDevice'),
         draft={draft}
         quote={quoteDraft}
         micStream={micStream}
+        voiceStatusLabel={voiceStatusLabel}
         placeholder={composerPlaceholder}
         composerRef={composerRef}
         onDraftChange={updateDraft}
@@ -2369,6 +2373,7 @@ t(lang, 'micNoDevice'),
       draft,
       quoteDraft,
       micStream,
+      voiceStatusLabel,
       composerPlaceholder,
       onClearQuote,
       onSend,
@@ -2379,7 +2384,7 @@ t(lang, 'micNoDevice'),
 
   return (
     <div
-      className={`app ${narrow ? 'narrow' : ''}${resizing ? ' is-resizing' : ''}`}
+      className={`app ${narrow ? 'narrow' : ''}${resizing ? ' is-resizing' : ''}${immersiveChat ? ' immersive' : ''}`}
       style={{ ['--sidebar-w' as string]: `${sidebarWidth}px` }}
       onContextMenu={(e) => e.preventDefault()}
     >
@@ -2448,7 +2453,7 @@ t(lang, 'micNoDevice'),
         ) : null}
 
         {(selectedBot || selectedSquad) && (
-          <>
+          <div className="chat-pane">
             <div className="main-header">
               {selectedBot ? (
                 <button
@@ -2588,9 +2593,11 @@ t(lang, 'micNoDevice'),
               onDenyTool={onDenyTool}
               onApproveToolForever={onApproveToolForever}
               composerSlot={composerSlot}
+              immersiveChat={immersiveChat}
+              onToggleImmersiveChat={onToggleImmersiveChat}
               showThinking={showThinking}
             />
-          </>
+          </div>
         )}
 
       </main>
