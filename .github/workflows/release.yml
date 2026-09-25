@@ -1,0 +1,175 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Git tag to build (must already exist, e.g. v0.1.0). Leave empty to use apps/desktop package.json version as vX.Y.Z without creating a tag.'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      tag: ${{ steps.ver.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: ver
+        shell: bash
+        run: |
+          V=$(node -p "require('./apps/desktop/package.json').version")
+          if [[ -n "${{ inputs.tag }}" ]]; then
+            TAG="${{ inputs.tag }}"
+          elif [[ "${{ github.ref_type }}" == "tag" ]]; then
+            TAG="${{ github.ref_name }}"
+          else
+            TAG="v${V}"
+          fi
+          echo "version=${V}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Resolved version=${V} tag=${TAG}"
+          # Tag must match package version (vX.Y.Z ↔ X.Y.Z).
+          EXPECTED="v${V}"
+          if [[ "${TAG}" != "${EXPECTED}" ]]; then
+            echo "::error::Release tag ${TAG} does not match apps/desktop version ${EXPECTED}"
+            exit 1
+          fi
+          ROOT_V=$(node -p "require('./package.json').version")
+          if [[ "${ROOT_V}" != "${V}" ]]; then
+            echo "::error::Root package.json version ${ROOT_V} != desktop ${V}"
+            exit 1
+          fi
+
+  build:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            name: mac
+            args: --mac --arm64 --x64
+          - os: windows-latest
+            name: win
+            args: --win --x64
+          - os: ubuntu-latest
+            name: linux
+            args: --linux --x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Node must be installed before pnpm cache runs: pnpm@11 needs >=22.13
+      # (runners default to Node 20; setup-node cache invokes pnpm after switching PATH).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.15.1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build packages + desktop
+        run: |
+          pnpm --filter @okbot/shared build
+          pnpm --filter @okbot/agent build
+          pnpm --filter @okbot/desktop build
+
+      - name: Package (${{ matrix.name }})
+        working-directory: apps/desktop
+        env:
+          # Avoid interactive prompts; unsigned local/CI builds are expected for now.
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+        run: pnpm exec electron-builder --config electron-builder.yml ${{ matrix.args }} --publish never
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: okbot-${{ matrix.name }}
+          path: |
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.zip
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.AppImage
+            apps/desktop/release/*.yml
+            apps/desktop/release/*.yaml
+            apps/desktop/release/*.blockmap
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: okbot-*
+          merge-multiple: true
+
+      - name: List assets
+        shell: bash
+        run: |
+          find dist -type f | sort
+          test -n "$(find dist -type f | head -1)"
+
+      - name: Create / update GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.version.outputs.tag }}
+          VERSION: ${{ needs.version.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Flatten any nested dirs from artifact download
+          mkdir -p upload
+          find dist -type f -maxdepth 3 -print0 | while IFS= read -r -d '' f; do
+            cp -f "$f" "upload/$(basename "$f")"
+          done
+          ls -la upload
+
+          NOTES=$(cat <<MD
+          OkBot **${VERSION}**
+
+          ## Downloads
+          - **macOS**: DMG / ZIP（arm64 + x64）
+          - **Windows**: NSIS installer（x64）
+          - **Linux**: AppImage（x64）
+
+          Auto-update uses these GitHub Release assets via electron-updater.
+          MD
+          )
+
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "$TAG" upload/* --repo "${{ github.repository }}" --clobber
+            gh release edit "$TAG" --repo "${{ github.repository }}" --notes "$NOTES" --latest
+          else
+            gh release create "$TAG" upload/* \
+              --repo "${{ github.repository }}" \
+              --title "OkBot ${VERSION}" \
+              --notes "$NOTES" \
+              --latest
+          fi

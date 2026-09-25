@@ -1,0 +1,56 @@
+{
+  "name": "@okbot/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OkBot desktop shell",
+  "main": "./out/main/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm --filter @okbot/agent build && node ./scripts/ensure-mic-plist.mjs && electron-vite dev",
+    "ensure-mic": "node ./scripts/ensure-mic-plist.mjs",
+    "build": "pnpm --filter @okbot/agent build && electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dist": "pnpm build && electron-builder --config electron-builder.yml",
+    "dist:mac": "pnpm build && electron-builder --config electron-builder.yml --mac",
+    "dist:dir": "pnpm build && electron-builder --config electron-builder.yml --mac --dir",
+    "publish:github": "pnpm build && electron-builder --config electron-builder.yml --mac --publish always",
+    "test:session-jsonl": "node --import tsx electron/storage/sessionJsonl.test.ts",
+    "test:usage-store": "node --import tsx electron/storage/usageStore.test.ts",
+    "test": "node --import tsx electron/storage/sessionJsonl.test.ts && node --import tsx electron/storage/usageStore.test.ts"
+  },
+  "dependencies": {
+    "@emoji-mart/data": "^1.2.1",
+    "@okbot/agent": "workspace:*",
+    "@okbot/shared": "workspace:*",
+    "border-beam": "^1.3.0",
+    "bot-avatars": "0.1.1",
+    "emoji-mart": "^5.6.0",
+    "highlight.js": "^11.12.0",
+    "liquid-gooey": "^0.2.1",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "thinking-orbs": "^0.3.1",
+    "voice-glow": "^0.2.0",
+    "electron-updater": "^6.6.2"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "@types/react": "^19.1.12",
+    "@types/react-dom": "^19.1.9",
+    "@vitejs/plugin-react": "^5.0.2",
+    "electron": "^37.3.1",
+    "electron-vite": "^4.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.4",
+    "electron-builder": "^25.1.8"
+  },
+  "author": "shuzheng",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/shuzheng/okbot.git"
+  }
+}

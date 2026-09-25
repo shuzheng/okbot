@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "declaration": true,
+    "declarationMap": true,
+    "outDir": "dist",
+    "rootDir": "src",
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "types": [
+      "node"
+    ]
+  },
+  "include": [
+    "src/**/*.ts"
+  ],
+  "exclude": [
+    "src/smoke.ts",
+    "src/*.test.ts",
+    "src/**/*.test.ts"
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "name": "@okbot/agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node --import tsx src/promptContext.normalize.test.ts && node --import tsx src/stripThinkHistory.test.ts && node --import tsx src/guardrails.test.ts && node --import tsx src/allocateAskToolNames.test.ts && node --import tsx src/resolveShellExec.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
+    "test:smoke": "node --import tsx src/smoke.ts",
+    "test:normalize": "node --import tsx src/promptContext.normalize.test.ts",
+    "test:guardrails": "node --import tsx src/guardrails.test.ts",
+    "test:ask-names": "node --import tsx src/allocateAskToolNames.test.ts",
+    "test:shell-exec": "node --import tsx src/resolveShellExec.test.ts",
+    "test": "tsc -p tsconfig.json && node --import tsx src/promptContext.normalize.test.ts && node --import tsx src/stripThinkHistory.test.ts && node --import tsx src/guardrails.test.ts && node --import tsx src/allocateAskToolNames.test.ts && node --import tsx src/resolveShellExec.test.ts"
+  },
+  "dependencies": {
+    "@okbot/shared": "workspace:*",
+    "@openai/agents": "^0.18.0",
+    "openai": "^7.20.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2"
+  }
+}

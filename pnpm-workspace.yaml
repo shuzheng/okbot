@@ -1,0 +1,15 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+allowBuilds:
+  electron: true
+  electron-winstaller: true
+  esbuild: true
+
+onlyBuiltDependencies:
+  - electron
+  - esbuild
+
+patchedDependencies:
+  bot-avatars@0.1.1: patches/bot-avatars.patch

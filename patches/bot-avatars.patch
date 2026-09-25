@@ -1,0 +1,21 @@
+diff --git a/dist/index.es.js b/dist/index.es.js
+--- a/dist/index.es.js
++++ b/dist/index.es.js
+     }, Vt = () => {
+       J && J(), J = null;
+     };
+-    let Kt = null;
+-    return typeof IntersectionObserver == "function" ? (Kt = new IntersectionObserver((ue) => {
+-      var Lt;
+-      z = ((Lt = ue[0]) == null ? void 0 : Lt.isIntersecting) ?? !0, z ? Pt() : Vt();
+-    }), Kt.observe(D)) : Pt(), () => {
+-      Vt(), Kt && Kt.disconnect();
++    /* OkBot: always run while mounted. Default IO pauses when an overflow
++       ancestor (sidebar/session-list) clips the overscan canvas, which froze
++       idle motion in the session list even though the avatar stayed visible. */
++    Pt();
++    return () => {
++      Vt();
+     };
+   }, [ht]);
+   const At = typeof i == "number" ? `${i * kt}px` : `calc(${i} * ${kt})`, bt = (D) => typeof i == "number" ? `${-i * D}px` : `calc(${i} * ${-D})`, Mt = (kt - 1) / 2, Ot = {
