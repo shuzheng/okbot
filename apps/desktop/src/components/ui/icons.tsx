@@ -317,6 +317,51 @@ export function AboutIcon() {
   );
 }
 
+/** Link chain — copy local HTTP API request URL from chat header.
+ *  Scaled to match About/theme optical weight inside the shared 19px header glyph. */
+export function CopyRequestUrlIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" aria-hidden>
+      <g transform="translate(12 12) scale(0.82) translate(-12 -12)">
+        <path
+          d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <path
+          d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </g>
+    </svg>
+  );
+}
+
+/** Route / waypoints — open this run's tool trajectory.
+ *  Slight inset so optical size matches About inside the shared header glyph. */
+export function RunTraceIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" aria-hidden>
+      <g transform="translate(12 12) scale(0.92) translate(-12 -12)">
+        <circle cx="6" cy="19" r="2.5" stroke="currentColor" strokeWidth="1.8" />
+        <circle cx="18" cy="5" r="2.5" stroke="currentColor" strokeWidth="1.8" />
+        <path
+          d="M8.5 18.2h7.2a3.3 3.3 0 0 0 0-6.6H8.3a3.3 3.3 0 0 1 0-6.6H15.5"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </g>
+    </svg>
+  );
+}
+
 /** Enter immersive = Maximize2; exit = Minimize2 (lucide-style). */
 export function ImmersiveChatIcon({ immersive }: { immersive: boolean }) {
   if (immersive) {
@@ -387,6 +432,85 @@ export function ChevronsUpIcon() {
         stroke="currentColor"
         strokeWidth="1.8"
         strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+export function PlusIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden>
+      <path
+        d="M12 5v14M5 12h14"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+/** Landscape / image — white line icon for composer attach fan. */
+export function ImageAttachIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden>
+      <rect
+        x="4"
+        y="5.5"
+        width="16"
+        height="13"
+        rx="2.2"
+        stroke="currentColor"
+        strokeWidth="1.35"
+      />
+      <path
+        d="M4.8 15.2l4.2-4.2a1.4 1.4 0 0 1 2 0L15 15l1.6-1.6a1.4 1.4 0 0 1 2 0l1.6 1.6"
+        stroke="currentColor"
+        strokeWidth="1.35"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <circle cx="9" cy="9.2" r="1.15" fill="currentColor" />
+    </svg>
+  );
+}
+
+/** Document / file. */
+export function FileAttachIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden>
+      <path
+        d="M8 3.5h6.2L18.5 8v12.2a1.3 1.3 0 0 1-1.3 1.3H8A1.3 1.3 0 0 1 6.7 20.2V4.8A1.3 1.3 0 0 1 8 3.5z"
+        stroke="currentColor"
+        strokeWidth="1.35"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M14 3.6V8h4.3"
+        stroke="currentColor"
+        strokeWidth="1.35"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M9.2 12.5h5.6M9.2 15.8h5.6"
+        stroke="currentColor"
+        strokeWidth="1.35"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+/** Folder. */
+export function FolderAttachIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden>
+      <path
+        d="M3.8 8.2V7a1.8 1.8 0 0 1 1.8-1.8h4.1l1.6 1.7h7.1A1.8 1.8 0 0 1 20.2 8.7v8.5a1.8 1.8 0 0 1-1.8 1.8H5.6A1.8 1.8 0 0 1 3.8 17.2V8.2z"
+        stroke="currentColor"
+        strokeWidth="1.35"
         strokeLinejoin="round"
       />
     </svg>

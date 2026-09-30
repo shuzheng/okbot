@@ -2,6 +2,7 @@ import type { ChatMessage, ToolPreferences } from '@okbot/shared';
 import { resolveAssistantRoleLine, stripThinkContent, TOOL_IDS } from '@okbot/shared';
 import { normalizeMarkdownHeadings } from './promptContext.js';
 import { TOOL_BLURBS } from './tools.js';
+import { VISION_TURN_INSTRUCTION } from './visionInput.js';
 
 /** Rolling session-summary section shared by 1:1 bot and squad captain prompts. */
 export function formatSessionSummarySection(sessionSummary?: string | null): string {
@@ -39,6 +40,8 @@ export function buildAgentInstructions(
   memoriesText?: string,
   sessionSummary?: string,
   assistantRoleTemplate?: string,
+  /** When this turn carries vision image parts, override stale "no images" AGENTS claims. */
+  hasVisionInput?: boolean,
 ): string {
   const enabled = listEnabledToolIds(prefs);
   const toolLine = formatEnabledLocalToolsLine(prefs);
@@ -70,6 +73,7 @@ export function buildAgentInstructions(
       memoriesBlock,
       summaryBlock,
       skillsBlock,
+      hasVisionInput ? VISION_TURN_INSTRUCTION : '',
       '用简洁、清楚的中文回答。',
       toolLine,
       enabled.includes('edit_file') || enabled.includes('write_file')

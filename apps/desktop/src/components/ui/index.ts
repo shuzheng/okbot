@@ -18,10 +18,16 @@ export {
   InstructionsNavIcon,
   DownloadUpdateIcon,
   AboutIcon,
+  CopyRequestUrlIcon,
+  RunTraceIcon,
   ImmersiveChatIcon,
   ChevronsRightIcon,
   ChevronsDownIcon,
   ChevronsUpIcon,
+  PlusIcon,
+  ImageAttachIcon,
+  FileAttachIcon,
+  FolderAttachIcon,
 } from './icons';
 export { toast, ToastHost, type ToastKind } from './toast';
 export {

@@ -1,4 +1,5 @@
-import type { AgentInputItem, SessionInputCallback } from '@openai/agents';
+import type { SessionInputCallback } from '@openai/agents';
+import { enrichLastUserContentSessionInputCallback } from './visionInput.js';
 
 /**
  * Session already has the body-only user turn from appendMessage.
@@ -7,11 +8,5 @@ import type { AgentInputItem, SessionInputCallback } from '@openai/agents';
  * the SDK treat the turn as changed and double-persist the user message.
  */
 export function quoteSessionInputCallback(modelUserText: string): SessionInputCallback {
-  return (history: AgentInputItem[]) => {
-    if (!history.length) return history;
-    const last = history[history.length - 1] as Record<string, unknown> | undefined;
-    if (!last || last.role !== 'user') return history;
-    last.content = modelUserText;
-    return history;
-  };
+  return enrichLastUserContentSessionInputCallback(modelUserText);
 }

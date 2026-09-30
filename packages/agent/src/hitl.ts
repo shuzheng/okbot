@@ -82,6 +82,12 @@ export function createAgentAndRunner(input: {
   toolRunBudget?: ToolRunBudget;
   session?: Session;
   history?: ChatMessage[];
+  /** Current turn includes vision image parts (overrides stale AGENTS "no images" claims). */
+  hasVisionInput?: boolean;
+  /** Bot/squad id for generate_image save path. */
+  ownerId?: string;
+  /** Absolute owner `resources/` dir for generate_image. */
+  resourcesDir?: string;
 }) {
   const toolPrefs = input.tools ?? DEFAULT_TOOL_PREFERENCES;
   const security = input.security ?? DEFAULT_SECURITY;
@@ -103,6 +109,7 @@ export function createAgentAndRunner(input: {
       input.memoriesText,
       input.sessionSummary,
       input.assistantRoleTemplate,
+      input.hasVisionInput === true,
     ),
     model: input.model.model,
     ...(typeof input.model.maxTokens === 'number' && input.model.maxTokens >= 1
@@ -110,6 +117,11 @@ export function createAgentAndRunner(input: {
       : {}),
     tools: buildTools(toolPrefs, security, input.toolRunBudget, {
       skillLookup: input.skillLookup,
+      imageApi: { baseURL: input.model.baseURL, apiKey: input.model.apiKey },
+      imageAssets:
+        input.ownerId && input.resourcesDir
+          ? { ownerId: input.ownerId, resourcesDir: input.resourcesDir }
+          : undefined,
     }),
   });
   const runner = new Runner({

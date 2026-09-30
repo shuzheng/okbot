@@ -45,6 +45,30 @@ export const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
     keywords: ['自动更新', 'updates', 'release'],
   },
   { id: 'data', tab: 'general', labelKey: 'data', keywords: ['dataDir', '目录', 'folder'] },
+  {
+    id: 'localHttpApi',
+    tab: 'general',
+    labelKey: 'localHttpApi',
+    keywords: ['HTTP', 'API', 'localhost', '127.0.0.1', 'loopback', '本地', '令牌', 'token', 'port', '端口'],
+  },
+  {
+    id: 'localHttpApiEnable',
+    tab: 'general',
+    labelKey: 'localHttpApiEnable',
+    keywords: ['启用', 'enable', 'HTTP API'],
+  },
+  {
+    id: 'localHttpApiPort',
+    tab: 'general',
+    labelKey: 'localHttpApiPort',
+    keywords: ['端口', 'port'],
+  },
+  {
+    id: 'localHttpApiToken',
+    tab: 'general',
+    labelKey: 'localHttpApiToken',
+    keywords: ['令牌', 'token', 'bearer', 'secret'],
+  },
   { id: 'usageTotal', tab: 'usage', labelKey: 'usageTotal', keywords: ['token', '用量', 'usage'] },
   { id: 'usageDailyChart', tab: 'usage', labelKey: 'usageDailyChart', keywords: ['chart', 'daily', '图表'] },
   { id: 'usageByMember', tab: 'usage', labelKey: 'usageByMember', keywords: ['member', '助手'] },
@@ -54,6 +78,7 @@ export const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
   { id: 'toolReadSkill', tab: 'tools', labelKey: 'toolReadSkill', keywords: ['skill', '技能', 'read_skill'] },
   { id: 'toolWriteFile', tab: 'tools', labelKey: 'toolWriteFile', keywords: ['write'] },
   { id: 'toolEditFile', tab: 'tools', labelKey: 'toolEditFile', keywords: ['edit'] },
+  { id: 'toolGenerateImage', tab: 'tools', labelKey: 'toolGenerateImage', keywords: ['image', 'generate', 'minimax', '画图', '生图'] },
   {
     id: 'autoApproval',
     tab: 'tools',

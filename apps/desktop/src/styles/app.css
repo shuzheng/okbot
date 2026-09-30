@@ -13,6 +13,10 @@
   --bubble-user: #18181b;
   --bubble-user-text: #fff;
   --bubble-bot: #ececee;
+  /* Attach +/fan: soft chrome in light; dark theme overrides below. */
+  --composer-attach: #e4e4e7;
+  --composer-attach-text: #3f3f46;
+  --composer-attach-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
   --input: #ffffff;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
   --sidebar-w: 250px;
@@ -46,6 +50,9 @@
     --bubble-user: #2e2e2e;
     --bubble-user-text: #f5f5f5;
     --bubble-bot: #212121;
+    --composer-attach: #2e2e2e;
+    --composer-attach-text: #f5f5f5;
+    --composer-attach-shadow: 0 8px 22px rgba(0, 0, 0, 0.28);
     --input: #212121;
   }
 }
@@ -63,6 +70,9 @@
   --bubble-user: #2e2e2e;
   --bubble-user-text: #f5f5f5;
   --bubble-bot: #212121;
+  --composer-attach: #2e2e2e;
+  --composer-attach-text: #f5f5f5;
+  --composer-attach-shadow: 0 8px 22px rgba(0, 0, 0, 0.28);
   --input: #212121;
 }
 
@@ -80,6 +90,9 @@
   --bubble-user: #18181b;
   --bubble-user-text: #fff;
   --bubble-bot: #ececee;
+  --composer-attach: #e4e4e7;
+  --composer-attach-text: #3f3f46;
+  --composer-attach-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
   --input: #ffffff;
 }
 
@@ -1052,52 +1065,12 @@ input, textarea { user-select: text; }
   gap: 4px;
   flex-shrink: 0;
 }
-.header-trace-btn {
+/* Shared chat-header icon hit box + glyph size (request-url / trace / theme / about / update). */
+.header-icon-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 32px;
-  padding: 0 10px;
-  border: none;
-  border-radius: 9px;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 500;
-  white-space: nowrap;
-}
-.header-trace-btn:hover {
-  background: var(--accent-soft);
-  color: var(--text);
-}
-.header-theme-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  border: none;
-  border-radius: 9px;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-}
-.header-theme-btn svg {
-  width: 19px;
-  height: 19px;
-  display: block;
-}
-.header-theme-btn:hover {
-  background: var(--accent-soft);
-  color: var(--text);
-}
-.header-update-btn,
-.header-about-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  box-sizing: border-box;
   width: 32px;
   height: 32px;
   padding: 0;
@@ -1107,15 +1080,15 @@ input, textarea { user-select: text; }
   color: var(--muted);
   cursor: pointer;
   position: relative;
+  flex-shrink: 0;
 }
-.header-update-btn svg,
-.header-about-btn svg {
+.header-icon-btn svg {
   width: 19px;
   height: 19px;
   display: block;
+  flex-shrink: 0;
 }
-.header-update-btn:hover,
-.header-about-btn:hover {
+.header-icon-btn:hover {
   background: var(--accent-soft);
   color: var(--text);
 }
@@ -1324,7 +1297,12 @@ input, textarea { user-select: text; }
   align-items: flex-start;
 }
 .bubble-row.assistant {
-  align-self: flex-start;
+  /* Definite width (not shrink-to-fit): CJK min-content is ~1ch, so a
+     percentage max-width on .bubble against an indefinite parent collapses
+     short replies into mid-line wraps every few glyphs. */
+  align-self: stretch;
+  width: 100%;
+  box-sizing: border-box;
   flex-direction: row;
 }
 .bubble-row-cluster {
@@ -1332,16 +1310,19 @@ input, textarea { user-select: text; }
   flex-direction: column;
   align-items: flex-end;
   gap: 6px;
+  width: fit-content;
   max-width: min(760px, 94%);
-  min-width: 0;
+  box-sizing: border-box;
 }
 .bubble-body-row {
   display: flex;
   flex-direction: row;
   align-items: flex-start;
   gap: 6px;
+  width: fit-content;
   max-width: 100%;
   min-width: 0;
+  box-sizing: border-box;
 }
 .bubble-body-row .bubble-actions {
   /* Optical align with first line of bubble text (pad 10px, ~14px/1.4 line, 28px btn). */
@@ -1349,7 +1330,8 @@ input, textarea { user-select: text; }
 }
 .bubble-row-cluster .bubble {
   flex: 0 1 auto;
-  max-width: min(720px, 88%);
+  width: fit-content;
+  max-width: min(720px, 100%);
 }
 .bubble-actions {
   flex: 0 0 auto;
@@ -1395,8 +1377,9 @@ input, textarea { user-select: text; }
   color: var(--text);
 }
 .bubble-row .bubble {
-  flex: 1 1 auto;
-  max-width: 100%;
+  /* Do not flex-grow: short CJK bubbles must stay width:fit-content. */
+  flex: 0 1 auto;
+  max-width: min(720px, 100%);
 }
 .prompt-context-overlay {
   position: fixed;
@@ -1478,13 +1461,21 @@ input, textarea { user-select: text; }
   cursor: text;
 }
 .bubble {
-  max-width: min(720px, 88%);
+  /* fit-content + definite parent max-width: short CJK stays one line; long text still caps */
+  width: fit-content;
+  max-width: min(720px, 100%);
+  box-sizing: border-box;
   padding: 10px 12px;
   border-radius: 16px;
   font-size: 14px;
   font-weight: 500;
   white-space: pre-wrap;
-  word-break: break-word;
+  /* Prefer normal breaks; overflow-wrap only for long unbroken tokens (URLs).
+     Do NOT use word-break: break-all / legacy break-word — they shrink flex
+     min-content (esp. with Latin). CJK already breaks per UAX#14; width is
+     controlled by fit-content against a definite containing block. */
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 .bubble.user {
   align-self: flex-end;
@@ -1494,6 +1485,20 @@ input, textarea { user-select: text; }
 }
 .bubble.user.send-pending {
   opacity: 0.78;
+  /* pulse-outside rides the child's edge; keep a faint hairline while sending. */
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bubble-user-text) 16%, transparent);
+}
+/* BorderBeam wrapper for optimistic outbound user bubbles. */
+.bubble-send-beam {
+  flex: 0 1 auto;
+  width: fit-content;
+  max-width: min(720px, 100%);
+  overflow: visible;
+  display: block;
+  box-sizing: border-box;
+}
+.bubble-send-beam > .bubble {
+  max-width: 100%;
 }
 .bubble.user.send-failed {
   /* Room for the bottom-right retry control inside the bubble. */
@@ -1936,7 +1941,221 @@ input, textarea { user-select: text; }
   align-items: stretch;
   justify-content: center;
   gap: 8px;
+  position: relative;
+  z-index: 6;
+  overflow: visible;
 }
+.composer-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 0;
+  width: 100%;
+  position: relative;
+  z-index: 6;
+  overflow: visible;
+}
+.composer-row .composer-beam {
+  flex: 1 1 auto;
+  min-width: 0;
+  /* Attach stack expands above the input; BorderBeam sets overflow:hidden — override so gooey stack is not clipped. */
+  overflow: visible !important;
+}
+.composer-attach {
+  /* Prefix control nested inside the rounded composer shell. */
+  position: relative;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  align-self: center;
+  z-index: 12;
+  overflow: visible;
+}
+.composer-attach.disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+.composer-attach-liquid {
+  /* liquid-gooey sets position:relative inline; !important keeps the fan stage
+     out of flow so the anchor sits in this 30px slot instead of below it. */
+  position: absolute !important;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  pointer-events: none;
+  overflow: visible;
+  z-index: 12;
+}
+.composer-attach-liquid .composer-attach-btn {
+  pointer-events: auto;
+}
+.composer-attach-btn {
+  box-sizing: border-box;
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  min-height: 30px;
+  padding: 0;
+  margin: 0;
+  border-radius: 50%;
+  /* Match Liquid fill (var(--composer-attach)) so the glyph sits inside the goo. */
+  border: 0.5px solid color-mix(in srgb, var(--composer-attach-text) 14%, transparent);
+  background: var(--composer-attach);
+  color: var(--composer-attach-text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  line-height: 0;
+  position: relative;
+  z-index: 1;
+  overflow: visible;
+  -webkit-app-region: no-drag;
+}
+.composer-attach-btn:disabled {
+  cursor: default;
+}
+.composer-attach-btn svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  overflow: visible;
+  opacity: 1;
+  color: var(--composer-attach-text);
+  fill: none;
+}
+.composer-attach-btn:hover:not(:disabled),
+.composer-attach-btn:focus-visible:not(:disabled) {
+  border-color: color-mix(in srgb, var(--composer-attach-text) 26%, transparent);
+  background: color-mix(in srgb, var(--composer-attach) 82%, var(--composer-attach-text));
+  color: var(--composer-attach-text);
+  outline: none;
+}
+/* + rotates/morphs to × when open (45° turns a plus into a cross). */
+.composer-attach-toggle svg {
+  transition: transform 220ms cubic-bezier(0.34, 1.4, 0.64, 1);
+  transform-origin: 50% 50%;
+  will-change: transform;
+}
+.composer-attach-toggle.open svg {
+  transform: rotate(45deg);
+}
+.composer-attach:not(.open) .composer-attach-btn:not(.composer-attach-toggle) {
+  opacity: 0;
+}
+.composer-attach.open .composer-attach-btn:not(.composer-attach-toggle) {
+  opacity: 1;
+  transition: opacity 100ms ease 40ms;
+}
+
+.composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.composer-attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(280px, 100%);
+  padding: 4px 6px 4px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.2;
+}
+.composer-attach-chip-icon {
+  display: inline-flex;
+  color: var(--text);
+  opacity: 0.85;
+}
+.composer-attach-chip-icon svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+.composer-attach-chip-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.composer-attach-chip-x {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.composer-attach-chip-x:hover,
+.composer-attach-chip-x:focus-visible {
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+  color: var(--text);
+  outline: none;
+}
+.composer-attach-chip-x svg {
+  width: 12px;
+  height: 12px;
+}
+
+.message-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+  width: 100%;
+  box-sizing: border-box;
+}
+.message-attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(280px, 100%);
+  padding: 4px 10px 4px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.2;
+}
+.message-attach-chip-icon {
+  display: inline-flex;
+  color: var(--text);
+  opacity: 0.85;
+}
+.message-attach-chip-icon svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+.message-attach-chip-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.bubble.user.bubble-attach-only {
+  min-width: 28px;
+  min-height: 28px;
+  padding: 6px 10px;
+}
+.bubble.user.bubble-attach-only:empty {
+  /* Keep a tiny target for pending BorderBeam when attachments-only. */
+  padding: 10px 14px;
+}
+
 .bubble-quote {
   box-sizing: border-box;
   display: flex;
@@ -2046,6 +2265,9 @@ input, textarea { user-select: text; }
   outline: none;
   box-shadow: none;
   background: transparent;
+  overflow: visible;
+  position: relative;
+  z-index: 6;
 }
 .composer-beam > .composer-inner,
 .composer .composer-inner {
@@ -2060,10 +2282,14 @@ input, textarea { user-select: text; }
   background: var(--input);
   border: var(--hairline) solid var(--hairline-color);
   border-radius: 20px;
-  padding: 6px 8px 6px 12px;
+  /* Tighter left padding: + lives inside as prefix. */
+  padding: 6px 8px 6px 6px;
   outline: none;
   box-shadow: none;
   transition: border-color 120ms ease;
+  overflow: visible;
+  position: relative;
+  z-index: 6;
 }
 .composer-inner:hover {
   border-color: color-mix(in srgb, var(--hairline-color) 80%, var(--text));
@@ -2138,6 +2364,17 @@ input, textarea { user-select: text; }
   color: var(--muted);
   max-width: 360px;
   line-height: 1.6;
+}
+.messages-history-loading {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  user-select: none;
+}
+.messages-history-loading .chat-turn-status-text {
+  font-size: 13px;
 }
 .modal-backdrop {
   position: fixed;
@@ -3109,6 +3346,11 @@ input, textarea { user-select: text; }
   max-width: none;
 }
 .settings-eye {
+  appearance: none;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
   position: absolute;
   right: 8px;
   width: 28px;
@@ -3121,6 +3363,29 @@ input, textarea { user-select: text; }
 .settings-eye:hover {
   color: var(--text);
   background: var(--accent-soft);
+}
+.settings-eye:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.settings-eye:disabled:hover {
+  color: var(--muted);
+  background: transparent;
+}
+.settings-secret-multi input {
+  padding-right: 92px;
+}
+.settings-secret-actions {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+}
+.settings-secret-actions .settings-eye {
+  position: static;
 }
 .settings-footer { display: none; }
 
@@ -5165,6 +5430,7 @@ input, textarea { user-select: text; }
   width: 15px;
   height: 15px;
 }
+/* Portaled to body (ModelEditDialog) — above .modal-backdrop (50), below confirm (100). */
 .model-edit-backdrop {
   position: fixed;
   inset: 0;
@@ -5174,6 +5440,7 @@ input, textarea { user-select: text; }
   align-items: center;
   justify-content: center;
   padding: 16px;
+  -webkit-app-region: no-drag;
 }
 .model-edit-dialog {
   width: min(420px, 100%);
@@ -5356,7 +5623,8 @@ input, textarea { user-select: text; }
 }
 .bubble-body-row-assistant .bubble {
   flex: 0 1 auto;
-  max-width: min(720px, 88%);
+  width: fit-content;
+  max-width: min(720px, 100%);
 }
 
 /* Usage settings */

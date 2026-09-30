@@ -19,6 +19,7 @@ import {
   formatSessionSummarySection,
   listEnabledToolIds,
 } from './instructions.js';
+import { VISION_TURN_INSTRUCTION } from './visionInput.js';
 import {
   buildRunOpts,
   consumeAgentTextStream,
@@ -58,6 +59,12 @@ export interface RunSquadChatInput extends HitlLoopHooks {
   toolRunBudget?: ToolRunBudget;
   session?: Session;
   sessionInputCallback?: SessionInputCallback;
+  /** Current user turn includes vision image attachments. */
+  hasVisionInput?: boolean;
+  /** Squad id — generated images land in `~/.okbot/<ownerId>/resources/`. */
+  ownerId: string;
+  /** Absolute `~/.okbot/<ownerId>/resources` directory. */
+  resourcesDir: string;
   history?: ChatMessage[];
   userText: string;
 }
@@ -86,6 +93,21 @@ export function allocateAskToolNames(members: { name: string; botId: string }[])
     usedNames.add(toolName);
     return toolName;
   });
+}
+
+
+/**
+ * Sync read-modify-write for shared member usage under concurrent ask_* executes.
+ * Must stay synchronous (no await between reads/writes); Node's single-threaded event
+ * loop then makes overlapping tool completes safe without an async mutex.
+ */
+export function recordMemberTokenUsage(
+  state: { acc: TokenUsage; byBot: Record<string, TokenUsage> },
+  botId: string,
+  usage: TokenUsage,
+): void {
+  state.acc = addTokenUsage(state.acc, usage);
+  state.byBot[botId] = addTokenUsage(state.byBot[botId] ?? emptyTokenUsage(), usage);
 }
 
 function buildMemberSquadInstructions(
@@ -132,6 +154,7 @@ export function buildCaptainSquadInstructions(input: {
   prefs: ToolPreferences;
   sessionSummary?: string;
   history: ChatMessage[];
+  hasVisionInput?: boolean;
 }): string {
   const roster = input.members
     .map((m) => {
@@ -139,7 +162,7 @@ export function buildCaptainSquadInstructions(input: {
     })
     .join('\n');
   const toolHint = input.members.length
-    ? `你可以串行调用以下队员工具完成子任务（一次只调用一名，等返回后再决定下一步；队员之间不会互相通话）：${input.members
+    ? `你可以调用以下队员工具完成子任务（队员之间不会互相通话；无依赖时可在同一轮并行调用多名，有依赖时等返回后再决定下一步）：${input.members
         .map((m, i) => `${input.askToolNames[i] || `ask_${sanitizeToolName(m.name || m.botId)}`}（参数 task：子任务说明；${m.name} / ${m.role || '成员'}）`)
         .join('、')}。`
     : '当前没有可调用的队员工具，请亲自回答。';
@@ -155,9 +178,10 @@ export function buildCaptainSquadInstructions(input: {
       `## 小队花名册与角色\n\n${roster || '（无）'}`,
       input.playbook?.trim() ? `## 协作指引\n\n${input.playbook.trim()}` : '',
       formatSessionSummarySection(input.sessionSummary),
-      '星型协作：队员只向你汇报；不要假设队员之间能对话。V1 请串行调用队员工具。',
+      '星型协作：队员只向你汇报；不要假设队员之间能对话。无依赖的子任务可在同一轮并行调用多名队员工具。',
       toolHint,
       localTools,
+      input.hasVisionInput ? VISION_TURN_INSTRUCTION : '',
       '用简洁、清楚的中文回答用户；整合队员结果后给出最终答复。',
       formatHistoryBlock(input.history),
     ]
@@ -167,7 +191,10 @@ export function buildCaptainSquadInstructions(input: {
 }
 
 /**
- * Squad chat: built-in captain Agent with members exposed as ask_* tools (serial, star topology).
+ * Squad chat: built-in captain Agent with members exposed as ask_* tools (parallel star topology).
+ * Captain remains the only hub; members do not talk to each other. When the model emits multiple
+ * ask_* tool calls in one turn, the Agents SDK runs their execute handlers concurrently
+ * (maxFunctionToolConcurrency unset → all in-flight).
  */
 export async function runSquadChat(input: RunSquadChatInput): Promise<
   RunChatResult & { memberUsageByBot?: Record<string, TokenUsage> }
@@ -188,8 +215,10 @@ export async function runSquadChat(input: RunSquadChatInput): Promise<
   const historyForInstructions = input.session ? [] : (input.history ?? []);
 
   const memberTools = [];
-  let memberUsageAcc = emptyTokenUsage();
-  const memberUsageByBot: Record<string, TokenUsage> = {};
+  const memberUsageState: { acc: TokenUsage; byBot: Record<string, TokenUsage> } = {
+    acc: emptyTokenUsage(),
+    byBot: {},
+  };
   const askToolNames = allocateAskToolNames(input.members);
   for (let i = 0; i < input.members.length; i++) {
     const member = input.members[i]!;
@@ -222,6 +251,8 @@ export async function runSquadChat(input: RunSquadChatInput): Promise<
               : {}),
             tools: buildTools(toolPrefs, security, input.toolRunBudget, {
               skillLookup: capturedMember.skillLookup,
+              imageApi: { baseURL: input.model.baseURL, apiKey: input.model.apiKey },
+              imageAssets: { ownerId: input.ownerId, resourcesDir: input.resourcesDir },
             }),
           });
           const memberRunner = new Runner({
@@ -260,11 +291,7 @@ export async function runSquadChat(input: RunSquadChatInput): Promise<
           );
           const reply = memberOut.content?.trim() || '（成员未返回内容）';
           const mu = memberOut.usage ?? emptyTokenUsage();
-          memberUsageAcc = addTokenUsage(memberUsageAcc, mu);
-          memberUsageByBot[capturedMember.botId] = addTokenUsage(
-            memberUsageByBot[capturedMember.botId] ?? emptyTokenUsage(),
-            mu,
-          );
+          recordMemberTokenUsage(memberUsageState, capturedMember.botId, mu);
           input.onSquadExchange?.({
             kind: 'reply',
             memberBotId: capturedMember.botId,
@@ -291,12 +318,23 @@ export async function runSquadChat(input: RunSquadChatInput): Promise<
       prefs: toolPrefs,
       sessionSummary: input.sessionSummary,
       history: historyForInstructions,
+      hasVisionInput: input.hasVisionInput === true,
     }),
     model: input.model.model,
-    ...(typeof input.model.maxTokens === 'number' && input.model.maxTokens >= 1
-      ? { modelSettings: { maxTokens: input.model.maxTokens } }
-      : {}),
-    tools: [...buildTools(toolPrefs, security, input.toolRunBudget), ...memberTools],
+    modelSettings: {
+      // Provider may emit multiple ask_* in one turn; SDK then runs executes concurrently.
+      parallelToolCalls: true,
+      ...(typeof input.model.maxTokens === 'number' && input.model.maxTokens >= 1
+        ? { maxTokens: input.model.maxTokens }
+        : {}),
+    },
+    tools: [
+      ...buildTools(toolPrefs, security, input.toolRunBudget, {
+        imageApi: { baseURL: input.model.baseURL, apiKey: input.model.apiKey },
+        imageAssets: { ownerId: input.ownerId, resourcesDir: input.resourcesDir },
+      }),
+      ...memberTools,
+    ],
   });
 
   const runner = new Runner({
@@ -308,10 +346,10 @@ export async function runSquadChat(input: RunSquadChatInput): Promise<
   let result = (await runner.run(captain, input.userText, runOpts)) as AgentRunStreamResult;
   const streamed = await consumeAgentTextStream(result, input.onDelta, input.signal);
   const captainOut = await runHitlStreamLoop(captain, runner, runOpts, result, streamed, input);
-  const usage = addTokenUsage(captainOut.usage ?? emptyTokenUsage(), memberUsageAcc);
+  const usage = addTokenUsage(captainOut.usage ?? emptyTokenUsage(), memberUsageState.acc);
   return {
     content: captainOut.content,
     usage,
-    memberUsageByBot,
+    memberUsageByBot: memberUsageState.byBot,
   };
 }

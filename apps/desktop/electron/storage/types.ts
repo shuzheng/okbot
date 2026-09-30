@@ -13,6 +13,8 @@ export type SessionRecordV2 = {
     quoteMessageId?: string;
     /** Short preview snapshot of the quoted message. */
     quotePreview?: string;
+    /** User attachments for chip UI (content may still carry `[Attached]` for the model). */
+    attachments?: Array<{ kind: 'image' | 'file' | 'folder'; path: string; name: string }>;
     /** Assistant turn token usage. */
     usage?: { input: number; output: number; cache: number };
   };

@@ -1,6 +1,6 @@
 {
   "name": "@okbot/agent",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
@@ -12,15 +12,18 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json && node --import tsx src/promptContext.normalize.test.ts && node --import tsx src/stripThinkHistory.test.ts && node --import tsx src/refresh.stripOutput.test.ts && node --import tsx src/guardrails.test.ts && node --import tsx src/allocateAskToolNames.test.ts && node --import tsx src/resolveShellExec.test.ts",
+    "build": "tsc -p tsconfig.json && node --import tsx src/promptContext.normalize.test.ts && node --import tsx src/stripThinkHistory.test.ts && node --import tsx src/visionInput.test.ts && node --import tsx src/refresh.stripOutput.test.ts && node --import tsx src/guardrails.test.ts && node --import tsx src/allocateAskToolNames.test.ts && node --import tsx src/buildCaptainSquadInstructions.test.ts && node --import tsx src/resolveShellExec.test.ts && node --import tsx src/generateImage.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
     "test:smoke": "node --import tsx src/smoke.ts",
     "test:normalize": "node --import tsx src/promptContext.normalize.test.ts",
     "test:guardrails": "node --import tsx src/guardrails.test.ts",
     "test:ask-names": "node --import tsx src/allocateAskToolNames.test.ts",
+    "test:captain-instructions": "node --import tsx src/buildCaptainSquadInstructions.test.ts",
     "test:shell-exec": "node --import tsx src/resolveShellExec.test.ts",
-    "test": "tsc -p tsconfig.json && node --import tsx src/promptContext.normalize.test.ts && node --import tsx src/stripThinkHistory.test.ts && node --import tsx src/refresh.stripOutput.test.ts && node --import tsx src/guardrails.test.ts && node --import tsx src/allocateAskToolNames.test.ts && node --import tsx src/resolveShellExec.test.ts"
+    "test": "tsc -p tsconfig.json && node --import tsx src/promptContext.normalize.test.ts && node --import tsx src/stripThinkHistory.test.ts && node --import tsx src/visionInput.test.ts && node --import tsx src/refresh.stripOutput.test.ts && node --import tsx src/guardrails.test.ts && node --import tsx src/allocateAskToolNames.test.ts && node --import tsx src/buildCaptainSquadInstructions.test.ts && node --import tsx src/resolveShellExec.test.ts && node --import tsx src/generateImage.test.ts",
+    "test:vision": "node --import tsx src/visionInput.test.ts",
+    "test:generate-image": "node --import tsx src/generateImage.test.ts"
   },
   "dependencies": {
     "@okbot/shared": "workspace:*",

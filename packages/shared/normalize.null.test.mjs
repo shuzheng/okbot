@@ -10,6 +10,8 @@ import {
   DEFAULT_TOOL_RUN,
   DEFAULT_DENIED_PATH_PREFIXES,
   DEFAULT_CONTEXT_COMPRESSION,
+  DEFAULT_SQUAD_CAPTAIN_PERSONA,
+  DEFAULT_SQUAD_PLAYBOOK,
 } from './dist/index.js';
 
 assert.equal(normalizeMaxTokens(null), null);
@@ -36,5 +38,11 @@ assert.deepEqual(sec2.deniedPathPrefixes, []);
 const cc = normalizeContextCompression(null);
 assert.equal(cc.ratio, DEFAULT_CONTEXT_COMPRESSION.ratio);
 assert.equal(cc.keepRecentMax, DEFAULT_CONTEXT_COMPRESSION.keepRecentMax);
+
+
+assert.match(DEFAULT_SQUAD_CAPTAIN_PERSONA, /并行/);
+assert.doesNotMatch(DEFAULT_SQUAD_CAPTAIN_PERSONA, /默认串行调用/);
+assert.match(DEFAULT_SQUAD_PLAYBOOK, /并行调用/);
+assert.doesNotMatch(DEFAULT_SQUAD_PLAYBOOK, /默认一次调用一名队员/);
 
 console.log('normalize.null.test.mjs: ok');

@@ -13,6 +13,8 @@ import {
   normalizeToolRunSettings,
   normalizeToolRunMaxToolCalls,
   normalizeToolRunMaxDurationSec,
+  normalizeLocalHttpApiSettings,
+  generateLocalHttpApiToken,
   type MemoryEntry,
   type AppSettings,
   type ModelSettings,
@@ -28,7 +30,7 @@ import { AutoApprovalRulesList } from './AutoApprovalRulesList';
 import { MemoryEntriesList } from './MemoryEntriesList';
 import { CompressRatioSlider } from './CompressRatioSlider';
 import type { InstructionsSubTab, SettingsTab } from './types';
-import { SettingsIcon, ModelNavIcon, SecurityNavIcon, InstructionsNavIcon, MemoryNavIcon, DownloadUpdateIcon } from '../../components/ui/icons';
+import { SettingsIcon, ModelNavIcon, SecurityNavIcon, InstructionsNavIcon, MemoryNavIcon, DownloadUpdateIcon, CopyIcon } from '../../components/ui/icons';
 import { applyTheme } from '../../utils/theme';
 import { updateScrollFade } from '../../utils/scrollFade';
 import { formatSystemError } from '../../utils/formatSystemError';
@@ -83,6 +85,11 @@ export function SettingsModal({
   const [sidebarDockMagnify, setSidebarDockMagnify] = useState(
     settings.sidebarDockMagnify === true,
   );
+  const initialLocalHttpApi = normalizeLocalHttpApiSettings(settings.localHttpApi);
+  const [localHttpApiEnabled, setLocalHttpApiEnabled] = useState(initialLocalHttpApi.enabled);
+  const [localHttpApiPort, setLocalHttpApiPort] = useState(String(initialLocalHttpApi.port));
+  const [localHttpApiToken, setLocalHttpApiToken] = useState(initialLocalHttpApi.token);
+  const [showLocalHttpApiToken, setShowLocalHttpApiToken] = useState(false);
   const [updaterStatus, setUpdaterStatus] = useState<UpdaterStatus | null>(null);
   const [updaterBusy, setUpdaterBusy] = useState(false);
   const [autoApprovalEnabled, setAutoApprovalEnabled] = useState(
@@ -315,6 +322,11 @@ export function SettingsModal({
         hardwareAcceleration,
         autoUpdate,
         sidebarDockMagnify,
+        localHttpApi: normalizeLocalHttpApiSettings({
+          enabled: localHttpApiEnabled,
+          port: Number(localHttpApiPort),
+          token: localHttpApiToken,
+        }),
         autoApprovalEnabled,
         autoApprovalRules,
         tools,
@@ -374,6 +386,9 @@ export function SettingsModal({
     hardwareAcceleration,
     autoUpdate,
     sidebarDockMagnify,
+    localHttpApiEnabled,
+    localHttpApiPort,
+    localHttpApiToken,
     autoApprovalEnabled,
     autoApprovalRules,
     tools,
@@ -603,6 +618,109 @@ export function SettingsModal({
                 ) : null}
 
 
+                <div
+                  className="settings-section-label settings-section-label-with-help"
+                  style={{ marginTop: 16 }}
+                  data-settings-id="localHttpApi"
+                >
+                  <span>{t(lang, 'localHttpApi')}</span>
+                  <SettingsHelpTip text={t(lang, 'localHttpApiHint')} />
+                </div>
+                <div className="settings-card">
+                  <div className="settings-row" data-settings-id="localHttpApiEnable">
+                    <span className="settings-row-label">{t(lang, 'localHttpApiEnable')}</span>
+                    <SettingsToggle
+                      checked={localHttpApiEnabled}
+                      onChange={() => setLocalHttpApiEnabled((v) => !v)}
+                    />
+                  </div>
+                  <div className="settings-row" data-settings-id="localHttpApiPort">
+                    <span className="settings-row-label">
+                      <span className="settings-row-label-text">{t(lang, 'localHttpApiPort')}</span>
+                      <SettingsHelpTip text={t(lang, 'localHttpApiPortHint')} />
+                    </span>
+                    <input
+                      spellCheck={false}
+                      className="wide"
+                      type="number"
+                      min={1024}
+                      max={65535}
+                      step={1}
+                      value={localHttpApiPort}
+                      disabled={!localHttpApiEnabled}
+                      onChange={(e) => setLocalHttpApiPort(e.target.value)}
+                    />
+                  </div>
+                  <div className="settings-row settings-row-stack" data-settings-id="localHttpApiToken">
+                    <span className="settings-row-label">
+                      <span className="settings-row-label-text">{t(lang, 'localHttpApiToken')}</span>
+                      <SettingsHelpTip text={t(lang, 'localHttpApiTokenHint')} />
+                    </span>
+                    <div className="settings-secret settings-secret-multi">
+                      <input
+                        type={showLocalHttpApiToken ? 'text' : 'password'}
+                        className="wide"
+                        value={localHttpApiToken}
+                        disabled={!localHttpApiEnabled}
+                        onChange={(e) => setLocalHttpApiToken(e.target.value)}
+                        spellCheck={false}
+                        autoComplete="off"
+                        style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12 }}
+                      />
+                      <div className="settings-secret-actions">
+                        <button
+                          type="button"
+                          className="settings-eye"
+                          disabled={!localHttpApiEnabled}
+                          aria-label={t(lang, showLocalHttpApiToken ? 'localHttpApiHideToken' : 'localHttpApiShowToken')}
+                          title={t(lang, showLocalHttpApiToken ? 'localHttpApiHideToken' : 'localHttpApiShowToken')}
+                          onClick={() => setShowLocalHttpApiToken((v) => !v)}
+                        >
+                          {showLocalHttpApiToken ? (
+                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8">
+                              <path d="M3 3l18 18M10.7 10.7a2 2 0 002.6 2.6M9.9 5.1A10.5 10.5 0 0121 12c-.5 1-1.2 2-2.1 2.9M6.1 6.1C4.7 7.3 3.6 8.8 3 12c1.5 4.5 5.5 7 9 7 1.4 0 2.8-.3 4.1-.9" />
+                            </svg>
+                          ) : (
+                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8">
+                              <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" />
+                              <circle cx="12" cy="12" r="3" />
+                            </svg>
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          className="settings-eye"
+                          disabled={!localHttpApiEnabled || !localHttpApiToken}
+                          aria-label={t(lang, 'localHttpApiCopyToken')}
+                          title={t(lang, 'localHttpApiCopyToken')}
+                          onClick={() => {
+                            void window.okbot.copyText(localHttpApiToken).then(() => {
+                              toast.success(t(lang, 'localHttpApiTokenCopied'));
+                            });
+                          }}
+                        >
+                          <CopyIcon />
+                        </button>
+                        <button
+                          type="button"
+                          className="settings-eye"
+                          disabled={!localHttpApiEnabled}
+                          aria-label={t(lang, 'localHttpApiRegenerateToken')}
+                          title={t(lang, 'localHttpApiRegenerateToken')}
+                          onClick={() => setLocalHttpApiToken(generateLocalHttpApiToken())}
+                        >
+                          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                            <path d="M3 3v5h5" />
+                            <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+                            <path d="M16 16h5v5" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
                 <div className="settings-section-label" style={{ marginTop: 16 }} data-settings-id="data">
                   {t(lang, 'data')}
                 </div>
@@ -625,7 +743,9 @@ export function SettingsModal({
                             ? 'toolReadSkill'
                             : id === 'write_file'
                               ? 'toolWriteFile'
-                              : 'toolEditFile';
+                              : id === 'generate_image'
+                                ? 'toolGenerateImage'
+                                : 'toolEditFile';
                     return (
                       <div
                         key={id}
@@ -639,7 +759,9 @@ export function SettingsModal({
                                 ? 'toolReadSkill'
                                 : id === 'write_file'
                                   ? 'toolWriteFile'
-                                  : 'toolEditFile'
+                                  : id === 'generate_image'
+                                    ? 'toolGenerateImage'
+                                    : 'toolEditFile'
                         }
                       >
                         <span className="settings-row-label">{t(lang, labelKey)}</span>

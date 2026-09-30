@@ -10,10 +10,18 @@ import {
   CheckIcon,
   DownloadUpdateIcon,
   AboutIcon,
+  CopyRequestUrlIcon,
+  RunTraceIcon,
 } from './components/ui/icons';
 import { AboutModal } from './features/about';
 import { BotFormModal } from './features/bots';
-import { ChatComposer, ChatTranscript, ChatWatermark } from './features/chat';
+import {
+  ChatComposer,
+  ChatTranscript,
+  ChatWatermark,
+  type AttachKind,
+  type ComposerAttachment,
+} from './features/chat';
 import { GlobalSearchModal, type GlobalSearchSelect } from './features/search';
 import { SettingsModal, type SettingsTab } from './features/settings';
 import {
@@ -44,6 +52,10 @@ import {
   transcribeWithLocalWhisper,
 } from './voice';
 import { formatSystemError } from './utils/formatSystemError';
+import {
+  formatMessageWithAttachments,
+  resolveMessageAttachments,
+} from './utils/messageAttachments';
 import { isAbortLikeError } from '@okbot/shared';
 import { toast, ToastHost, requestConfirm, ConfirmHost } from './components/ui';
 import type {
@@ -124,12 +136,16 @@ export function App() {
   const [runTraceCopied, setRunTraceCopied] = useState(false);
   const [hasMoreOlder, setHasMoreOlder] = useState(false);
   const [olderBeforeMessageId, setOlderBeforeMessageId] = useState<string | null>(null);
+  /** Owner id whose history is currently reflected in `messages` (null = none loaded). */
+  const [historyOwnerId, setHistoryOwnerId] = useState<string | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const loadingOlderRef = useRef(false);
   const [draft, setDraft] = useState('');
   const draftRef = useRef('');
   const [quoteDraft, setQuoteDraft] = useState<{ messageId: string; preview: string } | null>(null);
   const quoteDraftRef = useRef<{ messageId: string; preview: string } | null>(null);
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+  const attachmentsRef = useRef<ComposerAttachment[]>([]);
   /** Per-bot in-flight flag (streaming OR awaiting tool approval). */
   const [busyByBot, setBusyByBot] = useState<Record<string, boolean>>({});
   /** Count of renderer chatStart awaits per owner — keeps BorderBeam up across abort+restart steer. */
@@ -264,6 +280,44 @@ export function App() {
     setQuoteDraft(value);
   };
 
+  const updateAttachments = (next: ComposerAttachment[]) => {
+    attachmentsRef.current = next;
+    setAttachments(next);
+  };
+
+  const basenameOf = (filePath: string) => {
+    const norm = filePath.replace(/\\/g, '/');
+    const i = norm.lastIndexOf('/');
+    return i >= 0 ? norm.slice(i + 1) || norm : norm;
+  };
+
+  const onPickAttach = async (kind: AttachKind) => {
+    try {
+      const result = await window.okbot.pickPaths(kind);
+      if (result.canceled || !result.paths?.length) return;
+      const prev = attachmentsRef.current;
+      const existing = new Set(prev.map((a) => a.path));
+      const added: ComposerAttachment[] = [];
+      for (const filePath of result.paths) {
+        if (!filePath || existing.has(filePath)) continue;
+        existing.add(filePath);
+        added.push({
+          id: `att_${Date.now()}_${added.length}_${Math.random().toString(36).slice(2, 8)}`,
+          kind,
+          path: filePath,
+          name: basenameOf(filePath),
+        });
+      }
+      if (added.length) updateAttachments([...prev, ...added]);
+    } catch (err) {
+      toast.error(formatSystemError(err));
+    }
+  };
+
+  const onRemoveAttachment = (id: string) => {
+    updateAttachments(attachmentsRef.current.filter((a) => a.id !== id));
+  };
+
   const markSessionUnread = (ownerId: string, hasUnread: boolean) => {
     if (!ownerId) return;
     if (ownerId.startsWith('squad_')) {
@@ -393,6 +447,47 @@ export function App() {
     }
   }
 
+  /** Copy a ready SSE curl for the current bot/squad local HTTP API endpoint. */
+  async function copyLocalHttpRequestUrl() {
+    const sel = selectionRef.current;
+    const kind = sel?.kind === 'bot' || sel?.kind === 'squad' ? sel.kind : null;
+    const id = kind && sel ? sel.id : '';
+    if (!kind || !id) return;
+
+    const api = settings?.localHttpApi;
+    if (!api?.enabled) {
+      toast.info(t(lang, 'copyRequestUrlDisabled'));
+      setSettingsFocus({ tab: 'general', sectionId: 'localHttpApiEnable' });
+      setSettingsOpen(true);
+      return;
+    }
+
+    const pathKind = kind === 'squad' ? 'squads' : 'bots';
+    const url = `http://127.0.0.1:${api.port}/v1/${pathKind}/${id}/messages`;
+    const sampleText = lang === 'en' ? 'Hello' : '你好';
+    const body = JSON.stringify({ text: sampleText });
+    // Shell-safe one-liner via JSON.stringify quoting; matches GUIDE §6.1 SSE shape.
+    const curl = [
+      'curl -N -X POST',
+      JSON.stringify(url),
+      '-H',
+      JSON.stringify(`Authorization: Bearer ${api.token}`),
+      '-H',
+      JSON.stringify('Accept: text/event-stream'),
+      '-H',
+      JSON.stringify('Content-Type: application/json'),
+      '-d',
+      JSON.stringify(body),
+    ].join(' ');
+
+    try {
+      await copyTextToClipboard(curl);
+      toast.success(t(lang, 'copyRequestUrlCopied'));
+    } catch (err) {
+      toast.error(formatSystemError(err));
+    }
+  }
+
   async function openPromptContext(messageId: string) {
     const sel = selectionRef.current;
     const ownerId = sel?.kind === 'bot' || sel?.kind === 'squad' ? sel.id : null;
@@ -419,6 +514,11 @@ export function App() {
 
   const selectedBotId = selectedBot?.id;
   const chatOwnerId = selectedBot?.id ?? selectedSquad?.id ?? null;
+
+  useEffect(() => {
+    updateAttachments([]);
+  }, [chatOwnerId]);
+
   /** Active bot/squad resolved model → collapsible `<think>` (default on). */
   const showThinking = useMemo(() => {
     const modelSettings = normalizeModelSettings(settings?.model);
@@ -430,6 +530,7 @@ export function App() {
     return resolveModelConfig(modelSettings, override).showThinking;
   }, [settings?.model, selectedBot, selectedSquad]);
 
+  const messagesLoading = chatOwnerId !== null && historyOwnerId !== chatOwnerId;
   const busy = chatOwnerId ? !!busyByBot[chatOwnerId] : false;
   const toolCards = chatOwnerId ? toolCardsByBot[chatOwnerId] ?? [] : [];
   const turnPhase: TurnPhase = chatOwnerId
@@ -1232,8 +1333,11 @@ export function App() {
         setMessages([]);
         setHasMoreOlder(false);
         setOlderBeforeMessageId(null);
+        setHistoryOwnerId(null);
         return;
       }
+      // Clear transcript immediately; keep `historyOwnerId` on the previous
+      // owner so `messagesLoading` stays true until this fetch settles.
       setMessages([]);
       setHasMoreOlder(false);
       setOlderBeforeMessageId(null);
@@ -1241,24 +1345,35 @@ export function App() {
       const wantId =
         pending && pending.botId === owner ? pending.messageId : null;
 
-      if (wantId) {
-        const all = await window.okbot.getMessages(owner);
+      try {
+        if (wantId) {
+          const all = await window.okbot.getMessages(owner);
+          if (selectionRef.current?.id !== owner) return;
+          setMessages(all);
+          setHasMoreOlder(false);
+          setOlderBeforeMessageId(null);
+          pendingMessageFocusRef.current = null;
+          setHighlightMessageId(wantId);
+          setHistoryOwnerId(owner);
+          return;
+        }
+
+        const page = await window.okbot.getMessagesPage(owner, {
+          limit: MESSAGE_PAGE_SIZE,
+        });
         if (selectionRef.current?.id !== owner) return;
-        setMessages(all);
+        setMessages(page.messages);
+        setHasMoreOlder(page.hasMore);
+        setOlderBeforeMessageId(page.nextBeforeMessageId);
+        setHistoryOwnerId(owner);
+      } catch (err) {
+        if (selectionRef.current?.id !== owner) return;
+        setMessages([]);
         setHasMoreOlder(false);
         setOlderBeforeMessageId(null);
-        pendingMessageFocusRef.current = null;
-        setHighlightMessageId(wantId);
-        return;
+        setHistoryOwnerId(owner);
+        toast.error(formatSystemError(err));
       }
-
-      const page = await window.okbot.getMessagesPage(owner, {
-        limit: MESSAGE_PAGE_SIZE,
-      });
-      if (selectionRef.current?.id !== owner) return;
-      setMessages(page.messages);
-      setHasMoreOlder(page.hasMore);
-      setOlderBeforeMessageId(page.nextBeforeMessageId);
     }
     void load();
   }, [chatOwnerId]);
@@ -1744,20 +1859,29 @@ async function handleSend(retry?: {
     text: string;
     quoteMessageId?: string;
     quotePreview?: string;
+    attachments?: ChatMessage['attachments'];
   }) {
     if (!chatOwnerId) return;
     if (!selectedBot && !selectedSquad) return;
     const ownerId = chatOwnerId;
     const kind = selectedSquad ? 'squad' : 'bot';
     const isRetry = !!retry;
-    const body = isRetry ? retry!.text.trim() : (draftRef.current || draft).trim();
-    if (!body) return;
+    const rawBody = isRetry ? retry!.text.trim() : (draftRef.current || draft).trim();
+    const pendingAtts = isRetry ? [] : attachmentsRef.current;
+    const structuredAtts: ChatMessage['attachments'] = isRetry
+      ? retry!.attachments
+      : pendingAtts.length
+        ? pendingAtts.map(({ kind, path, name }) => ({ kind, path, name }))
+        : undefined;
+    const text = isRetry
+      ? rawBody
+      : formatMessageWithAttachments(rawBody, structuredAtts ?? []);
+    if (!text) return;
     const quote = isRetry
       ? retry!.quoteMessageId
         ? { messageId: retry!.quoteMessageId, preview: retry!.quotePreview || '' }
         : null
       : quoteDraftRef.current ?? quoteDraft;
-    const text = body;
     const quoteMessageId = (quote?.messageId || '').trim();
     const quotePreview = (quote?.preview || '').trim();
     if (!isRetry && (listeningRef.current || mediaRecorderRef.current)) {
@@ -1766,6 +1890,7 @@ async function handleSend(retry?: {
     if (!isRetry) {
       updateDraft('');
       updateQuoteDraft(null);
+      updateAttachments([]);
     }
     setError('');
     // Always jump to bottom on send and re-enable stick-to-bottom.
@@ -1790,6 +1915,7 @@ async function handleSend(retry?: {
         createdAt: new Date().toISOString(),
         sendStatus: 'pending',
         ...(quoteMessageId && quotePreview ? { quoteMessageId, quotePreview } : {}),
+        ...(structuredAtts?.length ? { attachments: structuredAtts } : {}),
       };
       setMessages((m) => [...m, tempUser]);
       if (kind === 'bot') {
@@ -1813,7 +1939,13 @@ async function handleSend(retry?: {
       }
     }
     try {
-      const sendOpts = quoteMessageId ? { quoteMessageId } : undefined;
+      const sendOpts =
+        quoteMessageId || structuredAtts?.length
+          ? {
+              ...(quoteMessageId ? { quoteMessageId } : {}),
+              ...(structuredAtts?.length ? { attachments: structuredAtts } : {}),
+            }
+          : undefined;
       if (kind === 'squad') await window.okbot.chatStartSquad(ownerId, text, sendOpts);
       else await window.okbot.chatStart(ownerId, text, sendOpts);
       // Mark optimistic bubble sent (user_message event may replace local_ id shortly).
@@ -1860,6 +1992,7 @@ async function handleSend(retry?: {
                 createdAt: new Date().toISOString(),
                 sendStatus: 'failed' as const,
                 ...(quoteMessageId && quotePreview ? { quoteMessageId, quotePreview } : {}),
+                ...(structuredAtts?.length ? { attachments: structuredAtts } : {}),
               },
             ];
           });
@@ -1898,6 +2031,7 @@ async function handleSend(retry?: {
       text,
       quoteMessageId: message.quoteMessageId,
       quotePreview: message.quotePreview,
+      attachments: message.attachments,
     });
   }
 
@@ -1919,7 +2053,10 @@ async function handleSend(retry?: {
 
   function handleQuoteMessage(message: ChatMessage) {
     const raw = message.content || '';
-    const forQuote = message.role === 'assistant' ? stripThinkContent(raw) : raw;
+    const forQuote =
+      message.role === 'assistant'
+        ? stripThinkContent(raw)
+        : resolveMessageAttachments(message).body;
     const preview = clipQuotePreview(forQuote);
     if (!message.id || !preview) return;
     updateQuoteDraft({ messageId: message.id, preview });
@@ -1928,7 +2065,11 @@ async function handleSend(retry?: {
 
   async function handleCopyMessage(message: ChatMessage) {
     const raw = message.content || '';
-    const text = (message.role === 'assistant' ? stripThinkContent(raw) : raw).trim();
+    const text = (
+      message.role === 'assistant'
+        ? stripThinkContent(raw)
+        : resolveMessageAttachments(message).body
+    ).trim();
     if (!text) return;
     try {
       await copyTextToClipboard(text);
@@ -2355,12 +2496,15 @@ async function handleSend(retry?: {
         busy={busy}
         draft={draft}
         quote={quoteDraft}
+        attachments={attachments}
         micStream={micStream}
         voiceStatusLabel={voiceStatusLabel}
         placeholder={composerPlaceholder}
         composerRef={composerRef}
         onDraftChange={updateDraft}
         onClearQuote={onClearQuote}
+        onRemoveAttachment={onRemoveAttachment}
+        onPickAttach={onPickAttach}
         onSend={onSend}
         onStop={handleStop}
         onToggleVoice={onToggleVoice}
@@ -2372,10 +2516,13 @@ async function handleSend(retry?: {
       busy,
       draft,
       quoteDraft,
+      attachments,
       micStream,
       voiceStatusLabel,
       composerPlaceholder,
       onClearQuote,
+      onRemoveAttachment,
+      onPickAttach,
       onSend,
       handleStop,
       onToggleVoice,
@@ -2499,7 +2646,7 @@ async function handleSend(retry?: {
                   updaterStatus.phase === 'downloaded') ? (
                   <button
                     type="button"
-                    className={`header-update-btn${
+                    className={`header-icon-btn header-update-btn${
                       updaterStatus.phase === 'downloading'
                         ? ' downloading'
                         : ' available'
@@ -2531,16 +2678,25 @@ async function handleSend(retry?: {
                 ) : null}
                 <button
                   type="button"
-                  className="header-trace-btn"
+                  className="header-icon-btn"
+                  title={t(lang, 'copyRequestUrl')}
+                  aria-label={t(lang, 'copyRequestUrl')}
+                  onClick={() => void copyLocalHttpRequestUrl()}
+                >
+                  <CopyRequestUrlIcon />
+                </button>
+                <button
+                  type="button"
+                  className="header-icon-btn"
                   title={t(lang, 'runTraceButton')}
                   aria-label={t(lang, 'runTraceButton')}
                   onClick={() => void openRunTrace()}
                 >
-                  {t(lang, 'runTraceButton')}
+                  <RunTraceIcon />
                 </button>
                 <button
                   type="button"
-                  className="header-theme-btn"
+                  className="header-icon-btn"
                   title={t(lang, 'themeCycle', {
                     mode: themeModeLabel(settings?.theme ?? 'system'),
                   })}
@@ -2553,7 +2709,7 @@ async function handleSend(retry?: {
                 </button>
                 <button
                   type="button"
-                  className="header-about-btn"
+                  className="header-icon-btn"
                   title={t(lang, 'aboutOpen')}
                   aria-label={t(lang, 'aboutOpen')}
                   onClick={() => setAboutOpen(true)}
@@ -2575,6 +2731,7 @@ async function handleSend(retry?: {
               turnStatusText={turnStatusText}
               turnPhaseOrbState={TURN_PHASE_ORB_STATE}
               loadingOlder={loadingOlder}
+              messagesLoading={messagesLoading}
               hasMoreOlder={hasMoreOlder}
               highlightMessageId={highlightMessageId}
               showJumpToBottom={showJumpToBottom}

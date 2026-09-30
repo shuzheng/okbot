@@ -5,13 +5,24 @@ import { VoiceBeam } from 'voice-glow';
 import { t, type UiLang } from '../../i18n';
 import {
   CloseIcon,
+  FileAttachIcon,
+  FolderAttachIcon,
+  ImageAttachIcon,
   MicIcon,
   MicStopIcon,
 } from '../../components/ui/icons';
+import { ComposerAttachMenu, type AttachKind } from './ComposerAttachMenu';
 
 export type ComposerQuoteDraft = {
   messageId: string;
   preview: string;
+};
+
+export type ComposerAttachment = {
+  id: string;
+  kind: AttachKind;
+  path: string;
+  name: string;
 };
 
 export type ChatComposerProps = {
@@ -20,6 +31,7 @@ export type ChatComposerProps = {
   busy: boolean;
   draft: string;
   quote: ComposerQuoteDraft | null;
+  attachments: ComposerAttachment[];
   micStream: MediaStream | null;
   /** Overrides placeholder while listening (e.g. recording / recognizing). */
   voiceStatusLabel?: string;
@@ -27,6 +39,8 @@ export type ChatComposerProps = {
   composerRef: RefObject<HTMLTextAreaElement | null>;
   onDraftChange: (value: string) => void;
   onClearQuote: () => void;
+  onRemoveAttachment: (id: string) => void;
+  onPickAttach: (kind: AttachKind) => void;
   onSend: () => void;
   onStop: () => void;
   onToggleVoice: () => void;
@@ -37,28 +51,39 @@ function resolvedOrbTheme(): 'light' | 'dark' {
   return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
 }
 
+function AttachKindIcon({ kind }: { kind: AttachKind }) {
+  if (kind === 'image') return <ImageAttachIcon />;
+  if (kind === 'folder') return <FolderAttachIcon />;
+  return <FileAttachIcon />;
+}
+
 export function ChatComposer({
   lang,
   listening,
   busy,
   draft,
   quote,
+  attachments,
   micStream,
   voiceStatusLabel,
   placeholder,
   composerRef,
   onDraftChange,
   onClearQuote,
+  onRemoveAttachment,
+  onPickAttach,
   onSend,
   onStop,
   onToggleVoice,
 }: ChatComposerProps) {
   const hasDraft = Boolean(draft.trim());
-  // Mid-run steer: Send stays available whenever there is draft text (not grayed solely for busy).
-  const sendDisabled = listening || !hasDraft;
+  const hasAttachments = attachments.length > 0;
+  const canSend = hasDraft || hasAttachments;
+  // Mid-run steer: Send stays available whenever there is draft text or attachments.
+  const sendDisabled = listening || !canSend;
   // Keep Stop explicit and separate while busy; show both Stop+Send when busy+draft.
   const showStop = busy && !listening;
-  const showSend = !listening && (hasDraft || !showStop);
+  const showSend = !listening && (canSend || !showStop);
 
   const inner = (
     <div className={`composer-inner${listening ? ' listening' : ''}`}>
@@ -70,7 +95,9 @@ export function ChatComposer({
           theme={resolvedOrbTheme()}
           aria-label={t(lang, 'listeningAria')}
         />
-      ) : null}
+      ) : (
+        <ComposerAttachMenu lang={lang} onPick={onPickAttach} />
+      )}
       <textarea
         spellCheck={false}
         ref={composerRef}
@@ -86,7 +113,7 @@ export function ChatComposer({
           }
           if (e.key !== 'Enter' || e.shiftKey) return;
           if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-          if (!hasDraft) return;
+          if (!canSend) return;
           e.preventDefault();
           onSend();
         }}
@@ -120,8 +147,8 @@ export function ChatComposer({
           type="button"
           disabled={sendDisabled}
           onClick={() => onSend()}
-          title={busy && hasDraft ? t(lang, 'sendSteer') : t(lang, 'send')}
-          aria-label={busy && hasDraft ? t(lang, 'sendSteer') : t(lang, 'send')}
+          title={busy && canSend ? t(lang, 'sendSteer') : t(lang, 'send')}
+          aria-label={busy && canSend ? t(lang, 'sendSteer') : t(lang, 'send')}
         >
           ↑
         </button>
@@ -146,36 +173,63 @@ export function ChatComposer({
           </button>
         </div>
       ) : null}
-      {listening && micStream ? (
-        <VoiceBeam
-          className="composer-beam"
-          type="default"
-          theme={resolvedOrbTheme()}
-          colorVariant="ocean"
-          stream={micStream}
-          strength={0.95}
-          active
+      {hasAttachments ? (
+        <div
+          className="composer-attachments"
+          role="list"
+          aria-label={t(lang, 'attachPending')}
         >
-          {inner}
-        </VoiceBeam>
-      ) : listening ? (
-        <div className="composer-beam composer-beam-static">{inner}</div>
-      ) : busy ? (
-        <BorderBeam
-          className="composer-beam"
-          size="md"
-          theme={resolvedOrbTheme()}
-          colorVariant="ocean"
-          strength={0.95}
-          borderRadius={20}
-          duration={2.4}
-          active
-        >
-          {inner}
-        </BorderBeam>
-      ) : (
-        <div className="composer-beam">{inner}</div>
-      )}
+          {attachments.map((a) => (
+            <div key={a.id} className="composer-attach-chip" role="listitem" title={a.path}>
+              <span className="composer-attach-chip-icon" aria-hidden>
+                <AttachKindIcon kind={a.kind} />
+              </span>
+              <span className="composer-attach-chip-name">{a.name}</span>
+              <button
+                type="button"
+                className="composer-attach-chip-x"
+                title={t(lang, 'attachRemove')}
+                aria-label={t(lang, 'attachRemove')}
+                onClick={() => onRemoveAttachment(a.id)}
+              >
+                <CloseIcon />
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      <div className="composer-row">
+        {listening && micStream ? (
+          <VoiceBeam
+            className="composer-beam"
+            type="default"
+            theme={resolvedOrbTheme()}
+            colorVariant="ocean"
+            stream={micStream}
+            strength={0.95}
+            active
+          >
+            {inner}
+          </VoiceBeam>
+        ) : listening ? (
+          <div className="composer-beam composer-beam-static">{inner}</div>
+        ) : busy ? (
+          <BorderBeam
+            className="composer-beam"
+            size="md"
+            theme={resolvedOrbTheme()}
+            colorVariant="ocean"
+            strength={0.95}
+            borderRadius={20}
+            duration={2.4}
+            active
+          >
+            {inner}
+          </BorderBeam>
+        ) : (
+          <div className="composer-beam">{inner}</div>
+        )}
+      </div>
     </div>
   );
 }

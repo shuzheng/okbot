@@ -25,6 +25,7 @@ import {
   normalizeSecuritySettings,
   normalizeSquadSettings,
   normalizeInstructionsSettings,
+  LEGACY_DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT,
   normalizeMemorySettings,
   normalizeToolRunSettings,
   normalizeSquad,
@@ -43,6 +44,7 @@ import {
   type BotAvatarShape,
   type TokenUsage,
   type UsageStats,
+  normalizeLocalHttpApiSettings,
 } from '@okbot/shared';
 import { ensureDir, readJson, readJsonResult, backupFileAside, writeJson, unquoteYamlScalar } from './fs';
 import { loadUsageStats, recordTokenUsage, removeOwnerUsage } from './usageStore';
@@ -164,13 +166,14 @@ export class FileStorage {
   }
 
 
-  /** `~/.okbot/<squadId>` — session + pending HITL only (no AGENTS/skills). */
+  /** `~/.okbot/<squadId>` — session + pending HITL + resources (no AGENTS/skills). */
   private squadDir(squadId: string): string {
     return path.join(this.root, squadId);
   }
 
   private ensureSquadLayout(squadId: string): void {
     ensureDir(this.squadDir(squadId));
+    ensureDir(path.join(this.squadDir(squadId), 'resources'));
     const sf = this.sessionFile(squadId);
     if (!fs.existsSync(sf)) fs.writeFileSync(sf, '', 'utf8');
   }
@@ -569,6 +572,14 @@ export class FileStorage {
     return path.join(this.root, ownerId);
   }
 
+  /** `~/.okbot/<botId|squadId>/resources` — generated images / media. */
+  ownerResourcesDir(ownerId: string): string {
+    const id = assertSafeOwnerSegment(ownerId);
+    const dir = path.join(this.ownerDir(id), 'resources');
+    ensureDir(dir);
+    return dir;
+  }
+
   /** Latest per-run tool/error trajectory for a bot or squad, if any. */
   getLastRunTrace(ownerId: string): RunTraceFile | null {
     const id = (ownerId || '').trim();
@@ -612,6 +623,7 @@ export class FileStorage {
           read_skill: { ...DEFAULT_SETTINGS.tools.read_skill },
           write_file: { ...DEFAULT_SETTINGS.tools.write_file },
           edit_file: { ...DEFAULT_SETTINGS.tools.edit_file },
+          generate_image: { ...DEFAULT_SETTINGS.tools.generate_image },
         },
         security: {
           ...DEFAULT_SETTINGS.security,
@@ -624,6 +636,7 @@ export class FileStorage {
         memory: { ...DEFAULT_SETTINGS.memory },
         squad: { ...DEFAULT_SETTINGS.squad },
         toolRun: { ...DEFAULT_SETTINGS.toolRun },
+        localHttpApi: normalizeLocalHttpApiSettings(DEFAULT_SETTINGS.localHttpApi),
         autoApprovalRules: [...DEFAULT_SETTINGS.autoApprovalRules],
       };
     }
@@ -653,6 +666,7 @@ export class FileStorage {
       memory: normalizeMemorySettings((raw as { memory?: unknown }).memory),
       squad: normalizeSquadSettings((raw as { squad?: unknown }).squad),
       toolRun: normalizeToolRunSettings((raw as { toolRun?: unknown }).toolRun),
+      localHttpApi: normalizeLocalHttpApiSettings((raw as { localHttpApi?: unknown }).localHttpApi),
     };
     // Rewrite legacy shapes in place (no dual-read forever). Only when we actually
     // read a file from disk — never after parse failure.
@@ -664,7 +678,22 @@ export class FileStorage {
         typeof rawModel === 'object' &&
         !Array.isArray(rawModel.providers);
       const legacySquad = (raw as { squad?: unknown }).squad === undefined;
-      if (legacyModel || legacySquad) {
+      const rawLocal = (raw as { localHttpApi?: unknown }).localHttpApi;
+      const legacyLocalHttpApi =
+        rawLocal === undefined ||
+        typeof rawLocal !== 'object' ||
+        rawLocal === null ||
+        typeof (rawLocal as { token?: unknown }).token !== 'string' ||
+        !(rawLocal as { token: string }).token.trim();
+      const rawInstructions = (raw as { instructions?: { agentsMdRefreshSystemPrompt?: unknown } })
+        .instructions;
+      const rawAgentsPrompt =
+        rawInstructions && typeof rawInstructions.agentsMdRefreshSystemPrompt === 'string'
+          ? rawInstructions.agentsMdRefreshSystemPrompt.trim()
+          : '';
+      const legacyAgentsRefreshPrompt =
+        rawAgentsPrompt === LEGACY_DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT;
+      if (legacyModel || legacySquad || legacyLocalHttpApi || legacyAgentsRefreshPrompt) {
         backupFileAside(this.settingsPath, 'pre-migrate');
         writeJson(this.settingsPath, next);
       }
@@ -708,6 +737,7 @@ export class FileStorage {
       memory: normalizeMemorySettings(settings.memory),
       squad: normalizeSquadSettings(settings.squad),
       toolRun: normalizeToolRunSettings(settings.toolRun),
+      localHttpApi: normalizeLocalHttpApiSettings(settings.localHttpApi),
     };
     writeJson(this.settingsPath, next);
     return next;

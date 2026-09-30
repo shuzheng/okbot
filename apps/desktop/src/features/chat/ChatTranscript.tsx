@@ -1,10 +1,24 @@
 import { Fragment, memo, type ReactNode, type RefObject } from 'react';
+import { BorderBeam } from 'border-beam';
 import { ThinkingOrb, type OrbState } from 'thinking-orbs';
-import { SQUAD_CAPTAIN_SPEAKER_ID, type Bot, type ChatMessage, type Squad } from '@okbot/shared';
+import {
+  SQUAD_CAPTAIN_SPEAKER_ID,
+  type Bot,
+  type ChatMessage,
+  type MessageAttachment,
+  type Squad,
+} from '@okbot/shared';
 import { t, type UiLang } from '../../i18n';
 import type { ToolCard, TurnPhase } from '../../types';
 import { FlatAvatar } from '../../components/ui/avatars';
-import { CopyIcon, ImmersiveChatIcon } from '../../components/ui/icons';
+import {
+  CopyIcon,
+  FileAttachIcon,
+  FolderAttachIcon,
+  ImageAttachIcon,
+  ImmersiveChatIcon,
+} from '../../components/ui/icons';
+import { resolveMessageAttachments } from '../../utils/messageAttachments';
 import { BotOnboarding } from '../bots/BotOnboarding';
 import { AssistantContent } from './AssistantContent';
 import { ToolCardView } from './ToolCardView';
@@ -21,6 +35,8 @@ export type ChatTranscriptProps = {
   turnStatusText: string;
   turnPhaseOrbState: Record<TurnPhase, OrbState>;
   loadingOlder: boolean;
+  /** True while switching sessions until history fetch settles. */
+  messagesLoading: boolean;
   hasMoreOlder: boolean;
   highlightMessageId: string | null;
   showJumpToBottom: boolean;
@@ -45,6 +61,44 @@ export type ChatTranscriptProps = {
   showThinking?: boolean;
 };
 
+
+function AttachKindIcon({ kind }: { kind: MessageAttachment['kind'] }) {
+  if (kind === 'image') return <ImageAttachIcon />;
+  if (kind === 'folder') return <FolderAttachIcon />;
+  return <FileAttachIcon />;
+}
+
+function MessageAttachmentChips({
+  attachments,
+  lang,
+}: {
+  attachments: MessageAttachment[];
+  lang: UiLang;
+}) {
+  if (!attachments.length) return null;
+  return (
+    <div
+      className="message-attachments"
+      role="list"
+      aria-label={t(lang, 'attachPending')}
+    >
+      {attachments.map((a, i) => (
+        <div
+          key={`${a.kind}:${a.path}:${i}`}
+          className="message-attach-chip"
+          role="listitem"
+          title={a.path}
+        >
+          <span className="message-attach-chip-icon" aria-hidden>
+            <AttachKindIcon kind={a.kind} />
+          </span>
+          <span className="message-attach-chip-name">{a.name}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export const ChatTranscript = memo(function ChatTranscript({
   lang,
   messages,
@@ -57,6 +111,7 @@ export const ChatTranscript = memo(function ChatTranscript({
   turnStatusText,
   turnPhaseOrbState,
   loadingOlder,
+  messagesLoading,
   hasMoreOlder,
   highlightMessageId,
   showJumpToBottom,
@@ -101,6 +156,21 @@ export const ChatTranscript = memo(function ChatTranscript({
           ) : null}
           {selectedBot && selectedBot.onboardingComplete === false ? (
             <BotOnboarding lang={lang} bot={selectedBot} onDone={onBotOnboardingDone} />
+          ) : messagesLoading ? (
+            <div
+              className="placeholder messages-history-loading"
+              aria-busy="true"
+              aria-live="polite"
+              aria-label={t(lang, 'loadingChatHistory')}
+            >
+              <ThinkingOrb
+                state="searching"
+                size={20}
+                theme={resolvedOrbTheme()}
+                aria-hidden
+              />
+              <span className="chat-turn-status-text">{t(lang, 'loadingChatHistory')}</span>
+            </div>
           ) : messages.length === 0 && !busy ? (
             <div className="placeholder">
               {selectedSquad
@@ -125,6 +195,10 @@ export const ChatTranscript = memo(function ChatTranscript({
                 : null;
             // Captain replies: no avatar / no has-speaker gap. Members keep FlatAvatar.
             const showMemberAvatar = isSquadAssistant && !isCaptainSpeaker;
+            const userAtts = showCtx ? resolveMessageAttachments(m) : null;
+            const userBody = userAtts ? userAtts.body : m.content;
+            const userAttachments = userAtts?.attachments ?? [];
+            const hasUserBody = Boolean((userBody || '').trim());
             return (
               <Fragment key={m.id}>
                 {cardsForMsg.map((card) => renderToolCard(card))}
@@ -159,6 +233,7 @@ export const ChatTranscript = memo(function ChatTranscript({
                             <span className="bubble-quote-text">{m.quotePreview}</span>
                           </button>
                         ) : null}
+                        <MessageAttachmentChips attachments={userAttachments} lang={lang} />
                         <div className="bubble-body-row">
                           <div className="bubble-actions">
                             <button
@@ -193,41 +268,57 @@ export const ChatTranscript = memo(function ChatTranscript({
                               </svg>
                             </button>
                           </div>
-                          <div
-                            className={`bubble user${
-                              m.sendStatus === 'failed'
-                                ? ' send-failed'
-                                : m.sendStatus === 'pending'
-                                  ? ' send-pending'
-                                  : ''
-                            }`}
-                          >
-                            {m.content}
-                            {m.sendStatus === 'failed' ? (
-                              <button
-                                type="button"
-                                className="bubble-send-retry"
-                                title={t(lang, 'retrySend')}
-                                aria-label={t(lang, 'retrySend')}
-                                onClick={() => onRetrySend(m)}
+                          {m.sendStatus === 'pending' ? (
+                            <BorderBeam
+                              className="bubble-send-beam"
+                              size="pulse-outside"
+                              theme={resolvedOrbTheme()}
+                              colorVariant="ocean"
+                              strength={0.8}
+                              borderRadius={16}
+                              active
+                            >
+                              <div
+                                className={`bubble user send-pending${
+                                  hasUserBody ? '' : ' bubble-attach-only'
+                                }`}
                               >
-                                <svg
-                                  viewBox="0 0 24 24"
-                                  width="14"
-                                  height="14"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  strokeWidth="2.2"
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  aria-hidden
+                                {hasUserBody ? userBody : null}
+                              </div>
+                            </BorderBeam>
+                          ) : hasUserBody || m.sendStatus === 'failed' ? (
+                            <div
+                              className={`bubble user${
+                                m.sendStatus === 'failed' ? ' send-failed' : ''
+                              }${hasUserBody ? '' : ' bubble-attach-only'}`}
+                            >
+                              {hasUserBody ? userBody : null}
+                              {m.sendStatus === 'failed' ? (
+                                <button
+                                  type="button"
+                                  className="bubble-send-retry"
+                                  title={t(lang, 'retrySend')}
+                                  aria-label={t(lang, 'retrySend')}
+                                  onClick={() => onRetrySend(m)}
                                 >
-                                  <path d="M21 12a9 9 0 1 1-2.6-6.2" />
-                                  <path d="M21 3v6h-6" />
-                                </svg>
-                              </button>
-                            ) : null}
-                          </div>
+                                  <svg
+                                    viewBox="0 0 24 24"
+                                    width="14"
+                                    height="14"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="2.2"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    aria-hidden
+                                  >
+                                    <path d="M21 12a9 9 0 1 1-2.6-6.2" />
+                                    <path d="M21 3v6h-6" />
+                                  </svg>
+                                </button>
+                              ) : null}
+                            </div>
+                          ) : null}
                         </div>
                       </div>
                     ) : (

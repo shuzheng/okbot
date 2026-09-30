@@ -18,10 +18,12 @@ import {
   refreshMemories,
   createOkbotFileSession,
   quoteSessionInputCallback,
+  resolveSessionInputCallbackForTurn,
   type SkillLookup,
 } from '@okbot/agent';
 import type { IpcContext } from './context';
 import { isSquadOwnerId } from '../storage/ids';
+import { normalizeMessageAttachments } from '../storage/sessionJsonl';
 import {
   ensureSessionCompressed,
   resolveTopicCompressForce,
@@ -69,10 +71,11 @@ function resolveQuoteFields(
   const quotedContent = (quoted?.content || '').trim();
   if (!quotedContent) return { userMsgExtra: {}, modelText: body };
   const preview = clipQuotePreview(quotedContent);
+  const modelText = formatUserTextWithQuote(body, quotedContent);
   return {
     userMsgExtra: { quoteMessageId: qid, quotePreview: preview },
-    modelText: formatUserTextWithQuote(body, quotedContent),
-    sessionInputCallback: quoteSessionInputCallback(formatUserTextWithQuote(body, quotedContent)),
+    modelText,
+    sessionInputCallback: quoteSessionInputCallback(modelText),
   };
 }
 
@@ -84,306 +87,21 @@ function persistAssistantContent(content: string, _showThinking: boolean): strin
   return content;
 }
 
-export function registerChatIpc(ctx: IpcContext): void {
-  ipcMain.handle(
-    IpcChannels.toolRespond,
-    async (
-      _e,
-      payload: { requestId: string; approved: boolean; message?: string },
-    ) => {
-      const decision = {
-        approved: Boolean(payload.approved),
-        message: payload.message,
-      };
-
-      const live = ctx.pendingToolApprovals.get(payload.requestId);
-      if (live) {
-        ctx.pendingToolApprovals.delete(payload.requestId);
-        ctx.storage.clearPendingHitl(live.botId);
-        live.resolve(decision);
-        return { ok: true };
-      }
-
-      // Cold start: resume from disk-persisted RunState.
-      const diskEntries = ctx.storage.listAllPendingHitl();
-      const disk = diskEntries.find((p) => p.requestId === payload.requestId);
-      if (!disk) return { ok: false, error: '没有待处理的工具审批' };
-
-      // disk.botId is the chat owner (bot or squad). Squad cold-resume needs the
-      // captain agent graph; mis-looking-up via listBots used to wipe squad pending.
-      if (isSquadOwnerId(disk.botId)) {
-        const squad = ctx.storage.listSquads().find((s) => s.id === disk.botId);
-        if (!squad) {
-          ctx.storage.clearPendingHitl(disk.botId);
-          return { ok: false, error: '小队不存在' };
-        }
-        // Cold-start resume for squad captain local-tool HITL: rebuild is not yet
-        // wired (member ask_* graph). Keep pending and ask user to finish while live,
-        // or clear so the next turn is clean — prefer clear + honest error.
-        ctx.storage.clearPendingHitl(disk.botId);
-        return {
-          ok: false,
-          error:
-            '小队工具审批无法在应用重启后恢复，请重新发送该轮消息并再次批准。',
-        };
-      }
-
-      const bot = ctx.storage.listBots().find((b) => b.id === disk.botId);
-      if (!bot) {
-        ctx.storage.clearPendingHitl(disk.botId);
-        return { ok: false, error: '助手不存在' };
-      }
-
-      if (ctx.abortControllers.has(bot.id)) {
-        return { ok: false, error: '该助手已有进行中的任务' };
-      }
-
-      const runSlot = await acquireRunSlot(bot.id);
-      // Re-check after waiting on the per-owner chain (steer may have started).
-      if (ctx.abortControllers.has(bot.id)) {
-        runSlot.release();
-        return { ok: false, error: '该助手已有进行中的任务' };
-      }
-
-      const assistantId = disk.messageId;
-      const assistantMsg: ChatMessage = {
-        id: assistantId,
-        role: 'assistant',
-        content: '',
-        createdAt: new Date().toISOString(),
-      };
-      const controller = new AbortController();
-      ctx.abortControllers.set(bot.id, controller);
-      ctx.storage.clearPendingHitl(bot.id);
-
-      const settings = ctx.storage.getSettings();
-      const modelConfig = resolveModelConfig(settings.model, { providerId: bot.providerId, modelId: bot.modelId });
-      const guards = createRunGuards({
-        ownerDir: ctx.storage.ownerDir(bot.id),
-        toolRun: settings.toolRun,
-        controller,
-      });
-      try {
-        const agentsMd = ctx.storage.readAgentsMd(bot.id);
-        const skillsText = ctx.storage.formatSkillsForPrompt(bot.id);
-        const skillLookup = skillLookupFor(ctx.storage, bot.id);
-        const memoriesText = ctx.storage.formatMemoriesForPrompt(bot.id);
-        const summaryState = ctx.storage.readSessionSummary(bot.id);
-        const sessionSummary = summaryState?.summary?.trim() || '';
-        const fileSession = createOkbotFileSession(
-          ctx.storage.createSessionStore(bot.id, {
-            afterMessageId: summaryState?.coveredThroughId ?? null,
-          }),
-        );
-
-        const result = await resumeAgentChatAfterHitl({
-          botName: bot.name,
-          botDescription: bot.description,
-          agentsMd,
-          skillsText,
-          skillLookup,
-          memoriesText,
-          sessionSummary: sessionSummary || undefined,
-          assistantRoleTemplate: settings.instructions?.assistantRoleTemplate,
-          model: modelConfig,
-          tools: settings.tools,
-          security: settings.security,
-          maxTurns: settings.maxTurns,
-          toolRunBudget: guards.budget,
-          session: fileSession,
-          signal: controller.signal,
-          serializedRunState: disk.serializedRunState,
-          requestId: disk.requestId,
-          toolName: disk.toolName,
-          decision,
-          onClearLiveText: () => {
-            if (!assistantMsg.content) return;
-            assistantMsg.content = '';
-            ctx.sendChatEvent({
-              type: 'assistant_message',
-              botId: bot.id,
-              message: { ...assistantMsg },
-            });
-          },
-          onDelta: (delta) => {
-            assistantMsg.content += delta;
-            ctx.sendChatEvent({
-              type: 'delta',
-              botId: bot.id,
-              messageId: assistantId,
-              delta,
-            });
-          },
-          onToolApprovalRequest: ({ requestId, toolName, arguments: toolArgs, serializedRunState }) =>
-            new Promise<{ approved: boolean; message?: string }>((resolve) => {
-              if (controller.signal.aborted) {
-                resolve({ approved: false, message: '已取消' });
-                return;
-              }
-              const auto = resolveAutoApproval(
-                settings.autoApprovalEnabled === true,
-                settings.autoApprovalRules,
-                toolName,
-                toolArgs,
-              );
-              if (auto === 'allow') {
-                resolve({ approved: true, message: '自动审批规则已允许' });
-                return;
-              }
-              ctx.pendingToolApprovals.set(requestId, {
-                botId: bot.id,
-                messageId: assistantId,
-                toolName,
-                arguments: toolArgs,
-                resolve,
-              });
-              if (serializedRunState) {
-                try {
-                  ctx.storage.savePendingHitl(bot.id, {
-                    v: 1,
-                    requestId,
-                    messageId: assistantId,
-                    toolName,
-                    arguments: toolArgs,
-                    serializedRunState,
-                    createdAt: new Date().toISOString(),
-                  });
-                } catch (err) {
-                  console.error('[okbot] save pending hitl failed', err);
-                }
-              }
-              ctx.sendChatEvent({
-                type: 'tool_request',
-                botId: bot.id,
-                messageId: assistantId,
-                requestId,
-                toolName,
-                arguments: toolArgs,
-              });
-              const onAbort = () => {
-                if (!ctx.pendingToolApprovals.has(requestId)) return;
-                ctx.pendingToolApprovals.delete(requestId);
-                ctx.storage.clearPendingHitl(bot.id);
-                resolve({ approved: false, message: '已取消' });
-              };
-              controller.signal.addEventListener('abort', onAbort, { once: true });
-            }),
-          onToolResult: ({ requestId, toolName, approved, output }) => {
-            if (!approved) {
-              guards.budget.recordRejection(toolName, {}, output);
-            }
-            ctx.sendChatEvent({
-              type: 'tool_result',
-              botId: bot.id,
-              messageId: assistantId,
-              requestId,
-              toolName,
-              approved,
-              output,
-            });
-          },
-        });
-
-        guards.throwIfBroken();
-
-        // result.content prefers live stream (cleared at tools → formal only). Never shrink
-        // an already-visible bubble if the agent returned a shorter finalOutput fallback.
-        const finalized = (result.content || '').trim()
-          ? result.content
-          : assistantMsg.content;
-        if (
-          finalized &&
-          (!assistantMsg.content.trim() || finalized.length >= assistantMsg.content.length)
-        ) {
-          assistantMsg.content = finalized;
-        }
-        assistantMsg.content = persistAssistantContent(
-          assistantMsg.content,
-          modelConfig.showThinking,
-        );
-        if (result.usage) assistantMsg.usage = result.usage;
-        // Empty + no session row for this streaming id: skip upsert. Abort during
-        // HITL clears streamed text; unconditional upsert used to rebind/wipe the
-        // previous assistant turn (see FileStorage.upsertAssistantMessage).
-        if ((assistantMsg.content || '').trim()) {
-          ctx.storage.upsertAssistantMessage(bot.id, assistantMsg);
-        }
-        if (result.usage && (result.usage.input || result.usage.output || result.usage.cache)) {
-          try {
-            ctx.storage.recordUsage(bot.id, result.usage);
-          } catch (err) {
-            console.error('[okbot] record bot usage failed', err);
-          }
-        }
-        ctx.sendChatEvent({
-          type: 'done',
-          botId: bot.id,
-          messageId: assistantId,
-          content: assistantMsg.content,
-          usage: result.usage,
-          ...(controller.signal.aborted ? { aborted: true } : {}),
-        });
-        guards.finish(
-          resolveRunFinishStatus({
-            aborted: controller.signal.aborted,
-            breakReason: guards.budget.getBreakReason(),
-          }),
-        );
-        return { ok: true, resumed: true };
-      } catch (err) {
-        // Circuit-breaker aborts the same controller; surface getBreakReason() first
-        // so the user sees the limit message instead of a silent stop.
-        if (
-          !guards.budget.getBreakReason() &&
-          (controller.signal.aborted || isAbortLikeError(err))
-        ) {
-          guards.finish(
-            resolveRunFinishStatus({
-              aborted: true,
-              breakReason: null,
-            }),
-          );
-          ctx.sendChatEvent({
-            type: 'done',
-            botId: bot.id,
-            messageId: assistantId,
-            content: assistantMsg.content,
-            aborted: true,
-          });
-          return { ok: true, resumed: true, aborted: true };
-        }
-        const message = handleRunFailure({
-          root: ctx.storage.root,
-          ownerId: bot.id,
-          messageId: assistantId,
-          phase: 'resumeHitl',
-          err,
-          guards,
-        });
-        console.error('[okbot] resumeHitl failed', err);
-        if (!assistantMsg.content) {
-          assistantMsg.content = `错误：${message}`;
-          ctx.storage.upsertAssistantMessage(bot.id, assistantMsg, { allowRebind: false });
-        }
-        ctx.sendChatEvent({
-          type: 'error',
-          botId: bot.id,
-          messageId: assistantId,
-          error: message,
-        });
-        return { ok: false, error: message };
-      } finally {
-        guards.dispose();
-        ctx.abortControllers.delete(bot.id);
-        ctx.rejectPendingApprovalsForBot(bot.id, '已结束');
-        runSlot.release();
-      }
-    },
-  );
-
-  ipcMain.handle(
-    IpcChannels.chatStart,
-    async (_e, payload: { botId?: string; squadId?: string; text: string; quoteMessageId?: string }) => {
+export async function startChatTurn(
+  ctx: IpcContext,
+  payload: {
+    botId?: string;
+    squadId?: string;
+    text: string;
+    quoteMessageId?: string;
+    attachments?: ChatMessage['attachments'];
+  },
+): Promise<{
+  userMessage: ChatMessage;
+  assistantMessage?: ChatMessage;
+  superseded?: boolean;
+  aborted?: boolean;
+}> {
       const text = (payload.text ?? '').trim();
       if (!text) throw new Error('请输入内容');
 
@@ -396,12 +114,14 @@ export function registerChatIpc(ctx: IpcContext): void {
           if (!byId.has(m.botId)) throw new Error(`成员不存在：${m.botId}`);
         }
         const quote = resolveQuoteFields(ctx.storage, squad.id, payload.quoteMessageId, text);
+        const attachments = normalizeMessageAttachments(payload.attachments);
         const userMsg: ChatMessage = {
           id: createId('msg'),
           role: 'user',
           content: text,
           createdAt: new Date().toISOString(),
           ...quote.userMsgExtra,
+          ...(attachments ? { attachments } : {}),
         };
         // Persist steer text before abort+restart so rapid sends keep full history.
         ctx.storage.appendMessage(squad.id, userMsg);
@@ -524,6 +244,13 @@ export function registerChatIpc(ctx: IpcContext): void {
             }),
           );
 
+          const sessionInputCallback = await resolveSessionInputCallbackForTurn({
+            modelText: quote.modelText,
+            quoteSessionInputCallback: quote.sessionInputCallback,
+            attachments,
+          });
+          const hasVisionInput = (attachments ?? []).some((a) => a.kind === 'image');
+
           const result = await runSquadChat({
             squadName: squad.name,
             squadDescription: squad.description,
@@ -536,7 +263,10 @@ export function registerChatIpc(ctx: IpcContext): void {
             toolRunBudget: guards.budget,
             history: [],
             session: fileSession,
-            sessionInputCallback: quote.sessionInputCallback,
+            sessionInputCallback,
+            hasVisionInput,
+            ownerId: squad.id,
+            resourcesDir: ctx.storage.ownerResourcesDir(squad.id),
             userText: text,
             signal: controller.signal,
             onClearLiveText: () => {
@@ -776,12 +506,14 @@ export function registerChatIpc(ctx: IpcContext): void {
       if (!bot) throw new Error('助手不存在');
 
       const quote = resolveQuoteFields(ctx.storage, bot.id, payload.quoteMessageId, text);
+      const attachments = normalizeMessageAttachments(payload.attachments);
       const userMsg: ChatMessage = {
         id: createId('msg'),
         role: 'user',
         content: text,
         createdAt: new Date().toISOString(),
         ...quote.userMsgExtra,
+        ...(attachments ? { attachments } : {}),
       };
       // Persist steer text before abort+restart so rapid sends keep full history.
       ctx.storage.appendMessage(bot.id, userMsg);
@@ -865,6 +597,13 @@ export function registerChatIpc(ctx: IpcContext): void {
           }),
         );
 
+        const sessionInputCallback = await resolveSessionInputCallbackForTurn({
+          modelText: quote.modelText,
+          quoteSessionInputCallback: quote.sessionInputCallback,
+          attachments,
+        });
+        const hasVisionInput = (attachments ?? []).some((a) => a.kind === 'image');
+
         const result = await runAgentChat({
 
           botName: bot.name,
@@ -882,7 +621,10 @@ export function registerChatIpc(ctx: IpcContext): void {
           toolRunBudget: guards.budget,
           history: [], // model history via session
           session: fileSession,
-          sessionInputCallback: quote.sessionInputCallback,
+          sessionInputCallback,
+          hasVisionInput,
+          ownerId: bot.id,
+          resourcesDir: ctx.storage.ownerResourcesDir(bot.id),
           userText: text,
           signal: controller.signal,
           onClearLiveText: () => {
@@ -1134,7 +876,321 @@ export function registerChatIpc(ctx: IpcContext): void {
       } finally {
         steerGate.release();
       }
+}
+
+export function registerChatIpc(ctx: IpcContext): void {
+  ipcMain.handle(
+    IpcChannels.toolRespond,
+    async (
+      _e,
+      payload: { requestId: string; approved: boolean; message?: string },
+    ) => {
+      const decision = {
+        approved: Boolean(payload.approved),
+        message: payload.message,
+      };
+
+      const live = ctx.pendingToolApprovals.get(payload.requestId);
+      if (live) {
+        ctx.pendingToolApprovals.delete(payload.requestId);
+        ctx.storage.clearPendingHitl(live.botId);
+        live.resolve(decision);
+        return { ok: true };
+      }
+
+      // Cold start: resume from disk-persisted RunState.
+      const diskEntries = ctx.storage.listAllPendingHitl();
+      const disk = diskEntries.find((p) => p.requestId === payload.requestId);
+      if (!disk) return { ok: false, error: '没有待处理的工具审批' };
+
+      // disk.botId is the chat owner (bot or squad). Squad cold-resume needs the
+      // captain agent graph; mis-looking-up via listBots used to wipe squad pending.
+      if (isSquadOwnerId(disk.botId)) {
+        const squad = ctx.storage.listSquads().find((s) => s.id === disk.botId);
+        if (!squad) {
+          ctx.storage.clearPendingHitl(disk.botId);
+          return { ok: false, error: '小队不存在' };
+        }
+        // Cold-start resume for squad captain local-tool HITL: rebuild is not yet
+        // wired (member ask_* graph). Keep pending and ask user to finish while live,
+        // or clear so the next turn is clean — prefer clear + honest error.
+        ctx.storage.clearPendingHitl(disk.botId);
+        return {
+          ok: false,
+          error:
+            '小队工具审批无法在应用重启后恢复，请重新发送该轮消息并再次批准。',
+        };
+      }
+
+      const bot = ctx.storage.listBots().find((b) => b.id === disk.botId);
+      if (!bot) {
+        ctx.storage.clearPendingHitl(disk.botId);
+        return { ok: false, error: '助手不存在' };
+      }
+
+      if (ctx.abortControllers.has(bot.id)) {
+        return { ok: false, error: '该助手已有进行中的任务' };
+      }
+
+      const runSlot = await acquireRunSlot(bot.id);
+      // Re-check after waiting on the per-owner chain (steer may have started).
+      if (ctx.abortControllers.has(bot.id)) {
+        runSlot.release();
+        return { ok: false, error: '该助手已有进行中的任务' };
+      }
+
+      const assistantId = disk.messageId;
+      const assistantMsg: ChatMessage = {
+        id: assistantId,
+        role: 'assistant',
+        content: '',
+        createdAt: new Date().toISOString(),
+      };
+      const controller = new AbortController();
+      ctx.abortControllers.set(bot.id, controller);
+      ctx.storage.clearPendingHitl(bot.id);
+
+      const settings = ctx.storage.getSettings();
+      const modelConfig = resolveModelConfig(settings.model, { providerId: bot.providerId, modelId: bot.modelId });
+      const guards = createRunGuards({
+        ownerDir: ctx.storage.ownerDir(bot.id),
+        toolRun: settings.toolRun,
+        controller,
+      });
+      try {
+        const agentsMd = ctx.storage.readAgentsMd(bot.id);
+        const skillsText = ctx.storage.formatSkillsForPrompt(bot.id);
+        const skillLookup = skillLookupFor(ctx.storage, bot.id);
+        const memoriesText = ctx.storage.formatMemoriesForPrompt(bot.id);
+        const summaryState = ctx.storage.readSessionSummary(bot.id);
+        const sessionSummary = summaryState?.summary?.trim() || '';
+        const fileSession = createOkbotFileSession(
+          ctx.storage.createSessionStore(bot.id, {
+            afterMessageId: summaryState?.coveredThroughId ?? null,
+          }),
+        );
+
+        const result = await resumeAgentChatAfterHitl({
+          botName: bot.name,
+          botDescription: bot.description,
+          agentsMd,
+          skillsText,
+          skillLookup,
+          memoriesText,
+          sessionSummary: sessionSummary || undefined,
+          assistantRoleTemplate: settings.instructions?.assistantRoleTemplate,
+          model: modelConfig,
+          tools: settings.tools,
+          security: settings.security,
+          maxTurns: settings.maxTurns,
+          toolRunBudget: guards.budget,
+          session: fileSession,
+          ownerId: bot.id,
+          resourcesDir: ctx.storage.ownerResourcesDir(bot.id),
+          signal: controller.signal,
+          serializedRunState: disk.serializedRunState,
+          requestId: disk.requestId,
+          toolName: disk.toolName,
+          decision,
+          onClearLiveText: () => {
+            if (!assistantMsg.content) return;
+            assistantMsg.content = '';
+            ctx.sendChatEvent({
+              type: 'assistant_message',
+              botId: bot.id,
+              message: { ...assistantMsg },
+            });
+          },
+          onDelta: (delta) => {
+            assistantMsg.content += delta;
+            ctx.sendChatEvent({
+              type: 'delta',
+              botId: bot.id,
+              messageId: assistantId,
+              delta,
+            });
+          },
+          onToolApprovalRequest: ({ requestId, toolName, arguments: toolArgs, serializedRunState }) =>
+            new Promise<{ approved: boolean; message?: string }>((resolve) => {
+              if (controller.signal.aborted) {
+                resolve({ approved: false, message: '已取消' });
+                return;
+              }
+              const auto = resolveAutoApproval(
+                settings.autoApprovalEnabled === true,
+                settings.autoApprovalRules,
+                toolName,
+                toolArgs,
+              );
+              if (auto === 'allow') {
+                resolve({ approved: true, message: '自动审批规则已允许' });
+                return;
+              }
+              ctx.pendingToolApprovals.set(requestId, {
+                botId: bot.id,
+                messageId: assistantId,
+                toolName,
+                arguments: toolArgs,
+                resolve,
+              });
+              if (serializedRunState) {
+                try {
+                  ctx.storage.savePendingHitl(bot.id, {
+                    v: 1,
+                    requestId,
+                    messageId: assistantId,
+                    toolName,
+                    arguments: toolArgs,
+                    serializedRunState,
+                    createdAt: new Date().toISOString(),
+                  });
+                } catch (err) {
+                  console.error('[okbot] save pending hitl failed', err);
+                }
+              }
+              ctx.sendChatEvent({
+                type: 'tool_request',
+                botId: bot.id,
+                messageId: assistantId,
+                requestId,
+                toolName,
+                arguments: toolArgs,
+              });
+              const onAbort = () => {
+                if (!ctx.pendingToolApprovals.has(requestId)) return;
+                ctx.pendingToolApprovals.delete(requestId);
+                ctx.storage.clearPendingHitl(bot.id);
+                resolve({ approved: false, message: '已取消' });
+              };
+              controller.signal.addEventListener('abort', onAbort, { once: true });
+            }),
+          onToolResult: ({ requestId, toolName, approved, output }) => {
+            if (!approved) {
+              guards.budget.recordRejection(toolName, {}, output);
+            }
+            ctx.sendChatEvent({
+              type: 'tool_result',
+              botId: bot.id,
+              messageId: assistantId,
+              requestId,
+              toolName,
+              approved,
+              output,
+            });
+          },
+        });
+
+        guards.throwIfBroken();
+
+        // result.content prefers live stream (cleared at tools → formal only). Never shrink
+        // an already-visible bubble if the agent returned a shorter finalOutput fallback.
+        const finalized = (result.content || '').trim()
+          ? result.content
+          : assistantMsg.content;
+        if (
+          finalized &&
+          (!assistantMsg.content.trim() || finalized.length >= assistantMsg.content.length)
+        ) {
+          assistantMsg.content = finalized;
+        }
+        assistantMsg.content = persistAssistantContent(
+          assistantMsg.content,
+          modelConfig.showThinking,
+        );
+        if (result.usage) assistantMsg.usage = result.usage;
+        // Empty + no session row for this streaming id: skip upsert. Abort during
+        // HITL clears streamed text; unconditional upsert used to rebind/wipe the
+        // previous assistant turn (see FileStorage.upsertAssistantMessage).
+        if ((assistantMsg.content || '').trim()) {
+          ctx.storage.upsertAssistantMessage(bot.id, assistantMsg);
+        }
+        if (result.usage && (result.usage.input || result.usage.output || result.usage.cache)) {
+          try {
+            ctx.storage.recordUsage(bot.id, result.usage);
+          } catch (err) {
+            console.error('[okbot] record bot usage failed', err);
+          }
+        }
+        ctx.sendChatEvent({
+          type: 'done',
+          botId: bot.id,
+          messageId: assistantId,
+          content: assistantMsg.content,
+          usage: result.usage,
+          ...(controller.signal.aborted ? { aborted: true } : {}),
+        });
+        guards.finish(
+          resolveRunFinishStatus({
+            aborted: controller.signal.aborted,
+            breakReason: guards.budget.getBreakReason(),
+          }),
+        );
+        return { ok: true, resumed: true };
+      } catch (err) {
+        // Circuit-breaker aborts the same controller; surface getBreakReason() first
+        // so the user sees the limit message instead of a silent stop.
+        if (
+          !guards.budget.getBreakReason() &&
+          (controller.signal.aborted || isAbortLikeError(err))
+        ) {
+          guards.finish(
+            resolveRunFinishStatus({
+              aborted: true,
+              breakReason: null,
+            }),
+          );
+          ctx.sendChatEvent({
+            type: 'done',
+            botId: bot.id,
+            messageId: assistantId,
+            content: assistantMsg.content,
+            aborted: true,
+          });
+          return { ok: true, resumed: true, aborted: true };
+        }
+        const message = handleRunFailure({
+          root: ctx.storage.root,
+          ownerId: bot.id,
+          messageId: assistantId,
+          phase: 'resumeHitl',
+          err,
+          guards,
+        });
+        console.error('[okbot] resumeHitl failed', err);
+        if (!assistantMsg.content) {
+          assistantMsg.content = `错误：${message}`;
+          ctx.storage.upsertAssistantMessage(bot.id, assistantMsg, { allowRebind: false });
+        }
+        ctx.sendChatEvent({
+          type: 'error',
+          botId: bot.id,
+          messageId: assistantId,
+          error: message,
+        });
+        return { ok: false, error: message };
+      } finally {
+        guards.dispose();
+        ctx.abortControllers.delete(bot.id);
+        ctx.rejectPendingApprovalsForBot(bot.id, '已结束');
+        runSlot.release();
+      }
     },
+  );
+
+
+
+  ipcMain.handle(
+    IpcChannels.chatStart,
+    async (
+      _e,
+      payload: {
+        botId?: string;
+        squadId?: string;
+        text: string;
+        quoteMessageId?: string;
+        attachments?: ChatMessage['attachments'];
+      },
+    ) => startChatTurn(ctx, payload),
   );
 
   ipcMain.handle(IpcChannels.chatAbort, (_e, botId: string) => {

@@ -30,6 +30,7 @@ export {
   runSquadChat,
   allocateAskToolNames,
   buildCaptainSquadInstructions,
+  recordMemberTokenUsage,
   type SquadMemberAgentSpec,
   type RunSquadChatInput,
 } from './squad.js';
@@ -44,6 +45,18 @@ export {
 export { compressSessionHistory } from './compression.js';
 export { detectTopicChange } from './detectTopicChange.js';
 export { quoteSessionInputCallback } from './quoteContext.js';
+export {
+  buildMultimodalUserContent,
+  encodeImageFileAsDataUrl,
+  enrichLastUserContentSessionInputCallback,
+  resolveSessionInputCallbackForTurn,
+  mimeTypeForImagePath,
+  stripImageLinesFromAttachedBlock,
+  MAX_VISION_IMAGE_BYTES,
+  VISION_TURN_INSTRUCTION,
+  type MultimodalUserContentPart,
+  type VisionImageAttachment,
+} from './visionInput.js';
 
 export { tokenUsageFromRunResult, tokenUsageFromSdkUsage } from './usage.js';
 export {
@@ -61,4 +74,16 @@ export {
   type SkillLookupResult,
   type BuildToolsOptions,
 } from './tools.js';
+
+export {
+  generateImageWithMinimax,
+  minimaxImageGenerationUrl,
+  okbotAssetMarkdownSrc,
+  ownerResourceAssetRel,
+  ownerResourcesDir,
+  OKBOT_ASSET_SCHEME,
+  type ImageApiCredentials,
+  type GenerateImageResult,
+  type GenerateImageSaveOpts,
+} from './generateImage.js';
 

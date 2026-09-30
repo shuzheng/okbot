@@ -126,6 +126,15 @@ export function registerEntityIpc(ctx: IpcContext): void {
     if (prev.autoUpdate !== saved.autoUpdate) {
       ctx.onAutoUpdatePreferenceChanged?.(saved.autoUpdate !== false);
     }
+    const prevApi = prev.localHttpApi;
+    const nextApi = saved.localHttpApi;
+    if (
+      prevApi?.enabled !== nextApi.enabled ||
+      prevApi?.port !== nextApi.port ||
+      prevApi?.token !== nextApi.token
+    ) {
+      ctx.onLocalHttpApiSettingsChanged?.();
+    }
     return saved;
   });
 

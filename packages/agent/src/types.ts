@@ -71,6 +71,12 @@ export interface RunAgentChatInput extends RunChatInput {
    * (avoids duplicating the user turn the caller already wrote).
    */
   sessionInputCallback?: SessionInputCallback;
+  /** Current user turn includes vision image attachments. */
+  hasVisionInput?: boolean;
+  /** Bot/squad id — generated images land in `~/.okbot/<ownerId>/resources/`. */
+  ownerId: string;
+  /** Absolute `~/.okbot/<ownerId>/resources` directory. */
+  resourcesDir: string;
   onToolApprovalRequest: (req: ToolApprovalRequest) => Promise<ToolApprovalDecision>;
   onToolResult?: (info: {
     requestId: string;
@@ -100,6 +106,11 @@ export interface ResumeAgentChatAfterHitlInput {
   maxTurns?: number;
   session?: Session;
   sessionInputCallback?: SessionInputCallback;
+  hasVisionInput?: boolean;
+  /** Bot/squad id — generated images land in `~/.okbot/<ownerId>/resources/`. */
+  ownerId: string;
+  /** Absolute `~/.okbot/<ownerId>/resources` directory. */
+  resourcesDir: string;
   signal?: AbortSignal;
   onDelta?: (delta: string) => void;
   onToolApprovalRequest: (req: ToolApprovalRequest) => Promise<ToolApprovalDecision>;

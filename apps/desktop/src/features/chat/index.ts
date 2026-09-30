@@ -1,5 +1,7 @@
 export { ChatComposer } from './ChatComposer';
-export type { ChatComposerProps, ComposerQuoteDraft } from './ChatComposer';
+export type { ChatComposerProps, ComposerQuoteDraft, ComposerAttachment } from './ChatComposer';
+export { ComposerAttachMenu } from './ComposerAttachMenu';
+export type { AttachKind, ComposerAttachMenuProps } from './ComposerAttachMenu';
 export { ChatTranscript } from './ChatTranscript';
 export type { ChatTranscriptProps } from './ChatTranscript';
 export { ChatWatermark } from './ChatWatermark';

@@ -1,5 +1,7 @@
-import { BrowserWindow, clipboard, ipcMain, shell, systemPreferences, app } from 'electron';
+import { BrowserWindow, clipboard, dialog, ipcMain, shell, systemPreferences, app } from 'electron';
 import path from 'node:path';
+import fs from 'node:fs/promises';
+import os from 'node:os';
 import { IpcChannels } from '@okbot/shared';
 import type { IpcContext } from './context';
 import {
@@ -118,6 +120,102 @@ export function registerSystemIpc(_ctx: IpcContext): void {
     clipboard.writeText(typeof text === 'string' ? text : String(text ?? ''));
     return true;
   });
+
+
+  ipcMain.handle(
+    IpcChannels.pickPaths,
+    async (
+      e,
+      payload: { kind: 'image' | 'file' | 'folder' },
+    ): Promise<{ canceled: boolean; paths: string[] }> => {
+      const win = BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getFocusedWindow();
+      const kind = payload?.kind;
+      if (kind !== 'image' && kind !== 'file' && kind !== 'folder') {
+        return { canceled: true, paths: [] };
+      }
+      const opts: Electron.OpenDialogOptions =
+        kind === 'folder'
+          ? {
+              properties: ['openDirectory', 'createDirectory'],
+            }
+          : kind === 'image'
+            ? {
+                properties: ['openFile', 'multiSelections'],
+                filters: [
+                  {
+                    name: 'Images',
+                    extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'],
+                  },
+                ],
+              }
+            : {
+                properties: ['openFile', 'multiSelections'],
+              };
+      const result = win
+        ? await dialog.showOpenDialog(win, opts)
+        : await dialog.showOpenDialog(opts);
+      if (result.canceled || !result.filePaths?.length) {
+        return { canceled: true, paths: [] };
+      }
+      return { canceled: false, paths: result.filePaths };
+    },
+  );
+
+  /** Resolve okbot-asset:… markdown images under ~/.okbot/<owner>/resources (CSP-safe data URLs). */
+  ipcMain.handle(
+    IpcChannels.readGeneratedAssetDataUrl,
+    async (
+      _e,
+      payload: { assetRel?: string },
+    ): Promise<{ ok: true; dataUrl: string } | { ok: false; error: string }> => {
+      const relRaw = typeof payload?.assetRel === 'string' ? payload.assetRel.trim() : '';
+      const rel = relRaw.replace(/^okbot-asset:/i, '').replace(/^\/+/, '').replace(/\\/g, '/');
+      if (!rel || rel.includes('..') || path.isAbsolute(rel)) {
+        return { ok: false, error: 'invalid asset path' };
+      }
+      // Expect `<ownerId>/resources/<fileName>` (generated media only).
+      const parts = rel.split('/');
+      if (
+        parts.length !== 3 ||
+        parts[1] !== 'resources' ||
+        !parts[0] ||
+        !parts[2] ||
+        parts[0].includes('\\') ||
+        parts[2].includes('\\')
+      ) {
+        return { ok: false, error: 'asset must be <ownerId>/resources/<file>' };
+      }
+      const okbotRoot = path.resolve(os.homedir(), '.okbot');
+      const filePath = path.resolve(okbotRoot, rel);
+      if (filePath !== okbotRoot && !filePath.startsWith(okbotRoot + path.sep)) {
+        return { ok: false, error: 'path outside okbot root' };
+      }
+      // Must stay inside that owner's resources/ dir.
+      const resourcesDir = path.resolve(okbotRoot, parts[0], 'resources');
+      if (filePath !== resourcesDir && !filePath.startsWith(resourcesDir + path.sep)) {
+        return { ok: false, error: 'path outside owner resources' };
+      }
+      try {
+        const buf = await fs.readFile(filePath);
+        if (buf.byteLength > 25 * 1024 * 1024) {
+          return { ok: false, error: 'asset too large' };
+        }
+        const ext = path.extname(filePath).toLowerCase();
+        const mime =
+          ext === '.jpg' || ext === '.jpeg'
+            ? 'image/jpeg'
+            : ext === '.webp'
+              ? 'image/webp'
+              : ext === '.gif'
+                ? 'image/gif'
+                : 'image/png';
+        return { ok: true, dataUrl: `data:${mime};base64,${buf.toString('base64')}` };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { ok: false, error: msg };
+      }
+    },
+  );
 
   ipcMain.handle(IpcChannels.getAppInfo, () => {
     const buildDate =

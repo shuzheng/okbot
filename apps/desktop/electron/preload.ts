@@ -137,17 +137,33 @@ const api = {
         events: Array<Record<string, unknown>>;
       } | null;
     }>,
-  chatStart: (botId: string, text: string, opts?: { quoteMessageId?: string }) =>
+  chatStart: (
+    botId: string,
+    text: string,
+    opts?: {
+      quoteMessageId?: string;
+      attachments?: Array<{ kind: 'image' | 'file' | 'folder'; path: string; name: string }>;
+    },
+  ) =>
     ipcRenderer.invoke(IpcChannels.chatStart, {
       botId,
       text,
       quoteMessageId: opts?.quoteMessageId,
+      attachments: opts?.attachments,
     }),
-  chatStartSquad: (squadId: string, text: string, opts?: { quoteMessageId?: string }) =>
+  chatStartSquad: (
+    squadId: string,
+    text: string,
+    opts?: {
+      quoteMessageId?: string;
+      attachments?: Array<{ kind: 'image' | 'file' | 'folder'; path: string; name: string }>;
+    },
+  ) =>
     ipcRenderer.invoke(IpcChannels.chatStart, {
       squadId,
       text,
       quoteMessageId: opts?.quoteMessageId,
+      attachments: opts?.attachments,
     }),
   chatAbort: (botId: string) => ipcRenderer.invoke(IpcChannels.chatAbort, botId),
   compressSessionNow: (payload: {
@@ -167,6 +183,15 @@ const api = {
     ipcRenderer.invoke(IpcChannels.toolRespond, payload) as Promise<{ ok: boolean; error?: string }>,
   copyText: (text: string) =>
     ipcRenderer.invoke(IpcChannels.copyText, text) as Promise<boolean>,
+  pickPaths: (kind: 'image' | 'file' | 'folder') =>
+    ipcRenderer.invoke(IpcChannels.pickPaths, { kind }) as Promise<{
+      canceled: boolean;
+      paths: string[];
+    }>,
+  readGeneratedAssetDataUrl: (assetRel: string) =>
+    ipcRenderer.invoke(IpcChannels.readGeneratedAssetDataUrl, { assetRel }) as Promise<
+      { ok: true; dataUrl: string } | { ok: false; error: string }
+    >,
   setTrafficLightPosition: (pos: { x: number; y: number }) =>
     ipcRenderer.invoke(IpcChannels.setTrafficLightPosition, pos),
   windowMinimize: () => ipcRenderer.invoke(IpcChannels.windowMinimize) as Promise<boolean>,

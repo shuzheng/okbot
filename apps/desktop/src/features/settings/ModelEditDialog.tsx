@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { CatalogModel } from '@okbot/shared';
 import { t } from '../../i18n';
 import { SettingsToggle } from './SettingsToggle';
@@ -59,6 +60,18 @@ export function ModelEditDialog({
 
   const canSave = Boolean(nextId) && !idClash && !nameClash;
 
+  /* Escape cancels this dialog before SettingsModal's window listener closes settings. */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopPropagation();
+      onCancel();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [onCancel]);
+
   function submit() {
     if (!canSave) return;
     const cw = Number(contextWindow);
@@ -73,9 +86,18 @@ export function ModelEditDialog({
     });
   }
 
-  return (
-    <div className="model-edit-backdrop" onClick={onCancel}>
-      <div className="model-edit-dialog" onClick={(e) => e.stopPropagation()}>
+  if (typeof document === 'undefined') return null;
+
+  /* Portal to body: nested under .settings-shell/.settings-body overflow, fixed
+   * backdrop was clipped so the settings left nav painted over the dialog. */
+  return createPortal(
+    <div className="model-edit-backdrop" role="presentation" onClick={onCancel}>
+      <div
+        className="model-edit-dialog"
+        role="dialog"
+        aria-modal="true"
+        onClick={(e) => e.stopPropagation()}
+      >
         <h3>{mode === 'add' ? t(lang, 'modelAdd') : t(lang, 'modelEdit')}</h3>
         <div className="model-edit-field">
           <label>{t(lang, 'modelIdLabel')}</label>
@@ -160,6 +182,7 @@ export function ModelEditDialog({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

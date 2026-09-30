@@ -847,7 +847,7 @@ export function isAbortLikeError(err: unknown): boolean {
   return false;
 }
 
-export const TOOL_IDS = ['read_file', 'read_skill', 'write_file', 'edit_file', 'run_shell'] as const;
+export const TOOL_IDS = ['read_file', 'read_skill', 'write_file', 'edit_file', 'run_shell', 'generate_image'] as const;
 export type ToolId = (typeof TOOL_IDS)[number];
 
 export interface ToolPreference {
@@ -865,6 +865,7 @@ export const DEFAULT_TOOL_PREFERENCES: ToolPreferences = {
   write_file: { enabled: true, approval: 'allow' },
   edit_file: { enabled: true, approval: 'allow' },
   run_shell: { enabled: true, approval: 'allow' },
+  generate_image: { enabled: true, approval: 'allow' },
 };
 
 export function normalizeToolPreferences(raw: unknown): ToolPreferences {
@@ -874,6 +875,7 @@ export function normalizeToolPreferences(raw: unknown): ToolPreferences {
     read_skill: { ...DEFAULT_TOOL_PREFERENCES.read_skill },
     write_file: { ...DEFAULT_TOOL_PREFERENCES.write_file },
     edit_file: { ...DEFAULT_TOOL_PREFERENCES.edit_file },
+    generate_image: { ...DEFAULT_TOOL_PREFERENCES.generate_image },
   };
   if (!raw || typeof raw !== 'object') return out;
   const obj = raw as Partial<Record<ToolId, Partial<ToolPreference>>>;
@@ -987,13 +989,13 @@ export const DEFAULT_SQUAD_CAPTAIN_PERSONA = `你是小队的虚拟队长与编�
 1. 目标与约束优先：先确认用户目标、范围、验收标准、格式与限制。
 2. 角色边界：只把队员明确回报的内容当作其结论；不编造、不夸大、不把自己的推断伪装成队员结论。
 3. 中立务实：不确定时，涉及专业事实先问对应队员；涉及用户偏好、目标或取舍，先问用户。
-4. 效率可控：默认串行调用；独立且无依赖的子任务可并行；控制轮次、调用次数与成本。
+4. 效率可控：独立且无依赖的子任务应并行调用多名队员；有依赖时再串行；控制轮次、调用次数与成本。
 5. 结果负责：最终答复要可执行、可追溯，并说明依据、风险与未尽事项。`;
 
 export const DEFAULT_SQUAD_PLAYBOOK = `0. 准备：读取队员名册、能力边界、工具权限与输出格式；建立任务清单：目标/约束/子任务/负责人/依赖/状态/结果/未决。
 1. 澄清：若关键信息缺失且影响结果，先向用户提不超过3个关键问题；否则做最小合理假设并明确标注。
 2. 拆解：把目标拆成可执行子任务。每个子任务写明：输入、期望输出、验收标准、依赖、优先级。
-3. 路由：按能力选择最合适队员。默认一次调用一名队员；若多个子任务无依赖且系统支持并行，可并行。
+3. 路由：按能力选择最合适队员。多个无依赖子任务应在同一轮并行调用对应队员；有依赖时再串行。
    分派时必须携带：总目标、子任务、已知输入、约束、期望格式、验收标准、不要做什么。
 4. 校验：队员回报后检查完整性、一致性、事实依据与验收标准。不合格则追问、重试、换人或降级。
 5. 冲突：队员结论冲突时，列出来源、证据、假设、置信度，按领域权威、数据新鲜度、可验证性裁决；不能裁决则请用户决定。
@@ -1046,11 +1048,26 @@ export interface InstructionsSettings {
 export const DEFAULT_ASSISTANT_ROLE_TEMPLATE =
   '你是「{name}」，一个可使用本机工具的桌面个人助手。';
 
+/**
+ * Pre-vision-guard AGENTS.md refresh system prompt (exact text).
+ * Persisted settings that still store this exact default are upgraded to
+ * DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT (adds the no absolute capability-denial clause).
+ */
+export const LEGACY_DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT = [
+  '你负责维护桌面助手机器人的 AGENTS.md（系统提示词）。',
+  '只写入值得跨会话记住的内容：用户偏好、长期目标、项目路径/技术栈、反复出现的约束。',
+  '不要写入一次性任务细节、密钥、冗长日志或与助手无关的闲聊。',
+  '保持 Markdown，保留原有章节结构（角色与目标 / 用户偏好 / 项目与环境 / 工作备注），可增删条目。',
+  '若无需更新，只输出一行：NO_CHANGE',
+  '若需更新，只输出完整的新 AGENTS.md 正文（不要代码围栏，不要解释）。',
+].join('\n');
+
 /** Full default system prompt for silent AGENTS.md maintenance. */
 export const DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT = [
   '你负责维护桌面助手机器人的 AGENTS.md（系统提示词）。',
   '只写入值得跨会话记住的内容：用户偏好、长期目标、项目路径/技术栈、反复出现的约束。',
   '不要写入一次性任务细节、密钥、冗长日志或与助手无关的闲聊。',
+  '不要写入绝对的能力否定（例如「无图像处理能力」「不能看图」「只支持文本」）：视觉取决于当前模型与用户是否附带图片，本机工具列表以系统注入为准，勿在 AGENTS.md 里写死。',
   '保持 Markdown，保留原有章节结构（角色与目标 / 用户偏好 / 项目与环境 / 工作备注），可增删条目。',
   '若无需更新，只输出一行：NO_CHANGE',
   '若需更新，只输出完整的新 AGENTS.md 正文（不要代码围栏，不要解释）。',
@@ -1080,10 +1097,15 @@ export function normalizeInstructionsSettings(raw: unknown): InstructionsSetting
       : {};
   const template =
     typeof src.assistantRoleTemplate === 'string' ? src.assistantRoleTemplate.trim() : '';
-  const agentsPrompt =
+  const agentsPromptRaw =
     typeof src.agentsMdRefreshSystemPrompt === 'string'
       ? src.agentsMdRefreshSystemPrompt.trim()
       : '';
+  // Upgrade exact pre-vision-guard default so installs keep the no-denial clause.
+  const agentsPrompt =
+    !agentsPromptRaw || agentsPromptRaw === LEGACY_DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT
+      ? ''
+      : agentsPromptRaw;
   const skillsInstr =
     typeof src.skillsCreateUpdateInstruction === 'string'
       ? src.skillsCreateUpdateInstruction.trim()
@@ -1149,6 +1171,52 @@ export function normalizeMemorySettings(raw: unknown): MemorySettings {
   };
 }
 
+/**
+ * Loopback HTTP API for external programs (`settings.json` → `localHttpApi`).
+ * Default OFF. When enabled, main process binds 127.0.0.1 only.
+ */
+export interface LocalHttpApiSettings {
+  /** Master switch. Default false. */
+  enabled: boolean;
+  /** TCP port on 127.0.0.1. Default 18765; clamp 1024–65535. */
+  port: number;
+  /** Shared secret; required on every request except health. Empty → auto-generate. */
+  token: string;
+}
+
+export const DEFAULT_LOCAL_HTTP_API_PORT = 18765;
+
+/** Cryptographically strong token for localHttpApi (48 hex chars). */
+export function generateLocalHttpApiToken(): string {
+  const bytes = new Uint8Array(24);
+  if (typeof globalThis.crypto?.getRandomValues === "function") {
+    globalThis.crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+export const DEFAULT_LOCAL_HTTP_API: LocalHttpApiSettings = {
+  enabled: false,
+  port: DEFAULT_LOCAL_HTTP_API_PORT,
+  token: "", // filled by normalize on first read/save
+};
+
+/** Clamp / fill local HTTP API settings. Empty token → generate. */
+export function normalizeLocalHttpApiSettings(raw: unknown): LocalHttpApiSettings {
+  const obj =
+    raw && typeof raw === "object" ? (raw as Partial<Record<keyof LocalHttpApiSettings, unknown>>) : {};
+  const enabled = obj.enabled === true;
+  let port = typeof obj.port === "number" && Number.isFinite(obj.port) ? Math.floor(obj.port) : DEFAULT_LOCAL_HTTP_API_PORT;
+  if (port < 1024 || port > 65535) port = DEFAULT_LOCAL_HTTP_API_PORT;
+  let token = typeof obj.token === "string" ? obj.token.trim() : "";
+  if (!token) token = generateLocalHttpApiToken();
+  // Reject whitespace / control chars in token
+  if (!/^[A-Za-z0-9_-]+$/.test(token)) token = generateLocalHttpApiToken();
+  return { enabled, port, token };
+}
+
 export interface AppSettings {
   theme: ThemeMode;
   /** UI language. */
@@ -1187,6 +1255,8 @@ export interface AppSettings {
   squad: SquadSettings;
   /** Per-run tool call / duration circuit breakers + trajectory recording. */
   toolRun: ToolRunSettings;
+  /** Local loopback HTTP API (default OFF; 127.0.0.1 only). */
+  localHttpApi: LocalHttpApiSettings;
 }
 
 /** Roster row in `~/.okbot/bots.json` (name card only). */
@@ -1459,6 +1529,17 @@ export type ChatRole = 'user' | 'assistant' | 'system';
 /** Renderer-only lifecycle for optimistic user bubbles (not persisted). */
 export type MessageSendStatus = 'pending' | 'sent' | 'failed';
 
+/** User-message file/folder/image attachment (UI chips; paths also kept in content for the model). */
+export type MessageAttachmentKind = 'image' | 'file' | 'folder';
+
+export interface MessageAttachment {
+  kind: MessageAttachmentKind;
+  /** Absolute path on the local machine. */
+  path: string;
+  /** Display basename. */
+  name: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: ChatRole;
@@ -1472,6 +1553,12 @@ export interface ChatMessage {
   quoteMessageId?: string;
   /** Short plain snapshot of the quoted message for the quote strip / composer preview. */
   quotePreview?: string;
+  /**
+   * User attachments shown as chips outside the text bubble.
+   * Wire `content` may still include an `[Attached]` block so tools see file/folder paths.
+   * Image attachments are also injected as multimodal vision (`input_image` / data URL) for the current turn.
+   */
+  attachments?: MessageAttachment[];
   /** Token usage for this assistant turn (omitted for user / legacy rows). */
   usage?: TokenUsage;
   /**
@@ -1539,6 +1626,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     read_skill: { ...DEFAULT_TOOL_PREFERENCES.read_skill },
     write_file: { ...DEFAULT_TOOL_PREFERENCES.write_file },
     edit_file: { ...DEFAULT_TOOL_PREFERENCES.edit_file },
+    generate_image: { ...DEFAULT_TOOL_PREFERENCES.generate_image },
   },
   security: { ...DEFAULT_SECURITY, deniedPathPrefixes: [...DEFAULT_DENIED_PATH_PREFIXES], allowedPathPrefixes: [] },
   model: {
@@ -1552,6 +1640,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   memory: { ...DEFAULT_MEMORY_SETTINGS },
   squad: { ...DEFAULT_SQUAD_SETTINGS },
   toolRun: { ...DEFAULT_TOOL_RUN },
+  localHttpApi: { ...DEFAULT_LOCAL_HTTP_API, token: '' },
 };
 
 export const EMOJI_PRESETS = [
@@ -1643,6 +1732,10 @@ export const IpcChannels = {
   writeBotSkill: 'okbot:write-bot-skill',
   deleteBotSkill: 'okbot:delete-bot-skill',
   listGlobalAgentsSkills: 'okbot:list-global-agents-skills',
+  /** Renderer → main: native open-dialog for composer attachments. */
+  pickPaths: 'okbot:pick-paths',
+  /** Renderer → main: read ~/.okbot/<owner>/resources/* as a data URL for markdown images. */
+  readGeneratedAssetDataUrl: 'okbot:read-generated-asset-data-url',
 } as const;
 
 export type PendingToolRequest = {

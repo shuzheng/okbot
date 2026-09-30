@@ -4,6 +4,33 @@ import { createId, normalizeTokenUsage, type ChatMessage, type MessagesPage } fr
 import { ensureDir } from './fs';
 import type { SessionRecordV2 } from './types';
 
+
+function basenameOf(filePath: string): string {
+  const norm = filePath.replace(/\\/g, '/');
+  const i = norm.lastIndexOf('/');
+  return i >= 0 ? norm.slice(i + 1) || norm : norm;
+}
+
+/** Sanitize attachments from ChatMessage / meta for persistence. */
+export function normalizeMessageAttachments(
+  raw: unknown,
+): Array<{ kind: 'image' | 'file' | 'folder'; path: string; name: string }> | undefined {
+  if (!Array.isArray(raw) || !raw.length) return undefined;
+  const out: Array<{ kind: 'image' | 'file' | 'folder'; path: string; name: string }> = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const o = item as Record<string, unknown>;
+    const kind =
+      o.kind === 'image' || o.kind === 'file' || o.kind === 'folder' ? o.kind : null;
+    const filePath = typeof o.path === 'string' ? o.path.trim() : '';
+    if (!kind || !filePath) continue;
+    const name =
+      typeof o.name === 'string' && o.name.trim() ? o.name.trim() : basenameOf(filePath);
+    out.push({ kind, path: filePath, name });
+  }
+  return out.length ? out : undefined;
+}
+
 export function isSessionRecordV2(raw: unknown): raw is SessionRecordV2 {
   if (!raw || typeof raw !== 'object') return false;
   const o = raw as Record<string, unknown>;
@@ -41,6 +68,7 @@ export function legacyMessageToRecord(msg: ChatMessage): SessionRecordV2 {
     typeof msg.quotePreview === 'string' && msg.quotePreview.trim()
       ? msg.quotePreview.trim()
       : undefined;
+  const attachments = normalizeMessageAttachments(msg.attachments);
   const usage = normalizeTokenUsage(msg.usage);
   return {
     v: 2,
@@ -56,6 +84,7 @@ export function legacyMessageToRecord(msg: ChatMessage): SessionRecordV2 {
       ...(speakerBotId ? { speakerBotId } : {}),
       ...(quoteMessageId ? { quoteMessageId } : {}),
       ...(quotePreview ? { quotePreview } : {}),
+      ...(attachments ? { attachments } : {}),
       ...(usage ? { usage } : {}),
     },
   };
@@ -153,6 +182,7 @@ export function recordToUiMessage(rec: SessionRecordV2): ChatMessage | null {
     typeof rec.meta?.quotePreview === 'string' && rec.meta.quotePreview.trim()
       ? rec.meta.quotePreview.trim()
       : undefined;
+  const attachments = normalizeMessageAttachments(rec.meta?.attachments);
   const usage = normalizeTokenUsage(rec.meta?.usage);
   return {
     id: rec.id,
@@ -162,6 +192,7 @@ export function recordToUiMessage(rec: SessionRecordV2): ChatMessage | null {
     ...(speakerBotId ? { speakerBotId } : {}),
     ...(quoteMessageId ? { quoteMessageId } : {}),
     ...(quotePreview ? { quotePreview } : {}),
+    ...(attachments ? { attachments } : {}),
     ...(usage ? { usage } : {}),
   };
 }

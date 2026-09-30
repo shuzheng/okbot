@@ -23,6 +23,7 @@ okbot/
   apps/desktop/                 # Electron 壳 + React UI
     electron/                   # main / preload / IPC / storage / updater
       ipc/                      # registerChat / registerEntity / registerSystem
+      localHttpApi.ts           # 127.0.0.1 HTTP API（默认关）
       storage/                  # FileStorage、sessionJsonl、usageStore…
       updater.ts                # electron-updater + GitHub Releases
     src/
@@ -128,7 +129,7 @@ okbot/
 
 ## 5. 小队（Squad）
 
-- 星型拓扑：**内置虚拟队长**（非花名册 bot，`SQUAD_CAPTAIN_SPEAKER_ID = '__captain__'`）通过 Agents-as-Tools（`ask_*`）串行咨询成员。  
+- 星型拓扑：**内置虚拟队长**（非花名册 bot，`SQUAD_CAPTAIN_SPEAKER_ID = '__captain__'`）通过 Agents-as-Tools（`ask_*`）咨询成员；队长为唯一中枢，队员互不通话。无依赖时可在同一轮并行调用多名队员（SDK 对同轮多个 function tool 并发执行 `execute`）。  
 - 队员工具名经 `allocateAskToolNames` 去重（`ask_base`、`ask_base_2`…）；队长 prompt 的 `toolHint` 与真实工具名一致（含后缀）。  
 - 数据：`~/.okbot/squads.json` + `~/.okbot/<squadId>/session*.`。  
 - **创建向导**（`SquadWizardModal` 右侧抽屉）：名称、描述、成员（搜索拖拽）、每成员角色、可选小队模型。  
@@ -149,8 +150,8 @@ okbot/
 
 | Tab（侧栏文案） | 内容 |
 |-----|------|
-| **通用设置** | 主题（系统/浅/深）、语言（系统/中/英）、缩放特效（默认关；? 说明仿 MacOS Dock 动效）、麦克风、硬件加速（改后需重启）、数据目录说明（**不含**更新控件） |
-| **工具授权** | 五工具启用 + 审批策略（自动允许 / 询问；含 `read_skill`）；**自动审批规则（AAR）** 列表（允许/先询问、关键词、失焦自动保存草稿；空规则丢弃；重名校验；列表限高滚动）；**运行限制**（`settings.toolRun`：单轮最大工具调用 / 最大时长秒 / 记录运行轨迹，见下） |
+| **通用设置** | 主题（系统/浅/深）、语言（系统/中/英）、缩放特效（默认关；? 说明仿 MacOS Dock 动效）、麦克风、硬件加速（改后需重启）、**本地 HTTP API**（默认关；见下）、数据目录说明（**不含**更新控件） |
+| **工具授权** | 六工具启用 + 审批策略（自动允许 / 询问；含 `read_skill`）；**自动审批规则（AAR）** 列表（允许/先询问、关键词、失焦自动保存草稿；空规则丢弃；重名校验；列表限高滚动）；**运行限制**（`settings.toolRun`：单轮最大工具调用 / 最大时长秒 / 记录运行轨迹，见下） |
 | **安全防护** | 总开关、拦截模式（reject / tripwire）、限制在家目录、允许/拒绝路径前缀、危险 shell 正则；与审批关系说明 |
 | **模型接入** | **自定义供应商**（可多条：名称 / BaseURL / API Format / API Key / 每供应商模型目录）；模型行**连通测试**（按该供应商 baseURL/apiKey/apiFormat 对模型 id 发最小探针，IPC `testModelConnection`）；全局**默认模型**（下方下拉，供应商→模型；列表行不再用星标设默认）；列表顺序稳定（存盘数组序，启停不重排）；助手/小队覆盖同为 `providerId`+`modelId`；上下文压缩（自动换题、比例、保留上下限默认 5、摘要字数）、**单次运行最大回合**（1:1 `maxTurns`，默认 50） |
 | **系统指令** | 子 Tab 顺序：助手 / 小队 / AGENTS.md / 记忆 / 技能。「助手」：1:1 角色句模板（`settings.instructions.assistantRoleTemplate`，`{name}` 占位，空则恢复默认）；「小队」：队长人设、Playbook、队长/队员 maxTurns（`settings.squad`，与 1:1 无关）；「AGENTS.md」：静默维护完整 system 模版（`agentsMdRefreshSystemPrompt`）+ 分析最近消息条数（`agentsMdRecentMessageLimit`，默认 12，钳制 1–100）；「记忆」：范围判定说明（`settings.memory.scopeInstruction`）+ 分析最近消息条数（`recentMessageLimit`，默认 20）；「技能」：生成/更新 skill 判定指令（`skillsCreateUpdateInstruction`，仅替换 system 中那一行）+ 分析最近消息条数（`skillsRecentMessageLimit`，默认 20）。空字符串恢复默认；缺字段读盘时由 normalize 填回，下次保存写回。侧栏图标为文档形（与小队区分）。 |
@@ -158,7 +159,7 @@ okbot/
 | **用量分析** | 见 §9；按助手/小队列表有内边距 |
 | **自动更新** | `autoUpdate` 开关与手动检查/下载/安装（从通用迁出；route id 仍为 `updates`） |
 
-默认工具策略（`DEFAULT_TOOL_PREFERENCES`）：五工具默认全开且默认自动允许（含只读的 `read_file` / `read_skill`）。写/执行仍可走 AAR，未命中再 HITL（当审批设为询问时）。
+默认工具策略（`DEFAULT_TOOL_PREFERENCES`）：六工具默认全开且默认自动允许（含只读的 `read_file` / `read_skill`，以及 `generate_image`）。写/执行仍可走 AAR，未命中再 HITL（当审批设为询问时）。
 
 设置内可深链 `focusSection` / `data-settings-id`（全局搜索跳转）。`SettingsHelpTip` 经 portal 挂到 `document.body`（高 z-index），避免被 settings shell / body / card 的 overflow 裁切。
 
@@ -182,14 +183,44 @@ okbot/
 
 **运行轨迹**（`recordTrajectory`）：`~/.okbot/<botId|squadId>/last-run-trace.json`，形如 `{ runId, startedAt, endedAt?, status, events[] }`。事件：`run_start` / `tool_request` / `tool_result` / `circuit_break` / `run_error` / `run_done`（参数与输出摘要截断约 2k，无密钥）。对话顶栏按钮「本轮轨迹」→ IPC `getLastRunTrace(ownerId)` → 只读弹层（同 prompt-context 样式）。
 
+
+### 6.1 本地 HTTP API（loopback）
+
+供**本机其他程序**通过 HTTP 向助手或小队发送消息，走与 UI 相同的 `chatStart` / `startChatTurn` 路径（持久化 + `chatEvent`，界面实时更新）。
+
+- **默认关闭**。设置 → 通用 →「本地 HTTP API」：启用、端口、访问令牌（首次自动生成，可重新生成 / 复制）。
+- **仅绑定 `127.0.0.1`**，不对外网开放。
+- 鉴权：`Authorization: Bearer <token>` 或请求头 `X-OkBot-Token: <token>`（`GET /v1/health` 无需令牌）。
+- 端点（保持精简）：
+  - `GET /v1/health` → `{ ok, service }`
+  - `GET /v1/bots` → `{ ok, bots: [{ id, name }] }`
+  - `GET /v1/squads` → `{ ok, squads: [{ id, name }] }`
+  - `POST /v1/bots/:id/messages` / `POST /v1/squads/:id/messages`，JSON `{ "text": "..." }`：
+    - **默认（非 SSE）** → **202** `{ ok: true, sessionId }`（`sessionId` 即 bot/squad id）；异步入队同一轮对话，不在 HTTP 响应里等待最终回复。
+    - **SSE**：请求头带 `Accept: text/event-stream` → `Content-Type: text/event-stream`，连接保持打开，流式推送**本会话**（该 bot/squad id）的 `ChatEvent`，直到 `done` / `error`（或客户端断开）后结束。客户端断开只停止写入，不中止本轮对话。
+- SSE 帧：`event: <ChatEvent.type>`，`data:` 为完整 `ChatEvent` JSON（与 UI IPC 同源）。常见 `type`：`user_message` / `assistant_message` / `delta` / `tool_request` / `tool_result` / `done` / `error`。
+- 示例（SSE）：
+
+```bash
+curl -N -X POST "http://127.0.0.1:<port>/v1/bots/<botId>/messages" \
+  -H "Authorization: Bearer <token>" \
+  -H "Accept: text/event-stream" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"你好"}'
+```
+
+- 实现：`apps/desktop/electron/localHttpApi.ts`；设置变更时重启监听，禁用或退出时停止。
+- 无独立 CLI、无公网发布面。
+
 ---
 
 ## 7. 本机工具与安全
 
 工具（`packages/agent/src/tools.ts`）：
 
-- `read_file` / `read_skill` / `write_file` / `edit_file` / `run_shell`  
+- `read_file` / `read_skill` / `write_file` / `edit_file` / `run_shell` / `generate_image`  
 - `read_skill(slug)`：加载本助手已启用技能（本地优先，其次启用的全局）的完整 SKILL.md；系统提示只含目录，属渐进披露  
+- `generate_image(prompt, aspect_ratio?, model?)`：用当前模型供应商的 `baseURL`/`apiKey` 调 MiniMax 原生 `POST {baseURL}/image_generation`（默认 `image-01`；非 OpenAI `/images/generations`）。图片落盘 `~/.okbot/<botId|squadId>/resources/`，工具结果含 `okbot-asset:<ownerId>/resources/…` markdown（须原样写入回复）；`react-markdown` 通过自定义 `urlTransform` 保留该协议，渲染侧经 IPC 读成 data URL 显示（CSP `img-src` 不含 https）  
 - 输出截断、文件大小与二进制检测、shell 超时约 30s、cwd 默认家目录  
 - `run_shell` 跨平台：Windows 优先 PATH 中的 PowerShell Core `pwsh`（`-NoProfile -NonInteractive -Command`），找不到时用 `ComSpec`（默认 `cmd.exe`）`/d /s /c`；其余平台用 `SHELL`，否则 darwin `/bin/zsh`、其它 `/bin/bash`，参数 `-lc`（见 `resolveShellExec`）
 
@@ -367,11 +398,12 @@ HITL UI：工具卡上「允许 / 永久允许 / 拒绝」。
     session.jsonl
     session-summary.json
     last-run-trace.json         # 最近一轮工具/错误轨迹（recordTrajectory）
-    resources/
+    resources/                  # generate_image 等中间媒体
   <squadId>/
     session.jsonl
     session-summary.json
     last-run-trace.json
+    resources/                  # generate_image 等中间媒体（与 bot 同布局）
 ```
 
 **错误日志**（`apps/desktop/electron/storage/errorLog.ts`）：1:1 `chatStart`、HITL `resumeHitl`、小队 `squadChat` 在 catch 并发 `type: 'error'` 时追加一行 JSON（`ts` / `ownerId` / `messageId?` / `phase` / `error` / `stack?`），含熔断（`CircuitBreakError`）。不写 API Key、不写用户正文；仍 `console.error`。每次写入时按日历日剪枝，删除早于「今天−2 天」的 `errors-*.jsonl`。与 `last-run-trace.json` 互补：前者按日汇总失败，后者保留每会话最近一轮结构化轨迹。
@@ -383,7 +415,7 @@ HITL UI：工具卡上「允许 / 永久允许 / 拒绝」。
 常量：`packages/shared` → `IpcChannels`。  
 注册：`apps/desktop/electron/ipc/`（chat / entity / system）。
 
-常见通道：bootstrap、bots/squads CRUD、settings、discoverModels、messages 分页与搜索、chatStart/Abort/Event、toolRespond、setChatUnread、getPromptContext、getLastRunTrace、转写、appInfo、updater*、getUsageStats、copyText、traffic light 位置等。
+常见通道：bootstrap、bots/squads CRUD、settings、discoverModels、messages 分页与搜索、chatStart/Abort/Event、toolRespond、setChatUnread、getPromptContext、getLastRunTrace、转写、appInfo、updater*、getUsageStats、copyText、traffic light 位置等。本地 HTTP API（`localHttpApi.ts`）在主进程内直接调用 `startChatTurn`，不另开 IPC 通道。
 
 Preload 暴露 `window.okbot.*`；渲染进程不直连 Node fs。
 
@@ -394,6 +426,7 @@ Preload 暴露 `window.okbot.*`；渲染进程不直连 Node fs。
 - 用户：`bubble-row.user` → `bubble-row-cluster` →（quote）→ `bubble-body-row`（**actions | bubble**）。  
 - 助手：`bubble-row.assistant` → `bubble-body-row bubble-body-row-assistant`（**bubble | actions**）。  
 - 共用：`.bubble-actions` 默认透明，行 hover/focus-within 显示；`.bubble-body-row .bubble-actions { margin-top: 6px }`。  
+- **短中文气泡宽度**：CJK 在 UAX#14 下 min-content ≈ 1 字；勿让助手行 `align-self: flex-start` 做 shrink-to-fit，也勿对气泡用相对「不定宽父级」的 `% max-width` / `min-width: 0` 链条。正确做法：助手行 `align-self: stretch; width: 100%`（父级定宽），气泡 `width: fit-content; max-width: min(720px, 100%)`，`overflow-wrap: break-word` + `word-break: normal`（禁止 legacy `word-break: break-word` / `break-all`）。会话存盘无零宽字符问题；根因在布局而非 markdown/流式 delta。  
 - 小队：仅成员发言行加 `has-speaker`（头像列间距）；队长行不加，避免空头像占位。成员头像纯 CSS sticky（勿在 `.messages` 祖先加会打断 sticky 的 `overflow: hidden`）。  
 - 早期产品：**就地改干净结构**，避免绝对定位「贴在气泡角上」的第二套交互；不引入 Motion 等重动画库。
 
@@ -409,7 +442,8 @@ Preload 暴露 `window.okbot.*`；渲染进程不直连 Node fs。
 - 无 MCP。  
 - `run_shell` 非容器/seatbelt 沙箱。  
 - 模型目录 **仅手动 + discover**，无复杂厂商 OAuth。  
-- 小队搜索排除、虚拟队长非真实 bot——改相关逻辑时勿回归。
+- 小队搜索排除、虚拟队长非真实 bot——改相关逻辑时勿回归。  
+- 本地 HTTP API **仅 loopback**；无公网监听、无独立 CLI 发行。
 
 ---
 

@@ -9,6 +9,13 @@ import type { SecuritySettings, ToolPreferences } from '@okbot/shared';
 import { DEFAULT_SECURITY } from '@okbot/shared';
 import { buildToolInputGuardrails, expandHome } from './guardrails.js';
 import { wrapToolExecute, type ToolRunBudget } from './toolRunBudget.js';
+import {
+  formatGenerateImageToolOutput,
+  generateImageWithMinimax,
+  MINIMAX_ASPECT_RATIOS,
+  MINIMAX_IMAGE_MODELS,
+  type ImageApiCredentials,
+} from './generateImage.js';
 
 
 const MAX_TOOL_OUTPUT = 24_000;
@@ -270,6 +277,16 @@ export type SkillLookup = (slug: string) => SkillLookupResult | null;
 export type BuildToolsOptions = {
   /** Required for `read_skill` to return bodies; omit when no skill catalog is bound. */
   skillLookup?: SkillLookup;
+  /**
+   * Credentials for `generate_image` (same provider baseURL/apiKey as chat).
+   * When omitted, the tool reports a config error if invoked.
+   */
+  imageApi?: ImageApiCredentials;
+  /**
+   * Where to save generated images: bot/squad `resources/` dir + owner id for
+   * `okbot-asset:<ownerId>/resources/…` markdown.
+   */
+  imageAssets?: { ownerId: string; resourcesDir: string };
 };
 
 export function buildTools(
@@ -418,6 +435,69 @@ export function buildTools(
     );
   }
 
+  if (prefs.generate_image.enabled) {
+    list.push(
+      tool({
+        name: 'generate_image',
+        description:
+          '当用户要求画图/生成图片时调用。使用当前模型供应商的 baseURL + API Key，请求 MiniMax 原生文生图接口 POST {baseURL}/image_generation（模型 image-01；非 OpenAI /images/generations）。图片保存到当前助手/小队目录的 resources/；工具结果含一行 okbot-asset: markdown，你必须原样写入回复以便气泡内嵌显示。',
+        parameters: z.object({
+          prompt: z.string().describe('图片的详细文本描述（最长 1500 字符）'),
+          aspect_ratio: z
+            .enum(MINIMAX_ASPECT_RATIOS)
+            .optional()
+            .describe('宽高比，默认 1:1'),
+          model: z
+            .enum(MINIMAX_IMAGE_MODELS)
+            .optional()
+            .describe('图像模型，默认 image-01'),
+        }),
+        needsApproval: prefs.generate_image.approval === 'ask',
+        ...guardrailOpts,
+        execute: wrapToolExecute(
+          'generate_image',
+          budget,
+          async ({
+            prompt,
+            aspect_ratio,
+            model,
+          }: {
+            prompt: string;
+            aspect_ratio?: (typeof MINIMAX_ASPECT_RATIOS)[number];
+            model?: (typeof MINIMAX_IMAGE_MODELS)[number];
+          }) => {
+            const creds = options?.imageApi;
+            if (!creds?.baseURL?.trim() || !creds?.apiKey?.trim()) {
+              return '错误：未配置模型供应商 baseURL/API Key，无法生成图片。请先在设置 → 模型接入中填写。';
+            }
+            const assets = options?.imageAssets;
+            if (!assets?.ownerId?.trim() || !assets?.resourcesDir?.trim()) {
+              return '错误：未绑定助手/小队 resources 目录，无法保存生成图片。';
+            }
+            try {
+              const result = await generateImageWithMinimax(
+                creds,
+                {
+                  prompt,
+                  aspectRatio: aspect_ratio,
+                  model,
+                },
+                {
+                  ownerId: assets.ownerId,
+                  resourcesDir: assets.resourcesDir,
+                },
+              );
+              return formatGenerateImageToolOutput(result);
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              return `错误：图片生成失败 — ${msg}`;
+            }
+          },
+        ),
+      }),
+    );
+  }
+
   return list;
 }
 
@@ -427,4 +507,5 @@ export const TOOL_BLURBS: Record<string, string> = {
   read_skill: '加载技能正文',
   write_file: '新建/整文件覆盖写入',
   edit_file: '精确单处替换',
+  generate_image: '文生图（MiniMax image_generation）',
 };

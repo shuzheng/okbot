@@ -6,6 +6,7 @@ import { FileStorage } from './storage';
 import { registerAllIpc, type PendingToolApproval } from './ipc';
 import { initAutoUpdater, onAutoUpdatePreferenceChanged } from './updater';
 import { getAllowQuit, setAllowQuit } from './quitState';
+import { createLocalHttpApi } from './localHttpApi';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const storage = new FileStorage();
@@ -28,6 +29,8 @@ if (!gotSingleInstanceLock) {
 const abortControllers = new Map<string, AbortController>();
 /** Pending HITL tool approvals: requestId -> resolve */
 const pendingToolApprovals = new Map<string, PendingToolApproval>();
+
+let localHttpApiController: ReturnType<typeof createLocalHttpApi> | null = null;
 
 function snapshotActiveRuns() {
   const memoryPending = [...pendingToolApprovals.entries()].map(([requestId, p]) => ({
@@ -159,6 +162,7 @@ function sendChatEvent(event: ChatEvent) {
   for (const win of BrowserWindow.getAllWindows()) {
     win.webContents.send(IpcChannels.chatEvent, event);
   }
+  localHttpApiController?.bridgeChatEvent(event);
 }
 
 app.on('second-instance', () => {
@@ -226,6 +230,28 @@ app.whenReady().then(() => {
     return permission === 'media' || permission === 'mediaKeySystem' || /speech/i.test(name);
   });
 
+  localHttpApiController = createLocalHttpApi({
+    ctx: {
+      storage,
+      abortControllers,
+      pendingToolApprovals,
+      hardwareAccelerationActive,
+      sendChatEvent,
+      snapshotActiveRuns,
+      rejectPendingApprovalsForBot,
+      applyTheme,
+      onAutoUpdatePreferenceChanged,
+    },
+  });
+
+  const syncLocalHttpApi = () => {
+    try {
+      localHttpApiController?.sync(storage.getSettings().localHttpApi);
+    } catch (err) {
+      console.error('[okbot] localHttpApi sync failed', err);
+    }
+  };
+
   registerAllIpc({
     storage,
     abortControllers,
@@ -236,7 +262,10 @@ app.whenReady().then(() => {
     rejectPendingApprovalsForBot,
     applyTheme,
     onAutoUpdatePreferenceChanged,
+    onLocalHttpApiSettingsChanged: syncLocalHttpApi,
   });
+
+  syncLocalHttpApi();
 
   initAutoUpdater(() => storage.getSettings());
   try {
@@ -267,6 +296,11 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', (e) => {
   if (getAllowQuit()) {
+    try {
+      localHttpApiController?.stop();
+    } catch (err) {
+      console.error('[okbot] localHttpApi stop on quit failed', err);
+    }
     for (const botId of [...abortControllers.keys()]) {
       abortControllers.get(botId)?.abort();
       abortControllers.delete(botId);
@@ -320,6 +354,11 @@ app.on('before-quit', (e) => {
         return;
       }
       setAllowQuit(true);
+      try {
+        localHttpApiController?.stop();
+      } catch (err) {
+        console.error('[okbot] localHttpApi stop on quit failed', err);
+      }
       for (const botId of [...abortControllers.keys()]) {
         abortControllers.get(botId)?.abort();
         abortControllers.delete(botId);

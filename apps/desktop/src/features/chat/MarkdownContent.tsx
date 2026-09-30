@@ -1,6 +1,6 @@
-import { memo, useMemo, useState, type ReactNode } from 'react';
+import { memo, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { resolveUiLang, t } from '../../i18n';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import hljs from 'highlight.js/lib/core';
 import javascript from 'highlight.js/lib/languages/javascript';
@@ -197,17 +197,82 @@ function isInlineCode(
   return true;
 }
 
+function isOkbotAssetSrc(src: string | undefined): src is string {
+  return Boolean(src && /^okbot-asset:/i.test(src));
+}
+
+/** Load ~/.okbot/<owner>/resources images via IPC (CSP allows data: only, not remote https). */
+const OkbotAssetImage = memo(function OkbotAssetImage({
+  src,
+  alt,
+}: {
+  src: string;
+  alt?: string;
+}) {
+  const [dataUrl, setDataUrl] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setDataUrl(null);
+    setError(null);
+    const rel = src.replace(/^okbot-asset:/i, '');
+    void (async () => {
+      try {
+        const res = await window.okbot.readGeneratedAssetDataUrl(rel);
+        if (cancelled) return;
+        if (res.ok) setDataUrl(res.dataUrl);
+        else setError(res.error || 'load failed');
+      } catch (err) {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [src]);
+
+  if (error) {
+    return (
+      <span className="md-asset-missing" title={error}>
+        {alt || 'image'}（加载失败）
+      </span>
+    );
+  }
+  if (!dataUrl) {
+    return <span className="md-asset-loading">{alt || 'image'}…</span>;
+  }
+  return <img src={dataUrl} alt={alt || ''} />;
+});
+
+/**
+ * react-markdown's defaultUrlTransform only allows http(s)/mailto/irc/xmpp.
+ * Without this, `okbot-asset:…` src is stripped to "" → empty/broken <img>.
+ */
+function markdownUrlTransform(url: string): string {
+  if (/^okbot-asset:/i.test(url)) return url;
+  return defaultUrlTransform(url);
+}
+
 export const MarkdownContent = memo(function MarkdownContent({ children }: { children: string }) {
   return (
     <div className="md">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
+        urlTransform={markdownUrlTransform}
         components={{
           a: ({ href, children: linkChildren }) => (
             <a href={href} target="_blank" rel="noreferrer noopener">
               {linkChildren}
             </a>
           ),
+          img: ({ src, alt }) =>
+            isOkbotAssetSrc(src) ? (
+              <OkbotAssetImage src={src} alt={alt} />
+            ) : (
+              <img src={src} alt={alt || ''} />
+            ),
           code: ({ className, children: codeChildren, node }) => {
             const text = String(codeChildren).replace(/\n$/, '');
             if (

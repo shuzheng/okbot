@@ -35,4 +35,5 @@ export type IpcContext = {
   rejectPendingApprovalsForBot: (botId: string, message?: string) => void;
   applyTheme: (theme: AppSettings['theme']) => void;
   onAutoUpdatePreferenceChanged?: (enabled: boolean) => void;
+  onLocalHttpApiSettingsChanged?: () => void;
 };
