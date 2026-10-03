@@ -1233,6 +1233,8 @@ export interface ComputerEntry {
   port: number;
   /** Bearer token matching SANDBOX_TOKEN. */
   token: string;
+  /** When false, not offered as a default and not used for routing. Default true. */
+  enabled: boolean;
 }
 
 export const DEFAULT_SANDBOX_PORT = 18790;
@@ -1258,7 +1260,8 @@ export function normalizeComputerEntry(raw: unknown): ComputerEntry | null {
   if (!id || id === LOCAL_COMPUTER_ID) return null;
   if (!name || !host || !token) return null;
   if (!/^[A-Za-z0-9_-]+$/.test(token)) return null;
-  return { id, name, host, port, token };
+  const enabled = (o as { enabled?: unknown }).enabled === false ? false : true;
+  return { id, name, host, port, token, enabled };
 }
 
 export function normalizeComputers(raw: unknown): ComputerEntry[] {
@@ -1272,6 +1275,17 @@ export function normalizeComputers(raw: unknown): ComputerEntry[] {
     out.push(c);
   }
   return out;
+}
+
+/**
+ * Default shell/fs computer. Empty, `local`, or an id that is not in `computers`
+ * becomes `local`. Callers do not have to pick one before chat works.
+ */
+export function normalizeDefaultComputerId(raw: unknown, computers: ComputerEntry[]): string {
+  const id = typeof raw === 'string' ? raw.trim() : '';
+  if (!id || id === LOCAL_COMPUTER_ID) return LOCAL_COMPUTER_ID;
+  if (computers.some((c) => c.id === id && c.enabled !== false)) return id;
+  return LOCAL_COMPUTER_ID;
 }
 
 /**
@@ -1358,6 +1372,11 @@ export interface AppSettings {
    * Default false (off).
    */
   sidebarDockMagnify: boolean;
+  /**
+   * Shows developer-only settings (系统指令). Default false.
+   * Missing on disk stays off.
+   */
+  developerMode: boolean;
   /** Master switch for keyword-based auto tool approval. */
   autoApprovalEnabled: boolean;
   autoApprovalRules: AutoApprovalRule[];
@@ -1388,6 +1407,11 @@ export interface AppSettings {
    * Always-on Local is implicit (`LOCAL_COMPUTER_ID`) and not listed here.
    */
   computers: ComputerEntry[];
+  /**
+   * Shell/fs computer when the conversation does not name one.
+   * `local` or a `computers` id. Missing / unknown normalizes to `local`.
+   */
+  defaultComputerId: string;
 }
 
 /** Roster row in `~/.okbot/bots.json` (name card only). */
@@ -1657,6 +1681,40 @@ export function emptyUsageStats(): UsageStats {
   return { lifetime: emptyTokenUsage(), daily: {}, byOwner: {}, dailyByOwner: {} };
 }
 
+function usageTokenMap(raw: unknown): Record<string, TokenUsage> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out: Record<string, TokenUsage> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    const usage = normalizeTokenUsage(value);
+    if (usage) out[key] = usage;
+  }
+  return out;
+}
+
+/**
+ * Coerce a gateway or file payload into the Electron IPC `UsageStats` shape.
+ * Missing or non-object token bags become zeros so callers never read `.input` on undefined.
+ * Arrays (legacy gateway stubs used `byOwner: []`) are treated as empty maps.
+ */
+export function normalizeUsageStats(raw: unknown): UsageStats {
+  const src =
+    raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  const dailyByOwner: Record<string, Record<string, TokenUsage>> = {};
+  const rawDailyByOwner = src.dailyByOwner;
+  if (rawDailyByOwner && typeof rawDailyByOwner === 'object' && !Array.isArray(rawDailyByOwner)) {
+    for (const [ownerId, days] of Object.entries(rawDailyByOwner as Record<string, unknown>)) {
+      const map = usageTokenMap(days);
+      if (Object.keys(map).length > 0) dailyByOwner[ownerId] = map;
+    }
+  }
+  return {
+    lifetime: normalizeTokenUsage(src.lifetime) ?? emptyTokenUsage(),
+    daily: usageTokenMap(src.daily),
+    byOwner: usageTokenMap(src.byOwner),
+    dailyByOwner,
+  };
+}
+
 export type ChatRole = 'user' | 'assistant' | 'system';
 
 /** Renderer-only lifecycle for optimistic user bubbles (not persisted). */
@@ -1751,6 +1809,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   hardwareAcceleration: true,
   autoUpdate: true,
   sidebarDockMagnify: false,
+  developerMode: false,
   autoApprovalEnabled: false,
   autoApprovalRules: [],
   tools: {
@@ -1775,6 +1834,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   toolRun: { ...DEFAULT_TOOL_RUN },
   localHttpApi: { ...DEFAULT_LOCAL_HTTP_API, token: '' },
   computers: [],
+  defaultComputerId: LOCAL_COMPUTER_ID,
 };
 
 export const EMOJI_PRESETS = [

@@ -48,6 +48,7 @@ import {
 } from './features/sidebar';
 import { SquadWizardModal } from './features/squads';
 import { WindowControls } from './features/window';
+import { QuickTip } from './components/ui/QuickTip';
 import { useScrollFade } from './hooks/useScrollFade';
 import { applyTheme, subscribeSystemTheme } from './utils/theme';
 import { updateScrollFade } from './utils/scrollFade';
@@ -184,13 +185,6 @@ export function App() {
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
   const [immersiveChat, setImmersiveChat] = useState(loadImmersiveChat);
 
-  const [selectedComputerId, setSelectedComputerId] = useState<string>(() => {
-    try {
-      return localStorage.getItem('okbot.selectedComputerId') || 'local';
-    } catch {
-      return 'local';
-    }
-  });
   const immersiveChatRef = useRef(immersiveChat);
   immersiveChatRef.current = immersiveChat;
   const [resizing, setResizing] = useState(false);
@@ -2023,9 +2017,6 @@ async function handleSend(retry?: {
       const sendOpts = {
         ...(quoteMessageId ? { quoteMessageId } : {}),
         ...(structuredAtts?.length ? { attachments: structuredAtts } : {}),
-        ...(selectedComputerId && selectedComputerId !== 'local'
-          ? { computerId: selectedComputerId }
-          : { computerId: selectedComputerId || 'local' }),
       };
       if (kind === 'squad') await window.okbot.chatStartSquad(ownerId, text, sendOpts);
       else await window.okbot.chatStart(ownerId, text, sendOpts);
@@ -2590,19 +2581,6 @@ async function handleSend(retry?: {
         onSend={onSend}
         onStop={handleStop}
         onToggleVoice={onToggleVoice}
-            computers={[
-              { id: 'local', name: lang === 'en' ? 'Local' : '本机' },
-              ...(settings?.computers ?? []).map((c) => ({ id: c.id, name: c.name })),
-            ]}
-            computerId={selectedComputerId}
-            onComputerIdChange={(id) => {
-              setSelectedComputerId(id);
-              try {
-                localStorage.setItem('okbot.selectedComputerId', id);
-              } catch {
-                /* ignore */
-              }
-            }}
       />
     ),
     [
@@ -2773,6 +2751,7 @@ async function handleSend(retry?: {
                         ? t(lang, 'newVersionFound')
                         : t(lang, 'downloadUpdate');
                   return (
+                    <QuickTip text={title} place="below">
                     <button
                       type="button"
                       className={`header-icon-btn header-update-btn${
@@ -2782,7 +2761,6 @@ async function handleSend(retry?: {
                             ? ' ready'
                             : ' available'
                       }${showBadge ? ' has-badge' : ''}`}
-                      title={title}
                       aria-label={aria}
                       disabled={isDownloading && autoUpdateOn}
                       onClick={() => {
@@ -2798,32 +2776,35 @@ async function handleSend(retry?: {
                     >
                       {isReady ? <InstallUpdateIcon /> : <DownloadUpdateIcon />}
                     </button>
+                    </QuickTip>
                   );
                 })()}
+                <QuickTip text={t(lang, 'copyRequestUrl')} place="below">
                 <button
                   type="button"
                   className="header-icon-btn"
-                  title={t(lang, 'copyRequestUrl')}
                   aria-label={t(lang, 'copyRequestUrl')}
                   onClick={() => void copyLocalHttpRequestUrl()}
                 >
                   <CopyRequestUrlIcon />
                 </button>
+                </QuickTip>
+                <QuickTip text={t(lang, 'runTraceButton')} place="below">
                 <button
                   type="button"
                   className="header-icon-btn"
-                  title={t(lang, 'runTraceButton')}
                   aria-label={t(lang, 'runTraceButton')}
                   onClick={() => void openRunTrace()}
                 >
                   <RunTraceIcon />
                 </button>
+                </QuickTip>
+                <QuickTip place="below" text={t(lang, 'themeCycle', {
+                    mode: themeModeLabel(settings?.theme ?? 'system'),
+                  })}>
                 <button
                   type="button"
                   className="header-icon-btn"
-                  title={t(lang, 'themeCycle', {
-                    mode: themeModeLabel(settings?.theme ?? 'system'),
-                  })}
                   aria-label={t(lang, 'themeCycle', {
                     mode: themeModeLabel(settings?.theme ?? 'system'),
                   })}
@@ -2831,15 +2812,17 @@ async function handleSend(retry?: {
                 >
                   <ThemeModeIcon mode={settings?.theme ?? 'system'} />
                 </button>
+                </QuickTip>
+                <QuickTip text={t(lang, 'aboutOpen')} place="below">
                 <button
                   type="button"
                   className="header-icon-btn"
-                  title={t(lang, 'aboutOpen')}
                   aria-label={t(lang, 'aboutOpen')}
                   onClick={() => setAboutOpen(true)}
                 >
                   <AboutIcon />
                 </button>
+                </QuickTip>
                 {platform === 'win32' ? <WindowControls lang={lang} /> : null}
               </div>
             </div>

@@ -246,21 +246,6 @@ app.whenReady().then(() => {
   });
 
   const uiRoot = path.join(__dirname, '../renderer');
-  localHttpApiController = createLocalHttpApi({
-    ctx: {
-      storage,
-      abortControllers,
-      pendingToolApprovals,
-      hardwareAccelerationActive,
-      sendRuntimeEvent,
-      snapshotActiveRuns,
-      rejectPendingApprovalsForBot,
-      applyTheme,
-      onAutoUpdatePreferenceChanged,
-    },
-    uiRoot,
-  });
-
   const syncLocalHttpApi = () => {
     try {
       localHttpApiController?.sync(storage.getSettings().localHttpApi);
@@ -269,7 +254,7 @@ app.whenReady().then(() => {
     }
   };
 
-  registerAllIpc({
+  const ipcCtx = {
     storage,
     abortControllers,
     pendingToolApprovals,
@@ -280,7 +265,13 @@ app.whenReady().then(() => {
     applyTheme,
     onAutoUpdatePreferenceChanged,
     onLocalHttpApiSettingsChanged: syncLocalHttpApi,
+  };
+  localHttpApiController = createLocalHttpApi({
+    ctx: ipcCtx,
+    uiRoot,
   });
+
+  registerAllIpc(ipcCtx);
 
   syncLocalHttpApi();
 

@@ -9,6 +9,7 @@ import {
 import type { ChatMessage, ResolvedModelConfig, SecuritySettings, ToolPreferences } from '@okbot/shared';
 import { createId, DEFAULT_SECURITY, DEFAULT_TOOL_PREFERENCES } from '@okbot/shared';
 import { buildAgentInstructions } from './instructions.js';
+import { formatComputerRoutingSection, type ComputerRoute } from './computerSelection.js';
 import { buildTools, type SkillLookup } from './tools.js';
 import type { ExecutionBackend } from './executionBackend.js';
 import type { ToolRunBudget } from './toolRunBudget.js';
@@ -89,8 +90,10 @@ export function createAgentAndRunner(input: {
   ownerId?: string;
   /** Absolute owner `resources/` dir for generate_image. */
   resourcesDir?: string;
-  /** Shell/fs backend (local or remote cloud computer). */
+  /** Shell/fs backend (local or remote cloud computer). Ignored when computerRoute is set. */
   executionBackend?: ExecutionBackend;
+  /** Per-call computer selection for shell/fs tools. */
+  computerRoute?: ComputerRoute;
 }) {
   const toolPrefs = input.tools ?? DEFAULT_TOOL_PREFERENCES;
   const security = input.security ?? DEFAULT_SECURITY;
@@ -113,6 +116,7 @@ export function createAgentAndRunner(input: {
       input.sessionSummary,
       input.assistantRoleTemplate,
       input.hasVisionInput === true,
+      input.computerRoute ? formatComputerRoutingSection(input.computerRoute) : '',
     ),
     model: input.model.model,
     ...(typeof input.model.maxTokens === 'number' && input.model.maxTokens >= 1
@@ -130,7 +134,8 @@ export function createAgentAndRunner(input: {
         input.ownerId && input.resourcesDir
           ? { ownerId: input.ownerId, resourcesDir: input.resourcesDir }
           : undefined,
-      backend: input.executionBackend,
+      backend: input.computerRoute ? undefined : input.executionBackend,
+      computerRoute: input.computerRoute,
     }),
   });
   const runner = new Runner({

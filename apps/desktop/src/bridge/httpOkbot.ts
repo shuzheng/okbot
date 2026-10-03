@@ -3,6 +3,9 @@
  * over the desktop LAN HTTP API (REST + SSE). Same UI codebase.
  */
 
+import { normalizeUsageStats } from '@okbot/shared';
+
+
 type Json = Record<string, unknown>;
 
 function gatewayToken(): string {
@@ -184,6 +187,9 @@ export function fillGatewaySettings(settings: unknown) {
     theme: s.theme || 'system',
     language: s.language || 'system',
     computers: Array.isArray(s.computers) ? s.computers : [],
+    defaultComputerId: typeof s.defaultComputerId === 'string' && s.defaultComputerId.trim()
+      ? s.defaultComputerId.trim()
+      : 'local',
     tools: fillGatewayTools(s.tools),
     security: {
       enabled: security.enabled !== false,
@@ -246,8 +252,9 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
       return (Array.isArray(squads) ? squads : []).map(fillGatewaySquad);
     },
     getSettings: async () => (await okbot.getBootstrap()).settings,
-    saveSettings: async () => {
-      throw new Error('Saving settings from gateway web UI is not supported yet');
+    saveSettings: async (settings: unknown) => {
+      const json = await api<any>('POST', '/v1/settings', settings);
+      return fillGatewaySettings(json?.settings ?? json);
     },
     getMessagesPage: async (ownerId: string, opts?: { limit?: number; beforeMessageId?: string }) => {
       // Try bot path first; gateway accepts both bots and squads via same handler when we pass bots
@@ -397,7 +404,10 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
     onWindowMaximizedChanged: () => () => {},
     ensureMicrophoneAccess: async () => ({ granted: false }),
     openMicrophoneSettings: async () => false,
-    getUsageStats: async () => ({ byOwner: [], daily: [] }),
+    getUsageStats: async () => {
+      const body = await api<Record<string, unknown>>('GET', '/v1/usage');
+      return normalizeUsageStats(body);
+    },
     pickPaths: async () => ({ canceled: true, paths: [] }),
     readGeneratedAssetDataUrl: async () => null,
     getPromptContext: async () => ({ text: null }),

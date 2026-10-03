@@ -9,6 +9,7 @@ import type { Session, SessionInputCallback } from '@openai/agents';
 import type { ToolRunBudget } from './toolRunBudget.js';
 import type { SkillLookup } from './tools.js';
 import type { ExecutionBackend } from './executionBackend.js';
+import type { ComputerRoute } from './computerSelection.js';
 
 export interface RunChatInput {
   botName: string;
@@ -78,8 +79,10 @@ export interface RunAgentChatInput extends RunChatInput {
   ownerId: string;
   /** Absolute `~/.okbot/<ownerId>/resources` directory. */
   resourcesDir: string;
-  /** Shell/fs backend for this run (local or cloud computer). */
+  /** Shell/fs backend for this run (local or cloud computer). Ignored when computerRoute is set. */
   executionBackend?: ExecutionBackend;
+  /** Per-call computer selection for shell/fs tools. */
+  computerRoute?: ComputerRoute;
   onToolApprovalRequest: (req: ToolApprovalRequest) => Promise<ToolApprovalDecision>;
   onToolResult?: (info: {
     requestId: string;
@@ -114,8 +117,10 @@ export interface ResumeAgentChatAfterHitlInput {
   ownerId: string;
   /** Absolute `~/.okbot/<ownerId>/resources` directory. */
   resourcesDir: string;
-  /** Shell/fs backend for this run (local or cloud computer). */
+  /** Shell/fs backend for this run (local or cloud computer). Ignored when computerRoute is set. */
   executionBackend?: ExecutionBackend;
+  /** Per-call computer selection for shell/fs tools. */
+  computerRoute?: ComputerRoute;
   signal?: AbortSignal;
   onDelta?: (delta: string) => void;
   onToolApprovalRequest: (req: ToolApprovalRequest) => Promise<ToolApprovalDecision>;

@@ -3548,6 +3548,17 @@ input, textarea { user-select: text; }
     background: #0a84ff;
   }
 }
+.settings-toggle:disabled,
+.settings-toggle[aria-disabled='true'] {
+  background: #656565;
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.settings-row select:disabled,
+.settings-row input:disabled {
+  color: color-mix(in srgb, var(--text) 45%, transparent);
+  cursor: not-allowed;
+}
 .settings-restart-hint {
   margin-top: 8px;
   font-size: 12px;
@@ -4315,6 +4326,31 @@ input, textarea { user-select: text; }
   gap: 10px;
   margin-left: auto;
   flex-shrink: 0;
+}
+.settings-inline-link {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent, #6366f1);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  white-space: nowrap;
+}
+.settings-inline-link:hover {
+  color: var(--text);
+}
+.quick-tip {
+  position: fixed;
+  z-index: 200;
+  pointer-events: none;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: #2c2c2e;
+  color: #f5f5f5;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
+  white-space: nowrap;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
 }
 .settings-aar-add-btn {
   border: none;
@@ -5479,7 +5515,8 @@ input, textarea { user-select: text; }
   position: fixed;
   inset: 0;
   z-index: 80;
-  background: rgba(0, 0, 0, 0.35);
+  /* Same scrim as .modal-backdrop so the dialog sits on its own layer. */
+  background: rgba(0, 0, 0, 0.55);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -5488,10 +5525,18 @@ input, textarea { user-select: text; }
 }
 .model-edit-dialog {
   width: min(420px, 100%);
-  background: var(--panel, #1e1e1e);
+  /* Match .modal: solid surface, hairline, and lift. --panel in dark is near-black
+     and disappeared into the scrim (no border). */
+  background: #111;
+  border: 1px solid var(--border);
   border-radius: 14px;
   padding: 16px 16px 12px;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .model-edit-dialog {
+    background: #fff;
+  }
 }
 :root[data-theme='light'] .model-edit-dialog {
   background: #fff;
@@ -5688,7 +5733,7 @@ input, textarea { user-select: text; }
   font-weight: 650;
   letter-spacing: -0.02em;
 }
-.usage-chart-wrap { padding: 4px 0 2px; color: var(--muted); position: relative; }
+.usage-chart-wrap { padding: 14px 16px 12px; color: var(--muted); position: relative; }
 .usage-chart { width: 100%; height: auto; display: block; }
 .usage-legend {
   display: flex;
@@ -5735,11 +5780,14 @@ input, textarea { user-select: text; }
 .usage-chart-tip-row.input .v { color: var(--usage-input, #6366f1); }
 .usage-chart-tip-row.output .v { color: var(--usage-output, #22c55e); }
 .usage-chart-tip-row.cache .v { color: var(--usage-cache, #f59e0b); }
+.usage-filter-bar {
+  padding: 14px 16px 4px;
+}
 .usage-filter {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-bottom: 10px;
+  margin-bottom: 0;
 }
 .usage-filter-chip {
   appearance: none;
@@ -6004,28 +6052,5 @@ input, textarea { user-select: text; }
   opacity: 0.75;
 }
 
-
-/* Cloud computer selector above composer input */
-.composer-computer {
-  display: flex;
-  align-items: center;
-  padding: 0 12px 6px;
-}
-.composer-computer-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--muted, #888);
-}
-.composer-computer-select {
-  font-size: 12px;
-  padding: 4px 8px;
-  border-radius: 6px;
-  border: 1px solid var(--border, #333);
-  background: var(--panel, #1a1a1a);
-  color: inherit;
-  max-width: 220px;
-}
 
 .settings-muted { opacity: 0.6; font-size: 12px; }

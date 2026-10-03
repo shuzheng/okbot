@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import {
   addTokenUsage,
   emptyTokenUsage,
+  normalizeUsageStats,
   type Bot,
   type Squad,
   type TokenUsage,
@@ -22,7 +23,31 @@ function sumUsage(u: TokenUsage): number {
   return (u.input || 0) + (u.output || 0) + (u.cache || 0);
 }
 
+/** Never read `.input` on a missing token bag (gateway payloads can omit a day or lifetime). */
+function tokenOrEmpty(raw: TokenUsage | undefined | null): TokenUsage {
+  if (!raw || typeof raw !== 'object') return emptyTokenUsage();
+  return {
+    input: Number.isFinite(raw.input) ? raw.input : 0,
+    output: Number.isFinite(raw.output) ? raw.output : 0,
+    cache: Number.isFinite(raw.cache) ? raw.cache : 0,
+  };
+}
+
 type DayPoint = { day: string; input: number; output: number; cache: number };
+
+/**
+ * Empty selection is the 「全部」 chip. Selecting every listed assistant/squad
+ * is the same set from the user's point of view, so both must use the overall
+ * totals (`daily` / `lifetime`) rather than summing per-owner rows.
+ * Per-owner rows omit deleted assistants (kept on the overall totals) and any
+ * day recorded before `dailyByOwner` existed.
+ */
+function showsOverallUsage(selectedIds: string[], optionIds: string[]): boolean {
+  if (selectedIds.length === 0) return true;
+  if (selectedIds.length !== optionIds.length) return false;
+  const options = new Set(optionIds);
+  return selectedIds.every((id) => options.has(id));
+}
 
 function buildDailySeries(stats: UsageStats, ownerIds: string[], days = 14): DayPoint[] {
   const out: DayPoint[] = [];
@@ -34,11 +59,12 @@ function buildDailySeries(stats: UsageStats, ownerIds: string[], days = 14): Day
     const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     let u = emptyTokenUsage();
     if (!filter) {
-      u = stats.daily[key] ?? emptyTokenUsage();
+      u = tokenOrEmpty(stats.daily?.[key]);
     } else {
       for (const id of ownerIds) {
         const dayMap = stats.dailyByOwner?.[id];
-        if (dayMap?.[key]) u = addTokenUsage(u, dayMap[key]!);
+        const day = dayMap ? tokenOrEmpty(dayMap[key]) : emptyTokenUsage();
+        if (dayMap?.[key]) u = addTokenUsage(u, day);
       }
     }
     out.push({ day: key, input: u.input, output: u.output, cache: u.cache });
@@ -246,7 +272,7 @@ export function UsagePanel({
     void window.okbot
       .getUsageStats()
       .then((s) => {
-        if (!cancelled) setStats(s);
+        if (!cancelled) setStats(normalizeUsageStats(s));
       })
       .catch((err) => {
         if (!cancelled) toast.error(formatSystemError(err));
@@ -256,27 +282,31 @@ export function UsagePanel({
     };
   }, []);
 
-  const series = useMemo(
-    () => (stats ? buildDailySeries(stats, selectedOwnerIds, 14) : []),
-    [stats, selectedOwnerIds],
-  );
-
   const members = useMemo(() => {
     if (!stats) return [];
     const rows: Array<{ id: string; name: string; kind: 'bot' | 'squad'; usage: TokenUsage }> = [];
     for (const b of bots) {
-      const u = stats.byOwner[b.id];
-      if (u && sumUsage(u) > 0) rows.push({ id: b.id, name: b.name, kind: 'bot', usage: u });
+      const u = tokenOrEmpty(stats.byOwner?.[b.id]);
+      if (stats.byOwner?.[b.id] && sumUsage(u) > 0) rows.push({ id: b.id, name: b.name, kind: 'bot', usage: u });
     }
     for (const s of squads) {
-      const u = stats.byOwner[s.id];
-      if (u && sumUsage(u) > 0) rows.push({ id: s.id, name: s.name, kind: 'squad', usage: u });
+      const u = tokenOrEmpty(stats.byOwner?.[s.id]);
+      if (stats.byOwner?.[s.id] && sumUsage(u) > 0) rows.push({ id: s.id, name: s.name, kind: 'squad', usage: u });
     }
     rows.sort((a, b) => sumUsage(b.usage) - sumUsage(a.usage));
     return rows;
   }, [stats, bots, squads]);
 
   const filterOptions = members;
+  const overall = showsOverallUsage(
+    selectedOwnerIds,
+    filterOptions.map((m) => m.id),
+  );
+
+  const series = useMemo(
+    () => (stats ? buildDailySeries(stats, overall ? [] : selectedOwnerIds, 14) : []),
+    [stats, selectedOwnerIds, overall],
+  );
 
   function toggleOwner(id: string) {
     setSelectedOwnerIds((prev) =>
@@ -286,14 +316,14 @@ export function UsagePanel({
 
   const lifetime = useMemo(() => {
     if (!stats) return emptyTokenUsage();
-    if (selectedOwnerIds.length === 0) return stats.lifetime;
+    if (overall) return tokenOrEmpty(stats.lifetime);
     let u = emptyTokenUsage();
     for (const id of selectedOwnerIds) {
-      const o = stats.byOwner[id];
-      if (o) u = addTokenUsage(u, o);
+      const o = stats.byOwner?.[id];
+      if (o) u = addTokenUsage(u, tokenOrEmpty(o));
     }
     return u;
-  }, [stats, selectedOwnerIds]);
+  }, [stats, selectedOwnerIds, overall]);
 
   return (
     <div>
@@ -326,7 +356,7 @@ export function UsagePanel({
       </div>
       <div className="settings-card">
         {filterOptions.length > 0 ? (
-          <>
+          <div className="usage-filter-bar">
             <p className="usage-filter-hint">{t(lang, 'usageChartFilterHint')}</p>
             <div className="usage-filter" role="group" aria-label={t(lang, 'usageChartFilter')}>
               <button
@@ -350,7 +380,7 @@ export function UsagePanel({
                 </button>
               ))}
             </div>
-          </>
+          </div>
         ) : null}
         <UsageLineChart series={series} lang={lang} />
       </div>

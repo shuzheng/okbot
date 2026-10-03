@@ -14,6 +14,7 @@ export function SettingsToggle({ checked, onChange, disabled, 'aria-label': aria
       role="switch"
       aria-checked={checked}
       aria-label={ariaLabel}
+      aria-disabled={disabled || undefined}
       disabled={disabled}
       onClick={onChange}
     >

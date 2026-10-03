@@ -5,6 +5,7 @@ import { t, type UiLang } from '../../i18n';
 import type { MenuState, RenameTarget, Selection, SessionItem } from '../../types';
 import { FlatAvatar, SquadAvatar } from '../../components/ui/avatars';
 import { ImportAssistantIcon, PersonIcon, SearchIcon, SettingsIcon, SquadNavIcon } from '../../components/ui/icons';
+import { QuickTip } from '../../components/ui/QuickTip';
 import { formatSessionUpdatedAt } from '../../utils/formatSessionUpdatedAt';
 
 export type DockTipTarget =
@@ -140,21 +141,22 @@ export const SessionSidebar = memo(function SessionSidebar({
       <div className="sidebar-topbar">
         {!narrow && (
           <>
+            <QuickTip text={t(lang, 'search')} place="below">
             <button
               type="button"
               className="search-btn"
-              title={t(lang, 'search')}
               aria-label={t(lang, 'search')}
               onClick={onOpenSearch}
             >
               <SearchIcon />
             </button>
+            </QuickTip>
+            <QuickTip text={t(lang, 'sidebarNew')} place="below">
             <button
               ref={newBtnRef}
               className="new-btn"
-              title={t(lang, 'newSession')}
               onClick={onOpenCreateMenu}
-              aria-label={t(lang, 'newSession')}
+              aria-label={t(lang, 'sidebarNew')}
             >
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden>
                 <path
@@ -165,6 +167,7 @@ export const SessionSidebar = memo(function SessionSidebar({
                 />
               </svg>
             </button>
+            </QuickTip>
           </>
         )}
       </div>
@@ -436,13 +439,13 @@ export const SessionSidebar = memo(function SessionSidebar({
         {narrow ? (
           <div ref={footerFabRef} className={`footer-fab${footerMenuOpen ? ' open' : ''}`}>
             <div className="footer-fab-actions" role="menu">
+              <QuickTip text={t(lang, 'sidebarNew')}>
               <button
                 ref={newBtnFooterRef}
                 type="button"
                 className="new-btn-footer"
                 role="menuitem"
-                title={t(lang, 'newSession')}
-                aria-label={t(lang, 'newSession')}
+                aria-label={t(lang, 'sidebarNew')}
                 onClick={(e) => {
                   onOpenCreateMenu(e);
                 }}
@@ -456,11 +459,12 @@ export const SessionSidebar = memo(function SessionSidebar({
                   />
                 </svg>
               </button>
+              </QuickTip>
+              <QuickTip text={t(lang, 'search')}>
               <button
                 type="button"
                 className="search-btn-footer"
                 role="menuitem"
-                title={t(lang, 'search')}
                 aria-label={t(lang, 'search')}
                 onClick={() => {
                   setFooterMenuOpen(false);
@@ -469,11 +473,12 @@ export const SessionSidebar = memo(function SessionSidebar({
               >
                 <SearchIcon />
               </button>
+              </QuickTip>
+              <QuickTip text={t(lang, 'settings')}>
               <button
                 type="button"
                 className="footer-btn"
                 role="menuitem"
-                title={t(lang, 'settings')}
                 aria-label={t(lang, 'settings')}
                 onClick={() => {
                   setFooterMenuOpen(false);
@@ -485,6 +490,7 @@ export const SessionSidebar = memo(function SessionSidebar({
                 </span>
                 <span className="label">{t(lang, 'settings')}</span>
               </button>
+              </QuickTip>
             </div>
             <button
               type="button"

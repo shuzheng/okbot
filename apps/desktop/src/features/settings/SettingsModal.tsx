@@ -13,10 +13,12 @@ import {
   normalizeToolRunSettings,
   normalizeToolRunMaxToolCalls,
   normalizeToolRunMaxDurationSec,
+  DEFAULT_LOCAL_HTTP_API_PORT,
   normalizeLocalHttpApiSettings,
   sanitizeLocalHttpApiToken,
   generateLocalHttpApiToken,
   normalizeComputers,
+  normalizeDefaultComputerId,
   type ComputerEntry,
   type MemoryEntry,
   type AppSettings,
@@ -43,6 +45,15 @@ import { SettingsToggle } from './SettingsToggle';
 import { ModelProvidersPanel } from './ModelProvidersPanel';
 import { UsagePanel } from './UsagePanel';
 import { ComputersSettingsPanel } from './ComputersSettingsPanel';
+
+
+function gatewayWebUiUrl(portRaw: string, token: string): string {
+  const n = Number(portRaw);
+  const port = Number.isInteger(n) && n >= 1024 && n <= 65535 ? n : DEFAULT_LOCAL_HTTP_API_PORT;
+  const base = `http://127.0.0.1:${port}/`;
+  const secret = token.trim();
+  return secret ? `${base}?token=${encodeURIComponent(secret)}` : base;
+}
 
 export function SettingsModal({
   settings,
@@ -89,6 +100,10 @@ export function SettingsModal({
   const [sidebarDockMagnify, setSidebarDockMagnify] = useState(
     settings.sidebarDockMagnify === true,
   );
+  const [developerMode, setDeveloperMode] = useState(settings.developerMode === true);
+  useEffect(() => {
+    if (!developerMode && tab === 'instructions') setTab('general');
+  }, [developerMode, tab]);
   const initialLocalHttpApi = normalizeLocalHttpApiSettings(settings.localHttpApi);
   const [localHttpApiEnabled, setLocalHttpApiEnabled] = useState(initialLocalHttpApi.enabled);
   const [localHttpApiPort, setLocalHttpApiPort] = useState(String(initialLocalHttpApi.port));
@@ -98,6 +113,9 @@ export function SettingsModal({
   const [localHttpApiServeUi, setLocalHttpApiServeUi] = useState(initialLocalHttpApi.serveUi === true);
   const [computersDraft, setComputersDraft] = useState<ComputerEntry[]>(() =>
     normalizeComputers(settings.computers),
+  );
+  const [defaultComputerId, setDefaultComputerId] = useState(() =>
+    normalizeDefaultComputerId(settings.defaultComputerId, normalizeComputers(settings.computers)),
   );
 
   const [updaterStatus, setUpdaterStatus] = useState<UpdaterStatus | null>(null);
@@ -336,6 +354,7 @@ export function SettingsModal({
         hardwareAcceleration,
         autoUpdate,
         sidebarDockMagnify,
+        developerMode,
         localHttpApi: (() => {
           const nextApi = normalizeLocalHttpApiSettings({
             enabled: localHttpApiEnabled,
@@ -351,6 +370,7 @@ export function SettingsModal({
           return nextApi;
         })(),
         computers: normalizeComputers(computersDraft),
+        defaultComputerId: normalizeDefaultComputerId(defaultComputerId, normalizeComputers(computersDraft)),
         autoApprovalEnabled,
         autoApprovalRules,
         tools,
@@ -410,12 +430,14 @@ export function SettingsModal({
     hardwareAcceleration,
     autoUpdate,
     sidebarDockMagnify,
+    developerMode,
     localHttpApiEnabled,
     localHttpApiPort,
     localHttpApiToken,
     localHttpApiBindLan,
     localHttpApiServeUi,
     computersDraft,
+    defaultComputerId,
     autoApprovalEnabled,
     autoApprovalRules,
     tools,
@@ -478,29 +500,13 @@ export function SettingsModal({
           </button>
           <button
             type="button"
-            className={`settings-nav-item${tab === 'gateway' ? ' active' : ''}`}
-            onClick={() => setTab('gateway')}
+            className={`settings-nav-item${tab === 'model' ? ' active' : ''}`}
+            onClick={() => setTab('model')}
           >
             <span className="ico" aria-hidden>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                <path d="M4 8h16M4 16h16M8 4v4M16 16v4" strokeLinecap="round" />
-                <circle cx="12" cy="12" r="2" />
-              </svg>
+              <ModelNavIcon />
             </span>
-            {t(lang, 'gateway')}
-          </button>
-          <button
-            type="button"
-            className={`settings-nav-item${tab === 'computers' ? ' active' : ''}`}
-            onClick={() => setTab('computers')}
-          >
-            <span className="ico" aria-hidden>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                <rect x="3" y="4" width="18" height="12" rx="2" />
-                <path d="M8 20h8M12 16v4" strokeLinecap="round" />
-              </svg>
-            </span>
-            {t(lang, 'computers')}
+            {t(lang, 'model')}
           </button>
           <button
             type="button"
@@ -526,23 +532,29 @@ export function SettingsModal({
           </button>
           <button
             type="button"
-            className={`settings-nav-item${tab === 'model' ? ' active' : ''}`}
-            onClick={() => setTab('model')}
+            className={`settings-nav-item${tab === 'gateway' ? ' active' : ''}`}
+            onClick={() => setTab('gateway')}
           >
             <span className="ico" aria-hidden>
-              <ModelNavIcon />
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                <path d="M4 8h16M4 16h16M8 4v4M16 16v4" strokeLinecap="round" />
+                <circle cx="12" cy="12" r="2" />
+              </svg>
             </span>
-            {t(lang, 'model')}
+            {t(lang, 'gateway')}
           </button>
           <button
             type="button"
-            className={`settings-nav-item${tab === 'instructions' ? ' active' : ''}`}
-            onClick={() => setTab('instructions')}
+            className={`settings-nav-item${tab === 'computers' ? ' active' : ''}`}
+            onClick={() => setTab('computers')}
           >
             <span className="ico" aria-hidden>
-              <InstructionsNavIcon />
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                <rect x="3" y="4" width="18" height="12" rx="2" />
+                <path d="M8 20h8M12 16v4" strokeLinecap="round" />
+              </svg>
             </span>
-            {t(lang, 'instructions')}
+            {t(lang, 'computers')}
           </button>
           <button
             type="button"
@@ -577,6 +589,18 @@ export function SettingsModal({
             </span>
             {t(lang, 'updatesTab')}
           </button>
+          {developerMode ? (
+            <button
+              type="button"
+              className={`settings-nav-item${tab === 'instructions' ? ' active' : ''}`}
+              onClick={() => setTab('instructions')}
+            >
+              <span className="ico" aria-hidden>
+                <InstructionsNavIcon />
+              </span>
+              {t(lang, 'instructions')}
+            </button>
+          ) : null}
         </nav>
         <div className="settings-main">
           <div className="settings-main-head">
@@ -671,6 +695,19 @@ export function SettingsModal({
                 ) : null}
 
 
+                <div className="settings-section-label" style={{ marginTop: 16 }} data-settings-id="advanced">
+                  {t(lang, 'advanced')}
+                </div>
+                <div className="settings-card">
+                  <div className="settings-row" data-settings-id="developerMode">
+                    <span className="settings-row-label">{t(lang, 'developerMode')}</span>
+                    <SettingsToggle
+                      checked={developerMode}
+                      onChange={() => setDeveloperMode((v) => !v)}
+                    />
+                  </div>
+                </div>
+
                 <div className="settings-section-label" style={{ marginTop: 16 }} data-settings-id="data">
                   {t(lang, 'data')}
                 </div>
@@ -680,16 +717,15 @@ export function SettingsModal({
               </div>
             ) : tab === 'gateway' ? (
               <div>
-                <div
-                  className="settings-section-label settings-section-label-with-help"
-                  data-settings-id="localHttpApi"
-                >
-                  <span>{t(lang, 'localHttpApi')}</span>
-                  <SettingsHelpTip text={t(lang, 'localHttpApiHint')} />
+                <div className="settings-section-label" data-settings-id="localHttpApi">
+                  {t(lang, 'localHttpApi')}
                 </div>
                 <div className="settings-card">
                   <div className="settings-row" data-settings-id="localHttpApiEnable">
-                    <span className="settings-row-label">{t(lang, 'localHttpApiEnable')}</span>
+                    <span className="settings-row-label">
+                      <span className="settings-row-label-text">{t(lang, 'localHttpApiEnable')}</span>
+                      <SettingsHelpTip text={t(lang, 'localHttpApiHint')} />
+                    </span>
                     <SettingsToggle
                       checked={localHttpApiEnabled}
                       onChange={() => setLocalHttpApiEnabled((v) => !v)}
@@ -817,11 +853,23 @@ export function SettingsModal({
                       <span className="settings-row-label-text">{t(lang, 'localHttpApiServeUi')}</span>
                       <SettingsHelpTip text={t(lang, 'localHttpApiServeUiHint')} />
                     </span>
-                    <SettingsToggle
-                      checked={localHttpApiServeUi}
-                      disabled={!localHttpApiEnabled}
-                      onChange={() => setLocalHttpApiServeUi((v) => !v)}
-                    />
+                    <span className="settings-row-trailing">
+                      {localHttpApiServeUi ? (
+                        <a
+                          className="settings-inline-link"
+                          href={gatewayWebUiUrl(localHttpApiPort, localHttpApiToken)}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                        >
+                          {t(lang, 'localHttpApiOpenUi')}
+                        </a>
+                      ) : null}
+                      <SettingsToggle
+                        checked={localHttpApiServeUi}
+                        disabled={!localHttpApiEnabled}
+                        onChange={() => setLocalHttpApiServeUi((v) => !v)}
+                      />
+                    </span>
                   </div>
                 </div>
               </div>
@@ -829,7 +877,9 @@ export function SettingsModal({
               <ComputersSettingsPanel
                 lang={lang}
                 computers={computersDraft}
+                defaultComputerId={defaultComputerId}
                 onChange={setComputersDraft}
+                onDefaultComputerIdChange={setDefaultComputerId}
               />
             ) : tab === 'tools' ? (
               <div>
@@ -1611,14 +1661,15 @@ export function SettingsModal({
             ) : tab === 'memory' ? (
               <div>
                 <div
-                  className="settings-section-label"
+                  className="settings-section-label settings-section-label-with-help"
                   data-settings-id="globalMemories"
                 >
-                  {t(lang, 'globalMemories')}
+                  <span>{t(lang, 'globalMemoriesManage')}</span>
+                  <SettingsHelpTip text={t(lang, 'globalMemoriesManageHint')} />
                 </div>
                 <div className="settings-card">
                   <div className="settings-row">
-                    <span className="settings-row-label">{t(lang, 'globalMemories')}</span>
+                    <span className="settings-row-label">{t(lang, 'memoryList')}</span>
                     <div className="settings-row-trailing">
                       <button
                         type="button"

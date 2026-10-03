@@ -41,8 +41,9 @@ Token file: `/tmp/okbot-sandbox-agent.token` (and acceptance notes below after o
 3. Host: `127.0.0.1` (same Mac) or LAN IP of the host  
 4. Port: `18790`  
 5. Token: contents of `/tmp/okbot-sandbox-agent.token`  
-6. In chat composer, select that computer → ask the bot to `run_shell` (`uname -a` / `hostname`)  
-7. Tool output should show container hostname / Linux — not macOS Darwin.
+6. Add is blocked until a probe succeeds: `GET /v1/health` must be `okbot-sandbox-agent`, then an empty `POST /v1/shell` must return 400 `command_required` (token check only, no command). Unreachable, wrong service, or a bad token is not saved.  
+7. In chat composer, select that computer → ask the bot to `run_shell` (`uname -a` / `hostname`)  
+8. Tool output should show container hostname / Linux — not macOS Darwin.
 
 ### Automated smoke
 

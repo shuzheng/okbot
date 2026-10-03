@@ -42,6 +42,8 @@ export function buildAgentInstructions(
   assistantRoleTemplate?: string,
   /** When this turn carries vision image parts, override stale "no images" AGENTS claims. */
   hasVisionInput?: boolean,
+  /** Computer routing section from formatComputerRoutingSection. Omitted when unset. */
+  computerRouting?: string,
 ): string {
   const enabled = listEnabledToolIds(prefs);
   const toolLine = formatEnabledLocalToolsLine(prefs);
@@ -76,6 +78,7 @@ export function buildAgentInstructions(
       hasVisionInput ? VISION_TURN_INSTRUCTION : '',
       '用简洁、清楚的中文回答。',
       toolLine,
+      computerRouting?.trim() || '',
       enabled.includes('edit_file') || enabled.includes('write_file')
         ? '修改代码时优先 edit_file 做小范围外科手术式改动；新建文件或需要大幅重写时用 write_file。能读则先 read_file 再改。'
         : '',

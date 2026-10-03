@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { t, type UiLang } from '../../i18n';
+import { QuickTip } from '../../components/ui/QuickTip';
 
 function MinimizeIcon() {
   return (
@@ -75,10 +76,10 @@ export function WindowControls({ lang }: { lang: UiLang }) {
 
   return (
     <div className="window-controls" role="group" aria-label="Window">
+      <QuickTip text={t(lang, 'windowMinimize')} place="below">
       <button
         type="button"
         className="window-control-btn minimize"
-        title={t(lang, 'windowMinimize')}
         aria-label={t(lang, 'windowMinimize')}
         onClick={() => {
           void window.okbot.windowMinimize();
@@ -86,10 +87,11 @@ export function WindowControls({ lang }: { lang: UiLang }) {
       >
         <MinimizeIcon />
       </button>
+      </QuickTip>
+      <QuickTip text={t(lang, maximized ? 'windowRestore' : 'windowMaximize')} place="below">
       <button
         type="button"
         className="window-control-btn maximize"
-        title={t(lang, maximized ? 'windowRestore' : 'windowMaximize')}
         aria-label={t(lang, maximized ? 'windowRestore' : 'windowMaximize')}
         onClick={() => {
           void window.okbot.windowMaximizeToggle().then(setMaximized);
@@ -97,10 +99,11 @@ export function WindowControls({ lang }: { lang: UiLang }) {
       >
         {maximized ? <RestoreIcon /> : <MaximizeIcon />}
       </button>
+      </QuickTip>
+      <QuickTip text={t(lang, 'windowClose')} place="below">
       <button
         type="button"
         className="window-control-btn close"
-        title={t(lang, 'windowClose')}
         aria-label={t(lang, 'windowClose')}
         onClick={() => {
           void window.okbot.windowClose();
@@ -108,6 +111,7 @@ export function WindowControls({ lang }: { lang: UiLang }) {
       >
         <CloseGlyph />
       </button>
+      </QuickTip>
     </div>
   );
 }

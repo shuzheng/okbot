@@ -3,13 +3,14 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Socket } from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { RuntimeEvent, LocalHttpApiSettings } from '@okbot/shared';
+import { normalizeUsageStats, type AppSettings, type RuntimeEvent, type LocalHttpApiSettings } from '@okbot/shared';
 import { acceptRuntimeEventForSseTurn, encodeRuntimeEventSse, isRuntimeEventTurnTerminal } from '@okbot/agent';
 import type { IpcContext } from './ipc/context';
 import { abortChatOwner } from './ipc/chatControl';
 import { gatewayBootJs, gatewayLoginHtml, injectGatewayBoot, shouldServeGatewayLogin } from './gatewayLoginPage';
 import { runtimeEventChannel } from './sessionEvents';
 import { respondToToolApproval, startChatTurn } from './ipc/registerChat';
+import { persistAppSettings } from './ipc/registerEntity';
 
 const LOOPBACK_HOST = '127.0.0.1';
 const LAN_HOST = '0.0.0.0';
@@ -492,6 +493,57 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
             })),
           ],
         });
+        return;
+      }
+
+      // GET /v1/usage — same UsageStats shape as Electron getUsageStats.
+      if (method === 'GET' && parts.length === 2 && parts[0] === 'v1' && parts[1] === 'usage') {
+        const stats = normalizeUsageStats(deps.ctx.storage.getUsageStats());
+        sendJson(res, 200, { ok: true, ...stats });
+        return;
+      }
+
+      // POST /v1/settings — same persist path as Electron saveSettings (gateway Web UI).
+      if (
+        method === 'POST' &&
+        parts.length === 2 &&
+        parts[0] === 'v1' &&
+        parts[1] === 'settings'
+      ) {
+        let parsed: unknown;
+        try {
+          const raw = await readBody(req);
+          parsed = raw.trim() ? JSON.parse(raw) : null;
+        } catch (err) {
+          if (err instanceof Error && err.message === 'payload_too_large') {
+            sendJson(res, 413, { ok: false, error: 'payload_too_large' });
+            return;
+          }
+          sendJson(res, 400, { ok: false, error: 'invalid_json' });
+          return;
+        }
+        const body = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+          ? (parsed as Record<string, unknown>)
+          : null;
+        const settings =
+          body && body.settings && typeof body.settings === 'object' && !Array.isArray(body.settings)
+            ? body.settings
+            : body;
+        if (!settings) {
+          sendJson(res, 400, { ok: false, error: 'invalid_settings' });
+          return;
+        }
+        try {
+          const saved = persistAppSettings(deps.ctx, settings as AppSettings, {
+            deferListenerRestart: true,
+          });
+          sendJson(res, 200, { ok: true, settings: saved });
+        } catch (err) {
+          sendJson(res, 400, {
+            ok: false,
+            error: err instanceof Error ? err.message : 'save_failed',
+          });
+        }
         return;
       }
 

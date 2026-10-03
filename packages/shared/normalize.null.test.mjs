@@ -15,6 +15,9 @@ import {
   normalizeSquadSettings,
   normalizeLocalHttpApiSettings,
   sanitizeLocalHttpApiToken,
+  normalizeComputerEntry,
+  normalizeDefaultComputerId,
+  LOCAL_COMPUTER_ID,
   normalizeInstructionsSettings,
   LEGACY_DEFAULT_SQUAD_CAPTAIN_PERSONA,
   LEGACY_DEFAULT_SQUAD_PLAYBOOK,
@@ -88,3 +91,25 @@ assert.equal(disabledEmpty.token, '');
 const enabledEmpty = normalizeLocalHttpApiSettings({ enabled: true, token: '!!!' });
 assert.match(enabledEmpty.token, /^[A-Za-z0-9_-]+$/);
 assert.notEqual(enabledEmpty.token, '');
+
+const keptComputer = normalizeComputerEntry({
+  id: 'computer_a',
+  name: 'A',
+  host: '127.0.0.1',
+  port: 18790,
+  token: 'tok',
+});
+assert.equal(keptComputer && keptComputer.enabled, true);
+const offComputer = normalizeComputerEntry({
+  id: 'computer_b',
+  name: 'B',
+  host: '127.0.0.1',
+  port: 18790,
+  token: 'tok',
+  enabled: false,
+});
+assert.equal(offComputer && offComputer.enabled, false);
+assert.equal(
+  normalizeDefaultComputerId('computer_b', [offComputer]),
+  LOCAL_COMPUTER_ID,
+);

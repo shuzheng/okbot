@@ -17,15 +17,16 @@ Each assistant is a **person** with a name, avatar, and personality, so conversa
 
 ## Features
 
-- **Assistants** — build them like people: name and avatar
-- **Squads** — put assistants on a team, assign a task, and let them collaborate automatically
-- **Immersive chat** — stream replies like an IM, redirect mid-answer, retry failed sends, stay scrolled to the latest message
-- **Attachments** — send images, files, and folders; images are shown to the model as pictures, not only as paths
-- **Local tools** — assistants can read / write files and run commands when you allow it (auto-approve or ask each time)
-- **Skills & memory** — skills surface when useful; assistants remember what matters across conversations
-- **Model support** — connect the providers you already use; pick a model and start chatting
-- **Voice input** — speak on-device with Whisper (no cloud speech API)
-- **Observability** — lightweight token stats and run logs
+- **Assistants** — Create an assistant as a person: name and avatar, then chat like an IM
+- **Squads** — Group assistants into a team; you assign the task, they collaborate
+- **Shared assistants** — Export and import assistant packs (name, avatar, persona, skills)
+- **Remote computers** — Connect cloud computers and run on different machines
+- **Private deployment** — Turn on the LAN gateway and open the same chat in a browser; data stays on your machine
+- **Immersive chat** — Stream replies like an IM window, steer mid-turn, retry a failed send, stay on the latest message
+- **Skills and memory** — Skills open only when needed; important things are remembered across chats
+- **Models** — Connect the providers you already have and pick a model
+- **Voice input** — On-device Whisper transcription (no cloud speech API)
+- **Observability** — Light token stats and run logs
 
 ## Install
 

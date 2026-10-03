@@ -50,6 +50,7 @@ import {
   type SessionsChangedReason,
   normalizeLocalHttpApiSettings,
   normalizeComputers,
+  normalizeDefaultComputerId,
 } from '@okbot/shared';
 import {
   parseSkillMarkdown,
@@ -671,6 +672,7 @@ export class FileStorage {
         toolRun: { ...DEFAULT_SETTINGS.toolRun },
         localHttpApi: normalizeLocalHttpApiSettings(DEFAULT_SETTINGS.localHttpApi),
         computers: [],
+        defaultComputerId: 'local',
         autoApprovalRules: [...DEFAULT_SETTINGS.autoApprovalRules],
       };
     }
@@ -687,6 +689,7 @@ export class FileStorage {
       hardwareAcceleration: raw.hardwareAcceleration !== false,
       autoUpdate: raw.autoUpdate !== false,
       sidebarDockMagnify: raw.sidebarDockMagnify === true,
+      developerMode: raw.developerMode === true,
       autoApprovalEnabled: raw.autoApprovalEnabled === true,
       autoApprovalRules: normalizeAutoApprovalRules(raw.autoApprovalRules),
       tools: normalizeToolPreferences((raw as { tools?: unknown }).tools),
@@ -702,6 +705,10 @@ export class FileStorage {
       toolRun: normalizeToolRunSettings((raw as { toolRun?: unknown }).toolRun),
       localHttpApi: normalizeLocalHttpApiSettings((raw as { localHttpApi?: unknown }).localHttpApi),
       computers: normalizeComputers((raw as { computers?: unknown }).computers),
+      defaultComputerId: normalizeDefaultComputerId(
+        (raw as { defaultComputerId?: unknown }).defaultComputerId,
+        normalizeComputers((raw as { computers?: unknown }).computers),
+      ),
     };
     // Rewrite legacy shapes in place (no dual-read forever). Only when we actually
     // read a file from disk — never after parse failure.
@@ -776,6 +783,7 @@ export class FileStorage {
       hardwareAcceleration: settings.hardwareAcceleration !== false,
       autoUpdate: settings.autoUpdate !== false,
       sidebarDockMagnify: settings.sidebarDockMagnify === true,
+      developerMode: settings.developerMode === true,
       autoApprovalEnabled: settings.autoApprovalEnabled === true,
       autoApprovalRules: normalizeAutoApprovalRules(settings.autoApprovalRules),
       tools: normalizeToolPreferences(settings.tools),
@@ -802,6 +810,10 @@ export class FileStorage {
       toolRun: normalizeToolRunSettings(settings.toolRun),
       localHttpApi: normalizeLocalHttpApiSettings(settings.localHttpApi),
       computers: normalizeComputers(settings.computers),
+      defaultComputerId: normalizeDefaultComputerId(
+        settings.defaultComputerId,
+        normalizeComputers(settings.computers),
+      ),
     };
     this.writeSettingsFile(next);
     return next;
@@ -1950,6 +1962,12 @@ export class FileStorage {
       arguments: data.arguments,
       serializedRunState: data.serializedRunState,
       createdAt: data.createdAt || new Date().toISOString(),
+      ...(typeof data.computerId === 'string' && data.computerId.trim()
+        ? { computerId: data.computerId.trim() }
+        : {}),
+      ...(typeof data.userText === 'string' && data.userText
+        ? { userText: data.userText }
+        : {}),
     };
     writeJson(this.pendingHitlFile(botId), record);
   }

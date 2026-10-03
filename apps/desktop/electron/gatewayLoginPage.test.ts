@@ -10,7 +10,7 @@ assert.equal(shouldServeGatewayLogin('POST', '/', false), false);
 
 const html = gatewayLoginHtml();
 assert.match(html, /type="password"/);
-assert.match(html, /本地网关/);
+assert.match(html, /网关服务/);
 assert.doesNotMatch(html, /unauthorized/);
 
 const boot = gatewayBootJs();

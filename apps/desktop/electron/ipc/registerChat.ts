@@ -21,7 +21,7 @@ import {
   resolveSessionInputCallbackForTurn,
   stripImageLinesFromAttachedBlock,
   type SkillLookup,
-  resolveExecutionBackend,
+  type ComputerRoute,
 } from '@okbot/agent';
 import type { IpcContext } from './context';
 import { isSquadOwnerId } from '../storage/ids';
@@ -87,6 +87,20 @@ function resolveQuoteFields(
  * Persist assistant text as-is. showThinking only affects renderer projection;
  * stripping on write used to irreversibly truncate when parseThink misfired.
  */
+
+function computerRouteFor(
+  settings: { defaultComputerId?: string; computers?: ComputerRoute['computers'] },
+  userText?: string,
+  turnComputerId?: string,
+): ComputerRoute {
+  return {
+    defaultComputerId: settings.defaultComputerId,
+    turnComputerId,
+    computers: settings.computers,
+    userText,
+  };
+}
+
 function persistAssistantContent(content: string, _showThinking: boolean): string {
   return content;
 }
@@ -99,7 +113,10 @@ export async function startChatTurn(
     text: string;
     quoteMessageId?: string;
     attachments?: ChatMessage['attachments'];
-    /** Target computer for shell/fs tools; `local` or settings.computers[].id */
+    /**
+     * Optional turn default (HTTP API). Desktop chat omits this.
+     * A computer named in `text` still wins; several names are routed per tool call.
+     */
     computerId?: string;
   },
 ): Promise<{
@@ -274,10 +291,7 @@ export async function startChatTurn(
             hasVisionInput,
             ownerId: squad.id,
             resourcesDir: ctx.storage.ownerResourcesDir(squad.id),
-            executionBackend: resolveExecutionBackend({
-              computerId: payload.computerId,
-              computers: settings.computers,
-            }),
+            computerRoute: computerRouteFor(settings, text, payload.computerId),
             userText: text,
             signal: controller.signal,
             onClearLiveText: () => {
@@ -325,7 +339,8 @@ export async function startChatTurn(
                 if (serializedRunState) {
                   try {
                     ctx.storage.savePendingHitl(squad.id, {
-                    computerId: payload.computerId,
+                      computerId: payload.computerId,
+                      userText: text,
                       v: 1,
                       requestId,
                       messageId: assistantId,
@@ -639,10 +654,7 @@ export async function startChatTurn(
           hasVisionInput,
           ownerId: bot.id,
           resourcesDir: ctx.storage.ownerResourcesDir(bot.id),
-          executionBackend: resolveExecutionBackend({
-            computerId: payload.computerId,
-            computers: settings.computers,
-          }),
+          computerRoute: computerRouteFor(settings, text, payload.computerId),
           userText: text,
           signal: controller.signal,
           onClearLiveText: () => {
@@ -691,6 +703,7 @@ export async function startChatTurn(
                 try {
                   ctx.storage.savePendingHitl(bot.id, {
                     computerId: payload.computerId,
+                    userText: text,
                     v: 1,
                     requestId,
                     messageId: assistantId,
@@ -1000,10 +1013,7 @@ export async function respondToToolApproval(
           session: fileSession,
           ownerId: bot.id,
           resourcesDir: ctx.storage.ownerResourcesDir(bot.id),
-          executionBackend: resolveExecutionBackend({
-            computerId: disk.computerId,
-            computers: settings.computers,
-          }),
+          computerRoute: computerRouteFor(settings, disk.userText, disk.computerId),
           signal: controller.signal,
           serializedRunState: disk.serializedRunState,
           requestId: disk.requestId,
@@ -1055,6 +1065,7 @@ export async function respondToToolApproval(
                 try {
                   ctx.storage.savePendingHitl(bot.id, {
                     computerId: disk.computerId,
+                    userText: disk.userText,
                     v: 1,
                     requestId,
                     messageId: assistantId,

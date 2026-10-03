@@ -13,6 +13,7 @@ import {
   allocateAskToolNames,
   buildAgentInstructions,
   buildCaptainSquadInstructions,
+  formatComputerRoutingSection,
   formatSessionPromptContext,
   probeRemoteComputer,
 } from '@okbot/agent';
@@ -30,6 +31,35 @@ export function sanitizeAssistantFilename(name: string): string {
   if (!safe || safe === '.' || safe === '..') return 'assistant';
   if (/^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i.test(safe)) return `_${safe}`;
   return safe;
+}
+
+/** Same write path for Electron IPC and the gateway HTTP API. */
+export function persistAppSettings(
+  ctx: IpcContext,
+  settings: AppSettings,
+  opts?: { deferListenerRestart?: boolean },
+): AppSettings {
+  const prev = ctx.storage.getSettings();
+  const saved = ctx.storage.saveSettings(settings);
+  ctx.applyTheme(saved.theme);
+  if (prev.autoUpdate !== saved.autoUpdate) {
+    ctx.onAutoUpdatePreferenceChanged?.(saved.autoUpdate !== false);
+  }
+  const prevApi = prev.localHttpApi;
+  const nextApi = saved.localHttpApi;
+  const listenerChanged =
+    prevApi?.enabled !== nextApi.enabled ||
+    prevApi?.port !== nextApi.port ||
+    prevApi?.token !== nextApi.token ||
+    prevApi?.bindLan !== nextApi.bindLan ||
+    prevApi?.serveUi !== nextApi.serveUi;
+  if (listenerChanged) {
+    const notify = () => ctx.onLocalHttpApiSettingsChanged?.();
+    // Restarting the HTTP server drops the socket that is still writing this response.
+    if (opts?.deferListenerRestart) setImmediate(notify);
+    else notify();
+  }
+  return saved;
 }
 
 export function registerEntityIpc(ctx: IpcContext): void {
@@ -202,24 +232,9 @@ export function registerEntityIpc(ctx: IpcContext): void {
 
   ipcMain.handle(IpcChannels.getSettings, () => ctx.storage.getSettings());
   ipcMain.handle(IpcChannels.getUsageStats, () => ctx.storage.getUsageStats());
-  ipcMain.handle(IpcChannels.saveSettings, (_e, settings: AppSettings) => {
-    const prev = ctx.storage.getSettings();
-    const saved = ctx.storage.saveSettings(settings);
-    ctx.applyTheme(saved.theme);
-    if (prev.autoUpdate !== saved.autoUpdate) {
-      ctx.onAutoUpdatePreferenceChanged?.(saved.autoUpdate !== false);
-    }
-    const prevApi = prev.localHttpApi;
-    const nextApi = saved.localHttpApi;
-    if (
-      prevApi?.enabled !== nextApi.enabled ||
-      prevApi?.port !== nextApi.port ||
-      prevApi?.token !== nextApi.token
-    ) {
-      ctx.onLocalHttpApiSettingsChanged?.();
-    }
-    return saved;
-  });
+  ipcMain.handle(IpcChannels.saveSettings, (_e, settings: AppSettings) =>
+    persistAppSettings(ctx, settings),
+  );
 
   ipcMain.handle(
     IpcChannels.discoverModels,
@@ -445,6 +460,10 @@ export function registerEntityIpc(ctx: IpcContext): void {
           prefs: toolPrefs,
           sessionSummary: sessionSummary || undefined,
           history: [] /* session owns history */,
+          computerRouting: formatComputerRoutingSection({
+            defaultComputerId: settings.defaultComputerId,
+            computers: settings.computers,
+          }),
         });
         const { items, found } = ctx.storage.getSessionItemsThroughMessage(
           squad.id,
@@ -482,6 +501,11 @@ export function registerEntityIpc(ctx: IpcContext): void {
         memoriesText,
         sessionSummary || undefined,
         settings.instructions?.assistantRoleTemplate,
+        false,
+        formatComputerRoutingSection({
+          defaultComputerId: settings.defaultComputerId,
+          computers: settings.computers,
+        }),
       );
       const { items, found } = ctx.storage.getSessionItemsThroughMessage(bot.id, payload.messageId, {
         afterMessageId: coveredThroughId,

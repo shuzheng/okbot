@@ -1,7 +1,7 @@
 {
   "name": "okbot",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "OkBot \u2014 personal desktop AI assistant",
   "packageManager": "pnpm@11.15.1",
   "scripts": {

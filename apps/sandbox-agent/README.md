@@ -34,7 +34,7 @@ curl -s -X POST http://127.0.0.1:18790/v1/shell \
   -d '{"command":"uname -a && hostname"}'
 ```
 
-Register in OkBot **Settings → Computers**: name, host (`127.0.0.1` or LAN IP), port `18790`, token.
+Register in OkBot **Settings → Computers**: name, host (`127.0.0.1` or LAN IP), port `18790`, token. OkBot probes before saving: health must report `okbot-sandbox-agent`, and an empty shell call must reject with `command_required` (no command runs). A failed probe is not stored.
 
 ## Dev
 

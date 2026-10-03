@@ -29,5 +29,7 @@ export type PendingHitlRecord = {
   arguments: unknown;
   serializedRunState: string;
   computerId?: string;
+  /** User text for this turn, so a cold resume keeps the same computer routing. */
+  userText?: string;
   createdAt: string;
 };

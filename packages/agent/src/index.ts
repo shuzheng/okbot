@@ -85,6 +85,18 @@ export {
   type ShellExecSpec,
   type ResolveShellExecOptions,
 } from './executionBackend.js';
+export {
+  computerCatalog,
+  computersMentioned,
+  defaultComputerLabel,
+  effectiveDefaultComputerId,
+  formatComputerRoutingSection,
+  resolveImplicitComputer,
+  selectComputerForTool,
+  settingsDefaultComputerId,
+  type ComputerRoute,
+  type RoutedComputer,
+} from './computerSelection.js';
 
 export {
   generateImage,

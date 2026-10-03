@@ -64,8 +64,9 @@ okbot/
 - **展开态**：搜索、会话列表（助手 + 小队）、底部 FAB（搜索 / 设置 / 创建菜单）。会话行名称右上角显示**上次更新时间**（`formatSessionUpdatedAt`，用 `SessionItem.updatedAt`）：当天 `HH:mm`；昨天 `昨天 HH:mm`（EN: `Yesterday HH:mm`）；一周内为星期（`星期x` / EN 本地化短星期）；一月内为 `MM/DD`；更早为 `YYYY/MM/DD`。次要 muted 文案，不挤占标题/未读。  
 - **折叠态**：窄轨头像列表；悬停约 **500ms** 后显示 dock tip；底部紧凑 FAB。Mac Dock 式头像放大动效默认**关闭**（`settings.sidebarDockMagnify`，设置 → 通用 →「缩放特效」）；仅开关打开时才缩放。  
 - **宽度**：可拖拽，上限约 **400px**；点击 splitter 可折叠/展开；宽度持久化（`sidebarPersistence`）。  
-- **创建菜单**：创建助手 / 创建小队（独立图标）。  
-- **会话项**：头像 + 名称 + 最近回复预览；右键：置顶 / 改名 / 资料 / 删除。  
+- **创建菜单**：创建助手 / 创建小队 / **导入助手**（独立图标；导入在「新建小队」之后）。  
+- **会话项**：头像 + 名称 + 最近回复预览。助手右键：改名 / 资料 / **导出助手** / 删除。小队右键：改名 / 资料 / 删除。  
+- **两边列表同步**：桌面窗口与局域网网关页面共用同一份 `~/.okbot`。新消息、改名、新建、删除会发 `sessions_changed`（桌面走 IPC，网关走 `GET /v1/events` 长连接，只转发花名册变更、不转发对话 delta）。收到后约 **120ms** 内重新拉助手与小队列表；当前会话若已被删掉则清空选中。  
 - **未读回复**：非当前会话、且该会话 `hasUnreadReply` 且不在「工作中」时，头像外壳加 **unread 脉冲光晕**（`session-avatar-shell.unread`，文案 `unreadReply`）。切回会话会清未读（IPC `setChatUnread`）。  
 - **小队头像**：`SquadAvatar` 田字格拼接成员 emoji/颜色（不强制 bot-avatar 造型）。
 
@@ -114,7 +115,8 @@ okbot/
 - **新建** → 两步 onboarding（场景 / 期望协作方式）写入 `AGENTS.md`。场景 chips：编程调试、内容创作、数据分析、日常助理、学习答疑、翻译润色、办公文档、资料检索、产品需求、运维排障、其他（id 为自由字符串，`finishBotOnboarding` 照常）。首次**成功完成**的对话会软关闭 onboarding；用户中途停止（`done.aborted`）不会标记完成。  
 - 编辑资料：名称、描述、头像、颜色、可选 **模型覆盖**（`providerId` + `modelId`，皆空则用全局默认；同模型 id 可跨供应商）。  
 - 资料弹层底部 **高级**（默认折叠）：**指令**（本助手 `AGENTS.md`）；**记忆**（限高列表，仅本助手；全局记忆在设置 → 记忆）；**私有技能**（限高列表编辑/删除本助手 Skills）；**全局技能**总开关（默认关）+ 按 slug 选用 `~/.agents/skills`（`bot.json`：`useGlobalSkills` / `enabledGlobalSkills`）。  
-- 系统提示：`AGENTS.md`（引导写入 + 高级可编 + 跑后静默维护）；Skills：**渐进披露**——目录（名称 / slug / 何时使用）进系统提示，完整正文经 `read_skill` 按需加载（本助手 `skills/<slug>/SKILL.md` + 可选全局）；记忆：全局 `memory.md`（设置 → 记忆）+ 每助手 `memory.md`（JSONL）。
+- 系统提示：`AGENTS.md`（引导写入 + 高级可编 + 跑后静默维护）；Skills：**渐进披露**——目录（名称 / slug / 何时使用）进系统提示，完整正文经 `read_skill` 按需加载（本助手 `skills/<slug>/SKILL.md` + 可选全局）；记忆：全局 `memory.md`（设置 → 记忆）+ 每助手 `memory.md`（JSONL）。  
+- **技能热更新**：主进程对每个助手的 `skills/` 以及（若启用）`~/.agents/skills` 做 `fs.watch`（约 120ms 去抖），变更发 `skills_changed`。不改当前转录；**下一轮**开跑和 `read_skill` 都从磁盘重读，改完文件不用重启应用。
 
 ### 4.2 双轨头像（`avatarKind`）
 
@@ -126,6 +128,14 @@ okbot/
 创建/编辑为**右侧抽屉**（粘性标题栏 + 可滚动正文）：立体头像默认；悬停头像预览显示 **»** 形双 chevron（收起态向下 / 展开态向上，无文字）；emoji 预设、「更多」全量选择器、颜色板（一行，**「默认」打头** + 预设色含 `#FFFFFF`）；`avatarKind` 切换与 `botAvatarType` 选择。两边的「默认」均存空字符串 `color === ''`（立体头像→库默认色；emoji→无背景）。从立体头像「默认」切到 emoji **不**再 hash 出随机色。缺省 / 未知 `avatarKind` 读时归一为 `bot-avatar`（无双格式 shim）。新建助手时立体头像随机一种形状，颜色用库默认（不预选色板）。
 
 立体头像：`.flat-avatar-bot` **不**裁剪库的 1.5× overscan（跳动/翻转要画到布局盒外）。侧栏 `session-list` 加大上下 padding，会话行 `overflow: visible` + 提高 z-index，避免被列表/`sidebar` 的 overflow 或邻行背景切掉（误看起来像头像框裁切）。`bot-avatars` 经 pnpm patch：去掉「不可见即停动画」的 IntersectionObserver（侧栏 overflow 会误判 overscan canvas），挂载期间保持闲置/工作动画。
+
+### 4.3 助手包（导出 / 导入）
+
+把一个助手的对外形象带走，不带走密钥和聊天记录。
+
+- **内容**：`manifest.json`（格式 `okbot-assistant`：名称、描述、头像）+ 可选 `AGENTS.md` + `skills/<slug>/SKILL.md`。  
+- **导出**：侧栏该助手右键 **导出助手**。默认文件名是助手名称（去掉不能做文件名的字符），扩展名 `.okbot`。`.okbot` 是**未加密** zip（系统 `zip`，无密码）。导出前剥掉密钥类字段（apiKey、token、password 等），**不含**会话、记忆、供应商配置。保存路径若没写 `.okbot` 会自动补上。  
+- **导入**：侧栏 **+** → **导入助手**，可选 `.okbot` 或含 `manifest.json` 的文件夹。始终**新建**一名助手（头像 / 名称 / 人设 / 技能），并标成已完成引导；不改本机模型密钥。成功后刷新会话列表。
 
 ---
 
@@ -152,13 +162,13 @@ okbot/
 
 | Tab（侧栏文案） | 内容 |
 |-----|------|
-| **通用设置** | 主题（系统/浅/深）、语言（系统/中/英）、缩放特效（默认关；? 说明仿 MacOS Dock 动效）、麦克风、硬件加速（改后需重启）、数据目录说明（**不含**更新控件，**不含**本地网关与电脑连接） |
-| **本地网关** | 原「本地 HTTP API」：启用、端口、访问令牌、局域网网关、提供 Web UI（默认关；见 §6.1） |
-| **电脑连接** | 原「云电脑」：本机始终可用；添加远程电脑用与其它设置相同的行（名称 / 主机 / 端口 / 令牌，见 §6.2） |
+| **通用设置** | 主题（系统/浅/深）、语言（系统/中/英）、缩放特效（默认关；? 说明仿 MacOS Dock 动效）、麦克风、硬件加速（改后需重启）、数据目录说明（**不含**更新控件，**不含**网关服务与电脑连接）。**高级**：`developerMode`（开发者模式，默认关）。关闭时侧栏不显示「系统指令」；若当时正停在该页，回到通用设置 |
+| **模型接入** | **自定义供应商**（可多条：名称 / BaseURL / API Format / API Key / 每供应商模型目录）；模型行**连通测试**（按该供应商 baseURL/apiKey/apiFormat 对模型 id 发最小探针，IPC `testModelConnection`）；全局**默认模型**（下方下拉，供应商→模型；列表行不再用星标设默认）；列表顺序稳定（存盘数组序，启停不重排）；助手/小队覆盖同为 `providerId`+`modelId`；上下文压缩（自动换题、比例、保留上下限默认 5、摘要字数）、**单次运行最大回合**（1:1 `maxTurns`，默认 50） |
 | **工具授权** | 六工具启用 + 审批策略（自动允许 / 询问；含 `read_skill`）；**自动审批规则（AAR）** 列表（允许/先询问、关键词、失焦自动保存草稿；空规则丢弃；重名校验；列表限高滚动）；**运行限制**（`settings.toolRun`：单轮最大工具调用 / 最大时长秒 / 记录运行轨迹，见下） |
 | **安全防护** | 总开关、拦截模式（reject / tripwire）、限制在家目录、允许/拒绝路径前缀、危险 shell 正则；与审批关系说明 |
-| **模型接入** | **自定义供应商**（可多条：名称 / BaseURL / API Format / API Key / 每供应商模型目录）；模型行**连通测试**（按该供应商 baseURL/apiKey/apiFormat 对模型 id 发最小探针，IPC `testModelConnection`）；全局**默认模型**（下方下拉，供应商→模型；列表行不再用星标设默认）；列表顺序稳定（存盘数组序，启停不重排）；助手/小队覆盖同为 `providerId`+`modelId`；上下文压缩（自动换题、比例、保留上下限默认 5、摘要字数）、**单次运行最大回合**（1:1 `maxTurns`，默认 50） |
-| **系统指令** | 子 Tab 顺序：助手 / 小队 / AGENTS.md / 记忆 / 技能。「助手」：1:1 角色句模板（`settings.instructions.assistantRoleTemplate`，`{name}` 占位，空则恢复默认）；「小队」：队长人设、Playbook、队长/队员 maxTurns（`settings.squad`，与 1:1 无关）；「AGENTS.md」：静默维护完整 system 模版（`agentsMdRefreshSystemPrompt`）+ 分析最近消息条数（`agentsMdRecentMessageLimit`，默认 12，钳制 1–100）；「记忆」：范围判定说明（`settings.memory.scopeInstruction`）+ 分析最近消息条数（`recentMessageLimit`，默认 20）；「技能」：生成/更新 skill 判定指令（`skillsCreateUpdateInstruction`，仅替换 system 中那一行）+ 分析最近消息条数（`skillsRecentMessageLimit`，默认 20）。空字符串恢复默认；缺字段读盘时由 normalize 填回，下次保存写回。侧栏图标为文档形（与小队区分）。 |
+| **网关服务** | 页内小节为「网关配置」。说明在「HTTP API」一行（小节标题不再带问号）。其下为端口、访问令牌、局域网网关、提供 Web UI（默认关；见 §6.1）。Web UI 开关打开时，开关左侧有「打开 Web UI」链接（`http://127.0.0.1:<端口>/?token=`，与登录页打开方式相同）；关掉则不显示 |
+| **电脑连接** | 列表表头「电脑名称 / 添加电脑」。本机在列表中但没有连通测试、编辑、删除、开关。远程行有这四项；关闭后不能当默认、也不参与路由。下拉只含本机和已启用的远程电脑。见 §6.2 |
+| **系统指令** | 仅开发者模式打开时出现在侧栏。子 Tab 顺序：助手 / 小队 / AGENTS.md / 记忆 / 技能。「助手」：1:1 角色句模板（`settings.instructions.assistantRoleTemplate`，`{name}` 占位，空则恢复默认）；「小队」：队长人设、Playbook、队长/队员 maxTurns（`settings.squad`，与 1:1 无关）；「AGENTS.md」：静默维护完整 system 模版（`agentsMdRefreshSystemPrompt`）+ 分析最近消息条数（`agentsMdRecentMessageLimit`，默认 12，钳制 1–100）；「记忆」：范围判定说明（`settings.memory.scopeInstruction`）+ 分析最近消息条数（`recentMessageLimit`，默认 20）；「技能」：生成/更新 skill 判定指令（`skillsCreateUpdateInstruction`，仅替换 system 中那一行）+ 分析最近消息条数（`skillsRecentMessageLimit`，默认 20）。空字符串恢复默认；缺字段读盘时由 normalize 填回，下次保存写回。侧栏图标为文档形（与小队区分）。 |
 | **全局记忆** | **全局记忆**列表（`~/.okbot/memory.md`，增删改，限高滚动）。scope 判定说明已迁至 **系统指令 → 记忆**。助手资料抽屉 **高级 → 记忆** 仍只管理本助手记忆 |
 | **用量分析** | 见 §9；按助手/小队列表有内边距 |
 | **自动更新** | `autoUpdate` 开关与手动检查/下载/安装（从通用迁出；route id 仍为 `updates`） |
@@ -192,7 +202,7 @@ okbot/
 
 供**本机其他程序**通过 HTTP 向助手或小队发送消息，走与 UI 相同的 `chatStart` / `startChatTurn` 路径（持久化 + `chatEvent`，界面实时更新）。
 
-- **默认关闭**。设置 → **本地网关**：启用、端口、访问令牌。令牌字符集为 `[A-Za-z0-9_-]`（输入时即过滤）。**仅在启用且令牌为空时**自动生成；重新生成有明确提示。复制读的是已保存的令牌，不是输入框里尚未落盘的草稿。`settings.json` 权限为 `0600`。一键复制 curl **不**把真令牌放进剪贴板，占位为 `$OKBOT_TOKEN`。
+- **默认关闭**。设置 → **网关服务**（小节「网关配置」，总开关「HTTP API」）：端口、访问令牌。令牌字符集为 `[A-Za-z0-9_-]`（输入时即过滤）。**仅在启用且令牌为空时**自动生成；重新生成有明确提示。复制读的是已保存的令牌，不是输入框里尚未落盘的草稿。`settings.json` 权限为 `0600`。一键复制 curl **不**把真令牌放进剪贴板，占位为 `$OKBOT_TOKEN`。
 - **仅绑定 `127.0.0.1`**，不对外网开放。未开局域网时校验 `Host` 必须是 localhost / 127.0.0.1 / ::1（减轻 DNS rebinding）。开启局域网网关后绑定 `0.0.0.0`，仍靠令牌鉴权。
 - 鉴权：`Authorization: Bearer <token>` 或请求头 `X-OkBot-Token: <token>`（`GET /v1/health` 无需令牌）。
 - 端点（保持精简）：
@@ -202,6 +212,7 @@ okbot/
   - `GET /v1/approvals` → 进行中的回合与待审批工具（与桌面 HITL 同一份内存 / 磁盘状态）
   - `POST /v1/tool-respond`，JSON `{ "requestId", "approved", "message"? }`：与桌面「允许 / 拒绝」同一条 `respondToToolApproval`（含冷启动恢复）
   - `POST /v1/bots/:id/abort` / `POST /v1/squads/:id/abort`：与桌面停止相同（中止运行并拒绝挂起的审批）
+  - `GET /v1/events`：需令牌的 SSE 长连接，只推 `sessions_changed`（新消息、改名、新建、删除），供另一边刷新会话列表；不推本轮 `delta`。约 25s 一次注释心跳。  
   - `POST /v1/bots/:id/messages` / `POST /v1/squads/:id/messages`，JSON `{ "text": "..." }`（文本过长 413；过频 429）：
     - **默认（非 SSE）** → **202** `{ ok: true, sessionId }`（`sessionId` 即 bot/squad id）。这不是后台队列：与 UI 一样走 `startChatTurn`，若该会话已有一轮在跑，会 **steer**（中止旧轮再开新轮），HTTP 响应本身不等最终回复。
     - **SSE**：请求头带 `Accept: text/event-stream` → `Content-Type: text/event-stream`。先订阅再开回合。上一轮被 steer 掉时的 `done{aborted:true}` **早于**本轮 `user_message`，连接会忽略它，直到见到本轮 `user_message`，再流到本轮自己的 `done` / `error`。`tool_request` **不是**结束；审批等待期间连接保持，直到 `done` / `error`，或客户端断开。客户端断开只停止写入，不中止本轮；窗口关掉时用上面的审批 / 中止接口收口，避免运行永久挂起。`res.write` 背压不会当成断流。禁用 API 时会拆掉已有 SSE 连接。
@@ -223,16 +234,18 @@ curl -N -X POST "http://127.0.0.1:<port>/v1/bots/<botId>/messages" \
 
 远程执行目标：独立进程/容器 `apps/sandbox-agent`（包名 `@okbot/sandbox-agent`）。即使在裸服务器上运行 sandbox-agent，也可在 OkBot 设置中登记为云电脑。
 
-- 设置 → **电脑连接**：登记名称 / 主机 / 端口 / 令牌（`SANDBOX_TOKEN`），字段与其它设置页同一套行样式。**本机**始终可用（id=`local`），不写入列表。
-- 对话输入区可选择当前轮工具运行的电脑（`computerId` → `ExecutionBackend`）。
+- 设置 → **电脑连接**：列表与模型列表同一套表头/行。表头是「电脑名称」和「添加电脑」。添加、编辑共用名称 / 主机 / 端口 / 令牌（`SANDBOX_TOKEN`）表单。**本机**始终出现在列表里（id=`local`），没有连通测试、编辑、删除、启用开关，也不写入 `computers`。远程行有这四项。`enabled: false` 的电脑不能选为默认，也不进入路由。同一页下拉选择**恰好一台**默认电脑（本机或已启用的远程电脑）。没选过、所选电脑已删除或被关闭时，默认是本机。默认值存在 `settings.defaultComputerId`。  
+- **先探测再保存**：添加和编辑点保存时都先 `probeComputer`（约 5 秒超时）。`GET /v1/health` 必须返回 `ok: true` 且 `service` 为 `okbot-sandbox-agent`；再用该令牌 `POST /v1/shell` 空正文，期望 **400** `command_required`（只验令牌，不执行命令）。连不上、不是 sandbox-agent、令牌不对或响应异常时**不写入**，并在对话框里提示。列表上的连通测试只检查、不保存。
+- 对话区没有电脑选择。用户没点名电脑时，shell 与文件工具在默认电脑上执行。点名恰好一台（名称或 id；本机可以说「本机」）时改到那台。点名多台时，每次 `run_shell` / `read_file` / `write_file` / `edit_file` 须带 `computer`（id 或名称），分别在对应电脑上执行。HTTP API 请求体里的 `computerId` 只作为这一轮的默认电脑，对话点名优先。选择规则集中在 `packages/agent` 的 `computerSelection`，并写入当轮系统提示。
 - 协议：Bearer；`GET /v1/health`；`POST /v1/shell`（可选 SSE）；`POST /v1/fs/read|write|edit`。
-- 技能（`read_skill`）与文生图仍在**桌面主机**执行，不路由到云电脑。
-- 实现：`packages/agent` 的 `ExecutionBackend`（local + remote）；`buildTools` 注入 backend。Dockerfile：`apps/sandbox-agent/Dockerfile`。验收清单：`docs/acceptance-cloud-gateway.md`。
+- 技能（`read_skill`）与文生图仍在**桌面主机**执行，不随电脑切换。
+- 实现：`packages/agent` 的 `ExecutionBackend`（local + remote）与 `computerSelection`；`buildTools` 按该策略解析 backend。Dockerfile：`apps/sandbox-agent/Dockerfile`。验收清单：`docs/acceptance-cloud-gateway.md`。
 
 ### 6.3 桌面网关与同一套前端
 
 - `localHttpApi.bindLan` + `serveUi`：主进程在 LAN 上提供既有 HTTP API，并托管 renderer 构建产物。
 - 浏览器无 Electron preload 时，`src/bridge/httpOkbot.ts` 安装同源 HTTP/SSE 适配器，复用同一 React UI（不另建移动端 SPA）。
+- 桌面与网关的会话列表经 `sessions_changed` 互相同步（见 §3.1）；网关页用 `GET /v1/events` 收这一条，不靠当前会话的聊天 SSE。  
 - 早期产品：网关侧创建助手/保存设置/HITL/语音等能力可能受限；聊天与会话列表为验收主路径。
 
 ---
@@ -296,7 +309,7 @@ HITL UI：工具卡上「允许 / 永久允许 / 拒绝」。
 | **AGENTS.md** | `~/.okbot/<botId>/AGENTS.md` | 新建/引导写入；资料弹层「高级」可编；改名/描述时 `syncAgentsMdProfile`；用户高级写入在同次保存中优先生效；**每轮成功后** `refreshAgentsMd`（system=`settings.instructions.agentsMdRefreshSystemPrompt`，窗口=`agentsMdRecentMessageLimit`）可能静默重写（下一轮生效） |
 | **记忆** | 全局 `memory.md` + 本助手 `memory.md`（JSONL）；过期过滤后 `formatMemoriesForPrompt`；设置 → 指令 → 记忆可编 scope 判定句与分析条数；设置 → 记忆可编全局列表；高级列表可编辑本助手记忆 | **开跑前**读盘；本轮结束后 `refreshMemories`（`scopeInstruction` + `recentMessageLimit`）可能 upsert；下一轮生效 |
 | **更早对话摘要** | `session-summary.json` 的 `summary` | **开跑前**估 token ≥ `contextWindow × ratio` 且历史够长时增量压缩并写回，推进 `coveredThroughId`；**不删** `session.jsonl` |
-| **Skills（渐进披露）** | 本助手 `skills/<slug>/SKILL.md` +（可选）`~/.agents/skills` 已启用全局 → `formatSkillsForPrompt` **仅目录**（名称 / slug / 何时使用）；完整正文不进静态系统提示，匹配后由模型调用 `read_skill(slug)`（`resolveEnabledSkill`，本地优先）加载 | **开跑前**读盘目录；`useGlobalSkills` / `enabledGlobalSkills` 在 `bot.json`；高级列表可改本地 skill / 开关全局；本轮结束后 `refreshBotSkills`（判定行=`skillsCreateUpdateInstruction`，窗口=`skillsRecentMessageLimit`）可能 upsert；下一轮生效；「查看完整上下文」同样只见目录（正文仅出现在本轮 tool 结果中） |
+| **Skills（渐进披露）** | 本助手 `skills/<slug>/SKILL.md` +（可选）`~/.agents/skills` 已启用全局 → `formatSkillsForPrompt` **仅目录**（名称 / slug / 何时使用）；完整正文不进静态系统提示，匹配后由模型调用 `read_skill(slug)`（`resolveEnabledSkill`，本地优先）加载 | **开跑前**读盘目录（含热更新后的磁盘内容，见 §4.1）；`useGlobalSkills` / `enabledGlobalSkills` 在 `bot.json`；高级列表可改本地 skill / 开关全局；本轮结束后 `refreshBotSkills`（判定行=`skillsCreateUpdateInstruction`，窗口=`skillsRecentMessageLimit`）可能 upsert；下一轮生效；「查看完整上下文」同样只见目录（正文仅出现在本轮 tool 结果中） |
 | 工具说明 / 编码偏好句 | 设置里的工具开关与审批模式 | 改设置后下一轮生效 |
 
 估 token 用的静态文本大致含：AGENTS + skills + memories + 花名册 + 本轮用户正文（外加摘要与最近消息正文）。阈值始终用**当前**解析出的模型 `contextWindow`（换小窗口模型也会立刻按新窗口压）。
@@ -466,7 +479,7 @@ Preload 暴露 `window.okbot.*`；渲染进程不直连 Node fs。
 - `run_shell` 非容器/seatbelt 沙箱。  
 - 模型目录 **仅手动 + discover**，无复杂厂商 OAuth。  
 - 小队搜索排除、虚拟队长非真实 bot——改相关逻辑时勿回归。  
-- 本地 HTTP API **仅 loopback**；无公网监听、无独立 CLI 发行。
+- 本地 HTTP API **默认仅 loopback**。只有打开局域网网关才绑定 `0.0.0.0`，仍靠访问令牌；没有面向公网的入口，也没有独立 CLI。
 
 ---
 
@@ -474,7 +487,7 @@ Preload 暴露 `window.okbot.*`；渲染进程不直连 Node fs。
 
 1. 合并功能或重要 UI 变更时：**同一 PR/提交或紧随提交** 更新本文件对应章节。  
 2. 根目录用户文档：`README.md`（英文）与 `README_zh.md`（中文）保持短述 + 指向本指南；文首保留 `English | 中文` 相对链接，两边结构同步；勿在用户 README 写技术栈 / 当前范围 / `run_shell` 诚实边界等开发向内容（边界说明留在本指南对应章节）。  
-3. 本指南**不要**写死产品版本号（版本以 Releases / `package.json` 为准）。  
+3. 本指南不要写死产品号（以 Releases / `package.json` 为准）。  
 4. 以代码与近期 commit 为准，避免凭记忆写「计划中」能力。
 
 ## 已知限制（小队冷启动审批）

@@ -9,6 +9,7 @@ import {
   type Squad,
 } from '@okbot/shared';
 import { t, type UiLang } from '../../i18n';
+import { QuickTip } from '../../components/ui/QuickTip';
 import type { ToolCard, TurnPhase } from '../../types';
 import { FlatAvatar } from '../../components/ui/avatars';
 import {
@@ -408,16 +409,17 @@ export const ChatTranscript = memo(function ChatTranscript({
             {t(lang, 'scrollToBottom')}
           </button>
         ) : null}
+        <QuickTip text={t(lang, immersiveChat ? 'immersiveChatExit' : 'immersiveChatEnable')}>
         <button
           type="button"
           className="immersive-chat-fab"
-          title={t(lang, immersiveChat ? 'immersiveChatExit' : 'immersiveChatEnable')}
           aria-label={t(lang, immersiveChat ? 'immersiveChatExit' : 'immersiveChatEnable')}
           aria-pressed={immersiveChat}
           onClick={onToggleImmersiveChat}
         >
           <ImmersiveChatIcon immersive={immersiveChat} />
         </button>
+        </QuickTip>
       </div>
       {busy ? (
         <div className="chat-turn-status" aria-live="polite" aria-label={turnStatusText}>

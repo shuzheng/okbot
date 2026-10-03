@@ -15,10 +15,16 @@ import {
 import {
   createLocalExecutionBackend,
   type ExecutionBackend,
+  resolveExecutionBackend,
   resolveShellExec,
   type ResolveShellExecOptions,
   type ShellExecSpec,
 } from './executionBackend.js';
+import {
+  defaultComputerLabel,
+  selectComputerForTool,
+  type ComputerRoute,
+} from './computerSelection.js';
 
 export type { ExecutionBackend, ShellExecSpec, ResolveShellExecOptions };
 export { resolveShellExec, createLocalExecutionBackend };
@@ -59,8 +65,14 @@ export type BuildToolsOptions = {
   /**
    * Shell + fs execution target. Default = local desktop host.
    * Skills + image gen always stay on the desktop host (not routed here).
+   * Ignored when `computerRoute` is set (per-call routing).
    */
   backend?: ExecutionBackend;
+  /**
+   * Per-call computer selection. When set, shell/fs tools take an optional
+   * `computer` argument and otherwise follow this route.
+   */
+  computerRoute?: ComputerRoute;
 };
 
 export function buildTools(
@@ -72,26 +84,43 @@ export function buildTools(
   const list = [];
   const inputGuardrails = buildToolInputGuardrails(security ?? DEFAULT_SECURITY);
   const guardrailOpts = inputGuardrails.length ? { inputGuardrails } : {};
+  const route = options?.computerRoute;
   const backend = options?.backend ?? createLocalExecutionBackend();
-  const where = backend.label || '本机';
+  const where = route ? defaultComputerLabel(route) : backend.label || '本机';
+  const computerParam = z
+    .string()
+    .optional()
+    .describe('目标电脑的 id 或名称。省略时：用户只点了一台就用那台，否则用默认电脑。用户点了多台时必填。');
+
+  function backendFor(requested?: string): ExecutionBackend | string {
+    if (!route) return backend;
+    const picked = selectComputerForTool(route, requested);
+    if (!picked.ok) return picked.message;
+    return resolveExecutionBackend({ computerId: picked.id, computers: route.computers });
+  }
 
   if (prefs.run_shell.enabled) {
     list.push(
       tool({
         name: 'run_shell',
-        description:
-          `在「${where}」通过系统命令行执行一条命令（Windows 优先 PowerShell Core，找不到时使用 cmd）。仅在用户明确需要时使用；危险命令会先请求用户批准。`,
+        description: route
+          ? `在电脑上执行一条命令（默认「${where}」；Windows 优先 PowerShell Core，找不到时用 cmd）。用户点名电脑时传 computer（id 或名称）；点了多台时每次都要传。危险命令会先请求批准。`
+          : `在「${where}」通过系统命令行执行一条命令（Windows 优先 PowerShell Core，找不到时使用 cmd）。仅在用户明确需要时使用；危险命令会先请求用户批准。`,
         parameters: z.object({
           command: z.string().describe('要执行的命令'),
           cwd: z.string().optional().describe('可选工作目录，支持 ~'),
+          computer: computerParam,
         }),
         needsApproval: prefs.run_shell.approval === 'ask',
         ...guardrailOpts,
         execute: wrapToolExecute(
           'run_shell',
           budget,
-          async ({ command, cwd }: { command: string; cwd?: string }) =>
-            backend.runShell(command, cwd, budget?.signal),
+          async ({ command, cwd, computer }: { command: string; cwd?: string; computer?: string }) => {
+            const target = backendFor(computer);
+            if (typeof target === 'string') return target;
+            return target.runShell(command, cwd, budget?.signal);
+          },
         ),
       }),
     );
@@ -101,16 +130,23 @@ export function buildTools(
     list.push(
       tool({
         name: 'read_file',
-        description: `读取「${where}」上的一个文本文件。`,
+        description: route
+          ? `读取电脑上的一个文本文件（默认「${where}」）。用户点名电脑时传 computer。`
+          : `读取「${where}」上的一个文本文件。`,
         parameters: z.object({
           path: z.string().describe('文件绝对路径或 ~/…'),
+          computer: computerParam,
         }),
         needsApproval: prefs.read_file.approval === 'ask',
         ...guardrailOpts,
         execute: wrapToolExecute(
           'read_file',
           budget,
-          async ({ path: filePath }: { path: string }) => backend.readFile(filePath),
+          async ({ path: filePath, computer }: { path: string; computer?: string }) => {
+            const target = backendFor(computer);
+            if (typeof target === 'string') return target;
+            return target.readFile(filePath);
+          },
         ),
       }),
     );
@@ -163,19 +199,24 @@ export function buildTools(
     list.push(
       tool({
         name: 'write_file',
-        description:
-          `写入（覆盖）「${where}」上的一个文本文件；必要时创建父目录。适合新建文件或整文件重写。`,
+        description: route
+          ? `写入（覆盖）电脑上的一个文本文件（默认「${where}」）；必要时创建父目录。用户点名电脑时传 computer。`
+          : `写入（覆盖）「${where}」上的一个文本文件；必要时创建父目录。适合新建文件或整文件重写。`,
         parameters: z.object({
           path: z.string().describe('文件绝对路径或 ~/…'),
           content: z.string().describe('要写入的完整 UTF-8 文本内容'),
+          computer: computerParam,
         }),
         needsApproval: prefs.write_file.approval === 'ask',
         ...guardrailOpts,
         execute: wrapToolExecute(
           'write_file',
           budget,
-          async ({ path: filePath, content }: { path: string; content: string }) =>
-            backend.writeFile(filePath, content),
+          async ({ path: filePath, content, computer }: { path: string; content: string; computer?: string }) => {
+            const target = backendFor(computer);
+            if (typeof target === 'string') return target;
+            return target.writeFile(filePath, content);
+          },
         ),
       }),
     );
@@ -185,12 +226,14 @@ export function buildTools(
     list.push(
       tool({
         name: 'edit_file',
-        description:
-          `对「${where}」上已存在的文本文件做一次精确字符串替换（old_text → new_text）。适合小范围修改；若匹配 0 次或多于 1 次则报错不改。`,
+        description: route
+          ? `对电脑上已存在的文本文件做一次精确替换（默认「${where}」）。用户点名电脑时传 computer。匹配 0 次或多于 1 次则不改。`
+          : `对「${where}」上已存在的文本文件做一次精确字符串替换（old_text → new_text）。适合小范围修改；若匹配 0 次或多于 1 次则报错不改。`,
         parameters: z.object({
           path: z.string().describe('文件绝对路径或 ~/…'),
           old_text: z.string().describe('要替换的原文本（须在文件中恰好出现一次）'),
           new_text: z.string().describe('替换后的新文本'),
+          computer: computerParam,
         }),
         needsApproval: prefs.edit_file.approval === 'ask',
         ...guardrailOpts,
@@ -201,11 +244,17 @@ export function buildTools(
             path: filePath,
             old_text,
             new_text,
+            computer,
           }: {
             path: string;
             old_text: string;
             new_text: string;
-          }) => backend.editFile(filePath, old_text, new_text),
+            computer?: string;
+          }) => {
+            const target = backendFor(computer);
+            if (typeof target === 'string') return target;
+            return target.editFile(filePath, old_text, new_text);
+          },
         ),
       }),
     );

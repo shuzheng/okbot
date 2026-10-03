@@ -28,6 +28,7 @@ import {
 } from './hitl.js';
 import { buildTools, type SkillLookup } from './tools.js';
 import type { ExecutionBackend } from './executionBackend.js';
+import { formatComputerRoutingSection, type ComputerRoute } from './computerSelection.js';
 import { wrapToolExecute, type ToolRunBudget } from './toolRunBudget.js';
 import { assertModel } from './model.js';
 import type { HitlLoopHooks, RunChatResult } from './types.js';
@@ -66,8 +67,10 @@ export interface RunSquadChatInput extends HitlLoopHooks {
   ownerId: string;
   /** Absolute `~/.okbot/<ownerId>/resources` directory. */
   resourcesDir: string;
-  /** Shell/fs backend for this run (local or cloud computer). */
+  /** Shell/fs backend for this run. Ignored when computerRoute is set. */
   executionBackend?: ExecutionBackend;
+  /** Per-call computer selection for captain and member shell/fs tools. */
+  computerRoute?: ComputerRoute;
   history?: ChatMessage[];
   userText: string;
 }
@@ -117,6 +120,7 @@ function buildMemberSquadInstructions(
   squadName: string,
   member: SquadMemberAgentSpec,
   prefs: ToolPreferences,
+  computerRouting?: string,
 ): string {
   const roleLine = `你在《${squadName}》小队中的角色是：${member.role || '成员'}。请严格按该角色完成队长交给你的子任务，直接给出结果，不要扮演队长或调用其他队员。`;
   return normalizeMarkdownHeadings(
@@ -134,6 +138,7 @@ function buildMemberSquadInstructions(
         ? `## Skills（目录；须先加载再遵循）\n\n下方为技能目录。匹配时须先调用 read_skill（传入 slug）加载完整正文再执行；有匹配技能时不要另起炉灶。\n\n${member.skillsText.trim()}`
         : '',
       '用简洁、清楚的中文回答。只处理队长通过工具传入的任务，完成后把结论返回给队长。',
+      computerRouting?.trim() || '',
       (() => {
         const enabled = listEnabledToolIds(prefs);
         return enabled.length
@@ -158,6 +163,7 @@ export function buildCaptainSquadInstructions(input: {
   sessionSummary?: string;
   history: ChatMessage[];
   hasVisionInput?: boolean;
+  computerRouting?: string;
 }): string {
   const roster = input.members
     .map((m) => {
@@ -185,6 +191,7 @@ export function buildCaptainSquadInstructions(input: {
       toolHint,
       localTools,
       input.hasVisionInput ? VISION_TURN_INSTRUCTION : '',
+      input.computerRouting?.trim() || '',
       '用简洁、清楚的中文回答用户；整合队员结果后给出最终答复。',
       formatHistoryBlock(input.history),
     ]
@@ -248,7 +255,12 @@ export async function runSquadChat(input: RunSquadChatInput): Promise<
           });
           const memberAgent = new Agent({
             name: capturedMember.name || capturedName,
-            instructions: buildMemberSquadInstructions(input.squadName, capturedMember, toolPrefs),
+            instructions: buildMemberSquadInstructions(
+              input.squadName,
+              capturedMember,
+              toolPrefs,
+              input.computerRoute ? formatComputerRoutingSection(input.computerRoute) : '',
+            ),
             model: input.model.model,
             ...(typeof input.model.maxTokens === 'number' && input.model.maxTokens >= 1
               ? { modelSettings: { maxTokens: input.model.maxTokens } }
@@ -262,7 +274,13 @@ export async function runSquadChat(input: RunSquadChatInput): Promise<
                 providerName: input.model.providerName,
               },
               imageAssets: { ownerId: input.ownerId, resourcesDir: input.resourcesDir },
-              backend: input.executionBackend,
+              backend: input.computerRoute ? undefined : input.executionBackend,
+              computerRoute: input.computerRoute
+                ? {
+                    ...input.computerRoute,
+                    userText: [input.computerRoute.userText, taskText].filter(Boolean).join('\n'),
+                  }
+                : undefined,
             }),
           });
           const memberRunner = new Runner({
@@ -343,6 +361,7 @@ export async function runSquadChat(input: RunSquadChatInput): Promise<
       sessionSummary: input.sessionSummary,
       history: historyForInstructions,
       hasVisionInput: input.hasVisionInput === true,
+      computerRouting: input.computerRoute ? formatComputerRoutingSection(input.computerRoute) : '',
     }),
     model: input.model.model,
     modelSettings: {
@@ -361,7 +380,8 @@ export async function runSquadChat(input: RunSquadChatInput): Promise<
           providerName: input.model.providerName,
         },
         imageAssets: { ownerId: input.ownerId, resourcesDir: input.resourcesDir },
-        backend: input.executionBackend,
+        backend: input.computerRoute ? undefined : input.executionBackend,
+        computerRoute: input.computerRoute,
       }),
       ...memberTools,
     ],

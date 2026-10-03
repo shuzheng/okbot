@@ -46,10 +46,16 @@ export const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
   },
   { id: 'data', tab: 'general', labelKey: 'data', keywords: ['dataDir', '目录', 'folder'] },
   {
+    id: 'developerMode',
+    tab: 'general',
+    labelKey: 'developerMode',
+    keywords: ['高级', 'advanced', 'developer', '开发者', '系统指令'],
+  },
+  {
     id: 'localHttpApi',
     tab: 'gateway',
     labelKey: 'localHttpApi',
-    keywords: ['HTTP', 'API', 'localhost', '127.0.0.1', 'loopback', '本地', '令牌', 'token', 'port', '端口', '本地网关', '网关'],
+    keywords: ['HTTP', 'API', 'localhost', '127.0.0.1', 'loopback', '本地', '令牌', 'token', 'port', '端口', '网关服务', '网关配置', '网关'],
   },
   {
     id: 'localHttpApiEnable',
@@ -86,6 +92,12 @@ export const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
     tab: 'computers',
     labelKey: 'computers',
     keywords: ['cloud', 'sandbox', 'sandbox-agent', 'docker', '电脑', '云', '电脑连接'],
+  },
+  {
+    id: 'defaultComputer',
+    tab: 'computers',
+    labelKey: 'defaultComputer',
+    keywords: ['default', 'local', '本机', '默认电脑'],
   },
   { id: 'usageTotal', tab: 'usage', labelKey: 'usageTotal', keywords: ['token', '用量', 'usage'] },
   { id: 'usageDailyChart', tab: 'usage', labelKey: 'usageDailyChart', keywords: ['chart', 'daily', '图表'] },
@@ -284,6 +296,6 @@ export const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
     id: 'globalMemories',
     tab: 'memory',
     labelKey: 'globalMemories',
-    keywords: ['记忆', 'memory', 'global memory', '全局记忆'],
+    keywords: ['记忆', 'memory', 'global memory', '全局记忆', '全局记忆管理', '列表'],
   },
 ];

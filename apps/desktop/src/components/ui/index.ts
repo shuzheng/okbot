@@ -38,3 +38,4 @@ export {
   ConfirmHost,
   type ConfirmOptions,
 } from './ConfirmModal';
+export { QuickTip } from './QuickTip';

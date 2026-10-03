@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Liquid } from 'liquid-gooey';
 import { t, type UiLang } from '../../i18n';
+import { QuickTip } from '../../components/ui/QuickTip';
 import {
   FileAttachIcon,
   FolderAttachIcon,
@@ -108,18 +109,19 @@ export function ComposerAttachMenu({ lang, disabled, onPick }: ComposerAttachMen
           transition={FAN_TRANSITION}
           delay={45}
         >
+          <QuickTip text={t(lang, 'attachImage')}>
           <button
             type="button"
             className="composer-attach-btn"
             tabIndex={open ? 0 : -1}
             aria-hidden={!open}
             disabled={disabled || !open}
-            title={t(lang, 'attachImage')}
             aria-label={t(lang, 'attachImage')}
             onClick={() => pick('image')}
           >
             <ImageAttachIcon />
           </button>
+          </QuickTip>
         </Liquid.Item>
 
         {/* File — middle */}
@@ -131,18 +133,19 @@ export function ComposerAttachMenu({ lang, disabled, onPick }: ComposerAttachMen
           transition={FAN_TRANSITION}
           delay={22}
         >
+          <QuickTip text={t(lang, 'attachFile')}>
           <button
             type="button"
             className="composer-attach-btn"
             tabIndex={open ? 0 : -1}
             aria-hidden={!open}
             disabled={disabled || !open}
-            title={t(lang, 'attachFile')}
             aria-label={t(lang, 'attachFile')}
             onClick={() => pick('file')}
           >
             <FileAttachIcon />
           </button>
+          </QuickTip>
         </Liquid.Item>
 
         {/* Folder — just above +/X */}
@@ -154,18 +157,19 @@ export function ComposerAttachMenu({ lang, disabled, onPick }: ComposerAttachMen
           transition={FAN_TRANSITION}
           delay={0}
         >
+          <QuickTip text={t(lang, 'attachFolder')}>
           <button
             type="button"
             className="composer-attach-btn"
             tabIndex={open ? 0 : -1}
             aria-hidden={!open}
             disabled={disabled || !open}
-            title={t(lang, 'attachFolder')}
             aria-label={t(lang, 'attachFolder')}
             onClick={() => pick('folder')}
           >
             <FolderAttachIcon />
           </button>
+          </QuickTip>
         </Liquid.Item>
 
         {/* + / close — anchor */}
@@ -173,11 +177,11 @@ export function ComposerAttachMenu({ lang, disabled, onPick }: ComposerAttachMen
           className="composer-attach-item"
           style={{ position: 'absolute', left: itemLeft, bottom: 0 }}
         >
+          <QuickTip text={open ? t(lang, 'attachMenuClose') : t(lang, 'attachMenuOpen')}>
           <button
             type="button"
             className={`composer-attach-btn composer-attach-toggle${open ? ' open' : ''}`}
             disabled={disabled}
-            title={open ? t(lang, 'attachMenuClose') : t(lang, 'attachMenuOpen')}
             aria-label={open ? t(lang, 'attachMenuClose') : t(lang, 'attachMenuOpen')}
             aria-expanded={open}
             onClick={() => {
@@ -187,14 +191,15 @@ export function ComposerAttachMenu({ lang, disabled, onPick }: ComposerAttachMen
           >
             <PlusIcon />
           </button>
+          </QuickTip>
         </Liquid.Item>
       </Liquid>
       ) : (
+        <QuickTip text={t(lang, 'attachMenuOpen')}>
         <button
           type="button"
           className="composer-attach-btn composer-attach-toggle"
           disabled={disabled}
-          title={t(lang, 'attachMenuOpen')}
           aria-label={t(lang, 'attachMenuOpen')}
           aria-expanded={false}
           onClick={() => {
@@ -205,6 +210,7 @@ export function ComposerAttachMenu({ lang, disabled, onPick }: ComposerAttachMen
         >
           <PlusIcon />
         </button>
+        </QuickTip>
       )}
     </div>
   );

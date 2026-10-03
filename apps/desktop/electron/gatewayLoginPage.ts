@@ -12,8 +12,8 @@ export function gatewayLoginHtml(): string {
   return `<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>OkBot Gateway</title>
 <style>body{font-family:system-ui,sans-serif;padding:24px;max-width:420px;margin:auto;background:#111;color:#eee}input,button{font-size:16px;width:100%;box-sizing:border-box;padding:12px;margin:8px 0;border-radius:8px;border:1px solid #444;background:#222;color:#fff}button{background:#3b82f6;border:none;font-weight:600}p{line-height:1.45;color:#ccc}</style></head><body>
 <h1>OkBot</h1>
-<p>输入桌面「设置 → 本地网关」里的访问令牌，即可在这台设备上打开 OkBot。</p>
-<p>Enter the access token from Settings → Local gateway.</p>
+<p>输入桌面「设置 → 网关服务」里的访问令牌，即可在这台设备上打开 OkBot。</p>
+<p>Enter the access token from Settings → Gateway service.</p>
 <input id="t" type="password" placeholder="访问令牌 / Access token" autocomplete="current-password"/>
 <button id="g" type="button">打开 OkBot</button>
 <script>
@@ -309,7 +309,11 @@ export function gatewayBootJs(): string {
       listBots:function(){ return api('GET','/v1/bots').then(function(r){ return (r&&r.bots)||[]; }); },
       listSquads:function(){ return api('GET','/v1/squads').then(function(r){ return ((r&&r.squads)||[]).map(fillSquad); }); },
       getSettings:function(){ return okbot.getBootstrap().then(function(b){ return b.settings; }); },
-      saveSettings:unsupported('Saving settings from gateway web UI is not supported yet'),
+      saveSettings:function(settings){
+        return api('POST','/v1/settings', settings).then(function(json){
+          return fillSettings((json&&json.settings)||json);
+        });
+      },
       getMessagesPage:function(ownerId, opts){
         var q=new URLSearchParams();
         if(opts&&opts.limit) q.set('limit', String(opts.limit));
@@ -363,7 +367,31 @@ export function gatewayBootJs(): string {
       onWindowMaximizedChanged:noopUnsubscribe,
       ensureMicrophoneAccess:function(){ return Promise.resolve({granted:false, status:'unknown', prompted:false}); },
       openMicrophoneSettings:function(){ return Promise.resolve(false); },
-      getUsageStats:function(){ return Promise.resolve({byOwner:[], daily:[]}); },
+      getUsageStats:function(){
+        var empty={lifetime:{input:0,output:0,cache:0},daily:{},byOwner:{},dailyByOwner:{}};
+        function bag(v){ var u=v&&typeof v==='object'&&!Array.isArray(v)?v:{}; return {input:Number(u.input)||0,output:Number(u.output)||0,cache:Number(u.cache)||0}; }
+        function map(v){
+          if(!v||typeof v!=='object'||Array.isArray(v)) return {};
+          var out={};
+          for(var k in v){
+            if(!Object.prototype.hasOwnProperty.call(v,k)) continue;
+            var u=v[k];
+            out[k]=u&&typeof u==='object'&&!Array.isArray(u)?{input:Number(u.input)||0,output:Number(u.output)||0,cache:Number(u.cache)||0}:{input:0,output:0,cache:0};
+          }
+          return out;
+        }
+        return api('GET','/v1/usage').then(function(body){
+          var src=body&&typeof body==='object'?body:{};
+          var dailyByOwner={};
+          var raw=src.dailyByOwner;
+          if(raw&&typeof raw==='object'&&!Array.isArray(raw)){
+            for(var id in raw){
+              if(Object.prototype.hasOwnProperty.call(raw,id)) dailyByOwner[id]=map(raw[id]);
+            }
+          }
+          return {lifetime:bag(src.lifetime),daily:map(src.daily),byOwner:map(src.byOwner),dailyByOwner:dailyByOwner};
+        }, function(){ return empty; });
+      },
       pickPaths:function(){ return Promise.resolve({canceled:true, paths:[]}); },
       readGeneratedAssetDataUrl:function(){ return Promise.resolve(null); },
       getPromptContext:function(){ return Promise.resolve({text:null}); },
