@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import {
+  addTokenUsage,
   emptyTokenUsage,
   type Bot,
   type Squad,
@@ -23,14 +24,23 @@ function sumUsage(u: TokenUsage): number {
 
 type DayPoint = { day: string; input: number; output: number; cache: number };
 
-function buildDailySeries(stats: UsageStats, days = 14): DayPoint[] {
+function buildDailySeries(stats: UsageStats, ownerIds: string[], days = 14): DayPoint[] {
   const out: DayPoint[] = [];
   const now = new Date();
+  const filter = ownerIds.length > 0;
   for (let i = days - 1; i >= 0; i--) {
     const d = new Date(now);
     d.setDate(now.getDate() - i);
     const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    const u = stats.daily[key] ?? emptyTokenUsage();
+    let u = emptyTokenUsage();
+    if (!filter) {
+      u = stats.daily[key] ?? emptyTokenUsage();
+    } else {
+      for (const id of ownerIds) {
+        const dayMap = stats.dailyByOwner?.[id];
+        if (dayMap?.[key]) u = addTokenUsage(u, dayMap[key]!);
+      }
+    }
     out.push({ day: key, input: u.input, output: u.output, cache: u.cache });
   }
   return out;
@@ -55,59 +65,161 @@ function UsageLineChart({ series, lang }: { series: DayPoint[]; lang: UiLang }) 
       .map((p, i) => `${i === 0 ? 'M' : 'L'}${xAt(i).toFixed(1)},${yAt(p[key]).toFixed(1)}`)
       .join(' ');
 
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [hover, setHover] = useState<{ index: number } | null>(null);
+
+  function onMove(e: MouseEvent<SVGSVGElement>) {
+    const svg = e.currentTarget;
+    const rect = svg.getBoundingClientRect();
+    const scaleX = w / rect.width;
+    const x = (e.clientX - rect.left) * scaleX;
+    if (series.length === 0) {
+      setHover(null);
+      return;
+    }
+    let best = 0;
+    let bestDist = Infinity;
+    for (let i = 0; i < series.length; i++) {
+      const dist = Math.abs(xAt(i) - x);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = i;
+      }
+    }
+    // Only show when pointer is near the plot area.
+    const y = (e.clientY - rect.top) * (h / rect.height);
+    if (y < pad.t - 8 || y > pad.t + innerH + 8 || bestDist > innerW / Math.max(series.length, 1)) {
+      setHover(null);
+      return;
+    }
+    setHover({ index: best });
+  }
+
+  const tipPoint = hover ? series[hover.index] : null;
+  const tipStyle =
+    hover && wrapRef.current
+      ? (() => {
+          const wrap = wrapRef.current!.getBoundingClientRect();
+          const svg = wrapRef.current!.querySelector('svg');
+          const svgRect = svg?.getBoundingClientRect() ?? wrap;
+          const scaleX = svgRect.width / w;
+          const left = svgRect.left - wrap.left + xAt(hover.index) * scaleX;
+          const top = svgRect.top - wrap.top + pad.t * (svgRect.height / h);
+          return { left, top };
+        })()
+      : null;
+
   return (
-    <div className="usage-chart-wrap">
-      <svg className="usage-chart" viewBox={`0 0 ${w} ${h}`} role="img" aria-label={t(lang, 'usageDailyChart')}>
-        <line x1={pad.l} y1={pad.t} x2={pad.l} y2={pad.t + innerH} stroke="currentColor" opacity="0.2" />
-        <line
-          x1={pad.l}
-          y1={pad.t + innerH}
-          x2={pad.l + innerW}
-          y2={pad.t + innerH}
-          stroke="currentColor"
-          opacity="0.2"
-        />
-        <path d={pathFor('input')} fill="none" stroke="var(--usage-input, #6366f1)" strokeWidth="2" />
-        <path d={pathFor('output')} fill="none" stroke="var(--usage-output, #22c55e)" strokeWidth="2" />
-        <path d={pathFor('cache')} fill="none" stroke="var(--usage-cache, #f59e0b)" strokeWidth="2" />
-        <text x={pad.l - 4} y={pad.t + 4} textAnchor="end" fontSize="10" fill="currentColor" opacity="0.55">
-          {formatTokens(maxY)}
-        </text>
-        <text
-          x={pad.l - 4}
-          y={pad.t + innerH}
-          textAnchor="end"
-          fontSize="10"
-          fill="currentColor"
-          opacity="0.55"
+    <div className="usage-chart-wrap" ref={wrapRef}>
+      <div className="usage-chart-svg-wrap">
+        <svg
+          className="usage-chart"
+          viewBox={`0 0 ${w} ${h}`}
+          role="img"
+          aria-label={t(lang, 'usageDailyChart')}
+          onMouseMove={onMove}
+          onMouseLeave={() => setHover(null)}
         >
-          0
-        </text>
-        {series.length > 0 ? (
-          <>
-            <text
-              x={pad.l}
-              y={h - 6}
-              textAnchor="start"
-              fontSize="10"
-              fill="currentColor"
-              opacity="0.55"
-            >
-              {series[0]!.day.slice(5)}
-            </text>
-            <text
-              x={pad.l + innerW}
-              y={h - 6}
-              textAnchor="end"
-              fontSize="10"
-              fill="currentColor"
-              opacity="0.55"
-            >
-              {series[series.length - 1]!.day.slice(5)}
-            </text>
-          </>
+          <line x1={pad.l} y1={pad.t} x2={pad.l} y2={pad.t + innerH} stroke="currentColor" opacity="0.2" />
+          <line
+            x1={pad.l}
+            y1={pad.t + innerH}
+            x2={pad.l + innerW}
+            y2={pad.t + innerH}
+            stroke="currentColor"
+            opacity="0.2"
+          />
+          <path d={pathFor('input')} fill="none" stroke="var(--usage-input, #6366f1)" strokeWidth="2" />
+          <path d={pathFor('output')} fill="none" stroke="var(--usage-output, #22c55e)" strokeWidth="2" />
+          <path d={pathFor('cache')} fill="none" stroke="var(--usage-cache, #f59e0b)" strokeWidth="2" />
+          {hover && tipPoint ? (
+            <line
+              x1={xAt(hover.index)}
+              y1={pad.t}
+              x2={xAt(hover.index)}
+              y2={pad.t + innerH}
+              stroke="currentColor"
+              opacity="0.25"
+              strokeDasharray="3 3"
+            />
+          ) : null}
+          {hover && tipPoint
+            ? (['input', 'output', 'cache'] as const).map((k) => (
+                <circle
+                  key={k}
+                  cx={xAt(hover.index)}
+                  cy={yAt(tipPoint[k])}
+                  r={3.5}
+                  fill={
+                    k === 'input'
+                      ? 'var(--usage-input, #6366f1)'
+                      : k === 'output'
+                        ? 'var(--usage-output, #22c55e)'
+                        : 'var(--usage-cache, #f59e0b)'
+                  }
+                />
+              ))
+            : null}
+          <text x={pad.l - 4} y={pad.t + 4} textAnchor="end" fontSize="10" fill="currentColor" opacity="0.55">
+            {formatTokens(maxY)}
+          </text>
+          <text
+            x={pad.l - 4}
+            y={pad.t + innerH}
+            textAnchor="end"
+            fontSize="10"
+            fill="currentColor"
+            opacity="0.55"
+          >
+            0
+          </text>
+          {series.length > 0 ? (
+            <>
+              <text
+                x={pad.l}
+                y={h - 6}
+                textAnchor="start"
+                fontSize="10"
+                fill="currentColor"
+                opacity="0.55"
+              >
+                {series[0]!.day.slice(5)}
+              </text>
+              <text
+                x={pad.l + innerW}
+                y={h - 6}
+                textAnchor="end"
+                fontSize="10"
+                fill="currentColor"
+                opacity="0.55"
+              >
+                {series[series.length - 1]!.day.slice(5)}
+              </text>
+            </>
+          ) : null}
+        </svg>
+        {hover && tipPoint && tipStyle ? (
+          <div className="usage-chart-tip" style={{ left: tipStyle.left, top: tipStyle.top }}>
+            <div className="usage-chart-tip-day">{tipPoint.day}</div>
+            <div className="usage-chart-tip-row input">
+              <span className="k">{t(lang, 'usageInput')}</span>
+              <span className="v">{formatTokens(tipPoint.input)}</span>
+            </div>
+            <div className="usage-chart-tip-row output">
+              <span className="k">{t(lang, 'usageOutput')}</span>
+              <span className="v">{formatTokens(tipPoint.output)}</span>
+            </div>
+            <div className="usage-chart-tip-row cache">
+              <span className="k">{t(lang, 'usageCache')}</span>
+              <span className="v">{formatTokens(tipPoint.cache)}</span>
+            </div>
+            <div className="usage-chart-tip-row">
+              <span className="k">{t(lang, 'usageSum')}</span>
+              <span className="v">{formatTokens(sumUsage(tipPoint))}</span>
+            </div>
+          </div>
         ) : null}
-      </svg>
+      </div>
       <div className="usage-legend">
         <span className="usage-legend-item input">{t(lang, 'usageInput')}</span>
         <span className="usage-legend-item output">{t(lang, 'usageOutput')}</span>
@@ -127,6 +239,7 @@ export function UsagePanel({
   squads: Squad[];
 }) {
   const [stats, setStats] = useState<UsageStats | null>(null);
+  const [selectedOwnerIds, setSelectedOwnerIds] = useState<string[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -143,7 +256,10 @@ export function UsagePanel({
     };
   }, []);
 
-  const series = useMemo(() => (stats ? buildDailySeries(stats, 14) : []), [stats]);
+  const series = useMemo(
+    () => (stats ? buildDailySeries(stats, selectedOwnerIds, 14) : []),
+    [stats, selectedOwnerIds],
+  );
 
   const members = useMemo(() => {
     if (!stats) return [];
@@ -160,7 +276,24 @@ export function UsagePanel({
     return rows;
   }, [stats, bots, squads]);
 
-  const lifetime = stats?.lifetime ?? emptyTokenUsage();
+  const filterOptions = members;
+
+  function toggleOwner(id: string) {
+    setSelectedOwnerIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+  }
+
+  const lifetime = useMemo(() => {
+    if (!stats) return emptyTokenUsage();
+    if (selectedOwnerIds.length === 0) return stats.lifetime;
+    let u = emptyTokenUsage();
+    for (const id of selectedOwnerIds) {
+      const o = stats.byOwner[id];
+      if (o) u = addTokenUsage(u, o);
+    }
+    return u;
+  }, [stats, selectedOwnerIds]);
 
   return (
     <div>
@@ -192,6 +325,33 @@ export function UsagePanel({
         {t(lang, 'usageDailyChart')}
       </div>
       <div className="settings-card">
+        {filterOptions.length > 0 ? (
+          <>
+            <p className="usage-filter-hint">{t(lang, 'usageChartFilterHint')}</p>
+            <div className="usage-filter" role="group" aria-label={t(lang, 'usageChartFilter')}>
+              <button
+                type="button"
+                className={`usage-filter-chip${selectedOwnerIds.length === 0 ? ' on' : ''}`}
+                onClick={() => setSelectedOwnerIds([])}
+              >
+                {t(lang, 'usageChartFilterAll')}
+              </button>
+              {filterOptions.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  className={`usage-filter-chip${selectedOwnerIds.includes(m.id) ? ' on' : ''}`}
+                  onClick={() => toggleOwner(m.id)}
+                >
+                  {m.name}
+                  <span style={{ opacity: 0.55, marginLeft: 4 }}>
+                    {m.kind === 'squad' ? t(lang, 'usageKindSquad') : t(lang, 'usageKindBot')}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </>
+        ) : null}
         <UsageLineChart series={series} lang={lang} />
       </div>
 

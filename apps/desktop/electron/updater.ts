@@ -82,6 +82,10 @@ export function initAutoUpdater(readSettings: SettingsReader) {
       availableVersion: info.version,
       error: undefined,
     });
+    // Auto-update ON → download in background (header shows downloading → install).
+    if (getSettings().autoUpdate !== false) {
+      void downloadUpdate();
+    }
   });
   autoUpdater.on('update-not-available', () => {
     if (isDownloadActive()) return;
@@ -117,9 +121,10 @@ export function initAutoUpdater(readSettings: SettingsReader) {
     });
   });
 
-  // Background check shortly after launch when preference allows.
+  // Background check shortly after launch (always when packaged).
+  // autoUpdate preference controls auto-download, not discovery.
   setTimeout(() => {
-    if (getSettings().autoUpdate !== false && app.isPackaged) {
+    if (app.isPackaged) {
       void checkForUpdates(false);
     }
   }, 8_000);
@@ -207,9 +212,12 @@ export async function installUpdate(): Promise<void> {
   }
 }
 
-/** Call when settings.autoUpdate flips on — schedule a check. */
+/** Call when settings.autoUpdate flips on — schedule a check / resume download. */
 export function onAutoUpdatePreferenceChanged(enabled: boolean) {
-  if (enabled && app.isPackaged) {
-    void checkForUpdates(false);
+  if (!enabled || !app.isPackaged) return;
+  if (status.phase === 'available') {
+    void downloadUpdate();
+    return;
   }
+  void checkForUpdates(false);
 }

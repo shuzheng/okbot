@@ -20,8 +20,6 @@ export interface CatalogModel {
   maxTokens: number | null;
   /** When false, hidden from bot picker and cannot be default. Default true. */
   enabled: boolean;
-  /** Optional vision capability hint (UI badge). */
-  vision?: boolean;
   /**
    * When true (default if missing), render `<think>…</think>` as a collapsible block.
    * When false, strip think spans from display and from persisted assistant content.
@@ -71,6 +69,10 @@ export interface ResolvedModelConfig {
   maxTokens: number | null;
   /** Resolved showThinking (`!== false` → true). */
   showThinking: boolean;
+  /** All model ids on the resolved provider (for image-gen capability inference). */
+  providerModelIds?: string[];
+  /** Provider display name (passed through to agent tooling). */
+  providerName?: string;
 }
 
 /** Optional bot/squad model override. Both empty / omitted → global default. */
@@ -202,7 +204,6 @@ export function normalizeCatalogModel(raw: unknown): CatalogModel | null {
     contextWindow: normalizeContextWindow(src.contextWindow),
     maxTokens: normalizeMaxTokens(src.maxTokens),
     enabled: src.enabled !== false,
-    vision: src.vision === true ? true : undefined,
     // Default true when missing; only persist false when explicitly off.
     showThinking: src.showThinking === false ? false : undefined,
   };
@@ -450,6 +451,8 @@ export function resolveModelConfig(
     contextWindow: pick ? pick.contextWindow : 128_000,
     maxTokens: pick ? pick.maxTokens : null,
     showThinking: pick?.showThinking !== false,
+    providerModelIds: provider ? provider.models.map((m) => m.id) : [],
+    providerName: provider?.name ?? '',
   };
 }
 
@@ -1011,13 +1014,46 @@ export const DEFAULT_SQUAD_SETTINGS: SquadSettings = {
   memberMaxTurns: 10,
 };
 
-/** Clamp / fill squad settings. Empty persona/playbook → built-in Chinese defaults. */
+/**
+ * Pre-parallel-star captain persona (exact text). Persisted settings still storing this
+ * exact default are upgraded to DEFAULT_SQUAD_CAPTAIN_PERSONA (parallel-first wording).
+ */
+export const LEGACY_DEFAULT_SQUAD_CAPTAIN_PERSONA = `你是小队的虚拟队长与编排者。你负责理解目标、拆解任务、选择队员、传递上下文、校验结果、汇总结论，并简洁清楚的回复用户。
+你的价值在于编排与把关，而不是替队员输出其专业细节。
+
+原则：
+1. 目标与约束优先：先确认用户目标、范围、验收标准、格式与限制。
+2. 角色边界：只把队员明确回报的内容当作其结论；不编造、不夸大、不把自己的推断伪装成队员结论。
+3. 中立务实：不确定时，涉及专业事实先问对应队员；涉及用户偏好、目标或取舍，先问用户。
+4. 效率可控：默认串行调用；独立且无依赖的子任务可并行；控制轮次、调用次数与成本。
+5. 结果负责：最终答复要可执行、可追溯，并说明依据、风险与未尽事项。`;
+
+/**
+ * Pre-parallel-star playbook (exact text). Exact match → upgrade to DEFAULT_SQUAD_PLAYBOOK.
+ */
+export const LEGACY_DEFAULT_SQUAD_PLAYBOOK = `0. 准备：读取队员名册、能力边界、工具权限与输出格式；建立任务清单：目标/约束/子任务/负责人/依赖/状态/结果/未决。
+1. 澄清：若关键信息缺失且影响结果，先向用户提不超过3个关键问题；否则做最小合理假设并明确标注。
+2. 拆解：把目标拆成可执行子任务。每个子任务写明：输入、期望输出、验收标准、依赖、优先级。
+3. 路由：按能力选择最合适队员。默认一次调用一名队员；若多个子任务无依赖且系统支持并行，可并行。
+   分派时必须携带：总目标、子任务、已知输入、约束、期望格式、验收标准、不要做什么。
+4. 校验：队员回报后检查完整性、一致性、事实依据与验收标准。不合格则追问、重试、换人或降级。
+5. 冲突：队员结论冲突时，列出来源、证据、假设、置信度，按领域权威、数据新鲜度、可验证性裁决；不能裁决则请用户决定。
+6. 汇总：去重、校对、统一术语与格式。最终答复包含：结论/交付物、关键依据、风险与限制、下一步建议。不要暴露冗长内部推理。
+7. 异常：队员超时/失败/空结果时，记录原因，尝试一次修复；仍失败则换人或降级，并明确告知用户。
+8. 边界：不越权调用工具或访问数据；不泄露隐私与密钥；不把未确认信息写成事实。
+9. 队员之间默认不互通，所有跨队员信息由你传递，并标注来源。`;
+
+/** Clamp / fill squad settings. Empty / legacy serial-only defaults → parallel-star defaults. */
 export function normalizeSquadSettings(raw: unknown): SquadSettings {
   const src =
     raw && typeof raw === 'object' ? (raw as Partial<Record<keyof SquadSettings, unknown>>) : {};
-  const persona =
+  const personaRaw =
     typeof src.captainPersona === 'string' ? src.captainPersona.trim() : '';
-  const playbook = typeof src.playbook === 'string' ? src.playbook.trim() : '';
+  const playbookRaw = typeof src.playbook === 'string' ? src.playbook.trim() : '';
+  const persona =
+    !personaRaw || personaRaw === LEGACY_DEFAULT_SQUAD_CAPTAIN_PERSONA ? '' : personaRaw;
+  const playbook =
+    !playbookRaw || playbookRaw === LEGACY_DEFAULT_SQUAD_PLAYBOOK ? '' : playbookRaw;
 
   return {
     captainPersona: persona || DEFAULT_SQUAD_CAPTAIN_PERSONA,
@@ -1049,9 +1085,8 @@ export const DEFAULT_ASSISTANT_ROLE_TEMPLATE =
   '你是「{name}」，一个可使用本机工具的桌面个人助手。';
 
 /**
- * Pre-vision-guard AGENTS.md refresh system prompt (exact text).
- * Persisted settings that still store this exact default are upgraded to
- * DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT (adds the no absolute capability-denial clause).
+ * Older AGENTS.md refresh system prompts (exact text). Persisted settings that still
+ * store any of these exact defaults are upgraded to DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT.
  */
 export const LEGACY_DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT = [
   '你负责维护桌面助手机器人的 AGENTS.md（系统提示词）。',
@@ -1062,8 +1097,8 @@ export const LEGACY_DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT = [
   '若需更新，只输出完整的新 AGENTS.md 正文（不要代码围栏，不要解释）。',
 ].join('\n');
 
-/** Full default system prompt for silent AGENTS.md maintenance. */
-export const DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT = [
+/** Prior default that added the no-absolute-capability-denial clause + NO_CHANGE sentinel. */
+export const LEGACY_AGENTS_MD_REFRESH_WITH_VISION_GUARD = [
   '你负责维护桌面助手机器人的 AGENTS.md（系统提示词）。',
   '只写入值得跨会话记住的内容：用户偏好、长期目标、项目路径/技术栈、反复出现的约束。',
   '不要写入一次性任务细节、密钥、冗长日志或与助手无关的闲聊。',
@@ -1071,6 +1106,15 @@ export const DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT = [
   '保持 Markdown，保留原有章节结构（角色与目标 / 用户偏好 / 项目与环境 / 工作备注），可增删条目。',
   '若无需更新，只输出一行：NO_CHANGE',
   '若需更新，只输出完整的新 AGENTS.md 正文（不要代码围栏，不要解释）。',
+].join('\n');
+
+/** Full default system prompt for silent AGENTS.md maintenance. */
+export const DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT = [
+  '你负责维护桌面助手机器人的 AGENTS.md（系统提示词）。',
+  '只写入值得跨会话记住的内容：用户偏好、长期目标、项目路径/技术栈、反复出现的约束。',
+  '不要写入一次性任务细节、密钥、冗长日志或与助手无关的闲聊。',
+  '保持 Markdown，保留原有章节结构（角色与目标 / 用户偏好 / 项目与环境 / 工作备注），可增删条目。',
+  '若需更新，只输出完整的新 AGENTS.md 正文（不要代码围栏，不要解释）。否则不要输出任何正文。',
 ].join('\n');
 
 export const DEFAULT_AGENTS_MD_RECENT_MESSAGE_LIMIT = 12;
@@ -1101,9 +1145,11 @@ export function normalizeInstructionsSettings(raw: unknown): InstructionsSetting
     typeof src.agentsMdRefreshSystemPrompt === 'string'
       ? src.agentsMdRefreshSystemPrompt.trim()
       : '';
-  // Upgrade exact pre-vision-guard default so installs keep the no-denial clause.
+  // Upgrade exact legacy defaults (pre-vision-guard / vision-guard+NO_CHANGE) in place.
   const agentsPrompt =
-    !agentsPromptRaw || agentsPromptRaw === LEGACY_DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT
+    !agentsPromptRaw ||
+    agentsPromptRaw === LEGACY_DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT ||
+    agentsPromptRaw === LEGACY_AGENTS_MD_REFRESH_WITH_VISION_GUARD
       ? ''
       : agentsPromptRaw;
   const skillsInstr =
@@ -1171,17 +1217,85 @@ export function normalizeMemorySettings(raw: unknown): MemorySettings {
   };
 }
 
+/** Built-in always-on local desktop computer id. */
+export const LOCAL_COMPUTER_ID = 'local';
+
+/**
+ * Named remote cloud computer (Docker sandbox) registered in settings.
+ * Local is always available as `LOCAL_COMPUTER_ID` and is not stored in this list.
+ */
+export interface ComputerEntry {
+  id: string;
+  name: string;
+  /** Hostname or IP (e.g. 127.0.0.1 or LAN IP of Mac mini). */
+  host: string;
+  /** Sandbox HTTP port. Default 18790. */
+  port: number;
+  /** Bearer token matching SANDBOX_TOKEN. */
+  token: string;
+}
+
+export const DEFAULT_SANDBOX_PORT = 18790;
+
+export function generateComputerId(): string {
+  return createId('computer');
+}
+
+export function generateComputerToken(): string {
+  return generateLocalHttpApiToken();
+}
+
+export function normalizeComputerEntry(raw: unknown): ComputerEntry | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Partial<ComputerEntry>;
+  const id = typeof o.id === 'string' ? o.id.trim() : '';
+  const name = typeof o.name === 'string' ? o.name.trim() : '';
+  const host = typeof o.host === 'string' ? o.host.trim() : '';
+  let port =
+    typeof o.port === 'number' && Number.isFinite(o.port) ? Math.floor(o.port) : DEFAULT_SANDBOX_PORT;
+  if (port < 1 || port > 65535) port = DEFAULT_SANDBOX_PORT;
+  const token = typeof o.token === 'string' ? o.token.trim() : '';
+  if (!id || id === LOCAL_COMPUTER_ID) return null;
+  if (!name || !host || !token) return null;
+  if (!/^[A-Za-z0-9_-]+$/.test(token)) return null;
+  return { id, name, host, port, token };
+}
+
+export function normalizeComputers(raw: unknown): ComputerEntry[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ComputerEntry[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    const c = normalizeComputerEntry(item);
+    if (!c || seen.has(c.id)) continue;
+    seen.add(c.id);
+    out.push(c);
+  }
+  return out;
+}
+
 /**
  * Loopback HTTP API for external programs (`settings.json` → `localHttpApi`).
  * Default OFF. When enabled, main process binds 127.0.0.1 only.
+ * When `bindLan` is true, binds 0.0.0.0 (intranet gateway) and can serve the web UI.
  */
 export interface LocalHttpApiSettings {
   /** Master switch. Default false. */
   enabled: boolean;
-  /** TCP port on 127.0.0.1. Default 18765; clamp 1024–65535. */
+  /** TCP port. Default 18765; clamp 1024–65535. */
   port: number;
-  /** Shared secret; required on every request except health. Empty → auto-generate. */
+  /** Shared secret; required on every request except health. Empty while disabled is allowed; enabling generates one. */
   token: string;
+  /**
+   * When true, bind 0.0.0.0 (LAN / desktop gateway) instead of 127.0.0.1.
+   * Intranet use; auth token still required. Default false.
+   */
+  bindLan: boolean;
+  /**
+   * When true (and enabled), serve the built renderer UI over HTTP for mobile browsers.
+   * Normalize defaults serveUi to true when bindLan is true.
+   */
+  serveUi: boolean;
 }
 
 export const DEFAULT_LOCAL_HTTP_API_PORT = 18765;
@@ -1201,20 +1315,32 @@ export const DEFAULT_LOCAL_HTTP_API: LocalHttpApiSettings = {
   enabled: false,
   port: DEFAULT_LOCAL_HTTP_API_PORT,
   token: "", // filled by normalize on first read/save
+  bindLan: false,
+  serveUi: false,
 };
 
-/** Clamp / fill local HTTP API settings. Empty token → generate. */
+/** Keep only the token charset external clients can send safely. */
+export function sanitizeLocalHttpApiToken(raw: string): string {
+  return (raw || "").replace(/[^A-Za-z0-9_-]/g, "");
+}
+
+/**
+ * Clamp / fill local HTTP API settings.
+ * Disallowed characters are stripped (not silently replaced).
+ * A new token is generated only when the result is empty AND the API is enabled.
+ */
 export function normalizeLocalHttpApiSettings(raw: unknown): LocalHttpApiSettings {
   const obj =
     raw && typeof raw === "object" ? (raw as Partial<Record<keyof LocalHttpApiSettings, unknown>>) : {};
   const enabled = obj.enabled === true;
   let port = typeof obj.port === "number" && Number.isFinite(obj.port) ? Math.floor(obj.port) : DEFAULT_LOCAL_HTTP_API_PORT;
   if (port < 1024 || port > 65535) port = DEFAULT_LOCAL_HTTP_API_PORT;
-  let token = typeof obj.token === "string" ? obj.token.trim() : "";
-  if (!token) token = generateLocalHttpApiToken();
-  // Reject whitespace / control chars in token
-  if (!/^[A-Za-z0-9_-]+$/.test(token)) token = generateLocalHttpApiToken();
-  return { enabled, port, token };
+  let token = typeof obj.token === "string" ? sanitizeLocalHttpApiToken(obj.token) : "";
+  if (!token && enabled) token = generateLocalHttpApiToken();
+  const bindLan = obj.bindLan === true;
+  // serveUi defaults to true when bindLan (gateway hosts UI); otherwise false
+  const serveUi = obj.serveUi === true || (obj.serveUi !== false && bindLan);
+  return { enabled, port, token, bindLan, serveUi };
 }
 
 export interface AppSettings {
@@ -1255,8 +1381,13 @@ export interface AppSettings {
   squad: SquadSettings;
   /** Per-run tool call / duration circuit breakers + trajectory recording. */
   toolRun: ToolRunSettings;
-  /** Local loopback HTTP API (default OFF; 127.0.0.1 only). */
+  /** Local / LAN HTTP API + optional desktop gateway UI (default OFF). */
   localHttpApi: LocalHttpApiSettings;
+  /**
+   * Registered remote cloud computers (sandbox containers).
+   * Always-on Local is implicit (`LOCAL_COMPUTER_ID`) and not listed here.
+   */
+  computers: ComputerEntry[];
 }
 
 /** Roster row in `~/.okbot/bots.json` (name card only). */
@@ -1518,10 +1649,12 @@ export interface UsageStats {
   daily: Record<string, TokenUsage>;
   /** botId / squadId → lifetime totals for that conversation owner. */
   byOwner: Record<string, TokenUsage>;
+  /** ownerId → YYYY-MM-DD → counts (same retention window as `daily`). */
+  dailyByOwner: Record<string, Record<string, TokenUsage>>;
 }
 
 export function emptyUsageStats(): UsageStats {
-  return { lifetime: emptyTokenUsage(), daily: {}, byOwner: {} };
+  return { lifetime: emptyTokenUsage(), daily: {}, byOwner: {}, dailyByOwner: {} };
 }
 
 export type ChatRole = 'user' | 'assistant' | 'system';
@@ -1641,6 +1774,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   squad: { ...DEFAULT_SQUAD_SETTINGS },
   toolRun: { ...DEFAULT_TOOL_RUN },
   localHttpApi: { ...DEFAULT_LOCAL_HTTP_API, token: '' },
+  computers: [],
 };
 
 export const EMOJI_PRESETS = [
@@ -1687,6 +1821,7 @@ export const IpcChannels = {
   saveSettings: 'okbot:save-settings',
   discoverModels: 'okbot:discover-models',
   testModelConnection: 'okbot:test-model-connection',
+  probeComputer: 'okbot:probe-computer',
   getMessages: 'okbot:get-messages',
   getMessagesPage: 'okbot:get-messages-page',
   searchMessages: 'okbot:search-messages',
@@ -1736,6 +1871,10 @@ export const IpcChannels = {
   pickPaths: 'okbot:pick-paths',
   /** Renderer → main: read ~/.okbot/<owner>/resources/* as a data URL for markdown images. */
   readGeneratedAssetDataUrl: 'okbot:read-generated-asset-data-url',
+  /** Export assistant install package (folder or .okbot zip). */
+  exportAssistantPackage: 'okbot:export-assistant-package',
+  /** Import assistant install package (folder or .okbot zip). */
+  importAssistantPackage: 'okbot:import-assistant-package',
 } as const;
 
 export type PendingToolRequest = {
@@ -1746,7 +1885,13 @@ export type PendingToolRequest = {
   arguments: unknown;
 };
 
-export type ChatEvent =
+/**
+ * Unified agent runtime event stream — one model for desktop IPC, local HTTP API /
+ * Gateway SSE, and UI. Adapters must not invent divergent turn state machines.
+ */
+export type SessionsChangedReason = 'message' | 'created' | 'updated' | 'deleted';
+
+export type RuntimeEvent =
   | { type: 'delta'; botId: string; messageId: string; delta: string }
   | { type: 'done'; botId: string; messageId: string; content: string; usage?: TokenUsage; aborted?: boolean }
   | { type: 'error'; botId: string; messageId: string; error: string }
@@ -1768,6 +1913,22 @@ export type ChatEvent =
       toolName: string;
       approved: boolean;
       output?: string;
+    }
+  | {
+      /** Skills catalog changed on disk (hot reload); UI may refresh lists. */
+      type: 'skills_changed';
+      botId: string;
+      paths?: string[];
+      at: string;
+    }
+  | {
+      /**
+       * Roster, order, or preview changed (message, create, rename, delete).
+       * Clients refetch bots and squads. Not a chat-turn event.
+       */
+      type: 'sessions_changed';
+      botId: string;
+      reason: SessionsChangedReason;
     };
 
 /** About dialog / clipboard blob. */

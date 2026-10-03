@@ -155,9 +155,9 @@ jobs:
           OkBot **${VERSION}**
 
           ## Downloads
-          - **macOS**: DMG / ZIP (arm64 + x64)
-          - **Windows**: NSIS installer (x64)
-          - **Linux**: AppImage (x64)
+          - **macOS**: DMG / ZIP（arm64 + x64）
+          - **Windows**: NSIS installer（x64）
+          - **Linux**: AppImage（x64）
 
           Auto-update uses these GitHub Release assets via electron-updater.
           MD
@@ -165,7 +165,8 @@ jobs:
 
           if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
             gh release upload "$TAG" upload/* --repo "${{ github.repository }}" --clobber
-            gh release edit "$TAG" --repo "${{ github.repository }}" --notes "$NOTES" --latest
+            # Do not replace notes: the release is published with a changelog first.
+            gh release edit "$TAG" --repo "${{ github.repository }}" --latest
           else
             gh release create "$TAG" upload/* \
               --repo "${{ github.repository }}" \

@@ -8,6 +8,7 @@ import type {
 import type { Session, SessionInputCallback } from '@openai/agents';
 import type { ToolRunBudget } from './toolRunBudget.js';
 import type { SkillLookup } from './tools.js';
+import type { ExecutionBackend } from './executionBackend.js';
 
 export interface RunChatInput {
   botName: string;
@@ -77,6 +78,8 @@ export interface RunAgentChatInput extends RunChatInput {
   ownerId: string;
   /** Absolute `~/.okbot/<ownerId>/resources` directory. */
   resourcesDir: string;
+  /** Shell/fs backend for this run (local or cloud computer). */
+  executionBackend?: ExecutionBackend;
   onToolApprovalRequest: (req: ToolApprovalRequest) => Promise<ToolApprovalDecision>;
   onToolResult?: (info: {
     requestId: string;
@@ -111,6 +114,8 @@ export interface ResumeAgentChatAfterHitlInput {
   ownerId: string;
   /** Absolute `~/.okbot/<ownerId>/resources` directory. */
   resourcesDir: string;
+  /** Shell/fs backend for this run (local or cloud computer). */
+  executionBackend?: ExecutionBackend;
   signal?: AbortSignal;
   onDelta?: (delta: string) => void;
   onToolApprovalRequest: (req: ToolApprovalRequest) => Promise<ToolApprovalDecision>;

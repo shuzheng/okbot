@@ -26,6 +26,9 @@ import {
   normalizeSquadSettings,
   normalizeInstructionsSettings,
   LEGACY_DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT,
+  LEGACY_AGENTS_MD_REFRESH_WITH_VISION_GUARD,
+  LEGACY_DEFAULT_SQUAD_CAPTAIN_PERSONA,
+  LEGACY_DEFAULT_SQUAD_PLAYBOOK,
   normalizeMemorySettings,
   normalizeToolRunSettings,
   normalizeSquad,
@@ -44,9 +47,22 @@ import {
   type BotAvatarShape,
   type TokenUsage,
   type UsageStats,
+  type SessionsChangedReason,
   normalizeLocalHttpApiSettings,
+  normalizeComputers,
 } from '@okbot/shared';
-import { ensureDir, readJson, readJsonResult, backupFileAside, writeJson, unquoteYamlScalar } from './fs';
+import {
+  parseSkillMarkdown,
+  formatSkillMarkdown,
+  formatSkillCatalog,
+  buildSkillCatalogEntries,
+  buildAssistantPackage,
+  parseAssistantPackage,
+  assistantPackageToFileMap,
+  stripSecrets,
+  type AssistantPackageContents,
+} from '@okbot/agent';
+import { ensureDir, readJson, readJsonResult, backupFileAside, writeJson } from './fs';
 import { loadUsageStats, recordTokenUsage, removeOwnerUsage } from './usageStore';
 import {
   isSessionRecordV2,
@@ -70,6 +86,12 @@ import {
   sanitizeSkillSlug,
 } from './ids';
 import type { SessionRecordV2, PendingHitlRecord } from './types';
+import {
+  writeAssistantPackageDir,
+  readAssistantPackageDir,
+  zipAssistantPackage,
+  readAssistantPackageArchive,
+} from './assistantPackageIo';
 import { readLastRunTrace, markAbandonedIfRunning, type RunTraceFile } from './runTrace';
 
 export type { SessionRecordV2, PendingHitlRecord } from './types';
@@ -81,6 +103,10 @@ export class FileStorage {
   private settingsPath: string;
   /** One-shot warning after corrupt settings.json (shown on bootstrap). */
   private settingsLoadWarning: string | null = null;
+  /** Main process fans this out as RuntimeEvent sessions_changed. */
+  private sessionsChangedListener:
+    | ((ownerId: string, reason: SessionsChangedReason) => void)
+    | null = null;
   private settingsCorruptHandled = false;
   private windowPath: string;
   private usagePath: string;
@@ -95,8 +121,25 @@ export class FileStorage {
     ensureDir(this.root);
     if (!fs.existsSync(this.botsPath)) writeJson(this.botsPath, [] as BotRosterEntry[]);
     if (!fs.existsSync(this.squadsPath)) writeJson(this.squadsPath, [] as Squad[]);
-    if (!fs.existsSync(this.settingsPath)) writeJson(this.settingsPath, DEFAULT_SETTINGS);
+    if (!fs.existsSync(this.settingsPath)) this.writeSettingsFile(DEFAULT_SETTINGS);
     this.ensureMemoryFile(this.globalMemoryPath());
+  }
+
+  /** Desktop main registers this so Electron and the gateway share one roster signal. */
+  setSessionsChangedListener(
+    listener: ((ownerId: string, reason: SessionsChangedReason) => void) | null,
+  ): void {
+    this.sessionsChangedListener = listener;
+  }
+
+  private noteSessionsChanged(ownerId: string, reason: SessionsChangedReason): void {
+    const id = (ownerId || '').trim();
+    if (!id || !this.sessionsChangedListener) return;
+    try {
+      this.sessionsChangedListener(id, reason);
+    } catch (err) {
+      console.error('[okbot] sessions_changed listener failed', err);
+    }
   }
 
   /** `~/.okbot/<botId>` */
@@ -139,6 +182,17 @@ export class FileStorage {
   /** `~/.okbot/<botId>/skills` */
   private botSkillsDir(botId: string): string {
     return path.join(this.botDir(botId), 'skills');
+  }
+
+  /** Public path for skill hot-reload watchers. */
+  botSkillsDirPublic(botId: string): string {
+    this.assertKnownBotId(botId);
+    return this.botSkillsDir(botId);
+  }
+
+  /** Public `~/.agents/skills` for hot-reload. */
+  globalAgentsSkillsDirPublic(): string {
+    return this.globalAgentsSkillsDir();
   }
 
   /** `~/.okbot/<botId>/resources` */
@@ -449,28 +503,27 @@ export class FileStorage {
    */
   formatSkillsForPrompt(botId: string): string {
     const local = this.listSkills(botId);
-    const parts: string[] = local.map((s) =>
-      [`### ${s.name} (\`${s.slug}\`)`, '', `何时使用：${s.description}`].join('\n'),
-    );
+    let useGlobalSkills = false;
+    let enabledGlobalSkills: string[] = [];
+    let global: BotSkill[] = [];
     try {
       const config = this.readBotConfig(botId);
-      if (config.useGlobalSkills && config.enabledGlobalSkills.length) {
-        const enabled = new Set(config.enabledGlobalSkills);
-        for (const s of this.listGlobalAgentsSkills()) {
-          if (!enabled.has(s.slug)) continue;
-          parts.push(
-            [
-              `### ${s.name} (\`${s.slug}\`) · 全局技能`,
-              '',
-              `何时使用：${s.description}`,
-            ].join('\n'),
-          );
-        }
-      }
+      useGlobalSkills = config.useGlobalSkills === true;
+      enabledGlobalSkills = Array.isArray(config.enabledGlobalSkills)
+        ? config.enabledGlobalSkills
+        : [];
+      if (useGlobalSkills) global = this.listGlobalAgentsSkills();
     } catch {
       /* missing bot.json — local only */
     }
-    return parts.join('\n\n');
+    return formatSkillCatalog(
+      buildSkillCatalogEntries({
+        local,
+        global,
+        useGlobalSkills,
+        enabledGlobalSkills,
+      }),
+    );
   }
 
   writeSkill(botId: string, skill: BotSkill): void {
@@ -479,19 +532,14 @@ export class FileStorage {
     if (!slug) throw new Error('invalid skill slug');
     this.ensureBotLayout(botId);
     ensureDir(this.skillDir(botId, slug));
-    const nm = (stripThinkContent(skill.name).trim() || slug).replace(/"/g, "'");
-    const desc = (stripThinkContent(skill.description).trim() || nm).replace(/"/g, "'");
+    const nm = stripThinkContent(skill.name).trim() || slug;
+    const desc = stripThinkContent(skill.description).trim() || nm;
     const body = stripThinkContent(skill.body).trim();
-    const md = [
-      '---',
-      `name: "${nm}"`,
-      `description: "${desc}"`,
-      '---',
-      '',
-      body,
-      '',
-    ].join('\n');
-    fs.writeFileSync(this.skillFile(botId, slug), md, 'utf8');
+    fs.writeFileSync(
+      this.skillFile(botId, slug),
+      formatSkillMarkdown({ slug, name: nm, description: desc, body }),
+      'utf8',
+    );
   }
 
   deleteSkill(botId: string, slug: string): void {
@@ -508,22 +556,7 @@ export class FileStorage {
   }
 
   private parseSkillMarkdown(slug: string, raw: string): BotSkill {
-    let name = slug;
-    let description = '';
-    let body = raw;
-    const fm = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
-    if (fm) {
-      const meta = fm[1];
-      body = fm[2];
-      const n = meta.match(/^name:\s*(.*)$/m);
-      const d = meta.match(/^description:\s*(.*)$/m);
-      if (n) name = unquoteYamlScalar(n[1].trim()) || name;
-      if (d) description = unquoteYamlScalar(d[1].trim());
-    } else {
-      const title = raw.match(/^#\s+(.+)$/m);
-      if (title) name = title[1].trim();
-    }
-    return { slug, name, description: description || name, body: body.trim() };
+    return parseSkillMarkdown(slug, raw);
   }
 
 
@@ -637,6 +670,7 @@ export class FileStorage {
         squad: { ...DEFAULT_SETTINGS.squad },
         toolRun: { ...DEFAULT_SETTINGS.toolRun },
         localHttpApi: normalizeLocalHttpApiSettings(DEFAULT_SETTINGS.localHttpApi),
+        computers: [],
         autoApprovalRules: [...DEFAULT_SETTINGS.autoApprovalRules],
       };
     }
@@ -667,6 +701,7 @@ export class FileStorage {
       squad: normalizeSquadSettings((raw as { squad?: unknown }).squad),
       toolRun: normalizeToolRunSettings((raw as { toolRun?: unknown }).toolRun),
       localHttpApi: normalizeLocalHttpApiSettings((raw as { localHttpApi?: unknown }).localHttpApi),
+      computers: normalizeComputers((raw as { computers?: unknown }).computers),
     };
     // Rewrite legacy shapes in place (no dual-read forever). Only when we actually
     // read a file from disk — never after parse failure.
@@ -677,7 +712,17 @@ export class FileStorage {
         rawModel &&
         typeof rawModel === 'object' &&
         !Array.isArray(rawModel.providers);
-      const legacySquad = (raw as { squad?: unknown }).squad === undefined;
+      const legacySquadMissing = (raw as { squad?: unknown }).squad === undefined;
+      const rawSquad = (raw as { squad?: { captainPersona?: unknown; playbook?: unknown } }).squad;
+      const rawPersona =
+        rawSquad && typeof rawSquad.captainPersona === 'string'
+          ? rawSquad.captainPersona.trim()
+          : '';
+      const rawPlaybook =
+        rawSquad && typeof rawSquad.playbook === 'string' ? rawSquad.playbook.trim() : '';
+      const legacySquadSerial =
+        rawPersona === LEGACY_DEFAULT_SQUAD_CAPTAIN_PERSONA ||
+        rawPlaybook === LEGACY_DEFAULT_SQUAD_PLAYBOOK;
       const rawLocal = (raw as { localHttpApi?: unknown }).localHttpApi;
       const legacyLocalHttpApi =
         rawLocal === undefined ||
@@ -692,13 +737,31 @@ export class FileStorage {
           ? rawInstructions.agentsMdRefreshSystemPrompt.trim()
           : '';
       const legacyAgentsRefreshPrompt =
-        rawAgentsPrompt === LEGACY_DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT;
-      if (legacyModel || legacySquad || legacyLocalHttpApi || legacyAgentsRefreshPrompt) {
+        rawAgentsPrompt === LEGACY_DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT ||
+        rawAgentsPrompt === LEGACY_AGENTS_MD_REFRESH_WITH_VISION_GUARD;
+      if (
+        legacyModel ||
+        legacySquadMissing ||
+        legacySquadSerial ||
+        legacyLocalHttpApi ||
+        legacyAgentsRefreshPrompt
+      ) {
         backupFileAside(this.settingsPath, 'pre-migrate');
-        writeJson(this.settingsPath, next);
+        this.writeSettingsFile(next);
       }
     }
     return next;
+  }
+
+
+  /** settings.json holds API tokens; keep it owner-readable only. */
+  private writeSettingsFile(data: unknown): void {
+    writeJson(this.settingsPath, data);
+    try {
+      fs.chmodSync(this.settingsPath, 0o600);
+    } catch (err) {
+      console.error('[okbot] chmod settings.json failed', err);
+    }
   }
 
   saveSettings(settings: AppSettings): AppSettings {
@@ -738,8 +801,9 @@ export class FileStorage {
       squad: normalizeSquadSettings(settings.squad),
       toolRun: normalizeToolRunSettings(settings.toolRun),
       localHttpApi: normalizeLocalHttpApiSettings(settings.localHttpApi),
+      computers: normalizeComputers(settings.computers),
     };
-    writeJson(this.settingsPath, next);
+    this.writeSettingsFile(next);
     return next;
   }
 
@@ -995,7 +1059,9 @@ export class FileStorage {
     const roster = this.listRoster();
     roster.unshift(entry);
     this.writeRoster(roster);
-    return this.mergeBot(entry, config);
+    const bot = this.mergeBot(entry, config);
+    this.noteSessionsChanged(id, 'created');
+    return bot;
   }
 
   updateBot(
@@ -1082,20 +1148,25 @@ export class FileStorage {
     if (profileChanged) {
       this.syncAgentsMdProfile(id, entry.name, entry.description);
     }
-    return this.mergeBot(entry, config);
+    const bot = this.mergeBot(entry, config);
+    this.noteSessionsChanged(id, 'updated');
+    return bot;
   }
 
   deleteBot(id: string): void {
-    const roster = this.listRoster().filter((b) => b.id !== id);
+    const safe = assertSafeOwnerSegment(id);
+    this.assertKnownBotId(safe);
+    const roster = this.listRoster().filter((b) => b.id !== safe);
     this.writeRoster(roster);
-    const dir = this.botDir(id);
+    const dir = this.botDir(safe);
     if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
-    this.purgeBotFromSquads(id);
+    this.purgeBotFromSquads(safe);
     try {
-      removeOwnerUsage(this.usagePath, id);
+      removeOwnerUsage(this.usagePath, safe);
     } catch (err) {
-      console.error('[okbot] removeOwnerUsage failed', id, err);
+      console.error('[okbot] removeOwnerUsage failed', safe, err);
     }
+    this.noteSessionsChanged(safe, 'deleted');
   }
 
 
@@ -1166,7 +1237,9 @@ export class FileStorage {
     config.onboardingComplete = true;
     config.updatedAt = new Date().toISOString();
     this.writeBotConfig(config);
-    return this.mergeBot(entry, config);
+    const bot = this.mergeBot(entry, config);
+    this.noteSessionsChanged(botId, 'updated');
+    return bot;
   }
 
 
@@ -1283,6 +1356,7 @@ export class FileStorage {
     list.unshift(squad);
     writeJson(this.squadsPath, list);
     this.ensureSquadLayout(squad.id);
+    this.noteSessionsChanged(squad.id, 'created');
     return squad;
   }
 
@@ -1336,21 +1410,27 @@ export class FileStorage {
     if (prev.hasUnreadReply === true) next.hasUnreadReply = true;
     list[idx] = next;
     writeJson(this.squadsPath, list);
+    this.noteSessionsChanged(id, 'updated');
     return next;
   }
 
   deleteSquad(id: string): void {
+    const safe = assertSafeOwnerSegment(id);
+    if (!isSquadOwnerId(safe) || !this.listSquads().some((s) => s.id === safe)) {
+      throw new Error(`小队不存在：${safe}`);
+    }
     writeJson(
       this.squadsPath,
-      this.listSquads().filter((s) => s.id !== id),
+      this.listSquads().filter((s) => s.id !== safe),
     );
-    const dir = this.squadDir(id);
+    const dir = this.squadDir(safe);
     if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
     try {
-      removeOwnerUsage(this.usagePath, id);
+      removeOwnerUsage(this.usagePath, safe);
     } catch (err) {
-      console.error('[okbot] removeOwnerUsage failed', id, err);
+      console.error('[okbot] removeOwnerUsage failed', safe, err);
     }
+    this.noteSessionsChanged(safe, 'deleted');
   }
 
   /** Drop a deleted bot from all squads; delete squads that fall below 2 members. */
@@ -1783,6 +1863,7 @@ export class FileStorage {
     this.ensureSessionV2(botId);
     const rec = legacyMessageToRecord(message);
     fs.appendFileSync(this.sessionFile(botId), `${JSON.stringify(rec)}\n`, 'utf8');
+    this.noteSessionsChanged(botId, 'message');
   }
 
   /**
@@ -1803,6 +1884,7 @@ export class FileStorage {
     if (byId >= 0) {
       records[byId] = mergeUiMessageOntoRecord(records[byId]!, message);
       this.writeSessionRecords(botId, records);
+      this.noteSessionsChanged(botId, 'message');
       return;
     }
     // Abort during tool approval clears streamed content then still called upsert
@@ -1821,6 +1903,7 @@ export class FileStorage {
     ) {
       records.push(legacyMessageToRecord(message));
       this.writeSessionRecords(botId, records);
+      this.noteSessionsChanged(botId, 'message');
       return;
     }
     for (let i = records.length - 1; i >= 0; i--) {
@@ -1835,11 +1918,13 @@ export class FileStorage {
         // keeping Responses array-shaped content (do not flatten via legacyMessageToRecord).
         records[i] = mergeUiMessageOntoRecord(rec, message);
         this.writeSessionRecords(botId, records);
+        this.noteSessionsChanged(botId, 'message');
         return;
       }
     }
     records.push(legacyMessageToRecord(message));
     this.writeSessionRecords(botId, records);
+    this.noteSessionsChanged(botId, 'message');
   }
 
   private isPendingHitlRecord(raw: unknown): raw is PendingHitlRecord {
@@ -1967,6 +2052,82 @@ export class FileStorage {
       if (data) out.push({ ...data, botId: s.id });
     }
     return out;
+  }
+
+
+  /**
+   * Export assistant install package (secrets stripped): avatar / name / persona /
+   * AGENTS.md / skills/. `targetPath` ends with `.okbot` → zip; otherwise directory.
+   */
+  exportAssistantPackage(botId: string, targetPath: string): { path: string } {
+    this.assertKnownBotId(botId);
+    const roster = this.listRoster().find((b) => b.id === botId);
+    if (!roster) throw new Error('助手不存在');
+    const config = this.readBotConfig(botId);
+    const agentsMd = this.readAgentsMd(botId);
+    const skills = this.listSkills(botId);
+    const pkg = buildAssistantPackage({
+      name: roster.name,
+      description: roster.description,
+      avatar: {
+        avatarKind: config.avatarKind,
+        emoji: config.emoji,
+        color: config.color,
+        ...(config.botAvatarType ? { botAvatarType: config.botAvatarType } : {}),
+      },
+      agentsMd,
+      skills,
+    });
+    const clean = stripSecrets(pkg);
+    const target = path.resolve(targetPath.trim());
+    if (target.toLowerCase().endsWith('.okbot')) {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'okbot-export-'));
+      try {
+        writeAssistantPackageDir(tmp, clean);
+        zipAssistantPackage(tmp, target);
+      } finally {
+        try {
+          fs.rmSync(tmp, { recursive: true, force: true });
+        } catch {
+          /* ignore */
+        }
+      }
+    } else {
+      ensureDir(target);
+      writeAssistantPackageDir(target, clean);
+    }
+    return { path: target };
+  }
+
+  /**
+   * Import assistant package from folder or `.okbot` zip → new bot (no secrets).
+   */
+  importAssistantPackage(sourcePath: string): Bot {
+    const src = path.resolve(sourcePath.trim());
+    if (!fs.existsSync(src)) throw new Error('助手包路径不存在');
+    const pkg = fs.statSync(src).isDirectory()
+      ? readAssistantPackageDir(src)
+      : readAssistantPackageArchive(src);
+    const clean = stripSecrets(pkg);
+    const bot = this.createBot({
+      name: clean.manifest.name,
+      description: clean.manifest.description,
+      emoji: clean.manifest.avatar.emoji,
+      color: clean.manifest.avatar.color,
+      avatarKind: clean.manifest.avatar.avatarKind,
+      botAvatarType: clean.manifest.avatar.botAvatarType,
+    });
+    if (clean.agentsMd.trim()) {
+      this.writeAgentsMd(bot.id, clean.agentsMd);
+    }
+    for (const skill of clean.skills) {
+      this.writeSkill(bot.id, skill);
+    }
+    const cfg = this.readBotConfig(bot.id);
+    cfg.onboardingComplete = true;
+    cfg.updatedAt = new Date().toISOString();
+    this.writeBotConfig(cfg);
+    return this.listBots().find((b) => b.id === bot.id) ?? bot;
   }
 
 }

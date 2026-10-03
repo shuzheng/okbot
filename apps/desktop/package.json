@@ -1,6 +1,6 @@
 {
   "name": "@okbot/desktop",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "OkBot desktop shell",
   "main": "./out/main/index.js",
@@ -17,7 +17,8 @@
     "publish:github": "pnpm build && electron-builder --config electron-builder.yml --mac --publish always",
     "test:session-jsonl": "node --import tsx electron/storage/sessionJsonl.test.ts",
     "test:usage-store": "node --import tsx electron/storage/usageStore.test.ts",
-    "test": "node --import tsx electron/storage/sessionJsonl.test.ts && node --import tsx electron/storage/usageStore.test.ts"
+    "test": "node --import tsx electron/storage/sessionJsonl.test.ts && node --import tsx electron/storage/usageStore.test.ts && node --import tsx electron/gatewayLoginPage.test.ts && node --import tsx electron/gatewayBridge.test.ts && node --import tsx electron/idleGpu.test.ts && node --import tsx electron/localHttpApi.gateway.test.ts && node --import tsx electron/ipc/chatControl.test.ts && node --import tsx electron/storage/deleteOwner.test.ts && node --import tsx electron/storage/sessionsChanged.test.ts",
+    "test:gateway": "node --import tsx electron/localHttpApi.gateway.test.ts && node --import tsx electron/ipc/chatControl.test.ts && node --import tsx electron/storage/deleteOwner.test.ts"
   },
   "dependencies": {
     "@emoji-mart/data": "^1.2.1",

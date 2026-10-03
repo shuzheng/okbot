@@ -651,9 +651,6 @@ export function ModelProvidersPanel({ lang, value, onChange }: ModelProvidersPan
                         <span className="model-badge context">
                           {formatContextWindowBadge(m.contextWindow)}
                         </span>
-                        {m.vision ? (
-                          <span className="model-badge vision">{t(lang, 'modelVision')}</span>
-                        ) : null}
                         {isDefault ? (
                           <span className="model-badge default">{t(lang, 'modelDefaultBadge')}</span>
                         ) : null}

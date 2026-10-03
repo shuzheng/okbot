@@ -1,18 +1,20 @@
 {
   "name": "okbot",
   "private": true,
-  "version": "0.3.0",
-  "description": "OkBot — personal desktop AI assistant",
+  "version": "0.4.0",
+  "description": "OkBot \u2014 personal desktop AI assistant",
   "packageManager": "pnpm@11.15.1",
   "scripts": {
     "dev": "pnpm --filter @okbot/shared build && pnpm --filter @okbot/agent build && pnpm --filter @okbot/desktop dev",
     "build": "pnpm --filter @okbot/shared build && pnpm --filter @okbot/agent build && pnpm --filter @okbot/desktop build",
-    "typecheck": "pnpm -r typecheck",
+    "typecheck": "pnpm --filter @okbot/shared build && pnpm --filter @okbot/agent exec tsc -p tsconfig.json && pnpm -r typecheck",
     "test:agent": "pnpm --filter @okbot/agent test:smoke",
     "dist": "pnpm --filter @okbot/desktop dist:mac",
     "dist:dir": "pnpm --filter @okbot/desktop dist:dir",
     "publish:github": "pnpm --filter @okbot/desktop publish:github",
-    "test": "pnpm --filter @okbot/shared test && pnpm --filter @okbot/agent test && pnpm --filter @okbot/desktop test"
+    "test": "pnpm --filter @okbot/shared test && pnpm --filter @okbot/agent test && pnpm --filter @okbot/desktop test",
+    "test:sandbox": "pnpm --filter @okbot/sandbox-agent test",
+    "test:sandbox-agent": "pnpm --filter @okbot/sandbox-agent test"
   },
   "engines": {
     "node": ">=22.13"

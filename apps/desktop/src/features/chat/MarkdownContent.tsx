@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { resolveUiLang, t } from '../../i18n';
+import { resolveUiLang, t, type UiLang } from '../../i18n';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import hljs from 'highlight.js/lib/core';
@@ -205,9 +205,11 @@ function isOkbotAssetSrc(src: string | undefined): src is string {
 const OkbotAssetImage = memo(function OkbotAssetImage({
   src,
   alt,
+  lang,
 }: {
   src: string;
   alt?: string;
+  lang: UiLang;
 }) {
   const [dataUrl, setDataUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -236,7 +238,7 @@ const OkbotAssetImage = memo(function OkbotAssetImage({
   if (error) {
     return (
       <span className="md-asset-missing" title={error}>
-        {alt || 'image'}（加载失败）
+        {(alt ? `${alt} · ` : '') + t(lang, 'imageLoadFailed')}
       </span>
     );
   }
@@ -255,7 +257,14 @@ function markdownUrlTransform(url: string): string {
   return defaultUrlTransform(url);
 }
 
-export const MarkdownContent = memo(function MarkdownContent({ children }: { children: string }) {
+export const MarkdownContent = memo(function MarkdownContent({
+  children,
+  lang,
+}: {
+  children: string;
+  lang?: UiLang;
+}) {
+  const uiLang = lang ?? resolveUiLang(undefined);
   return (
     <div className="md">
       <ReactMarkdown
@@ -269,7 +278,11 @@ export const MarkdownContent = memo(function MarkdownContent({ children }: { chi
           ),
           img: ({ src, alt }) =>
             isOkbotAssetSrc(src) ? (
-              <OkbotAssetImage src={src} alt={alt} />
+              <OkbotAssetImage src={src} alt={alt} lang={uiLang} />
+            ) : src && /^https?:/i.test(src) ? (
+              <span className="md-asset-missing" title={src}>
+                {t(uiLang, 'externalImageBlocked')}
+              </span>
             ) : (
               <img src={src} alt={alt || ''} />
             ),

@@ -1,4 +1,4 @@
-import { Fragment, memo, type ReactNode, type RefObject } from 'react';
+import { Fragment, memo, useState, type ReactNode, type RefObject } from 'react';
 import { BorderBeam } from 'border-beam';
 import { ThinkingOrb, type OrbState } from 'thinking-orbs';
 import {
@@ -12,6 +12,7 @@ import { t, type UiLang } from '../../i18n';
 import type { ToolCard, TurnPhase } from '../../types';
 import { FlatAvatar } from '../../components/ui/avatars';
 import {
+  CheckIcon,
   CopyIcon,
   FileAttachIcon,
   FolderAttachIcon,
@@ -45,7 +46,7 @@ export type ChatTranscriptProps = {
   bottomRef: RefObject<HTMLDivElement | null>;
   onOpenPromptContext: (messageId: string) => void;
   onQuoteMessage: (message: ChatMessage) => void;
-  onCopyMessage: (message: ChatMessage) => void;
+  onCopyMessage: (message: ChatMessage) => boolean | Promise<boolean>;
   onViewTokenUsage: (message: ChatMessage) => void;
   onJumpToQuotedMessage: (messageId: string) => void;
   onJumpToBottom: () => void;
@@ -68,6 +69,40 @@ function AttachKindIcon({ kind }: { kind: MessageAttachment['kind'] }) {
   return <FileAttachIcon />;
 }
 
+function BubbleCopyButton({
+  lang,
+  message,
+  onCopyMessage,
+}: {
+  lang: UiLang;
+  message: ChatMessage;
+  onCopyMessage: (message: ChatMessage) => boolean | Promise<boolean>;
+}) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      className={`bubble-action-btn${copied ? ' copied' : ''}`}
+      title={copied ? t(lang, 'messageCopied') : t(lang, 'copyMessage')}
+      aria-label={copied ? t(lang, 'messageCopied') : t(lang, 'copyMessage')}
+      onClick={() => {
+        void (async () => {
+          try {
+            const ok = await onCopyMessage(message);
+            if (!ok) return;
+            setCopied(true);
+            window.setTimeout(() => setCopied(false), 1500);
+          } catch {
+            /* error toast handled upstream */
+          }
+        })();
+      }}
+    >
+      {copied ? <CheckIcon /> : <CopyIcon />}
+    </button>
+  );
+}
+
 function MessageAttachmentChips({
   attachments,
   lang,
@@ -80,7 +115,7 @@ function MessageAttachmentChips({
     <div
       className="message-attachments"
       role="list"
-      aria-label={t(lang, 'attachPending')}
+      aria-label={t(lang, 'attachSent')}
     >
       {attachments.map((a, i) => (
         <div
@@ -236,15 +271,11 @@ export const ChatTranscript = memo(function ChatTranscript({
                         <MessageAttachmentChips attachments={userAttachments} lang={lang} />
                         <div className="bubble-body-row">
                           <div className="bubble-actions">
-                            <button
-                              type="button"
-                              className="bubble-action-btn"
-                              title={t(lang, 'copyMessage')}
-                              aria-label={t(lang, 'copyMessage')}
-                              onClick={() => onCopyMessage(m)}
-                            >
-                              <CopyIcon />
-                            </button>
+                            <BubbleCopyButton
+                              lang={lang}
+                              message={m}
+                              onCopyMessage={onCopyMessage}
+                            />
                             <button
                               type="button"
                               className="bubble-action-btn"
@@ -354,15 +385,11 @@ export const ChatTranscript = memo(function ChatTranscript({
                               <path d="M7.2 18c1.9 0 3.3-1.5 3.3-3.4 0-1.8-1.3-3.1-3-3.1-.2 0-.5 0-.7.1.3-1.7 1.6-3.1 3.4-3.8L9.4 6C6.3 7.2 4 10 4 14.1 4 16.4 5.4 18 7.2 18zm9.3 0c1.9 0 3.3-1.5 3.3-3.4 0-1.8-1.3-3.1-3-3.1-.2 0-.5 0-.7.1.3-1.7 1.6-3.1 3.4-3.8L18.7 6C15.6 7.2 13.3 10 13.3 14.1c0 2.3 1.4 3.9 3.2 3.9z" />
                             </svg>
                           </button>
-                          <button
-                            type="button"
-                            className="bubble-action-btn"
-                            title={t(lang, 'copyMessage')}
-                            aria-label={t(lang, 'copyMessage')}
-                            onClick={() => onCopyMessage(m)}
-                          >
-                            <CopyIcon />
-                          </button>
+                          <BubbleCopyButton
+                            lang={lang}
+                            message={m}
+                            onCopyMessage={onCopyMessage}
+                          />
                         </div>
                       </div>
                     )}

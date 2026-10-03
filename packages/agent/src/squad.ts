@@ -27,6 +27,7 @@ import {
   type AgentRunStreamResult,
 } from './hitl.js';
 import { buildTools, type SkillLookup } from './tools.js';
+import type { ExecutionBackend } from './executionBackend.js';
 import { wrapToolExecute, type ToolRunBudget } from './toolRunBudget.js';
 import { assertModel } from './model.js';
 import type { HitlLoopHooks, RunChatResult } from './types.js';
@@ -65,6 +66,8 @@ export interface RunSquadChatInput extends HitlLoopHooks {
   ownerId: string;
   /** Absolute `~/.okbot/<ownerId>/resources` directory. */
   resourcesDir: string;
+  /** Shell/fs backend for this run (local or cloud computer). */
+  executionBackend?: ExecutionBackend;
   history?: ChatMessage[];
   userText: string;
 }
@@ -233,6 +236,7 @@ export async function runSquadChat(input: RunSquadChatInput): Promise<
         }),
         // No HITL for squad handoffs — the exchange is shown in the transcript instead.
         execute: wrapToolExecute(capturedName, input.toolRunBudget, async ({ task }) => {
+          try {
           const taskText = String(task ?? '').trim();
           if (!taskText) return '（空任务，已跳过）';
           input.onSquadExchange?.({
@@ -251,8 +255,14 @@ export async function runSquadChat(input: RunSquadChatInput): Promise<
               : {}),
             tools: buildTools(toolPrefs, security, input.toolRunBudget, {
               skillLookup: capturedMember.skillLookup,
-              imageApi: { baseURL: input.model.baseURL, apiKey: input.model.apiKey },
+              imageApi: {
+                baseURL: input.model.baseURL,
+                apiKey: input.model.apiKey,
+                catalogModelIds: input.model.providerModelIds,
+                providerName: input.model.providerName,
+              },
               imageAssets: { ownerId: input.ownerId, resourcesDir: input.resourcesDir },
+              backend: input.executionBackend,
             }),
           });
           const memberRunner = new Runner({
@@ -301,6 +311,20 @@ export async function runSquadChat(input: RunSquadChatInput): Promise<
             usage: mu,
           });
           return reply;
+          } catch (err) {
+            // One member's failure must not cancel sibling ask_* calls (SDK sibling cancellation).
+            if (input.signal?.aborted) throw err;
+            const msg = err instanceof Error ? err.message : String(err);
+            const failed = `（成员「${capturedMember.name}」执行失败：${msg}）`;
+            input.onSquadExchange?.({
+              kind: 'reply',
+              memberBotId: capturedMember.botId,
+              memberName: capturedMember.name,
+              toolName: capturedName,
+              content: failed,
+            });
+            return failed;
+          }
         }),
       }),
     );
@@ -330,8 +354,14 @@ export async function runSquadChat(input: RunSquadChatInput): Promise<
     },
     tools: [
       ...buildTools(toolPrefs, security, input.toolRunBudget, {
-        imageApi: { baseURL: input.model.baseURL, apiKey: input.model.apiKey },
+        imageApi: {
+          baseURL: input.model.baseURL,
+          apiKey: input.model.apiKey,
+          catalogModelIds: input.model.providerModelIds,
+          providerName: input.model.providerName,
+        },
         imageAssets: { ownerId: input.ownerId, resourcesDir: input.resourcesDir },
+        backend: input.executionBackend,
       }),
       ...memberTools,
     ],

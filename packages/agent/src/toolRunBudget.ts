@@ -62,6 +62,8 @@ export class ToolRunBudget {
   /** Wall time spent paused (HITL approval wait); excluded from maxDurationSec. */
   private pausedAccumMs = 0;
   private pauseStartedAt: number | null = null;
+  /** Concurrent HITL waits. Duration stays paused until the last one resumes. */
+  private pauseDepth = 0;
   private readonly controller: AbortController;
   private readonly hooks?: ToolRunTraceHooks;
 
@@ -107,10 +109,12 @@ export class ToolRunBudget {
   }
 
   /**
-   * Pause the duration budget (HITL approval wait). Nested pauses are ignored.
+   * Pause the duration budget (HITL approval wait). Nested pauses are refcounted
+   * so a second member waiting on approval is not billed while the first resumes.
    * Does not pause maxToolCalls counting.
    */
   pauseDuration(): void {
+    this.pauseDepth += 1;
     if (this.pauseStartedAt != null) return;
     this.pauseStartedAt = Date.now();
     if (this.timeoutId != null) {
@@ -119,12 +123,19 @@ export class ToolRunBudget {
     }
   }
 
-  /** Resume after {@link pauseDuration}; re-arms the remaining wall-clock budget. */
+  /** Resume one {@link pauseDuration}. The clock restarts only at depth 0. */
   resumeDuration(): void {
-    if (this.pauseStartedAt == null) return;
+    if (this.pauseDepth <= 0 || this.pauseStartedAt == null) return;
+    this.pauseDepth -= 1;
+    if (this.pauseDepth > 0) return;
     this.pausedAccumMs += Date.now() - this.pauseStartedAt;
     this.pauseStartedAt = null;
     if (!this.breakReason) this.armTimeout();
+  }
+
+  /** True while at least one HITL wait holds the duration clock. */
+  isDurationPaused(): boolean {
+    return this.pauseDepth > 0;
   }
 
   dispose(): void {
@@ -133,6 +144,7 @@ export class ToolRunBudget {
       this.timeoutId = null;
     }
     this.pauseStartedAt = null;
+    this.pauseDepth = 0;
   }
 
   getBreakReason(): string | null {

@@ -63,7 +63,21 @@ export function loadUsageStats(file: string): UsageStats {
       if (u) byOwner[k] = u;
     }
   }
-  return { lifetime, daily, byOwner };
+  const dailyByOwner: Record<string, Record<string, TokenUsage>> = {};
+  const rawDbo = (raw as { dailyByOwner?: unknown }).dailyByOwner;
+  if (rawDbo && typeof rawDbo === 'object') {
+    for (const [ownerId, days] of Object.entries(rawDbo as Record<string, unknown>)) {
+      if (!days || typeof days !== 'object') continue;
+      const map: Record<string, TokenUsage> = {};
+      for (const [day, v] of Object.entries(days as Record<string, unknown>)) {
+        const u = normalizeTokenUsage(v);
+        if (u) map[day] = u;
+      }
+      pruneUsageDaily(map);
+      if (Object.keys(map).length > 0) dailyByOwner[ownerId] = map;
+    }
+  }
+  return { lifetime, daily, byOwner, dailyByOwner };
 }
 
 /**
@@ -88,18 +102,23 @@ export function recordTokenUsage(
     return next;
   }
 
+  const day = localUsageDay();
   if (!opts?.skipLifetime) {
     next.lifetime = addTokenUsage(next.lifetime, u);
-    const day = localUsageDay();
     next.daily[day] = addTokenUsage(next.daily[day] ?? emptyTokenUsage(), u);
   }
 
   const owners = new Set<string>([ownerId, ...(opts?.alsoOwnerIds ?? [])].filter(Boolean));
   for (const id of owners) {
     next.byOwner[id] = addTokenUsage(next.byOwner[id] ?? emptyTokenUsage(), u);
+    if (!opts?.skipLifetime) {
+      const map = next.dailyByOwner[id] ?? (next.dailyByOwner[id] = {});
+      map[day] = addTokenUsage(map[day] ?? emptyTokenUsage(), u);
+    }
   }
 
   pruneUsageDaily(next.daily);
+  for (const map of Object.values(next.dailyByOwner)) pruneUsageDaily(map);
   ensureDir(path.dirname(file));
   writeJson(file, next);
   return next;
@@ -112,7 +131,11 @@ export function removeOwnerUsage(file: string, ownerId: string): UsageStats {
   if (id && id in next.byOwner) {
     delete next.byOwner[id];
   }
+  if (id && id in next.dailyByOwner) {
+    delete next.dailyByOwner[id];
+  }
   pruneUsageDaily(next.daily);
+  for (const map of Object.values(next.dailyByOwner)) pruneUsageDaily(map);
   ensureDir(path.dirname(file));
   writeJson(file, next);
   return next;

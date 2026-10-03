@@ -1,7 +1,9 @@
 import { app, BrowserWindow, dialog, Menu, nativeTheme, screen, session, shell } from 'electron';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { IpcChannels, type AppSettings, type ChatEvent } from '@okbot/shared';
+import { IpcChannels, type AppSettings, type RuntimeEvent } from '@okbot/shared';
+import { createSkillHotReloadHub } from '@okbot/agent';
 import { FileStorage } from './storage';
 import { registerAllIpc, type PendingToolApproval } from './ipc';
 import { initAutoUpdater, onAutoUpdatePreferenceChanged } from './updater';
@@ -124,6 +126,15 @@ function createWindow() {
     opts.y = saved.y;
   }
 
+  // Windows/Linux: set window icon explicitly (taskbar / alt-tab). Packaged Win also
+  // embeds resources/icon.ico into the exe via electron-builder; this covers runtime.
+  if (process.platform === 'win32' || process.platform === 'linux') {
+    const ico = path.join(__dirname, '../../resources/icon.ico');
+    const png = path.join(__dirname, '../../resources/icon.png');
+    if (fs.existsSync(ico)) opts.icon = ico;
+    else if (fs.existsSync(png)) opts.icon = png;
+  }
+
   const win = new BrowserWindow(opts);
 
   const persistBounds = () => {
@@ -158,12 +169,16 @@ function createWindow() {
   });
 }
 
-function sendChatEvent(event: ChatEvent) {
+function sendRuntimeEvent(event: RuntimeEvent) {
   for (const win of BrowserWindow.getAllWindows()) {
     win.webContents.send(IpcChannels.chatEvent, event);
   }
-  localHttpApiController?.bridgeChatEvent(event);
+  localHttpApiController?.bridgeRuntimeEvent(event);
 }
+
+storage.setSessionsChangedListener((ownerId, reason) => {
+  sendRuntimeEvent({ type: 'sessions_changed', botId: ownerId, reason });
+});
 
 app.on('second-instance', () => {
   const wins = BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed());
@@ -230,18 +245,20 @@ app.whenReady().then(() => {
     return permission === 'media' || permission === 'mediaKeySystem' || /speech/i.test(name);
   });
 
+  const uiRoot = path.join(__dirname, '../renderer');
   localHttpApiController = createLocalHttpApi({
     ctx: {
       storage,
       abortControllers,
       pendingToolApprovals,
       hardwareAccelerationActive,
-      sendChatEvent,
+      sendRuntimeEvent,
       snapshotActiveRuns,
       rejectPendingApprovalsForBot,
       applyTheme,
       onAutoUpdatePreferenceChanged,
     },
+    uiRoot,
   });
 
   const syncLocalHttpApi = () => {
@@ -257,7 +274,7 @@ app.whenReady().then(() => {
     abortControllers,
     pendingToolApprovals,
     hardwareAccelerationActive,
-    sendChatEvent,
+    sendRuntimeEvent,
     snapshotActiveRuns,
     rejectPendingApprovalsForBot,
     applyTheme,
@@ -266,6 +283,30 @@ app.whenReady().then(() => {
   });
 
   syncLocalHttpApi();
+
+  const skillHotReload = createSkillHotReloadHub({
+    resolveBotSkillsDir: (botId) => storage.botSkillsDirPublic(botId),
+    globalSkillsDir: storage.globalAgentsSkillsDirPublic(),
+    onChange: (change) => {
+      if (!change.botId) return;
+      sendRuntimeEvent({
+        type: 'skills_changed',
+        botId: change.botId,
+        paths: change.paths,
+        at: change.at,
+      });
+    },
+  });
+  const syncSkillWatchers = () => {
+    try {
+      skillHotReload.watchAll(storage.listBots().map((b) => b.id));
+    } catch (err) {
+      console.error('[okbot] skill hot-reload watch failed', err);
+    }
+  };
+  syncSkillWatchers();
+  // Re-sync watchers when roster may change (cheap; fs.watch is per-bot).
+  setInterval(syncSkillWatchers, 15_000).unref?.();
 
   initAutoUpdater(() => storage.getSettings());
   try {

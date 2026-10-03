@@ -8,7 +8,13 @@ import {
   CopyIcon,
   CloseIcon,
   CheckIcon,
+  EditIcon,
+  TrashIcon,
+  PersonIcon,
+  SquadNavIcon,
+  ExportAssistantIcon,
   DownloadUpdateIcon,
+  InstallUpdateIcon,
   AboutIcon,
   CopyRequestUrlIcon,
   RunTraceIcon,
@@ -177,6 +183,14 @@ export function App() {
   const [error, setError] = useState('');
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
   const [immersiveChat, setImmersiveChat] = useState(loadImmersiveChat);
+
+  const [selectedComputerId, setSelectedComputerId] = useState<string>(() => {
+    try {
+      return localStorage.getItem('okbot.selectedComputerId') || 'local';
+    } catch {
+      return 'local';
+    }
+  });
   const immersiveChatRef = useRef(immersiveChat);
   immersiveChatRef.current = immersiveChat;
   const [resizing, setResizing] = useState(false);
@@ -428,6 +442,8 @@ export function App() {
 
   const selectionRef = useRef(selection);
   selectionRef.current = selection;
+  /** Distinguishes two loads of the same owner (A→B→A). */
+  const historyLoadGenRef = useRef(0);
 
   async function openRunTrace() {
     const sel = selectionRef.current;
@@ -457,7 +473,7 @@ export function App() {
     const api = settings?.localHttpApi;
     if (!api?.enabled) {
       toast.info(t(lang, 'copyRequestUrlDisabled'));
-      setSettingsFocus({ tab: 'general', sectionId: 'localHttpApiEnable' });
+      setSettingsFocus({ tab: 'gateway', sectionId: 'localHttpApiEnable' });
       setSettingsOpen(true);
       return;
     }
@@ -471,7 +487,7 @@ export function App() {
       'curl -N -X POST',
       JSON.stringify(url),
       '-H',
-      JSON.stringify(`Authorization: Bearer ${api.token}`),
+      '"Authorization: Bearer $OKBOT_TOKEN"',
       '-H',
       JSON.stringify('Accept: text/event-stream'),
       '-H',
@@ -744,8 +760,8 @@ export function App() {
   }, [animateSidebarWidth, maxSidebarForWindow]);
 
   useEffect(() => {
-    // Keep traffic lights fixed while sidebar auto-collapses / expands.
-    void window.okbot.setTrafficLightPosition({ x: 14, y: 14 });
+    // Desktop-only. Gateway pages have no traffic lights; a throw here unmounts the tree.
+    void window.okbot.setTrafficLightPosition?.({ x: 14, y: 14 });
   }, []);
 
   useEffect(() => {
@@ -889,12 +905,57 @@ export function App() {
       });
     };
 
-    const off = window.okbot.onChatEvent((event) => {
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+    let refreshSeq = 0;
+    const scheduleSessionsRefresh = () => {
+      if (refreshTimer != null) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => {
+        refreshTimer = null;
+        const ticket = ++refreshSeq;
+        void Promise.all([window.okbot.listBots(), window.okbot.listSquads()])
+          .then(([nextBots, nextSquads]) => {
+            if (ticket !== refreshSeq) return;
+            setBots(nextBots);
+            setSquads(nextSquads);
+            const sel = selectionRef.current;
+            if (!sel) return;
+            const stillThere =
+              sel.kind === 'bot'
+                ? nextBots.some((b: { id: string }) => b.id === sel.id)
+                : nextSquads.some((s: { id: string }) => s.id === sel.id);
+            if (!stillThere) {
+              setSelection(null);
+              saveLastSelection(null);
+            }
+          })
+          .catch((err) => {
+            console.error('[okbot] session list refresh failed', err);
+          });
+      }, 120);
+    };
+
+    const off = window.okbot.onRuntimeEvent((event) => {
+      // Other window (Electron or gateway) changed the shared ~/.okbot roster.
+      if (event.type === 'sessions_changed') {
+        scheduleSessionsRefresh();
+        return;
+      }
+
       const isActive =
         (selectionRef.current?.kind === 'bot' || selectionRef.current?.kind === 'squad') &&
         selectionRef.current.id === event.botId;
 
+      // Hot-reload signal — catalog reloads on next turn; no transcript mutation.
+      if (event.type === 'skills_changed') {
+        return;
+      }
+
       if (event.type === 'user_message') {
+        // HTTP/API turns have no local send in flight; still show Stop.
+        setBusyByBot((prev) => (prev[event.botId] ? prev : { ...prev, [event.botId]: true }));
+        setTurnPhaseByBot((prev) =>
+          prev[event.botId] ? prev : { ...prev, [event.botId]: 'thinking' },
+        );
         if (isActive) {
           setMessages((prev) => {
             const byId = prev.findIndex((m) => m.id === event.message.id);
@@ -1085,6 +1146,7 @@ export function App() {
     });
     return () => {
       off();
+      if (refreshTimer != null) clearTimeout(refreshTimer);
       if (pending.raf != null) {
         cancelAnimationFrame(pending.raf);
         pending.raf = null;
@@ -1289,8 +1351,10 @@ export function App() {
         // Same session: load effect will not re-run — focus directly.
         void (async () => {
           const owner = target.botId;
+          const gen = ++historyLoadGenRef.current;
           try {
             const all = await window.okbot.getMessages(owner);
+            if (gen !== historyLoadGenRef.current) return;
             if (selectionRef.current?.id !== owner) return;
             setMessages(all);
             setHasMoreOlder(false);
@@ -1327,6 +1391,7 @@ export function App() {
 
 
   useEffect(() => {
+    const gen = ++historyLoadGenRef.current;
     async function load() {
       const owner = chatOwnerId;
       if (!owner) {
@@ -1348,6 +1413,7 @@ export function App() {
       try {
         if (wantId) {
           const all = await window.okbot.getMessages(owner);
+          if (gen !== historyLoadGenRef.current) return;
           if (selectionRef.current?.id !== owner) return;
           setMessages(all);
           setHasMoreOlder(false);
@@ -1361,12 +1427,14 @@ export function App() {
         const page = await window.okbot.getMessagesPage(owner, {
           limit: MESSAGE_PAGE_SIZE,
         });
+        if (gen !== historyLoadGenRef.current) return;
         if (selectionRef.current?.id !== owner) return;
         setMessages(page.messages);
         setHasMoreOlder(page.hasMore);
         setOlderBeforeMessageId(page.nextBeforeMessageId);
         setHistoryOwnerId(owner);
       } catch (err) {
+        if (gen !== historyLoadGenRef.current) return;
         if (selectionRef.current?.id !== owner) return;
         setMessages([]);
         setHasMoreOlder(false);
@@ -1619,6 +1687,19 @@ export function App() {
     skipRenameCommitRef.current = true;
     setRenameTarget(null);
     setRenameValue('');
+  }
+
+  async function importAssistantPackage() {
+    setCreateMenu(false);
+    setCreateMenuPos(null);
+    try {
+      const res = await window.okbot.importAssistantPackage();
+      if (!res || res.canceled || !('bot' in res)) return;
+      setBots(await window.okbot.listBots());
+      toast.success(t(lang, 'botPackageImported'));
+    } catch (err) {
+      toast.error(formatSystemError(err));
+    }
   }
 
   function openSquadWizard() {
@@ -1939,13 +2020,13 @@ async function handleSend(retry?: {
       }
     }
     try {
-      const sendOpts =
-        quoteMessageId || structuredAtts?.length
-          ? {
-              ...(quoteMessageId ? { quoteMessageId } : {}),
-              ...(structuredAtts?.length ? { attachments: structuredAtts } : {}),
-            }
-          : undefined;
+      const sendOpts = {
+        ...(quoteMessageId ? { quoteMessageId } : {}),
+        ...(structuredAtts?.length ? { attachments: structuredAtts } : {}),
+        ...(selectedComputerId && selectedComputerId !== 'local'
+          ? { computerId: selectedComputerId }
+          : { computerId: selectedComputerId || 'local' }),
+      };
       if (kind === 'squad') await window.okbot.chatStartSquad(ownerId, text, sendOpts);
       else await window.okbot.chatStart(ownerId, text, sendOpts);
       // Mark optimistic bubble sent (user_message event may replace local_ id shortly).
@@ -2063,19 +2144,20 @@ async function handleSend(retry?: {
     requestAnimationFrame(() => composerRef.current?.focus());
   }
 
-  async function handleCopyMessage(message: ChatMessage) {
+  async function handleCopyMessage(message: ChatMessage): Promise<boolean> {
     const raw = message.content || '';
     const text = (
       message.role === 'assistant'
         ? stripThinkContent(raw)
         : resolveMessageAttachments(message).body
     ).trim();
-    if (!text) return;
+    if (!text) return false;
     try {
       await copyTextToClipboard(text);
-      toast.success(t(lang, 'messageCopied'));
+      return true;
     } catch (err) {
       toast.error(formatSystemError(err));
+      return false;
     }
   }
 
@@ -2435,7 +2517,7 @@ async function handleSend(retry?: {
     handleQuoteMessage(message);
   }, []);
   const onCopyMessage = useCallback((message: ChatMessage) => {
-    void handleCopyMessage(message);
+    return handleCopyMessage(message);
   }, [lang]);
   const onViewTokenUsage = useCallback((message: ChatMessage) => {
     setTokenUsageView({ messageId: message.id, usage: message.usage });
@@ -2508,6 +2590,19 @@ async function handleSend(retry?: {
         onSend={onSend}
         onStop={handleStop}
         onToggleVoice={onToggleVoice}
+            computers={[
+              { id: 'local', name: lang === 'en' ? 'Local' : '本机' },
+              ...(settings?.computers ?? []).map((c) => ({ id: c.id, name: c.name })),
+            ]}
+            computerId={selectedComputerId}
+            onComputerIdChange={(id) => {
+              setSelectedComputerId(id);
+              try {
+                localStorage.setItem('okbot.selectedComputerId', id);
+              } catch {
+                /* ignore */
+              }
+            }}
       />
     ),
     [
@@ -2557,6 +2652,9 @@ async function handleSend(retry?: {
         onOpenCreateMenu={openCreateMenu}
         onStartCreateBot={onStartCreateBot}
         onOpenSquadWizard={openSquadWizard}
+        onImportAssistant={() => {
+          void importAssistantPackage();
+        }}
         onSelect={selectSession}
         onOpenSessionMenu={setMenu}
         onRenameValueChange={setRenameValue}
@@ -2640,42 +2738,68 @@ async function handleSend(retry?: {
                 </button>
               ) : null}
               <div className="header-actions">
-                {updaterStatus &&
-                (updaterStatus.phase === 'available' ||
-                  updaterStatus.phase === 'downloading' ||
-                  updaterStatus.phase === 'downloaded') ? (
-                  <button
-                    type="button"
-                    className={`header-icon-btn header-update-btn${
-                      updaterStatus.phase === 'downloading'
-                        ? ' downloading'
-                        : ' available'
-                    }`}
-                    title={
-                      updaterStatus.phase === 'downloaded'
-                        ? t(lang, 'updateDownloaded')
-                        : updaterStatus.phase === 'downloading'
-                          ? t(lang, 'updateDownloading', {
-                              progress: String(updaterStatus.progress ?? 0),
-                            })
-                          : t(lang, 'updateAvailable', {
-                              version: updaterStatus.availableVersion ?? '',
-                            })
-                    }
-                    aria-label={t(lang, 'downloadUpdate')}
-                    onClick={() => {
-                      void (async () => {
-                        if (updaterStatus.phase === 'downloaded') {
-                          await window.okbot.updaterInstall();
-                        } else if (updaterStatus.phase === 'available') {
-                          setUpdaterStatus(await window.okbot.updaterDownload());
+                {(() => {
+                  const phase = updaterStatus?.phase;
+                  if (
+                    !updaterStatus ||
+                    (phase !== 'available' &&
+                      phase !== 'downloading' &&
+                      phase !== 'downloaded')
+                  ) {
+                    return null;
+                  }
+                  const autoUpdateOn = settings?.autoUpdate !== false;
+                  // Auto-update ON: header tracks download → install (no settings jump).
+                  // Auto-update OFF: badge on "available" opens Settings → Auto-update.
+                  const showBadge = !autoUpdateOn && phase === 'available';
+                  const isDownloading = phase === 'downloading';
+                  const isReady = phase === 'downloaded';
+                  const title = isReady
+                    ? t(lang, 'updateDownloaded')
+                    : isDownloading
+                      ? t(lang, 'updateDownloading', {
+                          progress: String(updaterStatus.progress ?? 0),
+                        })
+                      : showBadge
+                        ? t(lang, 'newVersionFound')
+                        : t(lang, 'updateAvailable', {
+                            version: updaterStatus.availableVersion ?? '',
+                          });
+                  const aria = isReady
+                    ? t(lang, 'installUpdate')
+                    : isDownloading
+                      ? t(lang, 'downloadingUpdate')
+                      : showBadge
+                        ? t(lang, 'newVersionFound')
+                        : t(lang, 'downloadUpdate');
+                  return (
+                    <button
+                      type="button"
+                      className={`header-icon-btn header-update-btn${
+                        isDownloading
+                          ? ' downloading'
+                          : isReady
+                            ? ' ready'
+                            : ' available'
+                      }${showBadge ? ' has-badge' : ''}`}
+                      title={title}
+                      aria-label={aria}
+                      disabled={isDownloading && autoUpdateOn}
+                      onClick={() => {
+                        if (isReady) {
+                          void window.okbot.updaterInstall();
+                          return;
                         }
-                      })();
-                    }}
-                  >
-                    <DownloadUpdateIcon />
-                  </button>
-                ) : null}
+                        if (isDownloading) return;
+                        // available (auto-update OFF, or brief ON before auto-download)
+                        setSettingsFocus({ tab: 'updates', sectionId: 'autoUpdate' });
+                        setSettingsOpen(true);
+                      }}
+                    >
+                      {isReady ? <InstallUpdateIcon /> : <DownloadUpdateIcon />}
+                    </button>
+                  );
+                })()}
                 <button
                   type="button"
                   className="header-icon-btn"
@@ -2808,7 +2932,8 @@ async function handleSend(retry?: {
                   setRenameValue(bot.name);
                 }}
               >
-                {t(lang, 'rename')}
+                <span className="menu-item-icon"><EditIcon /></span>
+                <span>{t(lang, 'rename')}</span>
               </button>
               <button
                 type="button"
@@ -2817,7 +2942,28 @@ async function handleSend(retry?: {
                   setMenu(null);
                 }}
               >
-                {t(lang, 'profile')}
+                <span className="menu-item-icon"><PersonIcon /></span>
+                <span>{t(lang, 'profile')}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const botId = menu.bot.id;
+                  setMenu(null);
+                  void (async () => {
+                    try {
+                      const res = await window.okbot.exportAssistantPackage(botId);
+                      if (res && !res.canceled && 'path' in res) {
+                        toast.success(`${t(lang, 'botPackageExported')}: ${res.path}`);
+                      }
+                    } catch (err) {
+                      toast.error(formatSystemError(err));
+                    }
+                  })();
+                }}
+              >
+                <span className="menu-item-icon"><ExportAssistantIcon /></span>
+                <span>{t(lang, 'botExportPackage')}</span>
               </button>
               <button
                 type="button"
@@ -2865,7 +3011,8 @@ async function handleSend(retry?: {
                   })();
                 }}
               >
-                {t(lang, 'delete')}
+                <span className="menu-item-icon"><TrashIcon /></span>
+                <span>{t(lang, 'delete')}</span>
               </button>
             </>
           ) : (
@@ -2880,7 +3027,8 @@ async function handleSend(retry?: {
                   setRenameValue(squad.name);
                 }}
               >
-                {t(lang, 'rename')}
+                <span className="menu-item-icon"><EditIcon /></span>
+                <span>{t(lang, 'rename')}</span>
               </button>
               <button
                 type="button"
@@ -2889,7 +3037,8 @@ async function handleSend(retry?: {
                   setMenu(null);
                 }}
               >
-                {t(lang, 'squadProfile')}
+                <span className="menu-item-icon"><SquadNavIcon /></span>
+                <span>{t(lang, 'squadProfile')}</span>
               </button>
               <button
                 type="button"
@@ -2937,7 +3086,8 @@ async function handleSend(retry?: {
                   })();
                 }}
               >
-                {t(lang, 'delete')}
+                <span className="menu-item-icon"><TrashIcon /></span>
+                <span>{t(lang, 'delete')}</span>
               </button>
             </>
           )}

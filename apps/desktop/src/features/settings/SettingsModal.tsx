@@ -14,7 +14,10 @@ import {
   normalizeToolRunMaxToolCalls,
   normalizeToolRunMaxDurationSec,
   normalizeLocalHttpApiSettings,
+  sanitizeLocalHttpApiToken,
   generateLocalHttpApiToken,
+  normalizeComputers,
+  type ComputerEntry,
   type MemoryEntry,
   type AppSettings,
   type ModelSettings,
@@ -39,6 +42,7 @@ import { SettingsHelpTip } from './SettingsHelpTip';
 import { SettingsToggle } from './SettingsToggle';
 import { ModelProvidersPanel } from './ModelProvidersPanel';
 import { UsagePanel } from './UsagePanel';
+import { ComputersSettingsPanel } from './ComputersSettingsPanel';
 
 export function SettingsModal({
   settings,
@@ -90,6 +94,12 @@ export function SettingsModal({
   const [localHttpApiPort, setLocalHttpApiPort] = useState(String(initialLocalHttpApi.port));
   const [localHttpApiToken, setLocalHttpApiToken] = useState(initialLocalHttpApi.token);
   const [showLocalHttpApiToken, setShowLocalHttpApiToken] = useState(false);
+  const [localHttpApiBindLan, setLocalHttpApiBindLan] = useState(initialLocalHttpApi.bindLan === true);
+  const [localHttpApiServeUi, setLocalHttpApiServeUi] = useState(initialLocalHttpApi.serveUi === true);
+  const [computersDraft, setComputersDraft] = useState<ComputerEntry[]>(() =>
+    normalizeComputers(settings.computers),
+  );
+
   const [updaterStatus, setUpdaterStatus] = useState<UpdaterStatus | null>(null);
   const [updaterBusy, setUpdaterBusy] = useState(false);
   const [autoApprovalEnabled, setAutoApprovalEnabled] = useState(
@@ -166,7 +176,7 @@ export function SettingsModal({
   const onSaveRef = useRef(onSave);
   onSaveRef.current = onSave;
   const saveTimerRef = useRef<number | null>(null);
-  const pendingSaveRef = useRef<(() => void) | null>(null);
+  const pendingSaveRef = useRef<(() => void | Promise<void>) | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -218,7 +228,11 @@ export function SettingsModal({
   const title =
     tab === 'general'
       ? t(lang, 'general')
-      : tab === 'tools'
+      : tab === 'gateway'
+        ? t(lang, 'gateway')
+        : tab === 'computers'
+          ? t(lang, 'computers')
+          : tab === 'tools'
         ? t(lang, 'tools')
         : tab === 'security'
           ? t(lang, 'security')
@@ -298,7 +312,7 @@ export function SettingsModal({
       skipFirstSave.current = false;
       return;
     }
-    const persist = () => {
+    const persist = async () => {
       const pct = Number(compressRatioPct);
       const ratio = Number.isFinite(pct) ? pct / 100 : DEFAULT_CONTEXT_COMPRESSION.ratio;
       const security = normalizeSecuritySettings({
@@ -315,18 +329,28 @@ export function SettingsModal({
         shellPatternsEnabled,
         blockMode,
       });
-      void onSaveRef.current({
+      await onSaveRef.current({
         theme,
         language,
         microphoneId,
         hardwareAcceleration,
         autoUpdate,
         sidebarDockMagnify,
-        localHttpApi: normalizeLocalHttpApiSettings({
-          enabled: localHttpApiEnabled,
-          port: Number(localHttpApiPort),
-          token: localHttpApiToken,
-        }),
+        localHttpApi: (() => {
+          const nextApi = normalizeLocalHttpApiSettings({
+            enabled: localHttpApiEnabled,
+            port: Number(localHttpApiPort),
+            token: localHttpApiToken,
+            bindLan: localHttpApiBindLan,
+            serveUi: localHttpApiServeUi,
+          });
+          if (nextApi.token !== localHttpApiToken) {
+            setLocalHttpApiToken(nextApi.token);
+            if (nextApi.token) toast.info(t(lang, 'localHttpApiTokenSynced'));
+          }
+          return nextApi;
+        })(),
+        computers: normalizeComputers(computersDraft),
         autoApprovalEnabled,
         autoApprovalRules,
         tools,
@@ -389,6 +413,9 @@ export function SettingsModal({
     localHttpApiEnabled,
     localHttpApiPort,
     localHttpApiToken,
+    localHttpApiBindLan,
+    localHttpApiServeUi,
+    computersDraft,
     autoApprovalEnabled,
     autoApprovalRules,
     tools,
@@ -448,6 +475,32 @@ export function SettingsModal({
               <SettingsIcon />
             </span>
             {t(lang, 'general')}
+          </button>
+          <button
+            type="button"
+            className={`settings-nav-item${tab === 'gateway' ? ' active' : ''}`}
+            onClick={() => setTab('gateway')}
+          >
+            <span className="ico" aria-hidden>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                <path d="M4 8h16M4 16h16M8 4v4M16 16v4" strokeLinecap="round" />
+                <circle cx="12" cy="12" r="2" />
+              </svg>
+            </span>
+            {t(lang, 'gateway')}
+          </button>
+          <button
+            type="button"
+            className={`settings-nav-item${tab === 'computers' ? ' active' : ''}`}
+            onClick={() => setTab('computers')}
+          >
+            <span className="ico" aria-hidden>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                <rect x="3" y="4" width="18" height="12" rx="2" />
+                <path d="M8 20h8M12 16v4" strokeLinecap="round" />
+              </svg>
+            </span>
+            {t(lang, 'computers')}
           </button>
           <button
             type="button"
@@ -618,9 +671,17 @@ export function SettingsModal({
                 ) : null}
 
 
+                <div className="settings-section-label" style={{ marginTop: 16 }} data-settings-id="data">
+                  {t(lang, 'data')}
+                </div>
+                <div className="settings-hint">
+                  {t(lang, 'dataDir')}：{dataDir}
+                </div>
+              </div>
+            ) : tab === 'gateway' ? (
+              <div>
                 <div
                   className="settings-section-label settings-section-label-with-help"
-                  style={{ marginTop: 16 }}
                   data-settings-id="localHttpApi"
                 >
                   <span>{t(lang, 'localHttpApi')}</span>
@@ -662,7 +723,7 @@ export function SettingsModal({
                         className="wide"
                         value={localHttpApiToken}
                         disabled={!localHttpApiEnabled}
-                        onChange={(e) => setLocalHttpApiToken(e.target.value)}
+                        onChange={(e) => setLocalHttpApiToken(sanitizeLocalHttpApiToken(e.target.value))}
                         spellCheck={false}
                         autoComplete="off"
                         style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12 }}
@@ -694,9 +755,27 @@ export function SettingsModal({
                           aria-label={t(lang, 'localHttpApiCopyToken')}
                           title={t(lang, 'localHttpApiCopyToken')}
                           onClick={() => {
-                            void window.okbot.copyText(localHttpApiToken).then(() => {
+                            void (async () => {
+                              if (saveTimerRef.current != null) {
+                                window.clearTimeout(saveTimerRef.current);
+                                saveTimerRef.current = null;
+                              }
+                              const pending = pendingSaveRef.current;
+                              pendingSaveRef.current = null;
+                              if (pending) await pending();
+                              const saved = await window.okbot.getSettings();
+                              const token = saved.localHttpApi?.token || '';
+                              if (!token) {
+                                toast.info(t(lang, 'localHttpApiTokenEmpty'));
+                                return;
+                              }
+                              if (token !== localHttpApiToken) {
+                                setLocalHttpApiToken(token);
+                                toast.info(t(lang, 'localHttpApiTokenSynced'));
+                              }
+                              await window.okbot.copyText(token);
                               toast.success(t(lang, 'localHttpApiTokenCopied'));
-                            });
+                            })();
                           }}
                         >
                           <CopyIcon />
@@ -707,7 +786,10 @@ export function SettingsModal({
                           disabled={!localHttpApiEnabled}
                           aria-label={t(lang, 'localHttpApiRegenerateToken')}
                           title={t(lang, 'localHttpApiRegenerateToken')}
-                          onClick={() => setLocalHttpApiToken(generateLocalHttpApiToken())}
+                          onClick={() => {
+                            setLocalHttpApiToken(generateLocalHttpApiToken());
+                            toast.success(t(lang, 'localHttpApiTokenRegenerated'));
+                          }}
                         >
                           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                             <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
@@ -719,15 +801,36 @@ export function SettingsModal({
                       </div>
                     </div>
                   </div>
-                </div>
-
-                <div className="settings-section-label" style={{ marginTop: 16 }} data-settings-id="data">
-                  {t(lang, 'data')}
-                </div>
-                <div className="settings-hint">
-                  {t(lang, 'dataDir')}：{dataDir}
+                  <div className="settings-row" data-settings-id="localHttpApiBindLan">
+                    <span className="settings-row-label">
+                      <span className="settings-row-label-text">{t(lang, 'localHttpApiBindLan')}</span>
+                      <SettingsHelpTip text={t(lang, 'localHttpApiBindLanHint')} />
+                    </span>
+                    <SettingsToggle
+                      checked={localHttpApiBindLan}
+                      disabled={!localHttpApiEnabled}
+                      onChange={() => setLocalHttpApiBindLan((v) => !v)}
+                    />
+                  </div>
+                  <div className="settings-row" data-settings-id="localHttpApiServeUi">
+                    <span className="settings-row-label">
+                      <span className="settings-row-label-text">{t(lang, 'localHttpApiServeUi')}</span>
+                      <SettingsHelpTip text={t(lang, 'localHttpApiServeUiHint')} />
+                    </span>
+                    <SettingsToggle
+                      checked={localHttpApiServeUi}
+                      disabled={!localHttpApiEnabled}
+                      onChange={() => setLocalHttpApiServeUi((v) => !v)}
+                    />
+                  </div>
                 </div>
               </div>
+            ) : tab === 'computers' ? (
+              <ComputersSettingsPanel
+                lang={lang}
+                computers={computersDraft}
+                onChange={setComputersDraft}
+              />
             ) : tab === 'tools' ? (
               <div>
                 <div className="settings-section-label" data-settings-id="toolManagement">{t(lang, 'toolManagement')}</div>
@@ -1617,9 +1720,11 @@ export function SettingsModal({
                         ? t(lang, 'installUpdate')
                         : updaterStatus?.phase === 'available'
                           ? t(lang, 'downloadUpdate')
-                          : updaterBusy || updaterStatus?.phase === 'checking'
-                            ? t(lang, 'checkingUpdate')
-                            : t(lang, 'checkUpdate')}
+                          : updaterStatus?.phase === 'downloading'
+                            ? t(lang, 'downloadingUpdate')
+                            : updaterBusy || updaterStatus?.phase === 'checking'
+                              ? t(lang, 'checkingUpdate')
+                              : t(lang, 'checkUpdate')}
                     </button>
                   </div>
                 </div>

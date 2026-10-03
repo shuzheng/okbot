@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  bot-avatars@0.1.1: a971bcfe1cc6a61526226fefdc0b0c0852f901b77049d2e3d3c4f65a64e53d64
+  bot-avatars@0.1.1: 9c76e53ce875f1a42d1ca0fd34938c5884ea551d5531c1f7676e605caeeef8bb
 
 importers:
 
@@ -27,7 +27,7 @@ importers:
         version: 1.3.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       bot-avatars:
         specifier: 0.1.1
-        version: 0.1.1(patch_hash=a971bcfe1cc6a61526226fefdc0b0c0852f901b77049d2e3d3c4f65a64e53d64)(react@19.3.0)
+        version: 0.1.1(patch_hash=9c76e53ce875f1a42d1ca0fd34938c5884ea551d5531c1f7676e605caeeef8bb)(react@19.3.0)
       electron-updater:
         specifier: ^6.6.2
         version: 6.8.9(supports-color@7.1.0)
@@ -89,6 +89,18 @@ importers:
       vite:
         specifier: ^7.1.4
         version: 7.3.6(@types/node@26.6.2)(jiti@2.7.0)(tsx@4.23.15)
+
+  apps/sandbox-agent:
+    devDependencies:
+      '@types/node':
+        specifier: ^26.6.2
+        version: 26.6.2
+      tsx:
+        specifier: ^4.20.5
+        version: 4.23.15
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.2
 
   packages/agent:
     dependencies:
@@ -3601,7 +3613,7 @@ snapshots:
       react: 19.3.0
       react-dom: 19.3.0(react@19.3.0)
 
-  bot-avatars@0.1.1(patch_hash=a971bcfe1cc6a61526226fefdc0b0c0852f901b77049d2e3d3c4f65a64e53d64)(react@19.3.0):
+  bot-avatars@0.1.1(patch_hash=9c76e53ce875f1a42d1ca0fd34938c5884ea551d5531c1f7676e605caeeef8bb)(react@19.3.0):
     dependencies:
       react: 19.3.0
 

@@ -19,7 +19,9 @@ import {
   createOkbotFileSession,
   quoteSessionInputCallback,
   resolveSessionInputCallbackForTurn,
+  stripImageLinesFromAttachedBlock,
   type SkillLookup,
+  resolveExecutionBackend,
 } from '@okbot/agent';
 import type { IpcContext } from './context';
 import { isSquadOwnerId } from '../storage/ids';
@@ -37,8 +39,8 @@ import {
 import {
   acquireRunSlot,
   acquireSteerGate,
-  bumpSteerGeneration,
 } from './steerGate';
+import { abortChatOwner, resolveLiveToolApproval } from './chatControl';
 
 /** Bind `read_skill` to this bot's local + enabled-global skills. */
 function skillLookupFor(storage: IpcContext['storage'], botId: string): SkillLookup {
@@ -68,8 +70,10 @@ function resolveQuoteFields(
   const qid = (quoteMessageId || '').trim();
   if (!qid) return { userMsgExtra: {}, modelText: body };
   const quoted = storage.getMessageById(ownerId, qid);
-  const quotedContent = (quoted?.content || '').trim();
-  if (!quotedContent) return { userMsgExtra: {}, modelText: body };
+  const quotedRaw = (quoted?.content || '').trim();
+  if (!quotedRaw) return { userMsgExtra: {}, modelText: body };
+  // Image paths in a quoted [Attached] block must not leak into the preview or model text.
+  const quotedContent = stripImageLinesFromAttachedBlock(quotedRaw).trim() || '（图片）';
   const preview = clipQuotePreview(quotedContent);
   const modelText = formatUserTextWithQuote(body, quotedContent);
   return {
@@ -95,6 +99,8 @@ export async function startChatTurn(
     text: string;
     quoteMessageId?: string;
     attachments?: ChatMessage['attachments'];
+    /** Target computer for shell/fs tools; `local` or settings.computers[].id */
+    computerId?: string;
   },
 ): Promise<{
   userMessage: ChatMessage;
@@ -130,7 +136,7 @@ export async function startChatTurn(
         const steerGate = await acquireSteerGate(ctx, squad.id);
         try {
           if (!steerGate.proceed) {
-            ctx.sendChatEvent({ type: 'user_message', botId: squad.id, message: userMsg });
+            ctx.sendRuntimeEvent({ type: 'user_message', botId: squad.id, message: userMsg });
             return { userMessage: userMsg, superseded: true };
           }
 
@@ -236,7 +242,7 @@ export async function startChatTurn(
             force: topicForce,
           });
 
-          ctx.sendChatEvent({ type: 'user_message', botId: squad.id, message: userMsg });
+          ctx.sendRuntimeEvent({ type: 'user_message', botId: squad.id, message: userMsg });
 
           const fileSession = createOkbotFileSession(
             ctx.storage.createSessionStore(squad.id, {
@@ -248,6 +254,7 @@ export async function startChatTurn(
             modelText: quote.modelText,
             quoteSessionInputCallback: quote.sessionInputCallback,
             attachments,
+            security: settings.security,
           });
           const hasVisionInput = (attachments ?? []).some((a) => a.kind === 'image');
 
@@ -267,12 +274,16 @@ export async function startChatTurn(
             hasVisionInput,
             ownerId: squad.id,
             resourcesDir: ctx.storage.ownerResourcesDir(squad.id),
+            executionBackend: resolveExecutionBackend({
+              computerId: payload.computerId,
+              computers: settings.computers,
+            }),
             userText: text,
             signal: controller.signal,
             onClearLiveText: () => {
               if (!assistantMsg.content) return;
               assistantMsg.content = '';
-              ctx.sendChatEvent({
+              ctx.sendRuntimeEvent({
                 type: 'assistant_message',
                 botId: squad.id,
                 message: { ...assistantMsg },
@@ -280,7 +291,7 @@ export async function startChatTurn(
             },
             onDelta: (delta) => {
               assistantMsg.content += delta;
-              ctx.sendChatEvent({
+              ctx.sendRuntimeEvent({
                 type: 'delta',
                 botId: squad.id,
                 messageId: assistantId,
@@ -304,6 +315,7 @@ export async function startChatTurn(
                   return;
                 }
                 ctx.pendingToolApprovals.set(requestId, {
+                  computerId: payload.computerId,
                   botId: squad.id,
                   messageId: assistantId,
                   toolName,
@@ -313,6 +325,7 @@ export async function startChatTurn(
                 if (serializedRunState) {
                   try {
                     ctx.storage.savePendingHitl(squad.id, {
+                    computerId: payload.computerId,
                       v: 1,
                       requestId,
                       messageId: assistantId,
@@ -325,7 +338,7 @@ export async function startChatTurn(
                     console.error('[okbot] save pending hitl failed', err);
                   }
                 }
-                ctx.sendChatEvent({
+                ctx.sendRuntimeEvent({
                   type: 'tool_request',
                   botId: squad.id,
                   messageId: assistantId,
@@ -345,7 +358,7 @@ export async function startChatTurn(
               if (!approved) {
                 guards.budget.recordRejection(toolName, {}, output);
               }
-              ctx.sendChatEvent({
+              ctx.sendRuntimeEvent({
                 type: 'tool_result',
                 botId: squad.id,
                 messageId: assistantId,
@@ -377,7 +390,7 @@ export async function startChatTurn(
                 console.error('[okbot] append squad exchange failed', err);
               }
               // Member usage stays on the exchange bubble only; aggregate under squad.id below.
-              ctx.sendChatEvent({
+              ctx.sendRuntimeEvent({
                 type: 'assistant_message',
                 botId: squad.id,
                 message: exchangeMsg,
@@ -420,7 +433,7 @@ export async function startChatTurn(
               usage: result.usage,
             });
             if (patched) {
-              ctx.sendChatEvent({
+              ctx.sendRuntimeEvent({
                 type: 'assistant_message',
                 botId: squad.id,
                 message: patched,
@@ -436,7 +449,7 @@ export async function startChatTurn(
             }
           }
           guards.throwIfBroken();
-          ctx.sendChatEvent({
+          ctx.sendRuntimeEvent({
             type: 'done',
             botId: squad.id,
             messageId: assistantId,
@@ -462,7 +475,7 @@ export async function startChatTurn(
                 breakReason: null,
               }),
             );
-            ctx.sendChatEvent({
+            ctx.sendRuntimeEvent({
               type: 'done',
               botId: squad.id,
               messageId: assistantId,
@@ -484,7 +497,7 @@ export async function startChatTurn(
             assistantMsg.content = `错误：${message}`;
             ctx.storage.upsertAssistantMessage(squad.id, assistantMsg, { allowRebind: false });
           }
-          ctx.sendChatEvent({
+          ctx.sendRuntimeEvent({
             type: 'error',
             botId: squad.id,
             messageId: assistantId,
@@ -522,7 +535,7 @@ export async function startChatTurn(
       const steerGate = await acquireSteerGate(ctx, bot.id);
       try {
         if (!steerGate.proceed) {
-          ctx.sendChatEvent({ type: 'user_message', botId: bot.id, message: userMsg });
+          ctx.sendRuntimeEvent({ type: 'user_message', botId: bot.id, message: userMsg });
           return { userMessage: userMsg, superseded: true };
         }
 
@@ -584,7 +597,7 @@ export async function startChatTurn(
           force: topicForce,
         });
 
-        ctx.sendChatEvent({
+        ctx.sendRuntimeEvent({
           type: 'user_message',
           botId: bot.id,
           message: userMsg,
@@ -601,6 +614,7 @@ export async function startChatTurn(
           modelText: quote.modelText,
           quoteSessionInputCallback: quote.sessionInputCallback,
           attachments,
+          security: settings.security,
         });
         const hasVisionInput = (attachments ?? []).some((a) => a.kind === 'image');
 
@@ -625,12 +639,16 @@ export async function startChatTurn(
           hasVisionInput,
           ownerId: bot.id,
           resourcesDir: ctx.storage.ownerResourcesDir(bot.id),
+          executionBackend: resolveExecutionBackend({
+            computerId: payload.computerId,
+            computers: settings.computers,
+          }),
           userText: text,
           signal: controller.signal,
           onClearLiveText: () => {
             if (!assistantMsg.content) return;
             assistantMsg.content = '';
-            ctx.sendChatEvent({
+            ctx.sendRuntimeEvent({
               type: 'assistant_message',
               botId: bot.id,
               message: { ...assistantMsg },
@@ -638,7 +656,7 @@ export async function startChatTurn(
           },
           onDelta: (delta) => {
             assistantMsg.content += delta;
-            ctx.sendChatEvent({
+            ctx.sendRuntimeEvent({
               type: 'delta',
               botId: bot.id,
               messageId: assistantId,
@@ -662,6 +680,7 @@ export async function startChatTurn(
                 return;
               }
               ctx.pendingToolApprovals.set(requestId, {
+                computerId: payload.computerId,
                 botId: bot.id,
                 messageId: assistantId,
                 toolName,
@@ -671,6 +690,7 @@ export async function startChatTurn(
               if (serializedRunState) {
                 try {
                   ctx.storage.savePendingHitl(bot.id, {
+                    computerId: payload.computerId,
                     v: 1,
                     requestId,
                     messageId: assistantId,
@@ -683,7 +703,7 @@ export async function startChatTurn(
                   console.error('[okbot] save pending hitl failed', err);
                 }
               }
-              ctx.sendChatEvent({
+              ctx.sendRuntimeEvent({
                 type: 'tool_request',
                 botId: bot.id,
                 messageId: assistantId,
@@ -703,7 +723,7 @@ export async function startChatTurn(
             if (!approved) {
               guards.budget.recordRejection(toolName, {}, output);
             }
-            ctx.sendChatEvent({
+            ctx.sendRuntimeEvent({
               type: 'tool_result',
               botId: bot.id,
               messageId: assistantId,
@@ -744,7 +764,7 @@ export async function startChatTurn(
             console.error('[okbot] record bot usage failed', err);
           }
         }
-        ctx.sendChatEvent({
+        ctx.sendRuntimeEvent({
           type: 'done',
           botId: bot.id,
           messageId: assistantId,
@@ -839,7 +859,7 @@ export async function startChatTurn(
               breakReason: null,
             }),
           );
-          ctx.sendChatEvent({
+          ctx.sendRuntimeEvent({
             type: 'done',
             botId: bot.id,
             messageId: assistantId,
@@ -861,7 +881,7 @@ export async function startChatTurn(
           assistantMsg.content = `错误：${message}`;
           ctx.storage.upsertAssistantMessage(bot.id, assistantMsg, { allowRebind: false });
         }
-        ctx.sendChatEvent({
+        ctx.sendRuntimeEvent({
           type: 'error',
           botId: bot.id,
           messageId: assistantId,
@@ -878,25 +898,18 @@ export async function startChatTurn(
       }
 }
 
-export function registerChatIpc(ctx: IpcContext): void {
-  ipcMain.handle(
-    IpcChannels.toolRespond,
-    async (
-      _e,
-      payload: { requestId: string; approved: boolean; message?: string },
-    ) => {
+export async function respondToToolApproval(
+  ctx: IpcContext,
+  payload: { requestId: string; approved: boolean; message?: string },
+): Promise<{ ok: boolean; error?: string; resumed?: boolean; aborted?: boolean }> {
+
       const decision = {
         approved: Boolean(payload.approved),
         message: payload.message,
       };
 
-      const live = ctx.pendingToolApprovals.get(payload.requestId);
-      if (live) {
-        ctx.pendingToolApprovals.delete(payload.requestId);
-        ctx.storage.clearPendingHitl(live.botId);
-        live.resolve(decision);
-        return { ok: true };
-      }
+      const live = resolveLiveToolApproval(ctx, payload);
+      if (live) return live;
 
       // Cold start: resume from disk-persisted RunState.
       const diskEntries = ctx.storage.listAllPendingHitl();
@@ -987,6 +1000,10 @@ export function registerChatIpc(ctx: IpcContext): void {
           session: fileSession,
           ownerId: bot.id,
           resourcesDir: ctx.storage.ownerResourcesDir(bot.id),
+          executionBackend: resolveExecutionBackend({
+            computerId: disk.computerId,
+            computers: settings.computers,
+          }),
           signal: controller.signal,
           serializedRunState: disk.serializedRunState,
           requestId: disk.requestId,
@@ -995,7 +1012,7 @@ export function registerChatIpc(ctx: IpcContext): void {
           onClearLiveText: () => {
             if (!assistantMsg.content) return;
             assistantMsg.content = '';
-            ctx.sendChatEvent({
+            ctx.sendRuntimeEvent({
               type: 'assistant_message',
               botId: bot.id,
               message: { ...assistantMsg },
@@ -1003,7 +1020,7 @@ export function registerChatIpc(ctx: IpcContext): void {
           },
           onDelta: (delta) => {
             assistantMsg.content += delta;
-            ctx.sendChatEvent({
+            ctx.sendRuntimeEvent({
               type: 'delta',
               botId: bot.id,
               messageId: assistantId,
@@ -1027,6 +1044,7 @@ export function registerChatIpc(ctx: IpcContext): void {
                 return;
               }
               ctx.pendingToolApprovals.set(requestId, {
+                computerId: disk.computerId,
                 botId: bot.id,
                 messageId: assistantId,
                 toolName,
@@ -1036,6 +1054,7 @@ export function registerChatIpc(ctx: IpcContext): void {
               if (serializedRunState) {
                 try {
                   ctx.storage.savePendingHitl(bot.id, {
+                    computerId: disk.computerId,
                     v: 1,
                     requestId,
                     messageId: assistantId,
@@ -1048,7 +1067,7 @@ export function registerChatIpc(ctx: IpcContext): void {
                   console.error('[okbot] save pending hitl failed', err);
                 }
               }
-              ctx.sendChatEvent({
+              ctx.sendRuntimeEvent({
                 type: 'tool_request',
                 botId: bot.id,
                 messageId: assistantId,
@@ -1068,7 +1087,7 @@ export function registerChatIpc(ctx: IpcContext): void {
             if (!approved) {
               guards.budget.recordRejection(toolName, {}, output);
             }
-            ctx.sendChatEvent({
+            ctx.sendRuntimeEvent({
               type: 'tool_result',
               botId: bot.id,
               messageId: assistantId,
@@ -1111,7 +1130,7 @@ export function registerChatIpc(ctx: IpcContext): void {
             console.error('[okbot] record bot usage failed', err);
           }
         }
-        ctx.sendChatEvent({
+        ctx.sendRuntimeEvent({
           type: 'done',
           botId: bot.id,
           messageId: assistantId,
@@ -1139,7 +1158,7 @@ export function registerChatIpc(ctx: IpcContext): void {
               breakReason: null,
             }),
           );
-          ctx.sendChatEvent({
+          ctx.sendRuntimeEvent({
             type: 'done',
             botId: bot.id,
             messageId: assistantId,
@@ -1161,7 +1180,7 @@ export function registerChatIpc(ctx: IpcContext): void {
           assistantMsg.content = `错误：${message}`;
           ctx.storage.upsertAssistantMessage(bot.id, assistantMsg, { allowRebind: false });
         }
-        ctx.sendChatEvent({
+        ctx.sendRuntimeEvent({
           type: 'error',
           botId: bot.id,
           messageId: assistantId,
@@ -1174,10 +1193,16 @@ export function registerChatIpc(ctx: IpcContext): void {
         ctx.rejectPendingApprovalsForBot(bot.id, '已结束');
         runSlot.release();
       }
-    },
+}
+
+export function registerChatIpc(ctx: IpcContext): void {
+  ipcMain.handle(
+    IpcChannels.toolRespond,
+    (
+      _e,
+      payload: { requestId: string; approved: boolean; message?: string },
+    ) => respondToToolApproval(ctx, payload),
   );
-
-
 
   ipcMain.handle(
     IpcChannels.chatStart,
@@ -1193,14 +1218,7 @@ export function registerChatIpc(ctx: IpcContext): void {
     ) => startChatTurn(ctx, payload),
   );
 
-  ipcMain.handle(IpcChannels.chatAbort, (_e, botId: string) => {
-    // Invalidate any waiting mid-run steer so Stop does not let a queued restart proceed.
-    bumpSteerGeneration(botId);
-    ctx.abortControllers.get(botId)?.abort();
-    ctx.abortControllers.delete(botId);
-    ctx.rejectPendingApprovalsForBot(botId, '已取消');
-    return true;
-  });
+  ipcMain.handle(IpcChannels.chatAbort, (_e, botId: string) => abortChatOwner(ctx, botId));
 
   /**
    * Manual Summary+Buffer: bypass ratio threshold.

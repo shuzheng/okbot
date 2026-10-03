@@ -1,5 +1,7 @@
 export type SettingsTab =
   | 'general'
+  | 'gateway'
+  | 'computers'
   | 'tools'
   | 'security'
   | 'model'

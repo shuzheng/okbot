@@ -4,7 +4,7 @@ import { stripThinkContent, type Bot, type Squad } from '@okbot/shared';
 import { t, type UiLang } from '../../i18n';
 import type { MenuState, RenameTarget, Selection, SessionItem } from '../../types';
 import { FlatAvatar, SquadAvatar } from '../../components/ui/avatars';
-import { PersonIcon, SearchIcon, SettingsIcon, SquadNavIcon } from '../../components/ui/icons';
+import { ImportAssistantIcon, PersonIcon, SearchIcon, SettingsIcon, SquadNavIcon } from '../../components/ui/icons';
 import { formatSessionUpdatedAt } from '../../utils/formatSessionUpdatedAt';
 
 export type DockTipTarget =
@@ -33,6 +33,7 @@ export type SessionSidebarProps = {
   onOpenCreateMenu: (e: MouseEvent) => void;
   onStartCreateBot: () => void;
   onOpenSquadWizard: () => void;
+  onImportAssistant: () => void;
   onSelect: (selection: Selection) => void;
   onOpenSessionMenu: (menu: NonNullable<MenuState>) => void;
   onRenameValueChange: (value: string) => void;
@@ -72,6 +73,7 @@ export const SessionSidebar = memo(function SessionSidebar({
   onOpenCreateMenu,
   onStartCreateBot,
   onOpenSquadWizard,
+  onImportAssistant,
   onSelect,
   onOpenSessionMenu,
   onRenameValueChange,
@@ -201,6 +203,18 @@ export const SessionSidebar = memo(function SessionSidebar({
               <SquadNavIcon />
             </span>
             {t(lang, 'newSquadPlaceholder')}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setFooterMenuOpen(false);
+              onImportAssistant();
+            }}
+          >
+            <span className="create-menu-icon" aria-hidden>
+              <ImportAssistantIcon />
+            </span>
+            {t(lang, 'botImportPackage')}
           </button>
         </div>
       )}

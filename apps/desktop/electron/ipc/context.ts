@@ -1,4 +1,4 @@
-import type { AppSettings, ChatEvent } from '@okbot/shared';
+import type { AppSettings, RuntimeEvent } from '@okbot/shared';
 import type { FileStorage } from '../storage';
 
 /** In-memory live HITL approval waiter (hot path while agent run is alive). */
@@ -7,6 +7,8 @@ export type PendingToolApproval = {
   messageId: string;
   toolName: string;
   arguments: unknown;
+  /** Computer selected for the chat turn that requested this tool. */
+  computerId?: string;
   resolve: (decision: { approved: boolean; message?: string }) => void;
 };
 
@@ -30,7 +32,7 @@ export type IpcContext = {
   abortControllers: Map<string, AbortController>;
   pendingToolApprovals: Map<string, PendingToolApproval>;
   hardwareAccelerationActive: boolean;
-  sendChatEvent: (event: ChatEvent) => void;
+  sendRuntimeEvent: (event: RuntimeEvent) => void;
   snapshotActiveRuns: () => ActiveRunsSnapshot;
   rejectPendingApprovalsForBot: (botId: string, message?: string) => void;
   applyTheme: (theme: AppSettings['theme']) => void;

@@ -20,6 +20,7 @@ Each assistant is a **person** with a name, avatar, and personality, so conversa
 - **Assistants** — build them like people: name and avatar
 - **Squads** — put assistants on a team, assign a task, and let them collaborate automatically
 - **Immersive chat** — stream replies like an IM, redirect mid-answer, retry failed sends, stay scrolled to the latest message
+- **Attachments** — send images, files, and folders; images are shown to the model as pictures, not only as paths
 - **Local tools** — assistants can read / write files and run commands when you allow it (auto-approve or ask each time)
 - **Skills & memory** — skills surface when useful; assistants remember what matters across conversations
 - **Model support** — connect the providers you already use; pick a model and start chatting

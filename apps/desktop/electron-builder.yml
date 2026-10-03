@@ -7,6 +7,9 @@ directories:
 files:
   - out/**/*
   - package.json
+  # Runtime BrowserWindow icon (Win/Linux); build-time win.icon still uses resources/.
+  - resources/icon.ico
+  - resources/icon.png
 extraMetadata:
   name: okbot
   main: out/main/index.js
@@ -24,8 +27,13 @@ dmg:
 win:
   target:
     - nsis
-  icon: resources/icon.png
+  # Multi-size .ico (not PNG) so exe / taskbar / Start Menu / shortcuts get OkBot icon.
+  icon: resources/icon.ico
   artifactName: ${productName}-${version}-win-${arch}.${ext}
+nsis:
+  installerIcon: resources/icon.ico
+  uninstallerIcon: resources/icon.ico
+  installerHeaderIcon: resources/icon.ico
 linux:
   target:
     - AppImage

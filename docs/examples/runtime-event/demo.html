@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<title>OkBot · RuntimeEvent</title>
+<style>
+  :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, sans-serif; }
+  body { margin: 0; padding: 32px; background: #0b1220; color: #e8eefc; }
+  h1 { margin: 0 0 8px; font-size: 28px; }
+  h2 { margin: 0 0 12px; font-size: 16px; color: #9db0d4; }
+  .muted { color: #9db0d4; margin-bottom: 20px; }
+  .card { background: #141e33; border: 1px solid #243352; border-radius: 12px; padding: 16px 18px; margin-bottom: 14px; }
+  .card.ok { border-color: #2f6f4e; background: #10261c; }
+  pre { margin: 0; white-space: pre-wrap; font-size: 13px; line-height: 1.45; color: #d7e3ff; }
+  code { background: #243352; padding: 1px 6px; border-radius: 4px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .tag { display: inline-block; margin-top: 8px; padding: 4px 8px; border-radius: 999px; background: #243352; font-size: 12px; }
+  ul { margin: 0; padding-left: 18px; color: #d7e3ff; }
+</style>
+</head>
+<body>
+<section>
+  <h1>统一 RuntimeEvent</h1>
+  <p class="muted">桌面 IPC = Gateway SSE = 同一 JSON 模型</p>
+  <div class="card">
+    <pre>event: delta
+data: {"type":"delta","botId":"bot_…","messageId":"m1","delta":"你好"}
+
+event: tool_request
+data: {"type":"tool_request","toolName":"read_skill",…}
+
+event: done
+data: {"type":"done","content":"…"}</pre>
+  </div>
+  <div class="card ok">
+    云电脑 shell SSE（stdout/stderr/done）经 ExecStream 折叠为同一 <code>formatted</code>，工具层不维护第二套状态机。
+  </div>
+</section></body>
+</html>

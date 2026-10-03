@@ -28,5 +28,6 @@ export type PendingHitlRecord = {
   toolName: string;
   arguments: unknown;
   serializedRunState: string;
+  computerId?: string;
   createdAt: string;
 };

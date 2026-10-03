@@ -1,21 +1,37 @@
 diff --git a/dist/index.es.js b/dist/index.es.js
 --- a/dist/index.es.js
 +++ b/dist/index.es.js
-     }, Vt = () => {
+@@ -1120,7 +1120,7 @@
+     if (ht || Se()) return;
+     const D = w.current;
+     if (!D) return;
+-    let z = !0, J = null;
++    let z = !0, J = null, lastDraw = 0;
+     const ut = 3, dt = (ue) => {
+       const Lt = et.current;
+       if (Lt) {
+@@ -1128,7 +1128,10 @@
+           const Rt = D.getBoundingClientRect(), de = Rt.width / kt || 1, Le = (St.x - (Rt.left + Rt.width / 2)) / de, Ee = (St.y - (Rt.top + Rt.height / 2 + oe * de)) / de, Wt = Math.hypot(Le, Ee), Ls = Wt < 1 ? 1 : Wt > ut ? 0 : 1 - (Wt - 1) / (ut - 1);
+           Lt.setPointer(Le / Math.max(1, Wt), Ee / Math.max(1, Wt), Ls);
+         } else Lt.setPointer(0, 0, 0);
+-        Lt.update(ue * Tt.current), pt();
++        Lt.update(ue * Tt.current);
++        const idle = Lt.state === "default";
++        const now = typeof performance < "u" ? performance.now() : 0;
++        if (!idle || now - lastDraw >= 80) lastDraw = now, pt();
+       }
+     }, Pt = () => {
+       J || (J = Ea(dt));
+@@ -1136,10 +1139,11 @@
        J && J(), J = null;
      };
--    let Kt = null;
--    return typeof IntersectionObserver == "function" ? (Kt = new IntersectionObserver((ue) => {
--      var Lt;
--      z = ((Lt = ue[0]) == null ? void 0 : Lt.isIntersecting) ?? !0, z ? Pt() : Vt();
+     let Kt = null;
++    const host = D.parentElement || D;
+     return typeof IntersectionObserver == "function" ? (Kt = new IntersectionObserver((ue) => {
+       var Lt;
+       z = ((Lt = ue[0]) == null ? void 0 : Lt.isIntersecting) ?? !0, z ? Pt() : Vt();
 -    }), Kt.observe(D)) : Pt(), () => {
--      Vt(), Kt && Kt.disconnect();
-+    /* OkBot: always run while mounted. Default IO pauses when an overflow
-+       ancestor (sidebar/session-list) clips the overscan canvas, which froze
-+       idle motion in the session list even though the avatar stayed visible. */
-+    Pt();
-+    return () => {
-+      Vt();
++    }, { root: null, rootMargin: "64px", threshold: 0 }), Kt.observe(host)) : Pt(), () => {
+       Vt(), Kt && Kt.disconnect();
      };
    }, [ht]);
-   const At = typeof i == "number" ? `${i * kt}px` : `calc(${i} * ${kt})`, bt = (D) => typeof i == "number" ? `${-i * D}px` : `calc(${i} * ${-D})`, Mt = (kt - 1) / 2, Ot = {

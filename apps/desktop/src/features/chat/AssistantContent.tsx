@@ -24,12 +24,12 @@ export const AssistantContent = memo(function AssistantContent({
 
   if (!showThinking) {
     if (!parsed.answer) return null;
-    return <MarkdownContent>{parsed.answer}</MarkdownContent>;
+    return <MarkdownContent lang={lang}>{parsed.answer}</MarkdownContent>;
   }
 
   if (!parsed.hasThinking) {
     if (!content) return null;
-    return <MarkdownContent>{content}</MarkdownContent>;
+    return <MarkdownContent lang={lang}>{content}</MarkdownContent>;
   }
 
   return (
@@ -40,13 +40,13 @@ export const AssistantContent = memo(function AssistantContent({
           <div className="md-thinking-body">
             {parsed.thinking.map((block, i) => (
               <div key={i} className="md-thinking-block">
-                <MarkdownContent>{block}</MarkdownContent>
+                <MarkdownContent lang={lang}>{block}</MarkdownContent>
               </div>
             ))}
           </div>
         </details>
       ) : null}
-      {parsed.answer ? <MarkdownContent>{parsed.answer}</MarkdownContent> : null}
+      {parsed.answer ? <MarkdownContent lang={lang}>{parsed.answer}</MarkdownContent> : null}
     </>
   );
 });

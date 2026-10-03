@@ -10,6 +10,7 @@ import type { ChatMessage, ResolvedModelConfig, SecuritySettings, ToolPreference
 import { createId, DEFAULT_SECURITY, DEFAULT_TOOL_PREFERENCES } from '@okbot/shared';
 import { buildAgentInstructions } from './instructions.js';
 import { buildTools, type SkillLookup } from './tools.js';
+import type { ExecutionBackend } from './executionBackend.js';
 import type { ToolRunBudget } from './toolRunBudget.js';
 import type { HitlLoopHooks, RunChatResult } from './types.js';
 import { tokenUsageFromRunResult } from './usage.js';
@@ -88,6 +89,8 @@ export function createAgentAndRunner(input: {
   ownerId?: string;
   /** Absolute owner `resources/` dir for generate_image. */
   resourcesDir?: string;
+  /** Shell/fs backend (local or remote cloud computer). */
+  executionBackend?: ExecutionBackend;
 }) {
   const toolPrefs = input.tools ?? DEFAULT_TOOL_PREFERENCES;
   const security = input.security ?? DEFAULT_SECURITY;
@@ -117,11 +120,17 @@ export function createAgentAndRunner(input: {
       : {}),
     tools: buildTools(toolPrefs, security, input.toolRunBudget, {
       skillLookup: input.skillLookup,
-      imageApi: { baseURL: input.model.baseURL, apiKey: input.model.apiKey },
+      imageApi: {
+        baseURL: input.model.baseURL,
+        apiKey: input.model.apiKey,
+        catalogModelIds: input.model.providerModelIds,
+        providerName: input.model.providerName,
+      },
       imageAssets:
         input.ownerId && input.resourcesDir
           ? { ownerId: input.ownerId, resourcesDir: input.resourcesDir }
           : undefined,
+      backend: input.executionBackend,
     }),
   });
   const runner = new Runner({

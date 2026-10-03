@@ -44,6 +44,9 @@ export type ChatComposerProps = {
   onSend: () => void;
   onStop: () => void;
   onToggleVoice: () => void;
+  computers?: Array<{ id: string; name: string }>;
+  computerId?: string;
+  onComputerIdChange?: (id: string) => void;
 };
 
 function resolvedOrbTheme(): 'light' | 'dark' {
@@ -75,6 +78,9 @@ export function ChatComposer({
   onSend,
   onStop,
   onToggleVoice,
+  computers,
+  computerId,
+  onComputerIdChange,
 }: ChatComposerProps) {
   const hasDraft = Boolean(draft.trim());
   const hasAttachments = attachments.length > 0;
@@ -196,6 +202,27 @@ export function ChatComposer({
               </button>
             </div>
           ))}
+        </div>
+      ) : null}
+      {computers && computers.length > 0 && onComputerIdChange ? (
+        <div className="composer-computer">
+          <label className="composer-computer-label">
+            <span className="composer-computer-text">{t(lang, 'computer')}</span>
+            <select
+              className="composer-computer-select"
+              value={computerId || 'local'}
+              disabled={busy}
+              aria-label={t(lang, 'computerSelect')}
+              title={t(lang, 'computerSelect')}
+              onChange={(e) => onComputerIdChange(e.target.value)}
+            >
+              {computers.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
       ) : null}
       <div className="composer-row">

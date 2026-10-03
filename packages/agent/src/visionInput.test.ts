@@ -11,8 +11,11 @@ import {
   encodeImageFileAsDataUrl,
   mimeTypeForImagePath,
   stripImageLinesFromAttachedBlock,
+  sniffImageMime,
+  MAX_VISION_IMAGE_COUNT,
   VISION_TURN_INSTRUCTION,
 } from './visionInput.ts';
+import { DEFAULT_SECURITY } from '@okbot/shared';
 
 function assert(cond: unknown, msg: string): asserts cond {
   if (!cond) throw new Error(msg);
@@ -67,8 +70,6 @@ const imageOnly = await buildMultimodalUserContent('', [{ path: pngPath }]);
 assert(imageOnly.some((p) => p.type === 'input_image'), 'image-only has image');
 assert(imageOnly.some((p) => p.type === 'input_text'), 'image-only has hint text');
 
-fs.rmSync(dir, { recursive: true, force: true });
-
 const withVision = buildAgentInstructions(
   '测试',
   '',
@@ -93,4 +94,49 @@ const noVision = buildAgentInstructions(
 );
 assert(!noVision.includes('本回合视觉输入'), 'no vision instruction without flag');
 
+const quoted = [
+  '引用：',
+  '上一句',
+  '',
+  '[Attached]',
+  '- image: /Users/me/secret.png',
+  '- file: /Users/me/notes.txt',
+  '',
+  '看图',
+].join('\n');
+const quotedStripped = stripImageLinesFromAttachedBlock(quoted);
+assert(!quotedStripped.includes('secret.png'), 'quote+image path stripped');
+assert(quotedStripped.includes('- file: /Users/me/notes.txt'), 'file path kept after quote');
+assert(quotedStripped.includes('看图'), 'body kept after quote');
+
+assert(sniffImageMime(PNG_1X1) === 'image/png', 'png magic');
+const jpgNamed = path.join(dir, 'fake.jpg');
+fs.writeFileSync(jpgNamed, PNG_1X1);
+let sniffThrew = false;
+try {
+  await encodeImageFileAsDataUrl(jpgNamed);
+} catch (err) {
+  sniffThrew = true;
+  assert(String(err).includes('不符'), String(err));
+}
+assert(sniffThrew, 'mismatched magic rejected');
+
+let denied = false;
+try {
+  await encodeImageFileAsDataUrl(pngPath, { security: DEFAULT_SECURITY });
+} catch (err) {
+  denied = true;
+  assert(String(err).includes('拦截') || String(err).includes('不允许') || String(err).includes('范围'), String(err));
+}
+assert(denied, 'vision path uses checkPathAllowed');
+
+const many = Array.from({ length: MAX_VISION_IMAGE_COUNT + 1 }, () => ({ path: pngPath, name: 'dot.png' }));
+const capped = await buildMultimodalUserContent('hi', many);
+const imgs = capped.filter((part) => part.type === 'input_image');
+assert(imgs.length === MAX_VISION_IMAGE_COUNT, 'image count cap');
+const note = capped.find((part) => part.type === 'input_text');
+assert(note && note.type === 'input_text' && note.text.includes('其余已忽略'), 'cap note');
+
 console.log('visionInput.test.ts OK');
+
+fs.rmSync(dir, { recursive: true, force: true });

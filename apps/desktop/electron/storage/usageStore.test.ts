@@ -24,4 +24,21 @@ import { loadUsageStats, recordTokenUsage } from './usageStore.js';
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
+
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'okbot-usage-dbo-'));
+  const file = path.join(dir, 'usage.json');
+  const botA = 'bot_a';
+  const botB = 'bot_b';
+  recordTokenUsage(file, botA, { input: 3, output: 1, cache: 0 });
+  recordTokenUsage(file, botB, { input: 7, output: 2, cache: 1 });
+  const stats = loadUsageStats(file);
+  const day = Object.keys(stats.daily)[0];
+  assert.ok(day);
+  assert.equal(stats.dailyByOwner[botA]?.[day!]?.input, 3);
+  assert.equal(stats.dailyByOwner[botB]?.[day!]?.input, 7);
+  assert.equal(stats.daily[day!]?.input, 10);
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
 console.log('usageStore.test.ts: ok');

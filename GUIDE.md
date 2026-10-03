@@ -42,6 +42,7 @@ okbot/
       i18n.ts                   # zh / en
   packages/shared/              # 类型、默认设置、IPC channel 常量
   packages/agent/               # 跑对话、工具、小队、压缩、用量、转写
+  apps/sandbox-agent/           # 云电脑进程（HTTP shell/fs API + Dockerfile）
 ```
 
 开发入口：`pnpm dev`（先 build shared/agent，再 desktop）。类型检查：`pnpm --filter @okbot/desktop typecheck`。开发服务器绑 `127.0.0.1`（避免部分 Mac `/etc/hosts` 缺 `localhost` 导致 `ENOTFOUND localhost`）；若其它工具仍解析失败，把 `127.0.0.1 localhost` 与 `::1 localhost` 写回 `/etc/hosts`。
@@ -74,7 +75,7 @@ okbot/
 - **关于**：主题按钮右侧打开 `AboutModal`（应用信息、构建日期、复制信息）。  
 - **窗口控件（仅 Windows）**：关于按钮右侧为最小化 / 最大化(还原) / 关闭；macOS 仍用系统红绿灯，Linux 不加这组控件。  
 - **下载更新**：有可用/下载中/已下载更新时，主题按钮左侧出现更新按钮（见 §10）。
-- **沉浸式对话**：控制不在顶栏，而在消息/转录区域（`.messages-shell`）**右下角**悬停浮层按钮（Maximize2 / Minimize2 图标）。鼠标进入消息/转录区域时淡入，离开时淡出（`opacity` 过渡；不可见时 `pointer-events: none` 不挡点击）。点击隐藏侧栏与 splitter（聊天区全宽）；再点还原侧栏（保留进入前的宽度/折叠轨态）。偏好持久化 `localStorage` 键 `okbot.immersiveChat`。文案：`开启沉浸式对话` / `关闭沉浸式对话`（EN: Enable / Exit immersive chat）。
+- **沉浸式对话**：控制不在顶栏，而在消息/转录区域（`.messages-shell`）**右下角**悬停浮层按钮（Maximize2 / Minimize2 图标）。鼠标进入消息/转录区域时淡入，离开时淡出（`opacity` 过渡；不可见时 `pointer-events: none` 不挡点击）。点击隐藏侧栏与 splitter（聊天区全宽），并隐藏对话顶栏右侧图标组（`.header-actions` 里的更新、复制请求地址、本轮轨迹、主题、关于）；Windows 最小化 / 最大化 / 关闭仍留在顶栏右侧。再点同一按钮还原侧栏与这些图标（保留进入前的宽度/折叠轨态）。偏好持久化 `localStorage` 键 `okbot.immersiveChat`。文案：`开启沉浸式对话` / `关闭沉浸式对话`（EN: Enable / Exit immersive chat）。
 - **macOS 沉浸式顶栏 inset**：沉浸且侧栏隐藏时，对话顶栏在 darwin 上增加左侧安全区（`--traffic-lights-inset: 76px`），避免助手头像/名称与系统红绿灯重叠；Windows / Linux 不加该左 padding。
 
 ### 3.3 消息列表（`ChatTranscript`）
@@ -91,7 +92,7 @@ okbot/
 - 会话顶栏「本轮轨迹」：查看该助手/小队最近一轮 `last-run-trace.json`（只读弹层）。  
 - 发送时可**自动换题压缩**（见 §8.4；设置可关）。  
 - **流式性能**：`delta` 经 `requestAnimationFrame` 合并后再 `setState`（侧栏预览 + 气泡）；`MarkdownContent` / `CodeBlock` / `ChatTranscript` / `SessionSidebar` 用 `memo`，已完成气泡不因后续 token 重解析。  
-- 忙碌时底部 ThinkingOrb + 阶段文案（思考中 / 正在回复 / 工具与命令 / **正在收尾**——`done` 后、`chatStart` IPC 返回前的 persist 与 AGENTS/skills/memory 刷新）；可「跳到底部」。
+- 忙碌时底部 ThinkingOrb + 阶段文案（思考中 / 正在回复 / 工具与命令 / **正在进化**——`done` 后、`chatStart` IPC 返回前的 persist 与 AGENTS/skills/memory 刷新）；可「跳到底部」。
 - **贴底滚动**：用户未主动上滑时，流式 delta / 工具卡片 / Markdown 布局增高会通过 `ResizeObserver` + `MutationObserver` + 双 `rAF` 继续钉在底部；程序化滚动用 `pinningScrollRef` 忽略，避免误判「已离开底部」。距底 ≤48px 视为贴底，距底 >80px 才显示「回到底部」（滞回，消化亚像素抖动）。发送（含中途改向）会强制重新贴底；用户上滑后不抢滚动。
 
 ### 3.4 输入区（`ChatComposer`）
@@ -99,7 +100,8 @@ okbot/
 - 多行输入；空闲时描边强调。  
 - **引用草稿**：上方 quote 条（可关闭）；发送时写入 `quoteMessageId` + `quotePreview`（**不**把 `>` 拼进正文）。  
 - **麦克风**：点击开始录音，再点停止；`MediaRecorder` 采集音频 → 渲染进程 **本地 Whisper**（`@xenova/transformers` + 内置 `whisper-tiny`）转写写入 Composer；`VoiceBeam` 可视化。**不**走 Google Web Speech，也**不**走 provider `/audio/transcriptions`。需系统麦克风权限；识别可离线。失败时有模型加载 / 识别错误的中英提示。  
-- **发送 / 停止（中途改向）**：忙碌时输入框仍可编辑；有草稿时可继续发送（中途改向），Enter 同样可发送（尊重 IME）。**停止**保持独立：忙碌且草稿为空只显示停止；忙碌且有草稿时 **停止 + 发送** 同时显示。发送不会仅因忙碌而灰掉。BorderBeam / busy 一直保持到**最外层**运行真正结束（改向中途不会提前熄灭）。
+- **附件**：图片 / 文件 / 文件夹。正文前可带 `[Attached]` 块（路径给工具）；图片另走视觉通道（`input_image` data URL），且必须通过与 `read_file` 相同的路径防护、魔数校验，并有张数与总量上限。引用前缀下的 `[Attached]` 同样会去掉图片路径，避免泄漏进模型文本和 `quotePreview`。气泡里已发送附件的无障碍名称与输入区「待发送」区分。
+- **发送 / 停止（中途改向）**：忙碌时输入框仍可编辑；有草稿时可继续发送（中途改向），Enter 同样可发送（尊重 IME）。**停止**保持独立：忙碌且草稿为空只显示停止；忙碌且有草稿时 **停止 + 发送** 同时显示。发送不会仅因忙碌而灰掉。BorderBeam / busy 一直保持到**最外层**运行真正结束（改向中途不会提前熄灭）。本机 HTTP API 发起的回合同样会点亮忙碌 / 停止（收到 `user_message`）。
 - **发送失败重试**：乐观用户气泡带渲染期 `sendStatus`（`pending` | `sent` | `failed`，不落盘）。`chatStart` / `chatStartSquad`（含中途改向）拒绝或抛错时，气泡保留并在**右下角**显示红色重试按钮（i18n `retrySend`）；点击以原文 + 引用（若有）重发。失败时不再用 `getMessagesPage` 整页替换把本地气泡冲掉。
 
 ---
@@ -150,7 +152,9 @@ okbot/
 
 | Tab（侧栏文案） | 内容 |
 |-----|------|
-| **通用设置** | 主题（系统/浅/深）、语言（系统/中/英）、缩放特效（默认关；? 说明仿 MacOS Dock 动效）、麦克风、硬件加速（改后需重启）、**本地 HTTP API**（默认关；见下）、数据目录说明（**不含**更新控件） |
+| **通用设置** | 主题（系统/浅/深）、语言（系统/中/英）、缩放特效（默认关；? 说明仿 MacOS Dock 动效）、麦克风、硬件加速（改后需重启）、数据目录说明（**不含**更新控件，**不含**本地网关与电脑连接） |
+| **本地网关** | 原「本地 HTTP API」：启用、端口、访问令牌、局域网网关、提供 Web UI（默认关；见 §6.1） |
+| **电脑连接** | 原「云电脑」：本机始终可用；添加远程电脑用与其它设置相同的行（名称 / 主机 / 端口 / 令牌，见 §6.2） |
 | **工具授权** | 六工具启用 + 审批策略（自动允许 / 询问；含 `read_skill`）；**自动审批规则（AAR）** 列表（允许/先询问、关键词、失焦自动保存草稿；空规则丢弃；重名校验；列表限高滚动）；**运行限制**（`settings.toolRun`：单轮最大工具调用 / 最大时长秒 / 记录运行轨迹，见下） |
 | **安全防护** | 总开关、拦截模式（reject / tripwire）、限制在家目录、允许/拒绝路径前缀、危险 shell 正则；与审批关系说明 |
 | **模型接入** | **自定义供应商**（可多条：名称 / BaseURL / API Format / API Key / 每供应商模型目录）；模型行**连通测试**（按该供应商 baseURL/apiKey/apiFormat 对模型 id 发最小探针，IPC `testModelConnection`）；全局**默认模型**（下方下拉，供应商→模型；列表行不再用星标设默认）；列表顺序稳定（存盘数组序，启停不重排）；助手/小队覆盖同为 `providerId`+`modelId`；上下文压缩（自动换题、比例、保留上下限默认 5、摘要字数）、**单次运行最大回合**（1:1 `maxTurns`，默认 50） |
@@ -188,17 +192,20 @@ okbot/
 
 供**本机其他程序**通过 HTTP 向助手或小队发送消息，走与 UI 相同的 `chatStart` / `startChatTurn` 路径（持久化 + `chatEvent`，界面实时更新）。
 
-- **默认关闭**。设置 → 通用 →「本地 HTTP API」：启用、端口、访问令牌（首次自动生成，可重新生成 / 复制）。
-- **仅绑定 `127.0.0.1`**，不对外网开放。
+- **默认关闭**。设置 → **本地网关**：启用、端口、访问令牌。令牌字符集为 `[A-Za-z0-9_-]`（输入时即过滤）。**仅在启用且令牌为空时**自动生成；重新生成有明确提示。复制读的是已保存的令牌，不是输入框里尚未落盘的草稿。`settings.json` 权限为 `0600`。一键复制 curl **不**把真令牌放进剪贴板，占位为 `$OKBOT_TOKEN`。
+- **仅绑定 `127.0.0.1`**，不对外网开放。未开局域网时校验 `Host` 必须是 localhost / 127.0.0.1 / ::1（减轻 DNS rebinding）。开启局域网网关后绑定 `0.0.0.0`，仍靠令牌鉴权。
 - 鉴权：`Authorization: Bearer <token>` 或请求头 `X-OkBot-Token: <token>`（`GET /v1/health` 无需令牌）。
 - 端点（保持精简）：
   - `GET /v1/health` → `{ ok, service }`
   - `GET /v1/bots` → `{ ok, bots: [{ id, name }] }`
   - `GET /v1/squads` → `{ ok, squads: [{ id, name }] }`
-  - `POST /v1/bots/:id/messages` / `POST /v1/squads/:id/messages`，JSON `{ "text": "..." }`：
-    - **默认（非 SSE）** → **202** `{ ok: true, sessionId }`（`sessionId` 即 bot/squad id）；异步入队同一轮对话，不在 HTTP 响应里等待最终回复。
-    - **SSE**：请求头带 `Accept: text/event-stream` → `Content-Type: text/event-stream`，连接保持打开，流式推送**本会话**（该 bot/squad id）的 `ChatEvent`，直到 `done` / `error`（或客户端断开）后结束。客户端断开只停止写入，不中止本轮对话。
-- SSE 帧：`event: <ChatEvent.type>`，`data:` 为完整 `ChatEvent` JSON（与 UI IPC 同源）。常见 `type`：`user_message` / `assistant_message` / `delta` / `tool_request` / `tool_result` / `done` / `error`。
+  - `GET /v1/approvals` → 进行中的回合与待审批工具（与桌面 HITL 同一份内存 / 磁盘状态）
+  - `POST /v1/tool-respond`，JSON `{ "requestId", "approved", "message"? }`：与桌面「允许 / 拒绝」同一条 `respondToToolApproval`（含冷启动恢复）
+  - `POST /v1/bots/:id/abort` / `POST /v1/squads/:id/abort`：与桌面停止相同（中止运行并拒绝挂起的审批）
+  - `POST /v1/bots/:id/messages` / `POST /v1/squads/:id/messages`，JSON `{ "text": "..." }`（文本过长 413；过频 429）：
+    - **默认（非 SSE）** → **202** `{ ok: true, sessionId }`（`sessionId` 即 bot/squad id）。这不是后台队列：与 UI 一样走 `startChatTurn`，若该会话已有一轮在跑，会 **steer**（中止旧轮再开新轮），HTTP 响应本身不等最终回复。
+    - **SSE**：请求头带 `Accept: text/event-stream` → `Content-Type: text/event-stream`。先订阅再开回合。上一轮被 steer 掉时的 `done{aborted:true}` **早于**本轮 `user_message`，连接会忽略它，直到见到本轮 `user_message`，再流到本轮自己的 `done` / `error`。`tool_request` **不是**结束；审批等待期间连接保持，直到 `done` / `error`，或客户端断开。客户端断开只停止写入，不中止本轮；窗口关掉时用上面的审批 / 中止接口收口，避免运行永久挂起。`res.write` 背压不会当成断流。禁用 API 时会拆掉已有 SSE 连接。
+- SSE 帧：`event: <RuntimeEvent.type>`，`data:` 为完整 `RuntimeEvent` JSON（与 UI IPC 同源）。常见 `type`：`user_message` / `assistant_message` / `delta` / `tool_request` / `tool_result` / `done` / `error`。
 - 示例（SSE）：
 
 ```bash
@@ -210,17 +217,33 @@ curl -N -X POST "http://127.0.0.1:<port>/v1/bots/<botId>/messages" \
 ```
 
 - 实现：`apps/desktop/electron/localHttpApi.ts`；设置变更时重启监听，禁用或退出时停止。
-- 无独立 CLI、无公网发布面。
+- 无独立 CLI；开启 **局域网网关**（`bindLan`）时可绑定 `0.0.0.0`，供内网手机访问；开启 `serveUi` 时托管与桌面相同的渲染端静态资源。未登录时浏览器 `GET /`、`GET /gateway-login` 返回令牌输入页（HTML），不再是 JSON `unauthorized`。`/v1/*`（除 `GET /v1/health`）仍要 Bearer / `X-OkBot-Token`。登录后 `?token=` 或 cookie 继续打开同一套桌面 UI。
+
+### 6.2 云电脑（sandbox-agent）
+
+远程执行目标：独立进程/容器 `apps/sandbox-agent`（包名 `@okbot/sandbox-agent`）。即使在裸服务器上运行 sandbox-agent，也可在 OkBot 设置中登记为云电脑。
+
+- 设置 → **电脑连接**：登记名称 / 主机 / 端口 / 令牌（`SANDBOX_TOKEN`），字段与其它设置页同一套行样式。**本机**始终可用（id=`local`），不写入列表。
+- 对话输入区可选择当前轮工具运行的电脑（`computerId` → `ExecutionBackend`）。
+- 协议：Bearer；`GET /v1/health`；`POST /v1/shell`（可选 SSE）；`POST /v1/fs/read|write|edit`。
+- 技能（`read_skill`）与文生图仍在**桌面主机**执行，不路由到云电脑。
+- 实现：`packages/agent` 的 `ExecutionBackend`（local + remote）；`buildTools` 注入 backend。Dockerfile：`apps/sandbox-agent/Dockerfile`。验收清单：`docs/acceptance-cloud-gateway.md`。
+
+### 6.3 桌面网关与同一套前端
+
+- `localHttpApi.bindLan` + `serveUi`：主进程在 LAN 上提供既有 HTTP API，并托管 renderer 构建产物。
+- 浏览器无 Electron preload 时，`src/bridge/httpOkbot.ts` 安装同源 HTTP/SSE 适配器，复用同一 React UI（不另建移动端 SPA）。
+- 早期产品：网关侧创建助手/保存设置/HITL/语音等能力可能受限；聊天与会话列表为验收主路径。
 
 ---
 
 ## 7. 本机工具与安全
 
-工具（`packages/agent/src/tools.ts`）：
+工具（`packages/agent/src/tools.ts`，经 `ExecutionBackend` 执行 shell/fs）：
 
 - `read_file` / `read_skill` / `write_file` / `edit_file` / `run_shell` / `generate_image`  
 - `read_skill(slug)`：加载本助手已启用技能（本地优先，其次启用的全局）的完整 SKILL.md；系统提示只含目录，属渐进披露  
-- `generate_image(prompt, aspect_ratio?, model?)`：用当前模型供应商的 `baseURL`/`apiKey` 调 MiniMax 原生 `POST {baseURL}/image_generation`（默认 `image-01`；非 OpenAI `/images/generations`）。图片落盘 `~/.okbot/<botId|squadId>/resources/`，工具结果含 `okbot-asset:<ownerId>/resources/…` markdown（须原样写入回复）；`react-markdown` 通过自定义 `urlTransform` 保留该协议，渲染侧经 IPC 读成 data URL 显示（CSP `img-src` 不含 https）  
+- `generate_image(prompt, aspect_ratio?, model?)`：用当前模型供应商的 `baseURL`/`apiKey` **自动推断**是否支持 OpenAI 兼容文生图——OpenAI / Azure 主机，或目录含 `dall-e*`·`gpt-image*` → `POST {baseURL}/images/generations`（`b64_json`/`url`）。prefs 开启且推断成功才暴露工具。图片落盘 `~/.okbot/<botId|squadId>/resources/`，工具结果含 `okbot-asset:<ownerId>/resources/…` markdown（须原样写入回复）；`react-markdown` 通过自定义 `urlTransform` 保留该协议，渲染侧经 IPC 读成 data URL 显示（CSP `img-src` 不含 https）  
 - 输出截断、文件大小与二进制检测、shell 超时约 30s、cwd 默认家目录  
 - `run_shell` 跨平台：Windows 优先 PATH 中的 PowerShell Core `pwsh`（`-NoProfile -NonInteractive -Command`），找不到时用 `ComSpec`（默认 `cmd.exe`）`/d /s /c`；其余平台用 `SHELL`，否则 darwin `/bin/zsh`、其它 `/bin/bash`，参数 `-lc`（见 `resolveShellExec`）
 
@@ -240,8 +263,8 @@ HITL UI：工具卡上「允许 / 永久允许 / 拒绝」。
 ### 8.1 引用（quote-by-id）
 
 - 悬停气泡 → 引用 → 输入区出现预览条。  
-- 发出的用户消息带 `quoteMessageId` + `quotePreview`；气泡上方可点引用条 **跳转到原消息**（高亮）。  
-- Agent 侧：`quoteContext.ts` 按 id 注入上下文（非把引用当纯文本前缀）。
+- 发出的用户消息带 `quoteMessageId` + `quotePreview`；气泡上方可点引用条 **跳转到原消息**（高亮）。`quotePreview` 与送给模型的引用正文会先去掉 `[Attached]` 里的图片路径。  
+- Agent 侧：按消息 id 取原文，再交给本轮 `sessionInputCallback`（引用不是把 `>` 写进气泡正文）。
 
 ### 8.2 多轮上下文结构（模型每轮所见）
 
@@ -457,3 +480,5 @@ Preload 暴露 `window.okbot.*`；渲染进程不直连 Node fs。
 ## 已知限制（小队冷启动审批）
 
 应用重启后，**小队**会话里挂起的工具审批无法从磁盘恢复（队长成员图尚未支持冷启动重建）。重启后再次批准会提示重新发送该轮消息；普通单助手的待审批仍可冷恢复。
+
+`pending-hitl.json` 仍是每个 owner 一份（并行小队多条审批会互相覆盖落盘）。监听端口失败目前只打主进程日志，设置页没有单独的失败状态。

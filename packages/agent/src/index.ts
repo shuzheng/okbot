@@ -74,16 +74,74 @@ export {
   type SkillLookupResult,
   type BuildToolsOptions,
 } from './tools.js';
+export {
+  createLocalExecutionBackend,
+  createRemoteExecutionBackend,
+  probeRemoteComputer,
+  resolveExecutionBackend,
+  resolveShellExec,
+  type ExecutionBackend,
+  type RemoteComputerTarget,
+  type ShellExecSpec,
+  type ResolveShellExecOptions,
+} from './executionBackend.js';
 
 export {
-  generateImageWithMinimax,
-  minimaxImageGenerationUrl,
+  generateImage,
+  inferImageCapability,
+  isOpenAIImageHost,
+  openAIImageGenerationsUrl,
+  aspectRatioToOpenAISize,
+  parseOpenAIImagesResponse,
   okbotAssetMarkdownSrc,
   ownerResourceAssetRel,
   ownerResourcesDir,
   OKBOT_ASSET_SCHEME,
+  IMAGE_ASPECT_RATIOS,
+  OPENAI_DEFAULT_IMAGE_MODELS,
   type ImageApiCredentials,
+  type ImageCapability,
+  type ImageProtocol,
+  type ImageAspectRatio,
   type GenerateImageResult,
   type GenerateImageSaveOpts,
 } from './generateImage.js';
 
+export {
+  parseSkillMarkdown,
+  formatSkillMarkdown,
+  unquoteYamlScalar,
+  formatSkillCatalog,
+  buildSkillCatalogEntries,
+  watchSkillDirs,
+  createSkillHotReloadHub,
+  type SkillCatalogEntry,
+  type SkillHotReloadChange,
+  type SkillHotReloadOptions,
+} from './skills/index.js';
+
+export {
+  OKBOT_ASSISTANT_PACKAGE_FORMAT,
+  ASSISTANT_PACKAGE_SECRET_KEYS,
+  stripSecrets,
+  buildAssistantPackage,
+  parseAssistantPackage,
+  assistantPackageToFileMap,
+  type AssistantPackageAvatar,
+  type AssistantPackageManifest,
+  type AssistantPackageContents,
+} from './assistantPackage.js';
+
+export {
+  encodeRuntimeEventSse,
+  parseRuntimeEventSseBlocks,
+  isRuntimeEventTurnTerminal,
+  acceptRuntimeEventForSseTurn,
+} from './runtime/events.js';
+
+export {
+  encodeExecStreamSse,
+  parseExecStreamSseBlocks,
+  foldExecStreamToFormatted,
+  type ExecStreamEvent,
+} from './runtime/execStream.js';

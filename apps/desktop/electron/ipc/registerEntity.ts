@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron';
+import { dialog, ipcMain } from 'electron';
 import {
   IpcChannels,
   DEFAULT_TOOL_PREFERENCES,
@@ -14,12 +14,47 @@ import {
   buildAgentInstructions,
   buildCaptainSquadInstructions,
   formatSessionPromptContext,
+  probeRemoteComputer,
 } from '@okbot/agent';
 import type { IpcContext } from './context';
 import { readRecentErrorLog } from '../storage/errorLog';
 import { isSquadOwnerId } from '../storage/ids';
 
+/** Make an assistant display name safe to use as a cross-platform filename. */
+export function sanitizeAssistantFilename(name: string): string {
+  const safe = name
+    .normalize('NFC')
+    .replace(/[<>:"/\\|?*\u0000-\u001f\u007f]/g, '_')
+    .trim()
+    .replace(/[. ]+$/g, '');
+  if (!safe || safe === '.' || safe === '..') return 'assistant';
+  if (/^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i.test(safe)) return `_${safe}`;
+  return safe;
+}
+
 export function registerEntityIpc(ctx: IpcContext): void {
+
+  ipcMain.handle(
+    IpcChannels.probeComputer,
+    async (
+      _e,
+      payload: { host?: string; port?: number; token?: string; name?: string },
+    ): Promise<{ ok: true } | { ok: false; error: string }> => {
+      const host = (payload?.host || '').trim();
+      const token = (payload?.token || '').trim();
+      const port = Number(payload?.port);
+      if (!host || !token || !Number.isInteger(port) || port < 1 || port > 65535) {
+        return { ok: false, error: 'need_fields' };
+      }
+      const baseUrl = /^https?:\/\//i.test(host) ? host.replace(/\/+$/, '') : `http://${host}:${port}`;
+      return probeRemoteComputer({
+        name: (payload?.name || '').trim() || host,
+        baseUrl,
+        token,
+      });
+    },
+  );
+
   ipcMain.handle(IpcChannels.getBootstrap, () => {
     const settings = ctx.storage.getSettings();
     const settingsLoadWarning = ctx.storage.takeSettingsLoadWarning() ?? undefined;
@@ -89,6 +124,54 @@ export function registerEntityIpc(ctx: IpcContext): void {
     return true;
   });
   ipcMain.handle(IpcChannels.listGlobalAgentsSkills, () => ctx.storage.listGlobalAgentsSkills());
+
+  ipcMain.handle(
+    IpcChannels.exportAssistantPackage,
+    async (_e, payload: { botId: string; targetPath?: string }) => {
+      const botId = typeof payload?.botId === 'string' ? payload.botId : '';
+      if (!botId) throw new Error('缺少 botId');
+      let targetPath = typeof payload?.targetPath === 'string' ? payload.targetPath.trim() : '';
+      if (!targetPath) {
+        const botName = ctx.storage.listBots().find((bot) => bot.id === botId)?.name || 'assistant';
+        const defaultFilename = `${sanitizeAssistantFilename(botName)}.okbot`;
+        const result = await dialog.showSaveDialog({
+          title: '导出助手',
+          defaultPath: defaultFilename,
+          filters: [
+            { name: 'OkBot 助手包', extensions: ['okbot'] },
+            { name: 'All', extensions: ['*'] },
+          ],
+        });
+        if (result.canceled || !result.filePath) return { canceled: true as const };
+        targetPath = result.filePath.endsWith('.okbot')
+          ? result.filePath
+          : `${result.filePath}.okbot`;
+      }
+      const out = ctx.storage.exportAssistantPackage(botId, targetPath);
+      return { canceled: false as const, path: out.path };
+    },
+  );
+
+  ipcMain.handle(
+    IpcChannels.importAssistantPackage,
+    async (_e, sourcePath?: string) => {
+      let src = typeof sourcePath === 'string' ? sourcePath.trim() : '';
+      if (!src) {
+        const result = await dialog.showOpenDialog({
+          title: '导入助手',
+          properties: ['openFile', 'openDirectory'],
+          filters: [
+            { name: 'OkBot 助手包', extensions: ['okbot'] },
+            { name: 'All', extensions: ['*'] },
+          ],
+        });
+        if (result.canceled || !result.filePaths?.[0]) return { canceled: true as const };
+        src = result.filePaths[0]!;
+      }
+      const bot = ctx.storage.importAssistantPackage(src);
+      return { canceled: false as const, bot };
+    },
+  );
 
   ipcMain.handle(IpcChannels.listSquads, () => ctx.storage.withReplyPreviews(ctx.storage.listSquads()));
   ipcMain.handle(IpcChannels.createSquad, (_e, input) => ctx.storage.createSquad(input));

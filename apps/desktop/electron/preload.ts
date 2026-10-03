@@ -4,7 +4,7 @@ import {
   type AppInfo,
   type AppSettings,
   type BotOnboardingAnswers,
-  type ChatEvent,
+  type RuntimeEvent,
   type UpdaterStatus,
   type UsageStats,
 } from '@okbot/shared';
@@ -90,6 +90,14 @@ const api = {
   deleteBotSkill: (botId: string, slug: string) =>
     ipcRenderer.invoke(IpcChannels.deleteBotSkill, { botId, slug }) as Promise<boolean>,
   listGlobalAgentsSkills: () => ipcRenderer.invoke(IpcChannels.listGlobalAgentsSkills),
+  exportAssistantPackage: (botId: string, targetPath?: string) =>
+    ipcRenderer.invoke(IpcChannels.exportAssistantPackage, { botId, targetPath }) as Promise<
+      { canceled: true } | { canceled: false; path: string }
+    >,
+  importAssistantPackage: (sourcePath?: string) =>
+    ipcRenderer.invoke(IpcChannels.importAssistantPackage, sourcePath) as Promise<
+      { canceled: true } | { canceled: false; bot: unknown }
+    >,
   getSettings: () => ipcRenderer.invoke(IpcChannels.getSettings),
   saveSettings: (settings: AppSettings) => ipcRenderer.invoke(IpcChannels.saveSettings, settings),
   discoverModels: (payload: { baseURL: string; apiKey: string }) =>
@@ -101,7 +109,6 @@ const api = {
         contextWindow: number;
         maxTokens: number | null;
         enabled: boolean;
-        vision?: boolean;
         showThinking?: boolean;
       }>;
       error?: string;
@@ -116,6 +123,10 @@ const api = {
       ok: boolean;
       error?: string;
     }>,
+  probeComputer: (payload: { host: string; port: number; token: string; name?: string }) =>
+    ipcRenderer.invoke(IpcChannels.probeComputer, payload) as Promise<
+      { ok: true } | { ok: false; error: string }
+    >,
   getMessages: (botId: string) => ipcRenderer.invoke(IpcChannels.getMessages, botId),
   getMessagesPage: (botId: string, opts?: { limit?: number; beforeMessageId?: string | null }) =>
     ipcRenderer.invoke(IpcChannels.getMessagesPage, {
@@ -143,6 +154,7 @@ const api = {
     opts?: {
       quoteMessageId?: string;
       attachments?: Array<{ kind: 'image' | 'file' | 'folder'; path: string; name: string }>;
+      computerId?: string;
     },
   ) =>
     ipcRenderer.invoke(IpcChannels.chatStart, {
@@ -150,6 +162,7 @@ const api = {
       text,
       quoteMessageId: opts?.quoteMessageId,
       attachments: opts?.attachments,
+      computerId: opts?.computerId,
     }),
   chatStartSquad: (
     squadId: string,
@@ -157,6 +170,7 @@ const api = {
     opts?: {
       quoteMessageId?: string;
       attachments?: Array<{ kind: 'image' | 'file' | 'folder'; path: string; name: string }>;
+      computerId?: string;
     },
   ) =>
     ipcRenderer.invoke(IpcChannels.chatStart, {
@@ -164,6 +178,7 @@ const api = {
       text,
       quoteMessageId: opts?.quoteMessageId,
       attachments: opts?.attachments,
+      computerId: opts?.computerId,
     }),
   chatAbort: (botId: string) => ipcRenderer.invoke(IpcChannels.chatAbort, botId),
   compressSessionNow: (payload: {
@@ -239,8 +254,8 @@ const api = {
   updaterDownload: () =>
     ipcRenderer.invoke(IpcChannels.updaterDownload) as Promise<UpdaterStatus>,
   updaterInstall: () => ipcRenderer.invoke(IpcChannels.updaterInstall) as Promise<void>,
-  onChatEvent: (handler: (event: ChatEvent) => void): (() => void) => {
-    const listener = (_: unknown, event: ChatEvent) => handler(event);
+  onRuntimeEvent: (handler: (event: RuntimeEvent) => void): (() => void) => {
+    const listener = (_: unknown, event: RuntimeEvent) => handler(event);
     ipcRenderer.on(IpcChannels.chatEvent, listener);
     return () => {
       ipcRenderer.removeListener(IpcChannels.chatEvent, listener);

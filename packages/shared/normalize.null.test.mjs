@@ -12,6 +12,15 @@ import {
   DEFAULT_CONTEXT_COMPRESSION,
   DEFAULT_SQUAD_CAPTAIN_PERSONA,
   DEFAULT_SQUAD_PLAYBOOK,
+  normalizeSquadSettings,
+  normalizeLocalHttpApiSettings,
+  sanitizeLocalHttpApiToken,
+  normalizeInstructionsSettings,
+  LEGACY_DEFAULT_SQUAD_CAPTAIN_PERSONA,
+  LEGACY_DEFAULT_SQUAD_PLAYBOOK,
+  DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT,
+  LEGACY_DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT,
+  LEGACY_AGENTS_MD_REFRESH_WITH_VISION_GUARD,
 } from './dist/index.js';
 
 assert.equal(normalizeMaxTokens(null), null);
@@ -40,9 +49,42 @@ assert.equal(cc.ratio, DEFAULT_CONTEXT_COMPRESSION.ratio);
 assert.equal(cc.keepRecentMax, DEFAULT_CONTEXT_COMPRESSION.keepRecentMax);
 
 
+
 assert.match(DEFAULT_SQUAD_CAPTAIN_PERSONA, /并行/);
 assert.doesNotMatch(DEFAULT_SQUAD_CAPTAIN_PERSONA, /默认串行调用/);
 assert.match(DEFAULT_SQUAD_PLAYBOOK, /并行调用/);
 assert.doesNotMatch(DEFAULT_SQUAD_PLAYBOOK, /默认一次调用一名队员/);
 
+{
+  const upgraded = normalizeSquadSettings({
+    captainPersona: LEGACY_DEFAULT_SQUAD_CAPTAIN_PERSONA,
+    playbook: LEGACY_DEFAULT_SQUAD_PLAYBOOK,
+  });
+  assert.equal(upgraded.captainPersona, DEFAULT_SQUAD_CAPTAIN_PERSONA);
+  assert.equal(upgraded.playbook, DEFAULT_SQUAD_PLAYBOOK);
+}
+
+assert.doesNotMatch(DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT, /无图像处理能力/);
+assert.doesNotMatch(DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT, /NO_CHANGE/);
+{
+  const a = normalizeInstructionsSettings({
+    agentsMdRefreshSystemPrompt: LEGACY_DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT,
+  });
+  const b = normalizeInstructionsSettings({
+    agentsMdRefreshSystemPrompt: LEGACY_AGENTS_MD_REFRESH_WITH_VISION_GUARD,
+  });
+  assert.equal(a.agentsMdRefreshSystemPrompt, DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT);
+  assert.equal(b.agentsMdRefreshSystemPrompt, DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT);
+}
+
+
 console.log('normalize.null.test.mjs: ok');
+
+assert.equal(sanitizeLocalHttpApiToken('ab.cd e'), 'abcde');
+const kept = normalizeLocalHttpApiSettings({ enabled: true, token: 'ab.cd' });
+assert.equal(kept.token, 'abcd');
+const disabledEmpty = normalizeLocalHttpApiSettings({ enabled: false, token: '' });
+assert.equal(disabledEmpty.token, '');
+const enabledEmpty = normalizeLocalHttpApiSettings({ enabled: true, token: '!!!' });
+assert.match(enabledEmpty.token, /^[A-Za-z0-9_-]+$/);
+assert.notEqual(enabledEmpty.token, '');

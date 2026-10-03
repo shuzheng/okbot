@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<title>OkBot · Skills 渐进披露</title>
+<style>
+  :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, sans-serif; }
+  body { margin: 0; padding: 32px; background: #0b1220; color: #e8eefc; }
+  h1 { margin: 0 0 8px; font-size: 28px; }
+  h2 { margin: 0 0 12px; font-size: 16px; color: #9db0d4; }
+  .muted { color: #9db0d4; margin-bottom: 20px; }
+  .card { background: #141e33; border: 1px solid #243352; border-radius: 12px; padding: 16px 18px; margin-bottom: 14px; }
+  .card.ok { border-color: #2f6f4e; background: #10261c; }
+  pre { margin: 0; white-space: pre-wrap; font-size: 13px; line-height: 1.45; color: #d7e3ff; }
+  code { background: #243352; padding: 1px 6px; border-radius: 4px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .tag { display: inline-block; margin-top: 8px; padding: 4px 8px; border-radius: 999px; background: #243352; font-size: 12px; }
+  ul { margin: 0; padding-left: 18px; color: #d7e3ff; }
+</style>
+</head>
+<body>
+<section>
+  <h1>Skills 渐进披露</h1>
+  <p class="muted">系统提示仅含目录；正文经 <code>read_skill</code> 按需加载；磁盘变更热更新。</p>
+  <div class="card">
+    <h2>系统提示中的目录</h2>
+    <pre>### 打包演示 (`okbot-demo-pack`)
+
+何时使用：导出助手包时使用
+
+### 全局问候 (`okbot-global-greet`) · 全局技能
+
+何时使用：寒暄</pre>
+  </div>
+  <div class="card">
+    <h2>read_skill 返回（按需）</h2>
+    <pre># 打包演示 (`okbot-demo-pack`)
+来源：本助手技能
+何时使用：导出助手包时使用
+
+## Steps
+1. 导出
+2. 校验</pre>
+  </div>
+  <div class="card ok">
+    <strong>热更新</strong>：修改 SKILL.md → <code>skills_changed</code> → 下一轮自动读新内容（无需重启）。
+  </div>
+</section></body>
+</html>

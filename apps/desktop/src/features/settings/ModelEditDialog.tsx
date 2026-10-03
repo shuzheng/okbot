@@ -44,7 +44,6 @@ export function ModelEditDialog({
       ? String(initial.maxTokens)
       : '',
   );
-  const [vision, setVision] = useState(initial.vision === true);
   const [showThinking, setShowThinking] = useState(initial.showThinking !== false);
 
   const nextId = id.trim();
@@ -64,6 +63,8 @@ export function ModelEditDialog({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
+      // IME Esc dismisses a composition candidate; do not close the dialog.
+      if (e.isComposing || e.keyCode === 229) return;
       e.preventDefault();
       e.stopPropagation();
       onCancel();
@@ -81,7 +82,6 @@ export function ModelEditDialog({
       contextWindow: Number.isFinite(cw) && cw >= 1000 ? Math.floor(cw) : 128_000,
       maxTokens: parseMaxTokensInput(maxTokens),
       enabled: initial.enabled !== false,
-      ...(vision ? { vision: true } : {}),
       ...(showThinking ? {} : { showThinking: false }),
     });
   }
@@ -164,10 +164,6 @@ export function ModelEditDialog({
               }
             }}
           />
-        </div>
-        <div className="model-edit-field" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <SettingsToggle checked={vision} onChange={() => setVision((v) => !v)} />
-          <span style={{ fontSize: 12 }}>{t(lang, 'modelVision')}</span>
         </div>
         <div className="model-edit-field" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <SettingsToggle checked={showThinking} onChange={() => setShowThinking((v) => !v)} />

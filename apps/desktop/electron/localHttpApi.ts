@@ -1,18 +1,36 @@
 import http from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { ChatEvent, LocalHttpApiSettings } from '@okbot/shared';
+import type { Socket } from 'node:net';
+import fs from 'node:fs';
+import path from 'node:path';
+import type { RuntimeEvent, LocalHttpApiSettings } from '@okbot/shared';
+import { acceptRuntimeEventForSseTurn, encodeRuntimeEventSse, isRuntimeEventTurnTerminal } from '@okbot/agent';
 import type { IpcContext } from './ipc/context';
-import { startChatTurn } from './ipc/registerChat';
+import { abortChatOwner } from './ipc/chatControl';
+import { gatewayBootJs, gatewayLoginHtml, injectGatewayBoot, shouldServeGatewayLogin } from './gatewayLoginPage';
+import { runtimeEventChannel } from './sessionEvents';
+import { respondToToolApproval, startChatTurn } from './ipc/registerChat';
 
-const HOST = '127.0.0.1';
+const LOOPBACK_HOST = '127.0.0.1';
+const LAN_HOST = '0.0.0.0';
 
 type LocalHttpApiDeps = {
   ctx: IpcContext;
+  /** Absolute path to renderer build (electron-vite out/renderer). Optional. */
+  uiRoot?: string | null;
 };
 
 type JsonBody = Record<string, unknown>;
 
-type ChatEventListener = (event: ChatEvent) => void;
+type RuntimeEventListener = (event: RuntimeEvent) => void;
+
+/** Sidebar maps `squad.members`; a stripped `{id,name}` row crashes the Sept 30 renderer. */
+function gatewaySquadsForUi<T extends { members?: unknown }>(squads: T[]): T[] {
+  return squads.map((squad) =>
+    Array.isArray(squad.members) ? squad : { ...squad, members: [] },
+  );
+}
+
 
 function readBody(req: IncomingMessage, limit = 1_000_000): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -52,7 +70,7 @@ function extractToken(req: IncomingMessage): string {
     const m = /^Bearer\s+(.+)$/i.exec(auth.trim());
     if (m?.[1]) return m[1].trim();
   }
-  return '';
+  return cookieGatewayToken(req);
 }
 
 function matchPath(url: string): { pathname: string; parts: string[] } {
@@ -73,15 +91,51 @@ function wantsSse(req: IncomingMessage): boolean {
   return accept.includes('text/event-stream');
 }
 
-function writeSseEvent(res: ServerResponse, event: ChatEvent): boolean {
+function writeSseEvent(res: ServerResponse, event: RuntimeEvent): boolean {
   if (res.writableEnded || res.destroyed) return false;
   try {
-    const payload = `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
-    return res.write(payload);
+    // false means backpressure, not a failed write — the chunk is still queued.
+    res.write(encodeRuntimeEventSse(event));
+    return true;
   } catch {
     return false;
   }
 }
+
+/** Loopback clients must not be reachable via a foreign Host (DNS rebinding). */
+function isLoopbackHost(req: IncomingMessage): boolean {
+  const raw = req.headers.host;
+  const host = String(Array.isArray(raw) ? raw[0] : raw || '').trim().toLowerCase();
+  if (!host) return false;
+  const name = host.replace(/:\d+$/, '').replace(/^\[|\]$/g, '');
+  return name === '127.0.0.1' || name === 'localhost' || name === '::1';
+}
+
+
+function cookieGatewayToken(req: IncomingMessage): string {
+  const cookieHeader = String(req.headers.cookie || '');
+  const m = /(?:^|;\s*)okbot_gateway_token=([^;]+)/.exec(cookieHeader);
+  if (!m?.[1]) return '';
+  try {
+    return decodeURIComponent(m[1].trim());
+  } catch {
+    return m[1].trim();
+  }
+}
+
+function requestGatewayAuthed(req: IncomingMessage, urlObj: URL, token: string): boolean {
+  if (!token) return false;
+  const header = extractToken(req);
+  if (header && header === token) return true;
+  const qToken = (urlObj.searchParams.get('token') || '').trim();
+  if (qToken && qToken === token) return true;
+  const cookie = cookieGatewayToken(req);
+  return Boolean(cookie && cookie === token);
+}
+
+const MAX_CHAT_TEXT_CHARS = 100_000;
+const RATE_WINDOW_MS = 1000;
+const RATE_MAX = 60;
 
 function openSse(res: ServerResponse): void {
   res.writeHead(200, {
@@ -90,7 +144,7 @@ function openSse(res: ServerResponse): void {
     Connection: 'keep-alive',
     'X-Accel-Buffering': 'no',
   });
-  // Flush so proxies/clients see headers before the first ChatEvent.
+  // Flush so proxies/clients see headers before the first RuntimeEvent.
   if (typeof (res as ServerResponse & { flushHeaders?: () => void }).flushHeaders === 'function') {
     (res as ServerResponse & { flushHeaders: () => void }).flushHeaders();
   }
@@ -108,23 +162,42 @@ function openSse(res: ServerResponse): void {
 export function createLocalHttpApi(deps: LocalHttpApiDeps): {
   sync: (settings: LocalHttpApiSettings) => void;
   stop: () => void;
-  /** Fan-in from main sendChatEvent → active SSE subscribers. */
-  bridgeChatEvent: (event: ChatEvent) => void;
+  /** Fan-in from main sendRuntimeEvent → active SSE subscribers. */
+  bridgeRuntimeEvent: (event: RuntimeEvent) => void;
 } {
   let server: http.Server | null = null;
   let listeningPort: number | null = null;
   let currentToken = '';
+  let bindLan = false;
+  let serveUi = false;
   let starting: Promise<void> | null = null;
-  const chatListeners = new Set<ChatEventListener>();
+  const runtimeListeners = new Set<RuntimeEventListener>();
+  /** Long-lived GET /v1/events subscribers (session list only). */
+  const sessionListeners = new Set<RuntimeEventListener>();
+  const sessionPings = new Set<ReturnType<typeof setInterval>>();
+  const sockets = new Set<Socket>();
+  const rateHits: number[] = [];
 
-  const subscribeChatEvent = (listener: ChatEventListener): (() => void) => {
-    chatListeners.add(listener);
+  const subscribeRuntimeEvent = (listener: RuntimeEventListener): (() => void) => {
+    runtimeListeners.add(listener);
     return () => {
-      chatListeners.delete(listener);
+      runtimeListeners.delete(listener);
     };
   };
 
   const stopSync = () => {
+    runtimeListeners.clear();
+    sessionListeners.clear();
+    for (const ping of sessionPings) clearInterval(ping);
+    sessionPings.clear();
+    for (const sock of sockets) {
+      try {
+        sock.destroy();
+      } catch {
+        /* ignore */
+      }
+    }
+    sockets.clear();
     if (!server) {
       listeningPort = null;
       return;
@@ -139,14 +212,39 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
     }
   };
 
+  const allowRate = () => {
+    const now = Date.now();
+    while (rateHits.length && now - rateHits[0]! >= RATE_WINDOW_MS) rateHits.shift();
+    if (rateHits.length >= RATE_MAX) return false;
+    rateHits.push(now);
+    return true;
+  };
+
   const handle = async (req: IncomingMessage, res: ServerResponse) => {
     const method = (req.method || 'GET').toUpperCase();
     const { parts } = matchPath(req.url || '/');
 
-    // CORS not needed for curl/scripts; reject non-loopback defensively.
-    const remote = req.socket.remoteAddress || '';
-    if (remote && remote !== '127.0.0.1' && remote !== '::1' && remote !== '::ffff:127.0.0.1') {
-      sendJson(res, 403, { ok: false, error: 'forbidden' });
+    // Loopback-only mode rejects non-local peers; LAN gateway allows intranet.
+    if (!bindLan) {
+      const remote = req.socket.remoteAddress || '';
+      if (remote && remote !== '127.0.0.1' && remote !== '::1' && remote !== '::ffff:127.0.0.1') {
+        sendJson(res, 403, { ok: false, error: 'forbidden' });
+        return;
+      }
+      if (!isLoopbackHost(req)) {
+        sendJson(res, 403, { ok: false, error: 'forbidden_host' });
+        return;
+      }
+    }
+
+    // CORS for LAN browser / phone UI
+    if (bindLan && method === 'OPTIONS') {
+      res.writeHead(204, {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Headers': 'Authorization, Content-Type, Accept, X-OkBot-Token',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      });
+      res.end();
       return;
     }
 
@@ -156,6 +254,129 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
       return;
     }
 
+    // Boot script must exist before the renderer module. No secrets.
+    if (method === 'GET' && parts.length === 1 && parts[0] === 'gateway-boot.js') {
+      const js = gatewayBootJs();
+      res.writeHead(200, {
+        'Content-Type': 'text/javascript; charset=utf-8',
+        'Cache-Control': 'no-store',
+      });
+      res.end(js);
+      return;
+    }
+
+    // Browser GET of the gateway URL shows the token form. /v1 stays JSON.
+    if (method === 'GET') {
+      const entryUrl = new URL(req.url || '/', 'http://127.0.0.1');
+      const entryPath = entryUrl.pathname || '/';
+      if (shouldServeGatewayLogin(method, entryPath, requestGatewayAuthed(req, entryUrl, currentToken))) {
+        const html = gatewayLoginHtml();
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-store',
+        });
+        res.end(html);
+        return;
+      }
+    }
+
+    // Desktop gateway UI (LAN): login page is public; assets need token (header or ?token=).
+    if (serveUi && method === 'GET' && deps.uiRoot && fs.existsSync(deps.uiRoot)) {
+      const urlObj = new URL(req.url || '/', 'http://127.0.0.1');
+      const pathname = urlObj.pathname || '/';
+      const qToken = (urlObj.searchParams.get('token') || '').trim();
+      const headerToken = extractToken(req);
+      const cookieHeader = String(req.headers.cookie || '');
+      const cookieToken = (() => {
+        const m = /(?:^|;\s*)okbot_gateway_token=([^;]+)/.exec(cookieHeader);
+        if (!m?.[1]) return '';
+        try {
+          return decodeURIComponent(m[1].trim());
+        } catch {
+          return m[1].trim();
+        }
+      })();
+      const okAuth =
+        (headerToken && headerToken === currentToken) ||
+        (qToken && qToken === currentToken) ||
+        (cookieToken && cookieToken === currentToken) ||
+        false;
+      // Static SPA assets (js/css/img/fonts) are not secret; browsers cannot attach Bearer on <script src>.
+      const isStaticAsset = /\.(js|css|map|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|otf|wasm)(\?|$)/i.test(pathname);
+      // If browser asks for HTML without auth, send to login
+      const accept = String(req.headers.accept || '');
+      const wantsHtml = accept.includes('text/html') || pathname === '/' || pathname.endsWith('.html');
+      if (!okAuth) {
+        if (isStaticAsset) {
+          // serve below without auth
+        } else if (wantsHtml) {
+          res.writeHead(302, { Location: '/gateway-login' });
+          res.end();
+          return;
+        } else if (!pathname.startsWith('/v1/')) {
+          sendJson(res, 401, { ok: false, error: 'unauthorized' });
+          return;
+        }
+      }
+      if ((okAuth || isStaticAsset) && !pathname.startsWith('/v1/')) {
+        let rel = pathname === '/' ? '/index.html' : pathname;
+        const safe = path.normalize(rel).replace(/^(\.\.[/\\])+/, '');
+        let filePath = path.join(deps.uiRoot, safe);
+        const rootResolved = path.resolve(deps.uiRoot);
+        if (!path.resolve(filePath).startsWith(rootResolved)) {
+          sendJson(res, 403, { ok: false, error: 'forbidden' });
+          return;
+        }
+        const requestedExt = path.extname(pathname).toLowerCase();
+        if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+          // Missing scripts must 404. Falling back to index.html makes the module
+          // parser fail and leaves a blank page.
+          if (requestedExt && requestedExt !== '.html') {
+            sendJson(res, 404, { ok: false, error: 'not_found' });
+            return;
+          }
+          filePath = path.join(deps.uiRoot, 'index.html');
+        }
+        if (!fs.existsSync(filePath)) {
+          sendJson(res, 404, { ok: false, error: 'ui_not_built', hint: 'Run desktop build so out/renderer exists' });
+          return;
+        }
+        const ext = path.extname(filePath).toLowerCase();
+        const types: Record<string, string> = {
+          '.html': 'text/html; charset=utf-8',
+          '.js': 'text/javascript; charset=utf-8',
+          '.css': 'text/css; charset=utf-8',
+          '.svg': 'image/svg+xml',
+          '.png': 'image/png',
+          '.jpg': 'image/jpeg',
+          '.jpeg': 'image/jpeg',
+          '.webp': 'image/webp',
+          '.woff': 'font/woff',
+          '.woff2': 'font/woff2',
+          '.json': 'application/json',
+          '.map': 'application/json',
+          '.wasm': 'application/wasm',
+        };
+        const buf = fs.readFileSync(filePath);
+        const headers: Record<string, string> = {
+          'Content-Type': types[ext] || 'application/octet-stream',
+          'Cache-Control': ext === '.html' ? 'no-store' : 'public, max-age=3600',
+        };
+        if (qToken && qToken === currentToken) {
+          headers['Set-Cookie'] =
+            `okbot_gateway_token=${encodeURIComponent(qToken)}; Path=/; HttpOnly; SameSite=Lax`;
+        }
+        if (ext === '.html') {
+          res.writeHead(200, headers);
+          res.end(injectGatewayBoot(buf.toString('utf8')));
+          return;
+        }
+        res.writeHead(200, headers);
+        res.end(buf);
+        return;
+      }
+    }
+
     const token = extractToken(req);
     if (!currentToken || token !== currentToken) {
       sendJson(res, 401, { ok: false, error: 'unauthorized' });
@@ -163,17 +384,114 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
     }
 
     try {
-      // GET /v1/bots
+      // GET /v1/events — stay open and forward sessions_changed (not chat deltas).
+      if (method === 'GET' && parts.length === 2 && parts[0] === 'v1' && parts[1] === 'events') {
+        openSse(res);
+        let closed = false;
+        const ping = setInterval(() => {
+          if (closed || res.writableEnded || res.destroyed) {
+            finish();
+            return;
+          }
+          try {
+            res.write(': ping\n\n');
+          } catch {
+            finish();
+          }
+        }, 25_000);
+        ping.unref?.();
+        sessionPings.add(ping);
+        const finish = () => {
+          if (closed) return;
+          closed = true;
+          sessionListeners.delete(onSession);
+          clearInterval(ping);
+          sessionPings.delete(ping);
+          req.off('close', onClientClose);
+          try {
+            if (!res.writableEnded) res.end();
+          } catch {
+            /* ignore */
+          }
+        };
+        const onSession = (event: RuntimeEvent) => {
+          if (closed) return;
+          if (!writeSseEvent(res, event)) finish();
+        };
+        const onClientClose = () => finish();
+        sessionListeners.add(onSession);
+        req.on('close', onClientClose);
+        return;
+      }
+
+      // GET /v1/bots — same roster the desktop IPC returns (sidebar reads emoji, color, preview).
       if (method === 'GET' && parts.length === 2 && parts[0] === 'v1' && parts[1] === 'bots') {
-        const bots = deps.ctx.storage.listBots().map((b) => ({ id: b.id, name: b.name }));
+        const bots = deps.ctx.storage.withReplyPreviews(deps.ctx.storage.listBots());
         sendJson(res, 200, { ok: true, bots });
         return;
       }
 
-      // GET /v1/squads
+      // GET /v1/squads — full squad, members always an array (SessionSidebar maps squad.members).
       if (method === 'GET' && parts.length === 2 && parts[0] === 'v1' && parts[1] === 'squads') {
-        const squads = deps.ctx.storage.listSquads().map((s) => ({ id: s.id, name: s.name }));
+        const squads = gatewaySquadsForUi(
+          deps.ctx.storage.withReplyPreviews(deps.ctx.storage.listSquads()),
+        );
         sendJson(res, 200, { ok: true, squads });
+        return;
+      }
+
+      // GET /v1/bootstrap — same shape as desktop getBootstrap so the pre-bridge renderer can render.
+      if (method === 'GET' && parts.length === 2 && parts[0] === 'v1' && parts[1] === 'bootstrap') {
+        const settings = deps.ctx.storage.getSettings();
+        const bots = deps.ctx.storage.withReplyPreviews(deps.ctx.storage.listBots());
+        const squads = gatewaySquadsForUi(
+          deps.ctx.storage.withReplyPreviews(deps.ctx.storage.listSquads()),
+        );
+        const runs = deps.ctx.snapshotActiveRuns();
+        sendJson(res, 200, {
+          ok: true,
+          bots,
+          squads,
+          settings,
+          hardwareAccelerationActive: deps.ctx.hardwareAccelerationActive,
+          dataDir: deps.ctx.storage.root,
+          busyBotIds: runs.busyBotIds ?? [],
+          pendingToolRequests: runs.pendingToolRequests ?? [],
+          activeRuns: runs,
+        });
+        return;
+      }
+
+      // GET /v1/bots/:id/messages?limit=
+      if (
+        method === 'GET' &&
+        parts.length === 4 &&
+        parts[0] === 'v1' &&
+        (parts[1] === 'bots' || parts[1] === 'squads') &&
+        parts[3] === 'messages'
+      ) {
+        const id = parts[2] || '';
+        const page = deps.ctx.storage.getMessagesPage(id, { limit: 50 });
+        sendJson(res, 200, { ok: true, ...page });
+        return;
+      }
+
+      // GET /v1/computers
+      if (method === 'GET' && parts.length === 2 && parts[0] === 'v1' && parts[1] === 'computers') {
+        const settings = deps.ctx.storage.getSettings();
+        sendJson(res, 200, {
+          ok: true,
+          computers: [
+            { id: 'local', name: 'Local', kind: 'local' },
+            ...settings.computers.map((c) => ({
+              id: c.id,
+              name: c.name,
+              host: c.host,
+              port: c.port,
+              kind: 'remote',
+            })),
+          ],
+        });
         return;
       }
 
@@ -216,6 +534,18 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
           sendJson(res, 400, { ok: false, error: 'text_required' });
           return;
         }
+        if (text.length > MAX_CHAT_TEXT_CHARS) {
+          sendJson(res, 413, { ok: false, error: 'text_too_long' });
+          return;
+        }
+        if (!allowRate()) {
+          sendJson(res, 429, { ok: false, error: 'rate_limited' });
+          return;
+        }
+        const computerId =
+          typeof parsed.computerId === 'string' && parsed.computerId.trim()
+            ? parsed.computerId.trim()
+            : undefined;
 
         if (isBotMsg) {
           const bot = deps.ctx.storage.listBots().find((b) => b.id === id);
@@ -232,9 +562,11 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
         }
 
         const sessionId = id;
-        const payload = isBotMsg ? { botId: id, text } : { squadId: id, text };
+        const payload = isBotMsg
+          ? { botId: id, text, computerId }
+          : { squadId: id, text, computerId };
 
-        // SSE: Accept: text/event-stream → stream ChatEvent for this session until done/error.
+        // SSE: Accept: text/event-stream → stream RuntimeEvent for this session until done/error.
         if (wantsSse(req)) {
           openSse(res);
 
@@ -251,18 +583,21 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
             }
           };
 
-          const onChat = (event: ChatEvent) => {
+          const sseGate = { seenUserMessage: false };
+          const onChat = (event: RuntimeEvent) => {
             if (closed || event.botId !== sessionId) return;
+            // Previous steer's aborted done arrives before this turn's user_message.
+            if (!acceptRuntimeEventForSseTurn(sseGate, event)) return;
             if (!writeSseEvent(res, event)) {
               finish();
               return;
             }
-            if (event.type === 'done' || event.type === 'error') {
+            if (isRuntimeEventTurnTerminal(event)) {
               finish();
             }
           };
 
-          const unsubscribe = subscribeChatEvent(onChat);
+          const unsubscribe = subscribeRuntimeEvent(onChat);
           const onClientClose = () => {
             // Stop writing only; chat turn continues for the UI / persistence.
             if (closed) return;
@@ -300,6 +635,66 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
         return;
       }
 
+      // POST /v1/tool-respond — same decision path as the desktop approval card.
+      if (method === 'POST' && parts.length === 2 && parts[0] === 'v1' && parts[1] === 'tool-respond') {
+        if (!allowRate()) {
+          sendJson(res, 429, { ok: false, error: 'rate_limited' });
+          return;
+        }
+        let parsed: JsonBody = {};
+        try {
+          const raw = await readBody(req);
+          parsed = raw.trim() ? (JSON.parse(raw) as JsonBody) : {};
+        } catch (err) {
+          if (err instanceof Error && err.message === 'payload_too_large') {
+            sendJson(res, 413, { ok: false, error: 'payload_too_large' });
+            return;
+          }
+          sendJson(res, 400, { ok: false, error: 'invalid_json' });
+          return;
+        }
+        const requestId = typeof parsed.requestId === 'string' ? parsed.requestId.trim() : '';
+        const approved = parsed.approved === true;
+        const message = typeof parsed.message === 'string' ? parsed.message : undefined;
+        const result = await respondToToolApproval(deps.ctx, { requestId, approved, message });
+        sendJson(res, result.ok ? 200 : 409, result);
+        return;
+      }
+
+      // GET /v1/approvals — live + cold pending tool requests.
+      if (method === 'GET' && parts.length === 2 && parts[0] === 'v1' && parts[1] === 'approvals') {
+        const snap = deps.ctx.snapshotActiveRuns();
+        sendJson(res, 200, { ok: true, ...snap });
+        return;
+      }
+
+      // POST /v1/bots/:id/abort | POST /v1/squads/:id/abort
+      const isAbort =
+        method === 'POST' &&
+        parts.length === 4 &&
+        parts[0] === 'v1' &&
+        (parts[1] === 'bots' || parts[1] === 'squads') &&
+        parts[3] === 'abort';
+      if (isAbort) {
+        const id = parts[2] || '';
+        if (parts[1] === 'bots') {
+          const bot = deps.ctx.storage.listBots().find((b) => b.id === id);
+          if (!bot) {
+            sendJson(res, 404, { ok: false, error: 'bot_not_found' });
+            return;
+          }
+        } else {
+          const squad = deps.ctx.storage.listSquads().find((s) => s.id === id);
+          if (!squad) {
+            sendJson(res, 404, { ok: false, error: 'squad_not_found' });
+            return;
+          }
+        }
+        abortChatOwner(deps.ctx, id);
+        sendJson(res, 200, { ok: true, sessionId: id });
+        return;
+      }
+
       sendJson(res, 404, { ok: false, error: 'not_found' });
     } catch (err) {
       console.error('[okbot] localHttpApi request failed', err);
@@ -307,12 +702,19 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
     }
   };
 
-  const start = (port: number, token: string): Promise<void> => {
+  const start = (port: number, token: string, lan: boolean, ui: boolean): Promise<void> => {
     stopSync();
     currentToken = token;
+    bindLan = lan;
+    serveUi = ui;
+    const host = lan ? LAN_HOST : LOOPBACK_HOST;
     return new Promise((resolve, reject) => {
       const s = http.createServer((req, res) => {
         void handle(req, res);
+      });
+      s.on('connection', (sock) => {
+        sockets.add(sock);
+        sock.on('close', () => sockets.delete(sock));
       });
       s.on('error', (err) => {
         console.error('[okbot] localHttpApi listen error', err);
@@ -322,10 +724,14 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
         }
         reject(err);
       });
-      s.listen(port, HOST, () => {
+      s.listen(port, host, () => {
         server = s;
         listeningPort = port;
-        console.info(`[okbot] localHttpApi listening on http://${HOST}:${port}`);
+        console.info(
+          `[okbot] localHttpApi listening on http://${host}:${port}` +
+            (lan ? ' (LAN gateway)' : '') +
+            (ui ? ' (UI)' : ''),
+        );
         resolve();
       });
     });
@@ -337,15 +743,19 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
         if (server) console.info('[okbot] localHttpApi stopped');
         stopSync();
         currentToken = '';
+        bindLan = false;
+        serveUi = false;
         starting = null;
         return;
       }
       const port = settings.port;
       const token = settings.token;
-      if (server && listeningPort === port && currentToken === token) {
+      const lan = settings.bindLan === true;
+      const ui = settings.serveUi === true;
+      if (server && listeningPort === port && currentToken === token && bindLan === lan && serveUi === ui) {
         return;
       }
-      const run = start(port, token).catch((err) => {
+      const run = start(port, token, lan, ui).catch((err) => {
         console.error('[okbot] localHttpApi failed to start', err);
       });
       starting = run;
@@ -357,10 +767,12 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
       stopSync();
       currentToken = '';
       starting = null;
-      chatListeners.clear();
+      runtimeListeners.clear();
     },
-    bridgeChatEvent(event: ChatEvent) {
-      for (const listener of [...chatListeners]) {
+    bridgeRuntimeEvent(event: RuntimeEvent) {
+      const listeners =
+        runtimeEventChannel(event) === 'sessions' ? sessionListeners : runtimeListeners;
+      for (const listener of [...listeners]) {
         try {
           listener(event);
         } catch (err) {

@@ -1,0 +1,26 @@
+{
+  "name": "@okbot/sandbox-agent",
+  "version": "0.4.0",
+  "private": true,
+  "type": "module",
+  "description": "OkBot sandbox-agent \u2014 cloud computer remote shell + fs execution API",
+  "main": "./dist/server.js",
+  "bin": {
+    "okbot-sandbox-agent": "./dist/server.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "dev": "tsx src/server.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "pnpm build && node --import tsx src/sandboxApi.test.ts"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2"
+  }
+}

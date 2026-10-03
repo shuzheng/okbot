@@ -1,265 +1,33 @@
-import { homedir } from 'node:os';
-import path from 'node:path';
-import fs from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import { execFile, type ChildProcess } from 'node:child_process';
 import { tool } from '@openai/agents';
 import { z } from 'zod';
 import type { SecuritySettings, ToolPreferences } from '@okbot/shared';
 import { DEFAULT_SECURITY } from '@okbot/shared';
-import { buildToolInputGuardrails, expandHome } from './guardrails.js';
+import { buildToolInputGuardrails } from './guardrails.js';
 import { wrapToolExecute, type ToolRunBudget } from './toolRunBudget.js';
 import {
   formatGenerateImageToolOutput,
-  generateImageWithMinimax,
-  MINIMAX_ASPECT_RATIOS,
-  MINIMAX_IMAGE_MODELS,
+  generateImage,
+  inferImageCapability,
+  IMAGE_ASPECT_RATIOS,
   type ImageApiCredentials,
+  type ImageCapability,
 } from './generateImage.js';
+import {
+  createLocalExecutionBackend,
+  type ExecutionBackend,
+  resolveShellExec,
+  type ResolveShellExecOptions,
+  type ShellExecSpec,
+} from './executionBackend.js';
 
+export type { ExecutionBackend, ShellExecSpec, ResolveShellExecOptions };
+export { resolveShellExec, createLocalExecutionBackend };
 
 const MAX_TOOL_OUTPUT = 24_000;
-const MAX_FILE_BYTES = 200_000;
-const SHELL_TIMEOUT_MS = 30_000;
-
-
-export type ShellExecSpec = {
-  file: string;
-  args: string[];
-};
-
-export type ResolveShellExecOptions = {
-  /** Resolve an executable from PATH; injectable to keep Windows behavior testable. */
-  findExecutable?: (name: string) => string | null;
-};
-
-function findExecutableOnPath(name: string, env: NodeJS.ProcessEnv): string | null {
-  const pathValue = env.PATH ?? env.Path;
-  if (!pathValue) return null;
-
-  const pathExts = (env.PATHEXT || '.COM;.EXE;.BAT;.CMD')
-    .split(';')
-    .filter(Boolean);
-  const hasExtension = /\.[^\\/]+$/.test(name);
-  const names = hasExtension ? [name] : [name, ...pathExts.map((ext) => `${name}${ext}`)];
-
-  for (const directory of pathValue.split(';')) {
-    for (const candidateName of names) {
-      const candidate = path.win32.join(directory || '.', candidateName);
-      if (existsSync(candidate)) return candidate;
-    }
-  }
-  return null;
-}
-
-/** Pick shell binary + args for execFile (platform/env/resolver injectable for tests). */
-export function resolveShellExec(
-  command: string,
-  platform: NodeJS.Platform = process.platform,
-  env: NodeJS.ProcessEnv = process.env,
-  options: ResolveShellExecOptions = {},
-): ShellExecSpec {
-  if (platform === 'win32') {
-    const pwsh = (options.findExecutable ?? ((name) => findExecutableOnPath(name, env)))('pwsh');
-    if (pwsh) return { file: pwsh, args: ['-NoProfile', '-NonInteractive', '-Command', command] };
-
-    const file = env.ComSpec || 'cmd.exe';
-    return { file, args: ['/d', '/s', '/c', command] };
-  }
-  const file = env.SHELL || (platform === 'darwin' ? '/bin/zsh' : '/bin/bash');
-  return { file, args: ['-lc', command] };
-}
 
 function truncate(text: string, max = MAX_TOOL_OUTPUT): string {
   if (text.length <= max) return text;
   return `${text.slice(0, max)}\n\n…(已截断，共 ${text.length} 字符)`;
-}
-
-function looksBinary(buf: Buffer): boolean {
-  const sample = buf.subarray(0, Math.min(buf.length, 8000));
-  let weird = 0;
-  for (const b of sample) {
-    if (b === 0) return true;
-    if (b < 7 || (b > 13 && b < 32)) weird += 1;
-  }
-  return weird / sample.length > 0.3;
-}
-
-function killShellProcessTree(child: ChildProcess | undefined): void {
-  if (!child?.pid) return;
-  try {
-    if (process.platform === 'win32') {
-      execFile('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }, () => {});
-    } else {
-      try {
-        process.kill(-child.pid, 'SIGKILL');
-      } catch {
-        try {
-          child.kill('SIGKILL');
-        } catch {
-          /* ignore */
-        }
-      }
-    }
-  } catch {
-    /* ignore */
-  }
-}
-
-async function runShellCommand(
-  command: string,
-  cwd?: string,
-  signal?: AbortSignal,
-): Promise<string> {
-  const workdir = cwd?.trim() ? expandHome(cwd.trim()) : homedir();
-  const { file: shellFile, args: shellArgs } = resolveShellExec(command);
-  if (signal?.aborted) {
-    return truncate(`cwd: ${workdir}\n\nshell: ${shellFile}\n\n错误: 已中止`);
-  }
-  try {
-    const { stdout, stderr } = await new Promise<{ stdout: string; stderr: string }>(
-      (resolve, reject) => {
-        const child = execFile(
-          shellFile,
-          shellArgs,
-          {
-            cwd: workdir,
-            timeout: SHELL_TIMEOUT_MS,
-            maxBuffer: 1024 * 1024,
-            env: process.env,
-            windowsHide: true,
-            // New process group on POSIX so abort can kill the whole tree.
-            ...(process.platform === 'win32' ? {} : { detached: true }),
-          },
-          (err, stdout, stderr) => {
-            if (err) {
-              (err as { stdout?: string; stderr?: string }).stdout = stdout;
-              (err as { stdout?: string; stderr?: string }).stderr = stderr;
-              reject(err);
-              return;
-            }
-            resolve({ stdout: stdout ?? '', stderr: stderr ?? '' });
-          },
-        );
-        const onAbort = () => killShellProcessTree(child);
-        if (signal) {
-          if (signal.aborted) onAbort();
-          else signal.addEventListener('abort', onAbort, { once: true });
-        }
-        child.on('exit', () => {
-          signal?.removeEventListener('abort', onAbort);
-        });
-      },
-    );
-    const out = [
-      `cwd: ${workdir}`,
-      `shell: ${shellFile}`,
-      stdout?.trim() ? `stdout:\n${stdout}` : 'stdout: (empty)',
-      stderr?.trim() ? `stderr:\n${stderr}` : '',
-    ]
-      .filter(Boolean)
-      .join('\n\n');
-    return truncate(out);
-  } catch (err) {
-    const e = err as {
-      message?: string;
-      stdout?: string;
-      stderr?: string;
-      code?: number | string;
-      killed?: boolean;
-    };
-    const aborted = Boolean(signal?.aborted);
-    const parts = [
-      `cwd: ${workdir}`,
-      `shell: ${shellFile}`,
-      aborted
-        ? '错误: 已中止'
-        : e.killed
-          ? `错误: 超时（>${SHELL_TIMEOUT_MS}ms）`
-          : `错误: ${e.message || String(err)}`,
-      e.code != null ? `exit: ${e.code}` : '',
-      e.stdout?.trim() ? `stdout:\n${e.stdout}` : '',
-      e.stderr?.trim() ? `stderr:\n${e.stderr}` : '',
-    ].filter(Boolean);
-    return truncate(parts.join('\n\n'));
-  }
-}
-
-async function readLocalFile(filePath: string): Promise<string> {
-  const resolved = path.resolve(expandHome(filePath.trim()));
-  const stat = await fs.stat(resolved);
-  if (!stat.isFile()) throw new Error(`不是普通文件: ${resolved}`);
-  if (stat.size > MAX_FILE_BYTES) {
-    throw new Error(`文件过大（${stat.size} 字节，上限 ${MAX_FILE_BYTES}）: ${resolved}`);
-  }
-  const buf = await fs.readFile(resolved);
-  if (looksBinary(buf)) throw new Error(`疑似二进制文件，已拒绝读取: ${resolved}`);
-  return truncate(`path: ${resolved}\n\n${buf.toString('utf8')}`);
-}
-
-async function writeLocalFile(filePath: string, content: string): Promise<string> {
-  const resolved = path.resolve(expandHome(filePath.trim()));
-  const ext = path.extname(resolved).toLowerCase();
-  const binaryExts = new Set([
-    '.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.bmp', '.pdf',
-    '.zip', '.gz', '.tgz', '.bz2', '.xz', '.7z', '.rar',
-    '.exe', '.dll', '.so', '.dylib', '.bin', '.wasm',
-    '.mp3', '.mp4', '.mov', '.avi', '.mkv', '.wav', '.ogg',
-    '.woff', '.woff2', '.ttf', '.otf', '.eot',
-    '.sqlite', '.db', '.dmg', '.pkg', '.app',
-  ]);
-  if (binaryExts.has(ext)) {
-    throw new Error(`疑似二进制路径（扩展名 ${ext}），已拒绝写入: ${resolved}`);
-  }
-  await fs.mkdir(path.dirname(resolved), { recursive: true });
-  const buf = Buffer.from(content, 'utf8');
-  await fs.writeFile(resolved, buf, 'utf8');
-  return `已写入 ${resolved}（${buf.byteLength} 字节 / ${content.length} 字符）`;
-}
-
-async function editLocalFile(
-  filePath: string,
-  oldText: string,
-  newText: string,
-): Promise<string> {
-  const resolved = path.resolve(expandHome(filePath.trim()));
-  let stat;
-  try {
-    stat = await fs.stat(resolved);
-  } catch (err) {
-    const e = err as NodeJS.ErrnoException;
-    if (e.code === 'ENOENT') throw new Error(`文件不存在: ${resolved}`);
-    throw err;
-  }
-  if (!stat.isFile()) throw new Error(`不是普通文件: ${resolved}`);
-  if (stat.size > MAX_FILE_BYTES) {
-    throw new Error(`文件过大（${stat.size} 字节，上限 ${MAX_FILE_BYTES}）: ${resolved}`);
-  }
-  const buf = await fs.readFile(resolved);
-  if (looksBinary(buf)) throw new Error(`疑似二进制文件，已拒绝编辑: ${resolved}`);
-  const original = buf.toString('utf8');
-  if (!oldText) throw new Error('old_text 不能为空');
-  let count = 0;
-  let idx = 0;
-  while (true) {
-    const found = original.indexOf(oldText, idx);
-    if (found === -1) break;
-    count += 1;
-    idx = found + oldText.length;
-  }
-  if (count === 0) {
-    throw new Error(`未找到 old_text，未修改文件: ${resolved}`);
-  }
-  if (count > 1) {
-    throw new Error(
-      `old_text 匹配到 ${count} 处，为安全起见未修改。请提供更唯一的 old_text: ${resolved}`,
-    );
-  }
-  // Use replacer fn so `$&` / `$1` / `$$` in newText are literal, not expand patterns.
-  const updated = original.replace(oldText, () => newText);
-  const out = Buffer.from(updated, 'utf8');
-  await fs.writeFile(resolved, out, 'utf8');
-  return `已编辑 ${resolved}（1 处替换；现 ${out.byteLength} 字节 / ${updated.length} 字符）`;
 }
 
 export type SkillLookupResult = {
@@ -280,6 +48,7 @@ export type BuildToolsOptions = {
   /**
    * Credentials for `generate_image` (same provider baseURL/apiKey as chat).
    * When omitted, the tool reports a config error if invoked.
+   * Capability is auto-inferred from OpenAI host / OpenAI-style catalog models.
    */
   imageApi?: ImageApiCredentials;
   /**
@@ -287,6 +56,11 @@ export type BuildToolsOptions = {
    * `okbot-asset:<ownerId>/resources/…` markdown.
    */
   imageAssets?: { ownerId: string; resourcesDir: string };
+  /**
+   * Shell + fs execution target. Default = local desktop host.
+   * Skills + image gen always stay on the desktop host (not routed here).
+   */
+  backend?: ExecutionBackend;
 };
 
 export function buildTools(
@@ -298,13 +72,15 @@ export function buildTools(
   const list = [];
   const inputGuardrails = buildToolInputGuardrails(security ?? DEFAULT_SECURITY);
   const guardrailOpts = inputGuardrails.length ? { inputGuardrails } : {};
+  const backend = options?.backend ?? createLocalExecutionBackend();
+  const where = backend.label || '本机';
 
   if (prefs.run_shell.enabled) {
     list.push(
       tool({
         name: 'run_shell',
         description:
-          '在用户本机通过系统命令行执行一条命令（Windows 优先 PowerShell Core，找不到时使用 cmd）。仅在用户明确需要时使用；危险命令会先请求用户批准。',
+          `在「${where}」通过系统命令行执行一条命令（Windows 优先 PowerShell Core，找不到时使用 cmd）。仅在用户明确需要时使用；危险命令会先请求用户批准。`,
         parameters: z.object({
           command: z.string().describe('要执行的命令'),
           cwd: z.string().optional().describe('可选工作目录，支持 ~'),
@@ -315,7 +91,7 @@ export function buildTools(
           'run_shell',
           budget,
           async ({ command, cwd }: { command: string; cwd?: string }) =>
-            runShellCommand(command, cwd, budget?.signal),
+            backend.runShell(command, cwd, budget?.signal),
         ),
       }),
     );
@@ -325,7 +101,7 @@ export function buildTools(
     list.push(
       tool({
         name: 'read_file',
-        description: '读取用户本机上的一个文本文件。',
+        description: `读取「${where}」上的一个文本文件。`,
         parameters: z.object({
           path: z.string().describe('文件绝对路径或 ~/…'),
         }),
@@ -334,7 +110,7 @@ export function buildTools(
         execute: wrapToolExecute(
           'read_file',
           budget,
-          async ({ path: filePath }: { path: string }) => readLocalFile(filePath),
+          async ({ path: filePath }: { path: string }) => backend.readFile(filePath),
         ),
       }),
     );
@@ -388,7 +164,7 @@ export function buildTools(
       tool({
         name: 'write_file',
         description:
-          '写入（覆盖）用户本机上的一个文本文件；必要时创建父目录。适合新建文件或整文件重写。',
+          `写入（覆盖）「${where}」上的一个文本文件；必要时创建父目录。适合新建文件或整文件重写。`,
         parameters: z.object({
           path: z.string().describe('文件绝对路径或 ~/…'),
           content: z.string().describe('要写入的完整 UTF-8 文本内容'),
@@ -399,7 +175,7 @@ export function buildTools(
           'write_file',
           budget,
           async ({ path: filePath, content }: { path: string; content: string }) =>
-            writeLocalFile(filePath, content),
+            backend.writeFile(filePath, content),
         ),
       }),
     );
@@ -410,7 +186,7 @@ export function buildTools(
       tool({
         name: 'edit_file',
         description:
-          '对已存在的文本文件做一次精确字符串替换（old_text → new_text）。适合小范围修改；若匹配 0 次或多于 1 次则报错不改。',
+          `对「${where}」上已存在的文本文件做一次精确字符串替换（old_text → new_text）。适合小范围修改；若匹配 0 次或多于 1 次则报错不改。`,
         parameters: z.object({
           path: z.string().describe('文件绝对路径或 ~/…'),
           old_text: z.string().describe('要替换的原文本（须在文件中恰好出现一次）'),
@@ -429,28 +205,41 @@ export function buildTools(
             path: string;
             old_text: string;
             new_text: string;
-          }) => editLocalFile(filePath, old_text, new_text),
+          }) => backend.editFile(filePath, old_text, new_text),
         ),
       }),
     );
   }
 
-  if (prefs.generate_image.enabled) {
+  // Gate: prefs switch AND provider inferred to support OpenAI-compatible images API.
+  // Image gen always runs on the desktop host (not ExecutionBackend).
+  const imageCapability: ImageCapability | null = options?.imageApi?.baseURL?.trim()
+    ? inferImageCapability({
+        baseURL: options.imageApi.baseURL,
+        catalogModelIds: options.imageApi.catalogModelIds,
+        providerName: options.imageApi.providerName,
+      })
+    : null;
+
+  if (prefs.generate_image.enabled && imageCapability) {
+    const modelHint = imageCapability.models.join(' / ');
     list.push(
       tool({
         name: 'generate_image',
         description:
-          '当用户要求画图/生成图片时调用。使用当前模型供应商的 baseURL + API Key，请求 MiniMax 原生文生图接口 POST {baseURL}/image_generation（模型 image-01；非 OpenAI /images/generations）。图片保存到当前助手/小队目录的 resources/；工具结果含一行 okbot-asset: markdown，你必须原样写入回复以便气泡内嵌显示。',
+          `当用户要求画图/生成图片时调用。使用当前模型供应商的 baseURL + API Key，调用 OpenAI 兼容 POST {baseURL}/images/generations（模型默认 ${imageCapability.defaultModel}）。可选模型：${modelHint}。图片保存到当前助手/小队目录的 resources/；工具结果含一行 okbot-asset: markdown，你必须原样写入回复以便气泡内嵌显示。`,
         parameters: z.object({
-          prompt: z.string().describe('图片的详细文本描述（最长 1500 字符）'),
+          prompt: z
+            .string()
+            .describe('图片的详细文本描述（最长 4000 字符）'),
           aspect_ratio: z
-            .enum(MINIMAX_ASPECT_RATIOS)
+            .enum(IMAGE_ASPECT_RATIOS)
             .optional()
-            .describe('宽高比，默认 1:1'),
+            .describe('宽高比，默认 1:1（映射为 OpenAI Images size）'),
           model: z
-            .enum(MINIMAX_IMAGE_MODELS)
+            .string()
             .optional()
-            .describe('图像模型，默认 image-01'),
+            .describe(`图像模型，默认 ${imageCapability.defaultModel}；可选：${modelHint}`),
         }),
         needsApproval: prefs.generate_image.approval === 'ask',
         ...guardrailOpts,
@@ -463,8 +252,8 @@ export function buildTools(
             model,
           }: {
             prompt: string;
-            aspect_ratio?: (typeof MINIMAX_ASPECT_RATIOS)[number];
-            model?: (typeof MINIMAX_IMAGE_MODELS)[number];
+            aspect_ratio?: (typeof IMAGE_ASPECT_RATIOS)[number];
+            model?: string;
           }) => {
             const creds = options?.imageApi;
             if (!creds?.baseURL?.trim() || !creds?.apiKey?.trim()) {
@@ -475,7 +264,7 @@ export function buildTools(
               return '错误：未绑定助手/小队 resources 目录，无法保存生成图片。';
             }
             try {
-              const result = await generateImageWithMinimax(
+              const result = await generateImage(
                 creds,
                 {
                   prompt,
@@ -485,6 +274,8 @@ export function buildTools(
                 {
                   ownerId: assets.ownerId,
                   resourcesDir: assets.resourcesDir,
+                  capability: imageCapability,
+                  signal: budget?.signal,
                 },
               );
               return formatGenerateImageToolOutput(result);
@@ -507,5 +298,5 @@ export const TOOL_BLURBS: Record<string, string> = {
   read_skill: '加载技能正文',
   write_file: '新建/整文件覆盖写入',
   edit_file: '精确单处替换',
-  generate_image: '文生图（MiniMax image_generation）',
+  generate_image: '文生图（OpenAI 兼容 /images/generations）',
 };

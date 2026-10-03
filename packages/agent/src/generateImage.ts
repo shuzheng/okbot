@@ -2,11 +2,8 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 
-/** MiniMax native image models (not OpenAI /v1/images/generations). */
-export const MINIMAX_IMAGE_MODELS = ['image-01', 'image-01-live'] as const;
-export type MinimaxImageModel = (typeof MINIMAX_IMAGE_MODELS)[number];
-
-export const MINIMAX_ASPECT_RATIOS = [
+/** Aspect ratios accepted by the generate_image tool (mapped to OpenAI `size`). */
+export const IMAGE_ASPECT_RATIOS = [
   '1:1',
   '16:9',
   '4:3',
@@ -16,20 +13,47 @@ export const MINIMAX_ASPECT_RATIOS = [
   '9:16',
   '21:9',
 ] as const;
-export type MinimaxAspectRatio = (typeof MINIMAX_ASPECT_RATIOS)[number];
+export type ImageAspectRatio = (typeof IMAGE_ASPECT_RATIOS)[number];
+
+/** Common OpenAI Images API sizes. */
+export const OPENAI_IMAGE_SIZES = ['1024x1024', '1792x1024', '1024x1792'] as const;
+export type OpenAIImageSize = (typeof OPENAI_IMAGE_SIZES)[number];
+
+/** Default OpenAI-style image models when host is OpenAI but catalog has none. */
+export const OPENAI_DEFAULT_IMAGE_MODELS = ['dall-e-3', 'dall-e-2', 'gpt-image-1'] as const;
 
 /** Markdown / IPC scheme for images under ~/.okbot/<ownerId>/resources/. */
 export const OKBOT_ASSET_SCHEME = 'okbot-asset:';
 
+/** Sole supported image protocol: OpenAI-compatible Images API. */
+export type ImageProtocol = 'openai_images';
+
+/**
+ * Inferred image-gen capability for the current chat provider.
+ * Used both to gate `generate_image` tool exposure and to pick models.
+ */
+export type ImageCapability = {
+  protocol: ImageProtocol;
+  /** Models advertised in the tool schema. */
+  models: string[];
+  defaultModel: string;
+};
+
 export type ImageApiCredentials = {
   baseURL: string;
   apiKey: string;
+  /** Provider catalog model ids (optional; helps infer OpenAI-compatible image models). */
+  catalogModelIds?: string[];
+  /** Provider display name (unused for inference; kept for callers). */
+  providerName?: string;
 };
 
 export type GenerateImageInput = {
   prompt: string;
   aspectRatio?: string;
   model?: string;
+  /** OpenAI Images `size` (overrides aspectRatio mapping). */
+  size?: string;
 };
 
 export type GenerateImageResult = {
@@ -43,17 +67,17 @@ export type GenerateImageResult = {
   markdown: string;
   endpoint: string;
   model: string;
+  protocol: ImageProtocol;
 };
 
 /**
- * Build MiniMax native image endpoint from the same provider baseURL used for chat.
- * baseURL is typically `https://api.minimax.cn/v1` or a gateway `…/v1`.
- * Native path is `/v1/image_generation` (not OpenAI `/v1/images/generations`).
+ * OpenAI-compatible Images API: POST {baseURL}/images/generations
+ * (baseURL typically ends with `/v1`).
  */
-export function minimaxImageGenerationUrl(baseURL: string): string {
+export function openAIImageGenerationsUrl(baseURL: string): string {
   const trimmed = (baseURL || '').trim().replace(/\/+$/, '');
   if (!trimmed) throw new Error('baseURL 为空');
-  return `${trimmed}/image_generation`;
+  return `${trimmed}/images/generations`;
 }
 
 /** Absolute `~/.okbot/<ownerId>/resources` (or a test temp dir). */
@@ -83,50 +107,123 @@ export function ownerResourceAssetRel(ownerId: string, fileName: string): string
   return `${id}/resources/${name}`;
 }
 
-function normalizeAspectRatio(raw: string | undefined): MinimaxAspectRatio {
-  const v = (raw || '1:1').trim();
-  if ((MINIMAX_ASPECT_RATIOS as readonly string[]).includes(v)) {
-    return v as MinimaxAspectRatio;
+function hostnameOf(baseURL: string): string {
+  const raw = (baseURL || '').trim();
+  if (!raw) return '';
+  try {
+    const withScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(raw) ? raw : `https://${raw}`;
+    return new URL(withScheme).hostname.toLowerCase();
+  } catch {
+    return '';
   }
-  return '1:1';
 }
 
-function normalizeImageModel(raw: string | undefined): MinimaxImageModel {
-  const v = (raw || 'image-01').trim();
-  if ((MINIMAX_IMAGE_MODELS as readonly string[]).includes(v)) {
-    return v as MinimaxImageModel;
-  }
-  return 'image-01';
+/** Host looks like OpenAI or Azure OpenAI (Images API available). */
+export function isOpenAIImageHost(baseURL: string): boolean {
+  const host = hostnameOf(baseURL);
+  if (!host) return /openai\.com|openai\.azure/i.test(baseURL || '');
+  return (
+    host === 'api.openai.com' ||
+    host.endsWith('.openai.com') ||
+    host.endsWith('.openai.azure.com') ||
+    host.includes('openai.azure.com')
+  );
 }
 
-type MinimaxImageResponse = {
-  data?: {
-    image_urls?: string[];
-    image_base64?: string[];
+/** Heuristic: catalog / chat model id looks like an OpenAI-style image model. */
+export function isOpenAIImageModelId(id: string): boolean {
+  const v = (id || '').trim().toLowerCase();
+  if (!v) return false;
+  if (v.startsWith('dall-e') || v.includes('dall-e-')) return true;
+  if (v.startsWith('gpt-image')) return true;
+  return false;
+}
+
+/**
+ * Infer OpenAI-compatible image-gen capability from the current chat provider.
+ *
+ * Preference order (first match wins):
+ * 1. URL host looks like OpenAI / Azure OpenAI
+ *    → capability with catalog image models, or `OPENAI_DEFAULT_IMAGE_MODELS`.
+ * 2. Catalog lists OpenAI-style image models (`dall-e-*`, `gpt-image*`)
+ *    → capability with those catalog models (gateway / proxy hosts).
+ * 3. Otherwise → `null` (do not expose `generate_image`; provider likely chat-only).
+ */
+export function inferImageCapability(input: {
+  baseURL: string;
+  catalogModelIds?: string[];
+  providerName?: string;
+}): ImageCapability | null {
+  const baseURL = (input.baseURL || '').trim();
+  if (!baseURL) return null;
+
+  const catalog = (input.catalogModelIds ?? []).map((id) => (id || '').trim()).filter(Boolean);
+  const openaiCatalog = catalog.filter((id) => isOpenAIImageModelId(id));
+
+  const looksOpenAI = isOpenAIImageHost(baseURL) || openaiCatalog.length > 0;
+  if (!looksOpenAI) return null;
+
+  const models =
+    openaiCatalog.length > 0
+      ? uniqueKeepOrder(openaiCatalog)
+      : [...OPENAI_DEFAULT_IMAGE_MODELS];
+  return {
+    protocol: 'openai_images',
+    models,
+    defaultModel: models[0]!,
   };
-  base_resp?: {
-    status_code?: number;
-    status_msg?: string;
-  };
-  id?: string;
+}
+
+function uniqueKeepOrder(ids: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const id of ids) {
+    const k = id.trim();
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    out.push(k);
+  }
+  return out;
+}
+
+/** Map aspect_ratio onto a common OpenAI Images size. */
+export function aspectRatioToOpenAISize(aspectRatio?: string): OpenAIImageSize {
+  const a = (aspectRatio || '1:1').trim();
+  if (a === '16:9' || a === '21:9' || a === '3:2' || a === '4:3') return '1792x1024';
+  if (a === '9:16' || a === '2:3' || a === '3:4') return '1024x1792';
+  return '1024x1024';
+}
+
+function normalizeOpenAISize(raw: string | undefined, aspectRatio?: string): OpenAIImageSize {
+  const v = (raw || '').trim();
+  if ((OPENAI_IMAGE_SIZES as readonly string[]).includes(v)) {
+    return v as OpenAIImageSize;
+  }
+  return aspectRatioToOpenAISize(aspectRatio);
+}
+
+type OpenAIImagesResponse = {
+  data?: Array<{ b64_json?: string; url?: string }>;
+  error?: { message?: string; type?: string; code?: string | number };
 };
 
-export function parseMinimaxImageResponse(json: unknown): {
+export function parseOpenAIImagesResponse(json: unknown): {
   base64?: string;
   url?: string;
-  statusCode: number;
-  statusMsg: string;
+  errorMessage?: string;
 } {
-  const body = (json && typeof json === 'object' ? json : {}) as MinimaxImageResponse;
-  const statusCode = body.base_resp?.status_code ?? -1;
-  const statusMsg = body.base_resp?.status_msg ?? (statusCode === 0 ? 'success' : 'unknown error');
-  const b64 = body.data?.image_base64?.[0];
-  const url = body.data?.image_urls?.[0];
+  const body = (json && typeof json === 'object' ? json : {}) as OpenAIImagesResponse;
+  const errMsg =
+    typeof body.error?.message === 'string' && body.error.message.trim()
+      ? body.error.message.trim()
+      : undefined;
+  const first = Array.isArray(body.data) ? body.data[0] : undefined;
+  const b64 = first?.b64_json;
+  const url = first?.url;
   return {
     base64: typeof b64 === 'string' && b64.trim() ? b64.trim() : undefined,
     url: typeof url === 'string' && url.trim() ? url.trim() : undefined,
-    statusCode,
-    statusMsg,
+    errorMessage: errMsg,
   };
 }
 
@@ -152,90 +249,42 @@ function extFromBytes(buf: Buffer): string {
   return '.png';
 }
 
-async function decodeImageBytes(parsed: {
-  base64?: string;
-  url?: string;
-}): Promise<Buffer> {
+const MAX_GENERATED_IMAGE_DOWNLOAD_BYTES = 20 * 1024 * 1024;
+
+async function decodeImageBytes(
+  parsed: { base64?: string; url?: string },
+  opts?: { signal?: AbortSignal; fetchImpl?: typeof fetch },
+): Promise<Buffer> {
   if (parsed.base64) {
     return Buffer.from(stripDataUrlPrefix(parsed.base64), 'base64');
   }
   if (parsed.url) {
-    const res = await fetch(parsed.url);
+    const fetchImpl = opts?.fetchImpl ?? fetch;
+    const timeout = AbortSignal.timeout(30_000);
+    const signal = opts?.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
+    const res = await fetchImpl(parsed.url, { signal });
     if (!res.ok) {
       throw new Error(`下载生成图片失败：HTTP ${res.status}`);
     }
+    const declared = Number(res.headers.get('content-length') || '0');
+    if (Number.isFinite(declared) && declared > MAX_GENERATED_IMAGE_DOWNLOAD_BYTES) {
+      throw new Error(`下载生成图片过大（Content-Length ${declared}）`);
+    }
     const ab = await res.arrayBuffer();
+    if (ab.byteLength > MAX_GENERATED_IMAGE_DOWNLOAD_BYTES) {
+      throw new Error(`下载生成图片过大（${ab.byteLength} 字节）`);
+    }
     return Buffer.from(ab);
   }
-  throw new Error('响应中没有 image_base64 或 image_urls');
+  throw new Error('响应中没有可用的图片数据（base64 / url）');
 }
 
-export type GenerateImageSaveOpts = {
-  fetchImpl?: typeof fetch;
-  /** Absolute directory to write into (`~/.okbot/<ownerId>/resources`). */
-  resourcesDir: string;
-  /** Bot or squad id; used in markdown `okbot-asset:<ownerId>/resources/…`. */
-  ownerId: string;
-};
-
-/**
- * Call MiniMax-native `POST {baseURL}/image_generation`, save under the
- * owner `resources/` dir, return markdown the assistant must echo.
- */
-export async function generateImageWithMinimax(
-  creds: ImageApiCredentials,
-  input: GenerateImageInput,
-  opts: GenerateImageSaveOpts,
+async function saveImageBytes(
+  bytes: Buffer,
+  opts: { ownerId: string; resourcesDir: string },
+  prompt: string,
+  meta: { endpoint: string; model: string; protocol: ImageProtocol },
 ): Promise<GenerateImageResult> {
-  const prompt = (input.prompt || '').trim();
-  if (!prompt) throw new Error('prompt 不能为空');
-  if (prompt.length > 1500) throw new Error('prompt 最长 1500 字符');
-
-  const apiKey = (creds.apiKey || '').trim();
-  if (!apiKey) throw new Error('API Key 为空，请先在设置里配置模型供应商');
-
-  const model = normalizeImageModel(input.model);
-  const aspectRatio = normalizeAspectRatio(input.aspectRatio);
-  const endpoint = minimaxImageGenerationUrl(creds.baseURL);
-  const fetchImpl = opts?.fetchImpl ?? fetch;
-
-  const res = await fetchImpl(endpoint, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model,
-      prompt,
-      aspect_ratio: aspectRatio,
-      response_format: 'base64',
-      n: 1,
-      prompt_optimizer: true,
-    }),
-  });
-
-  const rawText = await res.text();
-  let json: unknown;
-  try {
-    json = rawText ? JSON.parse(rawText) : {};
-  } catch {
-    throw new Error(
-      `图片生成接口返回非 JSON（HTTP ${res.status}）：${rawText.slice(0, 400)}`,
-    );
-  }
-
-  const parsed = parseMinimaxImageResponse(json);
-  if (!res.ok && parsed.statusCode === -1) {
-    throw new Error(`图片生成 HTTP ${res.status}：${rawText.slice(0, 400)}`);
-  }
-  if (parsed.statusCode !== 0) {
-    throw new Error(
-      `图片生成失败（status_code=${parsed.statusCode}）：${parsed.statusMsg || 'unknown'}`,
-    );
-  }
-
-  const bytes = await decodeImageBytes(parsed);
   if (!bytes.length) throw new Error('生成图片数据为空');
 
   const ownerId = (opts.ownerId || '').trim();
@@ -260,14 +309,117 @@ export async function generateImageWithMinimax(
     assetRel,
     markdownSrc,
     markdown,
+    endpoint: meta.endpoint,
+    model: meta.model,
+    protocol: meta.protocol,
+  };
+}
+
+export type GenerateImageSaveOpts = {
+  fetchImpl?: typeof fetch;
+  /** Absolute directory to write into (`~/.okbot/<ownerId>/resources`). */
+  resourcesDir: string;
+  /** Bot or squad id; used in markdown `okbot-asset:<ownerId>/resources/…`. */
+  ownerId: string;
+  /** Pre-inferred capability; when omitted, inferred from credentials. */
+  capability?: ImageCapability | null;
+  /** Run abort (Stop / steer). Download and the generations POST honor it. */
+  signal?: AbortSignal;
+};
+
+/**
+ * Call OpenAI-compatible `POST {baseURL}/images/generations` (Bearer),
+ * accept `b64_json` / `url` in `data[]`, save under owner `resources/`.
+ */
+export async function generateImage(
+  creds: ImageApiCredentials,
+  input: GenerateImageInput,
+  opts: GenerateImageSaveOpts,
+): Promise<GenerateImageResult> {
+  const capability =
+    opts.capability !== undefined
+      ? opts.capability
+      : inferImageCapability({
+          baseURL: creds.baseURL,
+          catalogModelIds: creds.catalogModelIds,
+          providerName: creds.providerName,
+        });
+
+  if (!capability) {
+    throw new Error(
+      '当前模型供应商不支持文生图（未识别为 OpenAI 兼容图片接口）。请使用 OpenAI，或在供应商模型列表中加入 dall-e / gpt-image 等文生图模型。',
+    );
+  }
+
+  const prompt = (input.prompt || '').trim();
+  if (!prompt) throw new Error('prompt 不能为空');
+  if (prompt.length > 4000) throw new Error('prompt 最长 4000 字符');
+
+  const apiKey = (creds.apiKey || '').trim();
+  if (!apiKey) throw new Error('API Key 为空，请先在设置里配置模型供应商');
+
+  const defaultModel = capability.defaultModel || OPENAI_DEFAULT_IMAGE_MODELS[0];
+  const model = (input.model || '').trim() || defaultModel;
+  const size = normalizeOpenAISize(input.size, input.aspectRatio);
+  const endpoint = openAIImageGenerationsUrl(creds.baseURL);
+  const fetchImpl = opts?.fetchImpl ?? fetch;
+  const timeout = AbortSignal.timeout(120_000);
+  const signal = opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
+
+  const res = await fetchImpl(endpoint, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model,
+      prompt,
+      n: 1,
+      size,
+      response_format: 'b64_json',
+    }),
+    signal,
+  });
+
+  const rawText = await res.text();
+  let json: unknown;
+  try {
+    json = rawText ? JSON.parse(rawText) : {};
+  } catch {
+    throw new Error(
+      `图片生成接口返回非 JSON（HTTP ${res.status}）：${rawText.slice(0, 400)}`,
+    );
+  }
+
+  if (res.status === 404) {
+    throw new Error(
+      '图片生成接口不存在（HTTP 404）。当前供应商可能不支持 OpenAI 兼容的 /images/generations，请换用支持文生图的供应商（如 OpenAI）。',
+    );
+  }
+
+  const parsed = parseOpenAIImagesResponse(json);
+  if (!res.ok) {
+    throw new Error(
+      `图片生成失败（HTTP ${res.status}）：${parsed.errorMessage || rawText.slice(0, 400)}`,
+    );
+  }
+  if (parsed.errorMessage && !parsed.base64 && !parsed.url) {
+    throw new Error(`图片生成失败：${parsed.errorMessage}`);
+  }
+
+  const bytes = await decodeImageBytes(parsed, { signal: opts.signal, fetchImpl });
+  return saveImageBytes(bytes, opts, prompt, {
     endpoint,
     model,
-  };
+    protocol: 'openai_images',
+  });
 }
 
 export function formatGenerateImageToolOutput(result: GenerateImageResult): string {
   return [
     '图片已生成并保存到本机。',
+    `protocol: ${result.protocol}`,
     `endpoint: ${result.endpoint}`,
     `model: ${result.model}`,
     `path: ${result.filePath}`,

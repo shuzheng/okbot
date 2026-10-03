@@ -26,7 +26,20 @@ export type ComposerAttachMenuProps = {
 
 export function ComposerAttachMenu({ lang, disabled, onPick }: ComposerAttachMenuProps) {
   const [open, setOpen] = useState(false);
+  // SVG gooey filter is expensive on the Electron GPU process. Mount it only
+  // while the fan is open or finishing its close, not for the whole idle session.
+  const [gooey, setGooey] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (open) {
+      setGooey(true);
+      return;
+    }
+    if (!gooey) return;
+    const id = window.setTimeout(() => setGooey(false), 380);
+    return () => window.clearTimeout(id);
+  }, [open, gooey]);
 
   useEffect(() => {
     if (!open) return;
@@ -72,6 +85,7 @@ export function ComposerAttachMenu({ lang, disabled, onPick }: ComposerAttachMen
       ref={rootRef}
       className={`composer-attach${open ? ' open' : ''}${disabled ? ' disabled' : ''}`}
     >
+      {gooey ? (
       <Liquid
         className="composer-attach-liquid"
         fill="var(--composer-attach)"
@@ -175,6 +189,23 @@ export function ComposerAttachMenu({ lang, disabled, onPick }: ComposerAttachMen
           </button>
         </Liquid.Item>
       </Liquid>
+      ) : (
+        <button
+          type="button"
+          className="composer-attach-btn composer-attach-toggle"
+          disabled={disabled}
+          title={t(lang, 'attachMenuOpen')}
+          aria-label={t(lang, 'attachMenuOpen')}
+          aria-expanded={false}
+          onClick={() => {
+            if (disabled) return;
+            setGooey(true);
+            window.requestAnimationFrame(() => setOpen(true));
+          }}
+        >
+          <PlusIcon />
+        </button>
+      )}
     </div>
   );
 }
