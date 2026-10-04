@@ -9,7 +9,7 @@ import {
 import type { ChatMessage, ResolvedModelConfig, SecuritySettings, ToolPreferences } from '@okbot/shared';
 import { createId, DEFAULT_SECURITY, DEFAULT_TOOL_PREFERENCES } from '@okbot/shared';
 import { buildAgentInstructions } from './instructions.js';
-import { formatComputerRoutingSection, type ComputerRoute } from './computerSelection.js';
+import { shellFsRoutingSection, type ComputerRoute } from './computerSelection.js';
 import { buildTools, type SkillLookup } from './tools.js';
 import type { ExecutionBackend } from './executionBackend.js';
 import type { ToolRunBudget } from './toolRunBudget.js';
@@ -116,7 +116,7 @@ export function createAgentAndRunner(input: {
       input.sessionSummary,
       input.assistantRoleTemplate,
       input.hasVisionInput === true,
-      input.computerRoute ? formatComputerRoutingSection(input.computerRoute) : '',
+      shellFsRoutingSection(input.computerRoute, toolPrefs),
     ),
     model: input.model.model,
     ...(typeof input.model.maxTokens === 'number' && input.model.maxTokens >= 1

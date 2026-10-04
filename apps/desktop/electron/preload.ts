@@ -99,6 +99,8 @@ const api = {
       { canceled: true } | { canceled: false; bot: unknown }
     >,
   getSettings: () => ipcRenderer.invoke(IpcChannels.getSettings),
+  getGatewayAccessToken: () =>
+    ipcRenderer.invoke(IpcChannels.getGatewayAccessToken) as Promise<string>,
   saveSettings: (settings: AppSettings) => ipcRenderer.invoke(IpcChannels.saveSettings, settings),
   discoverModels: (payload: { baseURL: string; apiKey: string }) =>
     ipcRenderer.invoke(IpcChannels.discoverModels, payload) as Promise<{

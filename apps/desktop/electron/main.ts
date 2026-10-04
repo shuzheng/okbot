@@ -3,12 +3,19 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { IpcChannels, type AppSettings, type RuntimeEvent } from '@okbot/shared';
-import { createSkillHotReloadHub } from '@okbot/agent';
 import { FileStorage } from './storage';
 import { registerAllIpc, type PendingToolApproval } from './ipc';
 import { initAutoUpdater, onAutoUpdatePreferenceChanged } from './updater';
 import { getAllowQuit, setAllowQuit } from './quitState';
 import { createLocalHttpApi } from './localHttpApi';
+import { ensureGatewayToken, resolveGatewayUiRoot, startSkillWatch } from './gatewayRuntime';
+import {
+  acquireServerLock,
+  inspectRunningServer,
+  probeOkbotHealth,
+  publicBase,
+  releaseServerLock,
+} from './serverPresence';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const storage = new FileStorage();
@@ -33,6 +40,21 @@ const abortControllers = new Map<string, AbortController>();
 const pendingToolApprovals = new Map<string, PendingToolApproval>();
 
 let localHttpApiController: ReturnType<typeof createLocalHttpApi> | null = null;
+/** True only when this Electron process bound the gateway. A client must not stop `okbot serve`. */
+let ownsServer = false;
+let stopSkillWatch: (() => void) | null = null;
+/** Set when another OkBot already owns the data directory. The window is UI only. */
+let gatewayClient: { base: string; token: string; serveUi: boolean } | null = null;
+
+function rememberGatewayClient(port: number): void {
+  const api = storage.getSettings().localHttpApi;
+  gatewayClient = {
+    base: publicBase(port),
+    token: api.token,
+    serveUi: api.serveUi === true,
+  };
+  console.info(`[okbot] gateway already running at ${gatewayClient.base}; this window is a client`);
+}
 
 function snapshotActiveRuns() {
   const memoryPending = [...pendingToolApprovals.entries()].map(([requestId, p]) => ({
@@ -102,12 +124,30 @@ function createWindow() {
     title: 'OkBot',
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#000000' : '#f6f6f7',
     webPreferences: {
-      preload: path.join(__dirname, '../preload/index.mjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
     },
   };
+  const client = gatewayClient;
+  if (client) {
+    // Same renderer as a normal launch. Do not navigate to the gateway origin:
+    // `/?token=` skips the login page, but that query is not an API credential,
+    // so a server that is not actually serving the UI answers with unauthorized JSON.
+    // The attach preload sends the saved token as Authorization. Never log it.
+    opts.webPreferences = {
+      ...opts.webPreferences,
+      preload: path.join(__dirname, '../preload/attach.mjs'),
+      additionalArguments: [`--okbot-api-base=${client.base}`, `--okbot-api-token=${client.token}`],
+      // Renderer origin (file:// or the dev server) is not the gateway origin.
+      webSecurity: false,
+    };
+  } else {
+    opts.webPreferences = {
+      ...opts.webPreferences,
+      preload: path.join(__dirname, '../preload/index.mjs'),
+    };
+  }
   if (process.platform === 'darwin') {
     // macOS: inset traffic lights; do not invent custom window controls.
     opts.titleBarStyle = 'hiddenInset';
@@ -151,9 +191,9 @@ function createWindow() {
   win.on('close', persistBounds);
 
   if (process.env.ELECTRON_RENDERER_URL) {
-    win.loadURL(process.env.ELECTRON_RENDERER_URL);
+    void win.loadURL(process.env.ELECTRON_RENDERER_URL);
   } else {
-    win.loadFile(path.join(__dirname, '../renderer/index.html'));
+    void win.loadFile(path.join(__dirname, '../renderer/index.html'));
   }
 
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -193,7 +233,7 @@ app.on('second-instance', () => {
   }
 });
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return;
   applyTheme(storage.getSettings().theme);
 
@@ -245,7 +285,7 @@ app.whenReady().then(() => {
     return permission === 'media' || permission === 'mediaKeySystem' || /speech/i.test(name);
   });
 
-  const uiRoot = path.join(__dirname, '../renderer');
+  const uiRoot = resolveGatewayUiRoot(__dirname);
   const syncLocalHttpApi = () => {
     try {
       localHttpApiController?.sync(storage.getSettings().localHttpApi);
@@ -253,6 +293,21 @@ app.whenReady().then(() => {
       console.error('[okbot] localHttpApi sync failed', err);
     }
   };
+
+  const running = await inspectRunningServer(storage.root, storage.getSettings().localHttpApi.port);
+  if (running.state === 'running') {
+    rememberGatewayClient(running.port);
+  } else {
+    const desiredPort = storage.getSettings().localHttpApi.port;
+    const lock = acquireServerLock(storage.root, {
+      pid: process.pid,
+      port: desiredPort,
+      owner: 'electron',
+    });
+    if (!lock.ok) {
+      rememberGatewayClient(lock.existing.port || desiredPort);
+    } else {
+      ownsServer = true;
 
   const ipcCtx = {
     storage,
@@ -273,39 +328,45 @@ app.whenReady().then(() => {
 
   registerAllIpc(ipcCtx);
 
-  syncLocalHttpApi();
-
-  const skillHotReload = createSkillHotReloadHub({
-    resolveBotSkillsDir: (botId) => storage.botSkillsDirPublic(botId),
-    globalSkillsDir: storage.globalAgentsSkillsDirPublic(),
-    onChange: (change) => {
-      if (!change.botId) return;
-      sendRuntimeEvent({
-        type: 'skills_changed',
-        botId: change.botId,
-        paths: change.paths,
-        at: change.at,
-      });
-    },
-  });
-  const syncSkillWatchers = () => {
-    try {
-      skillHotReload.watchAll(storage.listBots().map((b) => b.id));
-    } catch (err) {
-      console.error('[okbot] skill hot-reload watch failed', err);
-    }
-  };
-  syncSkillWatchers();
-  // Re-sync watchers when roster may change (cheap; fs.watch is per-bot).
-  setInterval(syncSkillWatchers, 15_000).unref?.();
-
-  initAutoUpdater(() => storage.getSettings());
+  const ownedSettings = ensureGatewayToken(storage);
   try {
-    const n = storage.abandonRunningTracesOnStartup();
-    if (n > 0) console.info(`[okbot] marked ${n} abandoned run trace(s) on startup`);
+    await localHttpApiController.listen(ownedSettings.localHttpApi);
   } catch (err) {
-    console.error('[okbot] abandonRunningTracesOnStartup failed', err);
+    const port = ownedSettings.localHttpApi.port;
+    const health = await probeOkbotHealth(port);
+    if (health) {
+      try {
+        localHttpApiController.stop();
+      } catch (stopErr) {
+        console.error('[okbot] localHttpApi stop after attach failed', stopErr);
+      }
+      localHttpApiController = null;
+      ownsServer = false;
+      releaseServerLock(storage.root);
+      rememberGatewayClient(port);
+    } else {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'EADDRINUSE') {
+        console.error(`[okbot] port ${port} is in use and is not an OkBot server`);
+      } else {
+        console.error('[okbot] localHttpApi failed to start', err);
+      }
+    }
   }
+
+  if (ownsServer) {
+    stopSkillWatch = startSkillWatch(storage, sendRuntimeEvent);
+    initAutoUpdater(() => storage.getSettings());
+    try {
+      const n = storage.abandonRunningTracesOnStartup();
+      if (n > 0) console.info(`[okbot] marked ${n} abandoned run trace(s) on startup`);
+    } catch (err) {
+      console.error('[okbot] abandonRunningTracesOnStartup failed', err);
+    }
+  }
+  }
+  }
+
   createWindow();
 
   app.on('activate', () => {
@@ -326,7 +387,25 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
+app.on('will-quit', () => {
+  // Client of `okbot serve`: do not stop that process or delete its lock.
+  if (!ownsServer) return;
+  try {
+    stopSkillWatch?.();
+  } catch (err) {
+    console.error('[okbot] skill watch stop on quit failed', err);
+  }
+  try {
+    localHttpApiController?.stop();
+  } catch (err) {
+    console.error('[okbot] localHttpApi stop on quit failed', err);
+  }
+  releaseServerLock(storage.root);
+});
+
 app.on('before-quit', (e) => {
+  // UI client of an existing server: quitting this window must not cancel its work.
+  if (!ownsServer) return;
   if (getAllowQuit()) {
     try {
       localHttpApiController?.stop();

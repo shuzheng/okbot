@@ -63,6 +63,8 @@ export async function runShell(
   } catch {
     /* ignore; exec will surface cwd errors */
   }
+  const env = { ...process.env };
+  delete env.SANDBOX_TOKEN;
   const shellFile =
     (process.env.SHELL && existsSync(process.env.SHELL) ? process.env.SHELL : '') ||
     (existsSync('/bin/bash') ? '/bin/bash' : '/bin/sh');
@@ -97,7 +99,7 @@ export async function runShell(
           cwd: workdir,
           timeout: SHELL_TIMEOUT_MS,
           maxBuffer: 1024 * 1024,
-          env: process.env,
+          env,
         } as import('node:child_process').ExecFileOptions,
         (err: Error | null, out: string | Buffer, errOut: string | Buffer) => {
           stdout = typeof out === 'string' ? out : (out?.toString('utf8') ?? '');

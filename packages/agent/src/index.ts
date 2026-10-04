@@ -42,7 +42,31 @@ export {
   type SkillRefreshResult,
   type MemoryRefreshResult,
 } from './refresh.js';
-export { compressSessionHistory } from './compression.js';
+export {
+  compressSessionHistory,
+  selectDeltaForSummary,
+  SUMMARY_DELTA_MAX_CHARS,
+  SUMMARY_DELTA_PER_ITEM_CHARS,
+  type SessionHistoryCompressResult,
+  type SummaryDeltaSelection,
+} from './compression.js';
+export {
+  ContextWindowExceededError,
+  estimatePackedSessionTokens,
+  isToolResultItem,
+  omitOldestToolResultsUntilFit,
+  rowsForPriorBudget,
+  sessionItemBudgetText,
+  type BudgetSessionRow,
+} from './contextBudget.js';
+export {
+  applyAgentsMdSectionPatches,
+  isWholeFileReplacement,
+  mergeAgentsMdFromModel,
+  parseAgentsMdModelOutput,
+  parseMarkdownSections,
+  type AgentsMdSectionPatch,
+} from './agentsMdPatch.js';
 export { detectTopicChange } from './detectTopicChange.js';
 export { quoteSessionInputCallback } from './quoteContext.js';
 export {
@@ -91,6 +115,8 @@ export {
   defaultComputerLabel,
   effectiveDefaultComputerId,
   formatComputerRoutingSection,
+  configuredComputerProblem,
+  shellFsRoutingSection,
   resolveImplicitComputer,
   selectComputerForTool,
   settingsDefaultComputerId,

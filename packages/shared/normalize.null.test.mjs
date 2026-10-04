@@ -89,8 +89,9 @@ assert.equal(kept.token, 'abcd');
 const disabledEmpty = normalizeLocalHttpApiSettings({ enabled: false, token: '' });
 assert.equal(disabledEmpty.token, '');
 const enabledEmpty = normalizeLocalHttpApiSettings({ enabled: true, token: '!!!' });
-assert.match(enabledEmpty.token, /^[A-Za-z0-9_-]+$/);
-assert.notEqual(enabledEmpty.token, '');
+assert.equal(enabledEmpty.token, '');
+const reused = normalizeLocalHttpApiSettings({ enabled: false, token: 'abc_DEF-123' });
+assert.equal(reused.token, 'abc_DEF-123');
 
 const keptComputer = normalizeComputerEntry({
   id: 'computer_a',

@@ -48,7 +48,7 @@ SANDBOX_TOKEN=dev pnpm --filter @okbot/sandbox-agent start
 
 | Var | Default | Meaning |
 |-----|---------|---------|
-| `SANDBOX_HOST` | `0.0.0.0` | Bind address |
+| `SANDBOX_HOST` | `127.0.0.1` | Bind address. Docker image sets `0.0.0.0`. |
 | `SANDBOX_PORT` | `18790` | Listen port |
 | `SANDBOX_TOKEN` | (generated) | Bearer token |
 | `SANDBOX_WORKDIR` | `/workspace` | Default shell cwd inside container |

@@ -8,7 +8,25 @@ import { normalizeUsageStats } from '@okbot/shared';
 
 type Json = Record<string, unknown>;
 
+type AttachConfig = { base?: string; token?: string; platform?: string };
+
+/** Set by the Electron preload when this window is only a client of an existing server. */
+function attachConfig(): AttachConfig | null {
+  const raw = (globalThis as { __okbotAttach?: AttachConfig }).__okbotAttach;
+  if (!raw || typeof raw.base !== 'string' || !raw.base.trim()) return null;
+  return { base: raw.base.replace(/\/+$/, ''), token: typeof raw.token === 'string' ? raw.token : '' };
+}
+
+function endpoint(path: string): string {
+  const base = attachConfig()?.base;
+  if (!base) return path;
+  if (/^https?:\/\//i.test(path)) return path;
+  return base + (path.startsWith('/') ? path : `/${path}`);
+}
+
 function gatewayToken(): string {
+  const attached = attachConfig()?.token?.trim();
+  if (attached) return attached;
   try {
     const loc = globalThis.location;
     const storage = globalThis.sessionStorage;
@@ -35,7 +53,7 @@ async function api<T = Json>(
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
-  const res = await fetch(path, {
+  const res = await fetch(endpoint(path), {
     method,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -68,7 +86,7 @@ function startGatewaySessionEvents(): void {
     while (!stopped) {
       try {
         const token = gatewayToken();
-        const res = await fetch('/v1/events', {
+        const res = await fetch(endpoint('/v1/events'), {
           headers: {
             Accept: 'text/event-stream',
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -219,6 +237,19 @@ export function fillGatewaySettings(settings: unknown) {
   };
 }
 
+/** Fill localHttpApi.token from the narrow authenticated endpoint. Bootstrap blanks it. */
+async function withLiveGatewayToken<T extends { localHttpApi?: { token?: string } }>(settings: T): Promise<T> {
+  try {
+    const json = await api<{ token?: unknown }>('GET', '/v1/gateway-token');
+    const token = typeof json?.token === 'string' ? json.token : '';
+    if (!token) return settings;
+    const local = settings.localHttpApi && typeof settings.localHttpApi === 'object' ? settings.localHttpApi : {};
+    return { ...settings, localHttpApi: { ...local, token } };
+  } catch {
+    return settings;
+  }
+}
+
 export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unknown> {
   const okbot: any = {
     getBootstrap: async () => {
@@ -235,12 +266,13 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
           ? runs.pendingToolRequests
           : [];
       const squads = Array.isArray(b?.squads) ? b.squads : [];
+      const settings = await withLiveGatewayToken(fillGatewaySettings(b?.settings));
       return {
         bots: Array.isArray(b?.bots) ? b.bots : [],
         squads: squads.map(fillGatewaySquad),
         dataDir: b?.dataDir || '',
         hardwareAccelerationActive: b?.hardwareAccelerationActive !== false,
-        settings: fillGatewaySettings(b?.settings),
+        settings,
         busyBotIds: busy,
         pendingToolRequests: pending,
         activeRuns: { busyBotIds: busy, pendingToolRequests: pending },
@@ -252,9 +284,14 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
       return (Array.isArray(squads) ? squads : []).map(fillGatewaySquad);
     },
     getSettings: async () => (await okbot.getBootstrap()).settings,
+    /** Live token the server checks. Not read from bootstrap, which blanks it. */
+    getGatewayAccessToken: async () => {
+      const json = await api<{ token?: unknown }>('GET', '/v1/gateway-token');
+      return typeof json?.token === 'string' ? json.token : '';
+    },
     saveSettings: async (settings: unknown) => {
       const json = await api<any>('POST', '/v1/settings', settings);
-      return fillGatewaySettings(json?.settings ?? json);
+      return withLiveGatewayToken(fillGatewaySettings(json?.settings ?? json));
     },
     getMessagesPage: async (ownerId: string, opts?: { limit?: number; beforeMessageId?: string }) => {
       // Try bot path first; gateway accepts both bots and squads via same handler when we pass bots
@@ -278,7 +315,7 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
       opts?: { quoteMessageId?: string; computerId?: string; attachments?: unknown },
     ) => {
       const token = gatewayToken();
-      const res = await fetch(`/v1/bots/${encodeURIComponent(botId)}/messages`, {
+      const res = await fetch(endpoint(`/v1/bots/${encodeURIComponent(botId)}/messages`), {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -327,7 +364,7 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
       opts?: { quoteMessageId?: string; computerId?: string },
     ) => {
       const token = gatewayToken();
-      const res = await fetch(`/v1/squads/${encodeURIComponent(squadId)}/messages`, {
+      const res = await fetch(endpoint(`/v1/squads/${encodeURIComponent(squadId)}/messages`), {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -383,7 +420,7 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
     getAppInfo: async () => ({
       name: 'OkBot Gateway',
       version: 'gateway',
-      platform: 'web',
+      platform: attachConfig()?.platform || 'web',
       arch: '',
       electron: '',
       chrome: '',
@@ -465,7 +502,9 @@ export function installHttpOkbotBridge(): void {
   if (typeof window === 'undefined') return;
   const existing = (window as any).okbot;
   const gatewayBooted = Boolean((window as any).__okbotGatewayBoot);
-  if (existing && !gatewayBooted) return; // Electron preload already present
+  const attached = Boolean(attachConfig());
+  // Electron's full preload owns window.okbot. An attach preload does not; this window is a client.
+  if (existing && !gatewayBooted && !attached) return;
 
   const okbot = createHttpOkbotBridge();
   // Real HTTP methods override boot fallbacks. The boot setter then fills any

@@ -1108,13 +1108,29 @@ export const LEGACY_AGENTS_MD_REFRESH_WITH_VISION_GUARD = [
   '若需更新，只输出完整的新 AGENTS.md 正文（不要代码围栏，不要解释）。',
 ].join('\n');
 
-/** Full default system prompt for silent AGENTS.md maintenance. */
-export const DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT = [
+/**
+ * Previous default that asked the model to emit a full AGENTS.md replacement.
+ * Exact persisted copies upgrade to the section-patch default.
+ */
+export const LEGACY_AGENTS_MD_REFRESH_FULL_FILE = [
   '你负责维护桌面助手机器人的 AGENTS.md（系统提示词）。',
   '只写入值得跨会话记住的内容：用户偏好、长期目标、项目路径/技术栈、反复出现的约束。',
   '不要写入一次性任务细节、密钥、冗长日志或与助手无关的闲聊。',
   '保持 Markdown，保留原有章节结构（角色与目标 / 用户偏好 / 项目与环境 / 工作备注），可增删条目。',
   '若需更新，只输出完整的新 AGENTS.md 正文（不要代码围栏，不要解释）。否则不要输出任何正文。',
+].join('\n');
+
+/** Full default system prompt for silent AGENTS.md maintenance (section patches only). */
+export const DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT = [
+  '你负责维护桌面助手机器人的 AGENTS.md（系统提示词）。',
+  '只写入值得跨会话记住的内容：用户偏好、长期目标、项目路径/技术栈、反复出现的约束。',
+  '不要写入一次性任务细节、密钥、冗长日志或与助手无关的闲聊。',
+  '不要重写整份文件，不要删除未提到的章节。',
+  '只输出有改动的章节。新约定可以追加为新章节。',
+  '只输出 JSON，不要代码围栏，不要解释。',
+  '无需更新：{"action":"none"}',
+  '需要更新：{"action":"patch","sections":[{"heading":"用户偏好","body":"该章节的新正文（Markdown，不含标题行）"}]}',
+  'heading 用现有章节名（不要带 #）。只列有变化的章节。',
 ].join('\n');
 
 export const DEFAULT_AGENTS_MD_RECENT_MESSAGE_LIMIT = 12;
@@ -1149,7 +1165,8 @@ export function normalizeInstructionsSettings(raw: unknown): InstructionsSetting
   const agentsPrompt =
     !agentsPromptRaw ||
     agentsPromptRaw === LEGACY_DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT ||
-    agentsPromptRaw === LEGACY_AGENTS_MD_REFRESH_WITH_VISION_GUARD
+    agentsPromptRaw === LEGACY_AGENTS_MD_REFRESH_WITH_VISION_GUARD ||
+    agentsPromptRaw === LEGACY_AGENTS_MD_REFRESH_FULL_FILE
       ? ''
       : agentsPromptRaw;
   const skillsInstr =
@@ -1259,7 +1276,7 @@ export function normalizeComputerEntry(raw: unknown): ComputerEntry | null {
   const token = typeof o.token === 'string' ? o.token.trim() : '';
   if (!id || id === LOCAL_COMPUTER_ID) return null;
   if (!name || !host || !token) return null;
-  if (!/^[A-Za-z0-9_-]+$/.test(token)) return null;
+  if (!/^[A-Za-z0-9._~+/=-]+$/.test(token)) return null;
   const enabled = (o as { enabled?: unknown }).enabled === false ? false : true;
   return { id, name, host, port, token, enabled };
 }
@@ -1298,7 +1315,7 @@ export interface LocalHttpApiSettings {
   enabled: boolean;
   /** TCP port. Default 18765; clamp 1024–65535. */
   port: number;
-  /** Shared secret; required on every request except health. Empty while disabled is allowed; enabling generates one. */
+  /** Shared secret; required on every request except health. Empty is allowed. A token is created only when none is saved. */
   token: string;
   /**
    * When true, bind 0.0.0.0 (LAN / desktop gateway) instead of 127.0.0.1.
@@ -1328,7 +1345,7 @@ export function generateLocalHttpApiToken(): string {
 export const DEFAULT_LOCAL_HTTP_API: LocalHttpApiSettings = {
   enabled: false,
   port: DEFAULT_LOCAL_HTTP_API_PORT,
-  token: "", // filled by normalize on first read/save
+  token: "", // filled when a server starts and none is saved
   bindLan: false,
   serveUi: false,
 };
@@ -1341,7 +1358,8 @@ export function sanitizeLocalHttpApiToken(raw: string): string {
 /**
  * Clamp / fill local HTTP API settings.
  * Disallowed characters are stripped (not silently replaced).
- * A new token is generated only when the result is empty AND the API is enabled.
+ * Does not generate a token. An empty value stays empty so a saved token is reused
+ * instead of being replaced on read, on save, or when a window attaches.
  */
 export function normalizeLocalHttpApiSettings(raw: unknown): LocalHttpApiSettings {
   const obj =
@@ -1349,8 +1367,7 @@ export function normalizeLocalHttpApiSettings(raw: unknown): LocalHttpApiSetting
   const enabled = obj.enabled === true;
   let port = typeof obj.port === "number" && Number.isFinite(obj.port) ? Math.floor(obj.port) : DEFAULT_LOCAL_HTTP_API_PORT;
   if (port < 1024 || port > 65535) port = DEFAULT_LOCAL_HTTP_API_PORT;
-  let token = typeof obj.token === "string" ? sanitizeLocalHttpApiToken(obj.token) : "";
-  if (!token && enabled) token = generateLocalHttpApiToken();
+  const token = typeof obj.token === "string" ? sanitizeLocalHttpApiToken(obj.token) : "";
   const bindLan = obj.bindLan === true;
   // serveUi defaults to true when bindLan (gateway hosts UI); otherwise false
   const serveUi = obj.serveUi === true || (obj.serveUi !== false && bindLan);
@@ -1878,6 +1895,8 @@ export const IpcChannels = {
   updateSquad: 'okbot:update-squad',
   deleteSquad: 'okbot:delete-squad',
   getSettings: 'okbot:get-settings',
+  /** Live gateway access token this process checks (or the saved one when owning the server). */
+  getGatewayAccessToken: 'okbot:get-gateway-access-token',
   saveSettings: 'okbot:save-settings',
   discoverModels: 'okbot:discover-models',
   testModelConnection: 'okbot:test-model-connection',

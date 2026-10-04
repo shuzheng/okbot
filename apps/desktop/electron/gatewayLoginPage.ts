@@ -50,6 +50,7 @@ export const GATEWAY_BRIDGE_METHOD_NAMES = [
   'exportAssistantPackage',
   'importAssistantPackage',
   'getSettings',
+  'getGatewayAccessToken',
   'saveSettings',
   'discoverModels',
   'testModelConnection',
@@ -294,24 +295,54 @@ export function gatewayBootJs(): string {
           var squads=Array.isArray(b.squads)?b.squads:[];
           var busy=Array.isArray(b.busyBotIds)?b.busyBotIds:(Array.isArray(runs.busyBotIds)?runs.busyBotIds:[]);
           var pending=Array.isArray(b.pendingToolRequests)?b.pendingToolRequests:(Array.isArray(runs.pendingToolRequests)?runs.pendingToolRequests:[]);
-          return {
-            bots:bots,
-            squads:squads.map(fillSquad),
-            dataDir:b.dataDir||'',
-            hardwareAccelerationActive:b.hardwareAccelerationActive!==false,
-            settings:fillSettings(b.settings),
-            busyBotIds:busy,
-            pendingToolRequests:pending,
-            activeRuns:{busyBotIds:busy, pendingToolRequests:pending}
-          };
+          var settings=fillSettings(b.settings);
+          return api('GET','/v1/gateway-token').then(function(tok){
+            var token=tok&&typeof tok.token==='string'?tok.token:'';
+            if(token){
+              var local=settings.localHttpApi&&typeof settings.localHttpApi==='object'?settings.localHttpApi:{};
+              settings=Object.assign({}, settings, {localHttpApi:Object.assign({}, local, {token:token})});
+            }
+            return {
+              bots:bots,
+              squads:squads.map(fillSquad),
+              dataDir:b.dataDir||'',
+              hardwareAccelerationActive:b.hardwareAccelerationActive!==false,
+              settings:settings,
+              busyBotIds:busy,
+              pendingToolRequests:pending,
+              activeRuns:{busyBotIds:busy, pendingToolRequests:pending}
+            };
+          }, function(){
+            return {
+              bots:bots,
+              squads:squads.map(fillSquad),
+              dataDir:b.dataDir||'',
+              hardwareAccelerationActive:b.hardwareAccelerationActive!==false,
+              settings:settings,
+              busyBotIds:busy,
+              pendingToolRequests:pending,
+              activeRuns:{busyBotIds:busy, pendingToolRequests:pending}
+            };
+          });
         });
       },
       listBots:function(){ return api('GET','/v1/bots').then(function(r){ return (r&&r.bots)||[]; }); },
       listSquads:function(){ return api('GET','/v1/squads').then(function(r){ return ((r&&r.squads)||[]).map(fillSquad); }); },
       getSettings:function(){ return okbot.getBootstrap().then(function(b){ return b.settings; }); },
+      getGatewayAccessToken:function(){
+        return api('GET','/v1/gateway-token').then(function(json){
+          return json&&typeof json.token==='string'?json.token:'';
+        }, function(){ return ''; });
+      },
       saveSettings:function(settings){
         return api('POST','/v1/settings', settings).then(function(json){
-          return fillSettings((json&&json.settings)||json);
+          var filled=fillSettings((json&&json.settings)||json);
+          return api('GET','/v1/gateway-token').then(function(tok){
+            var token=tok&&typeof tok.token==='string'?tok.token:'';
+            if(!token) return filled;
+            var local=filled.localHttpApi&&typeof filled.localHttpApi==='object'?filled.localHttpApi:{};
+            return Object.assign({}, filled, {localHttpApi:Object.assign({}, local, {token:token})});
+          }, function(){ return filled; });
         });
       },
       getMessagesPage:function(ownerId, opts){

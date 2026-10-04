@@ -59,6 +59,7 @@ import {
   transcribeWithLocalWhisper,
 } from './voice';
 import { formatSystemError } from './utils/formatSystemError';
+import { applyOptimisticSendFailure, rememberReconciledLocalId } from './utils/optimisticSend';
 import {
   formatMessageWithAttachments,
   resolveMessageAttachments,
@@ -157,6 +158,10 @@ export function App() {
   const [busyByBot, setBusyByBot] = useState<Record<string, boolean>>({});
   /** Count of renderer chatStart awaits per owner — keeps BorderBeam up across abort+restart steer. */
   const sendsInFlightRef = useRef<Record<string, number>>({});
+  /** local_* ids already replaced by a persisted user_message. Failure must not re-append them. */
+  const reconciledLocalIdsRef = useRef<Set<string>>(new Set());
+  /** In-flight optimistic sends, including ones whose chat is not on screen. */
+  const pendingOptimisticRef = useRef<Array<{ ownerId: string; localId: string }>>([]);
   /** Fine-grained turn footer status while busy (derived from chat events). */
   /** Distinct thinking-orbs state per turn phase (libraries.dev/orbs). */
   const TURN_PHASE_ORB_STATE: Record<TurnPhase, OrbState> = {
@@ -945,6 +950,12 @@ export function App() {
       }
 
       if (event.type === 'user_message') {
+        const pendingIdx = pendingOptimisticRef.current.findIndex((p) => p.ownerId === event.botId);
+        if (pendingIdx >= 0) {
+          const pending = pendingOptimisticRef.current[pendingIdx]!;
+          pendingOptimisticRef.current.splice(pendingIdx, 1);
+          rememberReconciledLocalId(reconciledLocalIdsRef.current, pending.localId);
+        }
         // HTTP/API turns have no local send in flight; still show Stop.
         setBusyByBot((prev) => (prev[event.botId] ? prev : { ...prev, [event.botId]: true }));
         setTurnPhaseByBot((prev) =>
@@ -960,6 +971,7 @@ export function App() {
             }
             for (let i = prev.length - 1; i >= 0; i--) {
               if (prev[i].role === 'user' && String(prev[i].id).startsWith('local_')) {
+                rememberReconciledLocalId(reconciledLocalIdsRef.current, String(prev[i].id));
                 const next = [...prev];
                 next[i] = event.message;
                 return next;
@@ -1978,6 +1990,11 @@ async function handleSend(retry?: {
     setTurnPhaseByBot((prev) => ({ ...prev, [ownerId]: 'thinking' }));
     requestAnimationFrame(() => composerRef.current?.focus());
     const localId = isRetry ? retry!.localId : `local_${Date.now()}`;
+    pendingOptimisticRef.current = pendingOptimisticRef.current.filter((p) => p.localId !== localId);
+    pendingOptimisticRef.current.push({ ownerId, localId });
+    if (pendingOptimisticRef.current.length > 64) {
+      pendingOptimisticRef.current.splice(0, pendingOptimisticRef.current.length - 64);
+    }
     if (isRetry) {
       setMessages((prev) =>
         prev.map((m) => (m.id === localId ? { ...m, sendStatus: 'pending' as const } : m)),
@@ -2047,27 +2064,20 @@ async function handleSend(retry?: {
         toast.error(formatSystemError(err));
         // Keep the local bubble with a retry affordance — do not wipe it via getMessagesPage.
         if (selectionRef.current?.kind === kind && selectionRef.current.id === ownerId) {
-          setMessages((prev) => {
-            const idx = prev.findIndex((m) => m.id === localId);
-            if (idx >= 0) {
-              const next = [...prev];
-              next[idx] = { ...next[idx], sendStatus: 'failed' };
-              return next;
-            }
-            // Bubble missing (e.g. race) — re-insert failed local so retry stays available.
-            return [
-              ...prev,
+          const failedAt = new Date().toISOString();
+          setMessages((prev) =>
+            applyOptimisticSendFailure(
+              prev,
               {
-                id: localId,
-                role: 'user' as const,
-                content: text,
-                createdAt: new Date().toISOString(),
-                sendStatus: 'failed' as const,
+                localId,
+                text,
+                createdAt: failedAt,
                 ...(quoteMessageId && quotePreview ? { quoteMessageId, quotePreview } : {}),
                 ...(structuredAtts?.length ? { attachments: structuredAtts } : {}),
               },
-            ];
-          });
+              reconciledLocalIdsRef.current,
+            ),
+          );
         }
         try {
           setBots(await window.okbot.listBots());
@@ -2154,18 +2164,24 @@ async function handleSend(retry?: {
 
   async function jumpToQuotedMessage(messageId: string) {
     const id = (messageId || '').trim();
-    if (!id || !chatOwnerId) return;
+    const owner = chatOwnerId;
+    if (!id || !owner) return;
     if (messages.some((m) => m.id === id)) {
       setHighlightMessageId(id);
       return;
     }
+    const gen = ++historyLoadGenRef.current;
     try {
-      const all = await window.okbot.getMessages(chatOwnerId);
+      const all = await window.okbot.getMessages(owner);
+      if (gen !== historyLoadGenRef.current) return;
+      if (selectionRef.current?.id !== owner) return;
       setMessages(all);
       setHasMoreOlder(false);
       setOlderBeforeMessageId(null);
       setHighlightMessageId(id);
     } catch (err) {
+      if (gen !== historyLoadGenRef.current) return;
+      if (selectionRef.current?.id !== owner) return;
       toast.error(formatSystemError(err));
     }
   }
@@ -3266,6 +3282,7 @@ async function handleSend(retry?: {
           lang={lang}
           bots={bots}
           squads={squads}
+          developerMode={settings?.developerMode === true}
           onClose={() => setSearchOpen(false)}
           onSelect={handleGlobalSearchSelect}
         />

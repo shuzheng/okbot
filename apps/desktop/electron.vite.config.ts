@@ -16,6 +16,12 @@ export default defineConfig({
         external: ['bufferutil', 'utf-8-validate'],
         input: {
           index: resolve('electron/main.ts'),
+          cli: resolve('electron/cli.ts'),
+        },
+        output: {
+          banner(chunk) {
+            return chunk.name === 'cli' ? '#!/usr/bin/env node\n' : '';
+          },
         },
       },
     },
@@ -26,6 +32,7 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve('electron/preload.ts'),
+          attach: resolve('electron/attachPreload.ts'),
         },
       },
     },

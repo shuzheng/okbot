@@ -26,26 +26,96 @@ export function writeAssistantPackageDir(
   }
 }
 
+const MAX_PACKAGE_BYTES = 20 * 1024 * 1024;
+const MAX_PACKAGE_ENTRIES = 200;
+const MAX_PACKAGE_FILE_BYTES = 1_000_000;
+
+function assertSafePackageTree(dir: string): void {
+  let count = 0;
+  const walk = (current: string) => {
+    for (const name of fs.readdirSync(current)) {
+      count += 1;
+      if (count > MAX_PACKAGE_ENTRIES) throw new Error('助手包条目过多');
+      const abs = path.join(current, name);
+      const st = fs.lstatSync(abs);
+      if (st.isSymbolicLink()) throw new Error('助手包包含符号链接，已拒绝');
+      if (st.isDirectory()) {
+        walk(abs);
+        continue;
+      }
+      if (!st.isFile()) throw new Error('助手包包含不支持的文件类型');
+      if (st.size > MAX_PACKAGE_FILE_BYTES) throw new Error('助手包内文件过大');
+    }
+  };
+  walk(dir);
+}
+
+function readRegularFile(abs: string): string {
+  const st = fs.lstatSync(abs);
+  if (st.isSymbolicLink()) throw new Error('助手包包含符号链接，已拒绝');
+  if (!st.isFile()) throw new Error('助手包文件类型不对');
+  if (st.size > MAX_PACKAGE_FILE_BYTES) throw new Error('助手包内文件过大');
+  return fs.readFileSync(abs, 'utf8');
+}
+
+function assertArchiveListing(file: string): void {
+  const stat = fs.statSync(file);
+  if (!stat.isFile()) throw new Error('助手包不是文件');
+  if (stat.size > MAX_PACKAGE_BYTES) throw new Error('助手包过大');
+  let listing = '';
+  try {
+    listing = execFileSync('unzip', ['-Z', '-1', file], {
+      encoding: 'utf8',
+      maxBuffer: 2_000_000,
+    });
+  } catch {
+    throw new Error('无法读取助手包（需要系统 unzip）');
+  }
+  const lines = listing.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  if (lines.length > MAX_PACKAGE_ENTRIES) throw new Error('助手包条目过多');
+  for (const line of lines) {
+    if (line.includes('\\') || line.startsWith('/') || /^[A-Za-z]:/.test(line)) {
+      throw new Error('助手包路径不合法');
+    }
+    const normalized = line.replace(/\/+$/, '');
+    if (!normalized) continue;
+    if (normalized.split('/').some((part) => !part || part === '.' || part === '..')) {
+      throw new Error('助手包路径不合法');
+    }
+  }
+}
+
 /** Read package from a directory. */
 export function readAssistantPackageDir(dir: string): AssistantPackageContents {
   const root = path.resolve(dir);
+  assertSafePackageTree(root);
   const manifestPath = path.join(root, 'manifest.json');
   if (!fs.existsSync(manifestPath)) {
     throw new Error('助手包缺少 manifest.json');
   }
-  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as unknown;
+  const manifest = JSON.parse(readRegularFile(manifestPath)) as unknown;
   let agentsMd = '';
   const agentsPath = path.join(root, 'AGENTS.md');
   if (fs.existsSync(agentsPath)) {
-    agentsMd = fs.readFileSync(agentsPath, 'utf8');
+    agentsMd = readRegularFile(agentsPath);
   }
   const skillFiles: Array<{ slug: string; raw: string }> = [];
   const skillsRoot = path.join(root, 'skills');
   if (fs.existsSync(skillsRoot)) {
-    for (const name of fs.readdirSync(skillsRoot)) {
-      const skillFile = path.join(skillsRoot, name, 'SKILL.md');
-      if (!fs.existsSync(skillFile)) continue;
-      skillFiles.push({ slug: name, raw: fs.readFileSync(skillFile, 'utf8') });
+    const skillsStat = fs.lstatSync(skillsRoot);
+    if (skillsStat.isSymbolicLink()) throw new Error('助手包包含符号链接，已拒绝');
+    if (skillsStat.isDirectory()) {
+      for (const name of fs.readdirSync(skillsRoot)) {
+        const skillDir = path.join(skillsRoot, name);
+        const dirStat = fs.lstatSync(skillDir);
+        if (dirStat.isSymbolicLink() || !dirStat.isDirectory()) {
+          if (dirStat.isSymbolicLink()) throw new Error('助手包包含符号链接，已拒绝');
+          continue;
+        }
+        const skillFile = path.join(skillDir, 'SKILL.md');
+        if (!fs.existsSync(skillFile)) continue;
+        skillFiles.push({ slug: name, raw: readRegularFile(skillFile) });
+      }
     }
   }
   return parseAssistantPackage({ manifest, agentsMd, skillFiles });
@@ -65,9 +135,11 @@ export function zipAssistantPackage(dir: string, outFile: string): void {
 export function readAssistantPackageArchive(file: string): AssistantPackageContents {
   const abs = path.resolve(file);
   if (!fs.existsSync(abs)) throw new Error('助手包文件不存在');
+  assertArchiveListing(abs);
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'okbot-pkg-'));
   try {
     execFileSync('unzip', ['-q', '-o', abs, '-d', tmp]);
+    assertSafePackageTree(tmp);
     // Support either flat root or single top-level folder
     const manifestDirect = path.join(tmp, 'manifest.json');
     if (fs.existsSync(manifestDirect)) {

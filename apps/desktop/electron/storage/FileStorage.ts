@@ -27,6 +27,7 @@ import {
   normalizeInstructionsSettings,
   LEGACY_DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT,
   LEGACY_AGENTS_MD_REFRESH_WITH_VISION_GUARD,
+  LEGACY_AGENTS_MD_REFRESH_FULL_FILE,
   LEGACY_DEFAULT_SQUAD_CAPTAIN_PERSONA,
   LEGACY_DEFAULT_SQUAD_PLAYBOOK,
   normalizeMemorySettings,
@@ -64,6 +65,7 @@ import {
   type AssistantPackageContents,
 } from '@okbot/agent';
 import { ensureDir, readJson, readJsonResult, backupFileAside, writeJson } from './fs';
+import { formatCappedMemoriesForPrompt } from './memoryPrompt';
 import { loadUsageStats, recordTokenUsage, removeOwnerUsage } from './usageStore';
 import {
   isSessionRecordV2,
@@ -403,26 +405,10 @@ export class FileStorage {
   }
 
   formatMemoriesForPrompt(botId: string): string {
-    const global = this.listGlobalMemories();
-    const local = this.listBotMemories(botId);
-    const parts: string[] = [];
-    if (global.length) {
-      parts.push(
-        ['### 全局记忆', '', ...global.map((e) => `- [${e.id}] ${e.memory}${e.expires ? `（过期 ${e.expires}）` : ''}`)].join(
-          '\n',
-        ),
-      );
-    }
-    if (local.length) {
-      parts.push(
-        [
-          '### 本机器人记忆',
-          '',
-          ...local.map((e) => `- [${e.id}] ${e.memory}${e.expires ? `（过期 ${e.expires}）` : ''}`),
-        ].join('\n'),
-      );
-    }
-    return parts.join('\n\n');
+    return formatCappedMemoriesForPrompt(
+      this.listGlobalMemories(),
+      this.listBotMemories(botId),
+    );
   }
 
 
@@ -731,12 +717,13 @@ export class FileStorage {
         rawPersona === LEGACY_DEFAULT_SQUAD_CAPTAIN_PERSONA ||
         rawPlaybook === LEGACY_DEFAULT_SQUAD_PLAYBOOK;
       const rawLocal = (raw as { localHttpApi?: unknown }).localHttpApi;
+      // Missing shape only. An empty token is kept; server start fills it once.
+      // Treating "" as legacy rewrote a new token on every read, including attach.
       const legacyLocalHttpApi =
         rawLocal === undefined ||
         typeof rawLocal !== 'object' ||
         rawLocal === null ||
-        typeof (rawLocal as { token?: unknown }).token !== 'string' ||
-        !(rawLocal as { token: string }).token.trim();
+        typeof (rawLocal as { token?: unknown }).token !== 'string';
       const rawInstructions = (raw as { instructions?: { agentsMdRefreshSystemPrompt?: unknown } })
         .instructions;
       const rawAgentsPrompt =
@@ -745,7 +732,8 @@ export class FileStorage {
           : '';
       const legacyAgentsRefreshPrompt =
         rawAgentsPrompt === LEGACY_DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT ||
-        rawAgentsPrompt === LEGACY_AGENTS_MD_REFRESH_WITH_VISION_GUARD;
+        rawAgentsPrompt === LEGACY_AGENTS_MD_REFRESH_WITH_VISION_GUARD ||
+        rawAgentsPrompt === LEGACY_AGENTS_MD_REFRESH_FULL_FILE;
       if (
         legacyModel ||
         legacySquadMissing ||
@@ -1589,10 +1577,16 @@ export class FileStorage {
    * for the model are filtered. If the marker id is missing (legacy trimmed file), the
    * remaining file is treated as the live buffer (start at 0).
    */
+  /** Ids + items for send-path token estimates (includes tool rows). */
+  listSessionBudgetRows(botId: string): Array<{ id: string; item: Record<string, unknown> }> {
+    return this.readSessionRecords(botId).map((r) => ({ id: r.id, item: r.item }));
+  }
+
   readSessionItemsAfter(
     botId: string,
     afterMessageId?: string | null,
     limit?: number,
+    omitRecordIds?: ReadonlySet<string> | null,
   ): Record<string, unknown>[] {
     const records = this.readSessionRecords(botId);
     let start = 0;
@@ -1600,7 +1594,11 @@ export class FileStorage {
       const idx = records.findIndex((r) => r.id === afterMessageId);
       if (idx >= 0) start = idx + 1;
     }
-    const items = records.slice(start).map((r) => r.item);
+    let slice = records.slice(start);
+    if (omitRecordIds && omitRecordIds.size) {
+      slice = slice.filter((r) => !omitRecordIds.has(r.id));
+    }
+    const items = slice.map((r) => r.item);
     if (limit == null || limit <= 0 || limit >= items.length) return items;
     return items.slice(items.length - limit);
   }
@@ -1612,7 +1610,7 @@ export class FileStorage {
    */
   createSessionStore(
     botId: string,
-    opts?: { afterMessageId?: string | null },
+    opts?: { afterMessageId?: string | null; omitRecordIds?: string[] | null },
   ): {
     getSessionId: () => string;
     readItems: (limit?: number) => Record<string, unknown>[];
@@ -1623,9 +1621,12 @@ export class FileStorage {
   } {
     this.ensureSessionV2(botId);
     const afterMessageId = opts?.afterMessageId ?? null;
+    const omitRecordIds =
+      opts?.omitRecordIds && opts.omitRecordIds.length ? new Set(opts.omitRecordIds) : null;
     return {
       getSessionId: () => botId,
-      readItems: (limit?: number) => this.readSessionItemsAfter(botId, afterMessageId, limit),
+      readItems: (limit?: number) =>
+        this.readSessionItemsAfter(botId, afterMessageId, limit, omitRecordIds),
       appendItems: (items: Record<string, unknown>[]) => this.appendSessionItems(botId, items),
       popItem: () => this.popSessionItem(botId),
       clearItems: () => this.clearSessionItems(botId),
@@ -2135,17 +2136,22 @@ export class FileStorage {
       avatarKind: clean.manifest.avatar.avatarKind,
       botAvatarType: clean.manifest.avatar.botAvatarType,
     });
-    if (clean.agentsMd.trim()) {
-      this.writeAgentsMd(bot.id, clean.agentsMd);
+    try {
+      if (clean.agentsMd.trim()) {
+        this.writeAgentsMd(bot.id, clean.agentsMd);
+      }
+      for (const skill of clean.skills) {
+        this.writeSkill(bot.id, skill);
+      }
+      const cfg = this.readBotConfig(bot.id);
+      cfg.onboardingComplete = true;
+      cfg.updatedAt = new Date().toISOString();
+      this.writeBotConfig(cfg);
+      return this.listBots().find((b) => b.id === bot.id) ?? bot;
+    } catch (err) {
+      try { this.deleteBot(bot.id); } catch { /* leave the original error */ }
+      throw err;
     }
-    for (const skill of clean.skills) {
-      this.writeSkill(bot.id, skill);
-    }
-    const cfg = this.readBotConfig(bot.id);
-    cfg.onboardingComplete = true;
-    cfg.updatedAt = new Date().toISOString();
-    this.writeBotConfig(cfg);
-    return this.listBots().find((b) => b.id === bot.id) ?? bot;
   }
 
 }

@@ -14,9 +14,11 @@ import {
   type ResolvedModelConfig,
 } from '@okbot/shared';
 import { assertModel } from './model.js';
+import { mergeAgentsMdFromModel } from './agentsMdPatch.js';
 
 /**
- * Silently revise AGENTS.md from recent chat. Returns updated markdown, or null if unchanged.
+ * Silently patch AGENTS.md from recent chat. Returns updated markdown, or null if unchanged.
+ * Only changed sections are applied; a full-file rewrite is ignored.
  * Caller writes the file; next chat turn reloads from disk.
  */
 export async function refreshAgentsMd(input: {
@@ -80,17 +82,13 @@ export async function refreshAgentsMd(input: {
   );
 
   const choice = completion.choices[0];
-  // Truncated completions are unsafe to treat as a full AGENTS.md rewrite.
+  // Truncated completions are unsafe to apply as section patches.
   if (choice?.finish_reason === 'length') return null;
 
   // Model CoT (<think>…</think>) must never land in AGENTS.md.
-  let next = stripThinkContent(choice?.message?.content ?? '').trim();
-  if (next.startsWith('```')) {
-    next = next.replace(/^```(?:markdown|md)?\s*/i, '').replace(/\s*```$/, '').trim();
-  }
-  if (!next || next === 'NO_CHANGE' || /^NO_CHANGE\b/i.test(next)) return null;
-  if (next === input.currentAgentsMd.trim()) return null;
-  return next.endsWith('\n') ? next : `${next}\n`;
+  const raw = stripThinkContent(choice?.message?.content ?? '').trim();
+  if (!raw) return null;
+  return mergeAgentsMdFromModel(input.currentAgentsMd, raw);
 }
 
 export type SkillRefreshResult =

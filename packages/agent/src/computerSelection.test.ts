@@ -12,7 +12,8 @@ const air = { id: 'computer_air', name: 'MacBook Air', host: '127.0.0.1', port: 
 const base: ComputerRoute = { computers: [mini, air] };
 
 assert.equal(effectiveDefaultComputerId(base), 'local');
-assert.equal(effectiveDefaultComputerId({ ...base, defaultComputerId: 'missing' }), 'local');
+assert.equal(effectiveDefaultComputerId({ ...base, defaultComputerId: 'missing' }), '');
+assert.equal(selectComputerForTool({ ...base, defaultComputerId: 'missing' }).ok, false);
 assert.equal(effectiveDefaultComputerId({ ...base, defaultComputerId: 'computer_mini' }), 'computer_mini');
 assert.equal(
   effectiveDefaultComputerId({ ...base, defaultComputerId: 'computer_mini', turnComputerId: 'computer_air' }),
@@ -79,10 +80,27 @@ const disabledRoute: ComputerRoute = {
   defaultComputerId: 'computer_off',
   userText: '在 Offbox 上跑 uname',
 };
-assert.equal(effectiveDefaultComputerId(disabledRoute), 'local');
+assert.equal(effectiveDefaultComputerId(disabledRoute), '');
+assert.equal(selectComputerForTool({ ...disabledRoute, userText: '跑一下' }).ok, false);
 assert.deepEqual(computersMentioned('在 Offbox 上跑', disabledRoute).map((c) => c.id), []);
 assert.equal(selectComputerForTool(disabledRoute, 'Offbox').ok, false);
 const miniStill = selectComputerForTool({ ...disabledRoute, userText: '请在 Mac mini 上跑' });
 assert.equal(miniStill.ok && miniStill.id, 'computer_mini');
+
+
+assert.deepEqual(computersMentioned('/usr/local/bin/okbot', { ...base, defaultComputerId: 'computer_mini' }).map((c) => c.id), []);
+assert.deepEqual(computersMentioned('the local repo', base).map((c) => c.id), []);
+const pathNamed = selectComputerForTool({
+  ...base,
+  defaultComputerId: 'computer_mini',
+  userText: '运行 /usr/local/bin/okbot',
+});
+assert.equal(pathNamed.ok && pathNamed.id, 'computer_mini');
+const explicitLocal = selectComputerForTool({ ...base, defaultComputerId: 'computer_mini' }, 'local');
+assert.equal(explicitLocal.ok && explicitLocal.id, 'local');
+const hyphen = computersMentioned('分别在 Mac mini-MacBook Air 上', base).map((c) => c.id).sort();
+assert.deepEqual(hyphen, ['computer_air', 'computer_mini']);
+const badTurn = selectComputerForTool({ ...base, defaultComputerId: 'computer_mini', turnComputerId: 'gone' });
+assert.equal(badTurn.ok, false);
 
 console.log('computerSelection.test.ts: ok');

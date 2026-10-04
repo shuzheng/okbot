@@ -10,7 +10,7 @@ OkBot 是 **本机个人桌面 AI 助手**（Electron）：
 - 左侧：助手 / 小队会话列表  
 - 右侧：对话区（气泡、工具卡、输入框）  
 - 数据纯文件落在 `~/.okbot`，无云端账号体系  
-- **单实例**：主进程 `requestSingleInstanceLock()`；再启动会聚焦已有窗口（含后台隐藏时），不会开第二个进程  
+- **单实例**：主进程 `requestSingleInstanceLock()`；再启动会聚焦已有窗口（含后台隐藏时），不会开第二个进程。`okbot serve` 是另一个进程：同一 `~/.okbot` 只允许一个服务听端口，Electron 若发现已经在听，窗口只作界面连上去。  
 
 技术栈：Electron + React + TypeScript + Vite（electron-vite）；pnpm monorepo（`apps/desktop`、`packages/agent`、`packages/shared`）；对话走 `@openai/agents`（Chat Completions / Responses）+ 兼容网关（如 DeepSeek）。
 
@@ -21,9 +21,13 @@ OkBot 是 **本机个人桌面 AI 助手**（Electron）：
 ```text
 okbot/
   apps/desktop/                 # Electron 壳 + React UI
+    bin/okbot.mjs               # `okbot` bin → 加载 out/main/cli.js
     electron/                   # main / preload / IPC / storage / updater
       ipc/                      # registerChat / registerEntity / registerSystem
-      localHttpApi.ts           # 127.0.0.1 HTTP API（默认关）
+      localHttpApi.ts           # 网关 HTTP（Electron 与 okbot serve 共用）
+      cli.ts                    # `okbot serve` 入口
+      attachPreload.ts          # 附着客户端 preload（令牌走请求头）
+      serverPresence.ts         # 端口探测与数据目录锁
       storage/                  # FileStorage、sessionJsonl、usageStore…
       updater.ts                # electron-updater + GitHub Releases
     src/
@@ -202,11 +206,12 @@ okbot/
 
 供**本机其他程序**通过 HTTP 向助手或小队发送消息，走与 UI 相同的 `chatStart` / `startChatTurn` 路径（持久化 + `chatEvent`，界面实时更新）。
 
-- **默认关闭**。设置 → **网关服务**（小节「网关配置」，总开关「HTTP API」）：端口、访问令牌。令牌字符集为 `[A-Za-z0-9_-]`（输入时即过滤）。**仅在启用且令牌为空时**自动生成；重新生成有明确提示。复制读的是已保存的令牌，不是输入框里尚未落盘的草稿。`settings.json` 权限为 `0600`。一键复制 curl **不**把真令牌放进剪贴板，占位为 `$OKBOT_TOKEN`。
+- **开关默认关**（`okbot serve` 与 Electron 在端口空闲时仍会听端口，见 §6.1.1）。设置 → **网关服务**（小节「网关配置」，总开关「HTTP API」）：端口、访问令牌。令牌字符集为 `[A-Za-z0-9_-]`（输入时即过滤）。**已有令牌就复用**，读设置、保存设置、附着到已有服务都不会另造一串。只有磁盘上还没有令牌时，由真正拉起服务的进程生成并写入（`ensureGatewayToken`）；设置里的「重新生成」是单独动作。规范化不会因为「已启用且为空」就生成。复制读的是服务正在核对的那串，不是输入框里尚未落盘的草稿。窗口附着到已有 `okbot serve` 时，bootstrap / settings 的 JSON 里令牌仍是空的；界面经鉴权后另请求 `GET /v1/gateway-token`，把设置页输入框和复制都填成服务正在核对的那串，不会因为空字段再造一串。`settings.json` 权限为 `0600`。一键复制 curl **不**把真令牌放进剪贴板，占位为 `$OKBOT_TOKEN`。
 - **仅绑定 `127.0.0.1`**，不对外网开放。未开局域网时校验 `Host` 必须是 localhost / 127.0.0.1 / ::1（减轻 DNS rebinding）。开启局域网网关后绑定 `0.0.0.0`，仍靠令牌鉴权。
 - 鉴权：`Authorization: Bearer <token>` 或请求头 `X-OkBot-Token: <token>`（`GET /v1/health` 无需令牌）。
 - 端点（保持精简）：
   - `GET /v1/health` → `{ ok, service }`
+  - `GET /v1/gateway-token` → `{ ok, token }`：当前进程正在核对的访问令牌。必须先通过与其它 `/v1` 相同的鉴权；未带令牌是 401，响应里没有令牌。`GET /v1/bootstrap` 和 `POST /v1/settings` 仍把 `localHttpApi.token` 留空，不在这两处通用 JSON 里返回。Electron 附着与 Web UI 在拿到 bootstrap / 保存设置之后，以及设置页打开与复制时，会另走这一条把输入框填成真令牌。
   - `GET /v1/bots` → `{ ok, bots: [{ id, name }] }`
   - `GET /v1/squads` → `{ ok, squads: [{ id, name }] }`
   - `GET /v1/approvals` → 进行中的回合与待审批工具（与桌面 HITL 同一份内存 / 磁盘状态）
@@ -227,8 +232,51 @@ curl -N -X POST "http://127.0.0.1:<port>/v1/bots/<botId>/messages" \
   -d '{"text":"你好"}'
 ```
 
-- 实现：`apps/desktop/electron/localHttpApi.ts`；设置变更时重启监听，禁用或退出时停止。
-- 无独立 CLI；开启 **局域网网关**（`bindLan`）时可绑定 `0.0.0.0`，供内网手机访问；开启 `serveUi` 时托管与桌面相同的渲染端静态资源。未登录时浏览器 `GET /`、`GET /gateway-login` 返回令牌输入页（HTML），不再是 JSON `unauthorized`。`/v1/*`（除 `GET /v1/health`）仍要 Bearer / `X-OkBot-Token`。登录后 `?token=` 或 cookie 继续打开同一套桌面 UI。
+- 实现：`apps/desktop/electron/localHttpApi.ts`；设置变更时重启监听。Electron 自己拉起的服务，在退出时停止；`okbot serve` 拉起的服务，退出 Electron 不会停（附着行为见 §6.1.1）。
+- 开启 **局域网网关**（`bindLan`）时可绑定 `0.0.0.0`，供内网手机访问；开启 `serveUi` 时托管与桌面相同的渲染端静态资源。未登录时浏览器 `GET /`、`GET /gateway-login` 返回令牌输入页（HTML），不再是 JSON `unauthorized`。`/v1/*`（除 `GET /v1/health`）仍要 Bearer / `X-OkBot-Token`。登录后 `?token=` 或 cookie 继续打开同一套桌面 UI。
+
+### 6.1.1 服务器命令 `okbot serve`
+
+不打开 Electron，用 Node 跑与桌面同一套网关（`localHttpApi`）。适合只开服务、窗口按需再连。
+
+**构建**
+
+源码入口 `apps/desktop/electron/cli.ts`。`apps/desktop/electron.vite.config.ts` 主进程 `input` 含 `cli`；`electron-vite build` 打成 `apps/desktop/out/main/cli.js`，并加 `#!/usr/bin/env node` shebang。在仓库根目录：
+
+```bash
+pnpm --filter @okbot/desktop build
+```
+
+该命令先构建 `@okbot/agent`，再跑 `electron-vite build`。`pnpm dev` 不会产出给 `okbot serve` 用的 `cli.js`。没有单独下载成品的安装脚本，需在本仓库构建后使用。
+
+**用法**
+
+构建完成后任选其一：
+
+```bash
+node apps/desktop/out/main/cli.js serve
+```
+
+```bash
+okbot serve
+```
+
+或 `node apps/desktop/bin/okbot.mjs serve`。包的 bin 是 `okbot`（`apps/desktop/bin/okbot.mjs`），它只负责加载已构建的 `out/main/cli.js`；找不到时提示先构建。
+
+命令读 `~/.okbot` 里已保存的端口、绑定（`bindLan`）、令牌与是否提供 Web UI（`serveUi`），在前台监听。令牌已经存在就原样复用，不会在启动时换一串；只有还没有保存过时才生成并写入。**不**改动桌面里 HTTP API 开关的取值。启动成功后打印地址、绑定和正在使用的访问令牌（只在这一次启动输出里，请求处理过程不打印令牌）。端口上已有 OkBot 时直接退出，不打印令牌。`Ctrl+C`（或 `SIGTERM`）停止。浏览器打开打印出来的地址并用该令牌登录（需已打开「提供 Web UI」）。curl / 其它客户端用 `Authorization: Bearer <token>` 或 `X-OkBot-Token`（示例勿贴真实令牌，可用 `$OKBOT_TOKEN`）。
+
+**单实例**
+
+同一 `~/.okbot` 只允许一个服务听端口：先 `GET /v1/health`（`service` 为 `okbot-local-http-api`），再看数据目录锁 `~/.okbot/server.json`（含 `pid` / `port` / `owner`：`serve` 或 `electron`）。已是 OkBot 或锁里的进程还活着 → 提示已在运行并退出，不再起一份。端口被别的程序占用（`EADDRINUSE` 且健康检查不是 OkBot）→ 提示占用，也不冒充已在运行。
+
+**与 Electron 窗口的关系**
+
+Electron 启动时做同样检查：
+
+- **已有服务在听**：窗口只作界面客户端（`ownsServer=false`）。加载与普通启动相同的本地渲染端（`file://` 或 dev server），**不**导航到网关源站；`attach` preload（`electron/attachPreload.ts` → `out/preload/attach.mjs`）把已保存的地址与令牌交给渲染进程，请求带 `Authorization`。附着**不**生成新令牌。关掉窗口**不**停那个进程，也**不**删其锁。设置页不读 bootstrap 里的空令牌，而请求 `GET /v1/gateway-token` 取服务正在核对的那串，输入框与复制一致。
+- **端口空闲**：Electron 调同一个 `listen` 拉起服务，写入 `server.json`（`owner: electron`）。这次若是它拉起的，退出时停止监听并放开锁。
+
+实现：`cli.ts`、`serverPresence.ts`、`gatewayRuntime.ts`（`ensureGatewayToken` / UI 根路径 / 技能热重载）、`main.ts` 附着分支、`src/bridge/httpOkbot.ts`（读 `__okbotAttach`）。
 
 ### 6.2 云电脑（sandbox-agent）
 
@@ -302,17 +350,19 @@ HITL UI：工具卡上「允许 / 永久允许 / 拒绝」。
 
 由 `buildAgentInstructions` **每轮开跑时现拼**（有 Session 时 `history` 传空，不注入「最近对话」块）：
 
+回复写法也在这一层现拼：一个概念一个词、一句一事、主动语态并写清对象、条件写在动作前；闲聊不必写成手册。
+
 | 块 | 来源 | 更新时机 |
 |---|---|---|
 | 角色句（你是「某助手」…） | `settings.instructions.assistantRoleTemplate` + 当前 bot 名（`{name}`） | 设置 → 指令 → 助手；每轮现拼 |
 | **机器人资料（花名册）** | `bots.json` 的 name / description；与 AGENTS 冲突时以花名册为准 | 用户改资料立刻写盘；下一轮读到新值 |
-| **AGENTS.md** | `~/.okbot/<botId>/AGENTS.md` | 新建/引导写入；资料弹层「高级」可编；改名/描述时 `syncAgentsMdProfile`；用户高级写入在同次保存中优先生效；**每轮成功后** `refreshAgentsMd`（system=`settings.instructions.agentsMdRefreshSystemPrompt`，窗口=`agentsMdRecentMessageLimit`）可能静默重写（下一轮生效） |
+| **AGENTS.md** | `~/.okbot/<botId>/AGENTS.md` | 新建/引导写入；资料弹层「高级」可编；改名/描述时 `syncAgentsMdProfile`；用户高级写入在同次保存中优先生效；**每轮成功后** `refreshAgentsMd`（system=`settings.instructions.agentsMdRefreshSystemPrompt`，窗口=`agentsMdRecentMessageLimit`）可能只修补有变化的章节（不整篇覆盖，下一轮生效） |
 | **记忆** | 全局 `memory.md` + 本助手 `memory.md`（JSONL）；过期过滤后 `formatMemoriesForPrompt`；设置 → 指令 → 记忆可编 scope 判定句与分析条数；设置 → 记忆可编全局列表；高级列表可编辑本助手记忆 | **开跑前**读盘；本轮结束后 `refreshMemories`（`scopeInstruction` + `recentMessageLimit`）可能 upsert；下一轮生效 |
 | **更早对话摘要** | `session-summary.json` 的 `summary` | **开跑前**估 token ≥ `contextWindow × ratio` 且历史够长时增量压缩并写回，推进 `coveredThroughId`；**不删** `session.jsonl` |
 | **Skills（渐进披露）** | 本助手 `skills/<slug>/SKILL.md` +（可选）`~/.agents/skills` 已启用全局 → `formatSkillsForPrompt` **仅目录**（名称 / slug / 何时使用）；完整正文不进静态系统提示，匹配后由模型调用 `read_skill(slug)`（`resolveEnabledSkill`，本地优先）加载 | **开跑前**读盘目录（含热更新后的磁盘内容，见 §4.1）；`useGlobalSkills` / `enabledGlobalSkills` 在 `bot.json`；高级列表可改本地 skill / 开关全局；本轮结束后 `refreshBotSkills`（判定行=`skillsCreateUpdateInstruction`，窗口=`skillsRecentMessageLimit`）可能 upsert；下一轮生效；「查看完整上下文」同样只见目录（正文仅出现在本轮 tool 结果中） |
 | 工具说明 / 编码偏好句 | 设置里的工具开关与审批模式 | 改设置后下一轮生效 |
 
-估 token 用的静态文本大致含：AGENTS + skills + memories + 花名册 + 本轮用户正文（外加摘要与最近消息正文）。阈值始终用**当前**解析出的模型 `contextWindow`（换小窗口模型也会立刻按新窗口压）。
+估 token 用的静态文本大致含：AGENTS + skills + memories + 花名册 + 本轮用户正文，再加上摘要，以及未压缩尾部里的正文、工具参数和工具结果。阈值始终用**当前**解析出的模型 `contextWindow`（换小窗口模型也会立刻按新窗口压）。
 
 #### 8.2.3 session items：来源与更新时机
 
@@ -349,16 +399,17 @@ HITL UI：工具卡上「允许 / 永久允许 / 拒绝」。
 ### 8.4 上下文压缩（Summary + Buffer）
 
 - **比例触发**：估 token ≥ `contextWindow × ratio`（默认 ratio `0.8`），且 live buffer 长于 `keepRecentMin`。  
-- **默认保留最近 5 条**原文（`keepRecentMin`/`keepRecentMax` 默认均为 `5`；窗口不够时可再对半缩小直到 `keepRecentMin`）；更早内容相对上一版摘要做**增量**压缩，结构化字段含目标 / 约定 / 路径 / 未完成 / 其他，字数受 `summaryMaxChars` 约束。  
+- **默认保留最近 5 条**原文（`keepRecentMin`/`keepRecentMax` 默认均为 `5`；仍超出窗口时保留条数会降到 0，不停在 5）；更早内容相对上一版摘要做**增量**压缩，结构化字段含目标 / 约定 / 路径 / 未完成 / 其他，字数受 `summaryMaxChars` 约束。  
 - 写入 `session-summary.json`：`summary`、`coveredThroughId`、`updatedAt`。推进标记 **不** trim `session.jsonl`（界面气泡不删）。  
 - **助手与小队共用** `ensureSessionCompressed`（`sessionCompression.ts`）；小队同样会推进自己的 `coveredThroughId`。  
 - 设置：`contextCompression.*`（设置 → 模型相关区），含 **自动换题压缩** 开关（`autoTopicCompress`，默认开）。  
 - **自动换题压缩**（发送路径，1:1 与小队相同）：  
   - 发送前用会话配置的模型做一次轻量 yes/no 判定（`detectTopicChange`）：新用户句是否相对近期对话 / 会话摘要开启**新话题**。  
-  - 若是 → 与手动「压缩上下文」相同：`force: 'compress'`（绕过 ratio，保留最近缓冲）；**不是** `newTopic` / keep=0。  
+  - 若是 → `force: 'newTopic'`（keep=0，模型只看摘要和新消息）。同一话题仍保留最近消息。  
   - 若否 / 判定失败 / live buffer 不足以压缩（≤ `keepRecentMin`）→ 不强制压缩；比例触发仍按原逻辑。  
   - 静默进行，不弹 toast。  
-- 估 token / 自动压缩一律按「摘要 + `coveredThroughId` 之后的尾部」计算；`coveredThroughId` 只前进不回退。「查看完整上下文」与发送路径共用同一套投影。
+- 估 token / 自动压缩一律按「摘要 + `coveredThroughId` 之后的尾部」计算；`coveredThroughId` 只前进到摘要器真正读过的最后一条，不回退。「查看完整上下文」与发送路径共用同一套投影。
+- 发送前若仍超出窗口，会丢掉较早的工具结果，还放不下就中止本轮；压缩得到的约定写入该助手记忆。
 
 ### 8.5 会话存储
 
@@ -420,6 +471,7 @@ HITL UI：工具卡上「允许 / 永久允许 / 拒绝」。
   settings.json
   settings.json.corrupt-*      # 解析失败备份（读失败不写回默认）
   settings.json.pre-migrate-* # legacy 迁移写回前备份
+  server.json                  # 网关单实例锁（pid / port / owner；okbot serve 与 Electron 共用）
   usage.json
   bots.json
   squads.json
@@ -479,7 +531,7 @@ Preload 暴露 `window.okbot.*`；渲染进程不直连 Node fs。
 - `run_shell` 非容器/seatbelt 沙箱。  
 - 模型目录 **仅手动 + discover**，无复杂厂商 OAuth。  
 - 小队搜索排除、虚拟队长非真实 bot——改相关逻辑时勿回归。  
-- 本地 HTTP API **默认仅 loopback**。只有打开局域网网关才绑定 `0.0.0.0`，仍靠访问令牌；没有面向公网的入口，也没有独立 CLI。
+- 本地 HTTP API **默认仅 loopback**。只有打开局域网网关才绑定 `0.0.0.0`，仍靠访问令牌；没有面向公网的入口。不打开窗口时用 `okbot serve`（见 §6.1.1）。
 
 ---
 

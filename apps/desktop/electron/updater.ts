@@ -1,4 +1,4 @@
-import { BrowserWindow, app, dialog } from 'electron';
+import { BrowserWindow, app, autoUpdater as nativeAutoUpdater, dialog } from 'electron';
 import electronUpdater from 'electron-updater';
 import type { UpdateInfo, ProgressInfo } from 'electron-updater';
 import { setAllowQuit } from './quitState';
@@ -194,22 +194,44 @@ export async function downloadUpdate(): Promise<UpdaterStatus> {
 
 export async function installUpdate(): Promise<void> {
   if (status.phase !== 'downloaded') return;
-  const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
   const boxOpts = {
     type: 'info' as const,
     buttons: ['立即重启', '稍后'],
     defaultId: 0,
     cancelId: 1,
+    noLink: true,
     message: '更新已下载完成',
     detail: `新版本 ${status.availableVersion ?? ''} 已就绪。重启 OkBot 以完成安装。`,
   };
-  const result = win
-    ? await dialog.showMessageBox(win, boxOpts)
-    : await dialog.showMessageBox(boxOpts);
+  // Not attached to a window: a macOS sheet keeps that window from closing,
+  // and quitAndInstall never reaches the installer while any window is open.
+  const result = await dialog.showMessageBox(boxOpts);
   if (result.response === 0) {
-    setAllowQuit(true);
-    setImmediate(() => autoUpdater.quitAndInstall(false, true));
+    restartToInstall();
   }
+}
+
+/**
+ * quitAndInstall installs only after the window list is empty. The restart
+ * dialog used to be a sheet on the main window, so that window would not
+ * close and the installer never ran. Destroying windows inside
+ * before-quit-for-update happens before Electron checks the list.
+ */
+function restartToInstall(): void {
+  setAllowQuit(true);
+  // Let the dialog finish tearing down its modal session before we quit.
+  setTimeout(() => {
+    nativeAutoUpdater.once('before-quit-for-update', () => {
+      // The relaunched process must be able to take the single-instance lock.
+      app.releaseSingleInstanceLock();
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (win.isDestroyed()) continue;
+        win.removeAllListeners('close');
+        win.destroy();
+      }
+    });
+    autoUpdater.quitAndInstall(false, true);
+  }, 0);
 }
 
 /** Call when settings.autoUpdate flips on — schedule a check / resume download. */

@@ -280,6 +280,62 @@ export type RemoteComputerTarget = {
   fetchImpl?: typeof fetch;
 };
 
+const REMOTE_TIMEOUT_MS = 45_000;
+const REMOTE_MAX_BYTES = 1_500_000;
+
+function remoteSignal(outer?: AbortSignal, ms = REMOTE_TIMEOUT_MS): AbortSignal {
+  const timeout = AbortSignal.timeout(ms);
+  if (!outer) return timeout;
+  if (typeof AbortSignal.any === 'function') return AbortSignal.any([outer, timeout]);
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  if (outer.aborted || timeout.aborted) controller.abort();
+  else {
+    outer.addEventListener('abort', abort, { once: true });
+    timeout.addEventListener('abort', abort, { once: true });
+  }
+  return controller.signal;
+}
+
+async function readResponseText(res: Response, max = REMOTE_MAX_BYTES): Promise<string> {
+  if (!res.body) {
+    const text = await res.text();
+    if (text.length > max) throw new Error(`云电脑响应过大（>${max} 字节）`);
+    return text;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let size = 0;
+  let out = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      try { await reader.cancel(); } catch { /* ignore */ }
+      throw new Error(`云电脑响应过大（>${max} 字节）`);
+    }
+    out += decoder.decode(value, { stream: true });
+  }
+  out += decoder.decode();
+  return out;
+}
+
+function parseRemoteJson(text: string, status: number): Record<string, unknown> {
+  let json: Record<string, unknown> = {};
+  try {
+    json = text.trim() ? (JSON.parse(text) as Record<string, unknown>) : {};
+  } catch {
+    throw new Error(`云电脑响应非 JSON（HTTP ${status}）: ${text.slice(0, 200)}`);
+  }
+  if (status < 200 || status >= 300) {
+    const err = typeof json.error === 'string' ? json.error : `HTTP ${status}`;
+    const msg = typeof json.message === 'string' ? json.message : '';
+    throw new Error(`云电脑错误: ${err}${msg ? ` — ${msg}` : ''}`);
+  }
+  return json;
+}
+
 async function remoteJson(
   target: RemoteComputerTarget,
   method: string,
@@ -297,69 +353,63 @@ async function remoteJson(
       Accept: 'application/json',
     },
     body: JSON.stringify(body),
-    signal,
+    signal: remoteSignal(signal),
   });
-  const text = await res.text();
-  let json: Record<string, unknown> = {};
-  try {
-    json = text.trim() ? (JSON.parse(text) as Record<string, unknown>) : {};
-  } catch {
-    throw new Error(`云电脑响应非 JSON（HTTP ${res.status}）: ${text.slice(0, 200)}`);
-  }
-  if (!res.ok) {
-    const err = typeof json.error === 'string' ? json.error : `HTTP ${res.status}`;
-    const msg = typeof json.message === 'string' ? json.message : '';
-    throw new Error(`云电脑错误: ${err}${msg ? ` — ${msg}` : ''}`);
-  }
-  return json;
+  const text = await readResponseText(res);
+  return parseRemoteJson(text, res.status);
 }
 
-
-async function remoteShellSse(
+/** One POST. An SSE stream without done does not send the command again. */
+async function remoteShellOnce(
   target: RemoteComputerTarget,
   command: string,
   cwd: string | undefined,
   signal?: AbortSignal,
-): Promise<string | null> {
+): Promise<string> {
   const fetchFn = target.fetchImpl ?? fetch;
   const base = target.baseUrl.replace(/\/+$/, '');
-  let res: Response;
-  try {
-    res = await fetchFn(`${base}/v1/shell`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${target.token}`,
-        'Content-Type': 'application/json',
-        Accept: 'text/event-stream',
-      },
-      body: JSON.stringify({ command, cwd }),
-      signal,
-    });
-  } catch {
-    return null;
-  }
+  const res = await fetchFn(`${base}/v1/shell`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${target.token}`,
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream, application/json',
+    },
+    body: JSON.stringify({ command, cwd }),
+    signal: remoteSignal(signal),
+  });
   const ct = res.headers.get('content-type') || '';
-  if (!res.ok || !ct.includes('text/event-stream') || !res.body) {
-    // Not an SSE response — caller falls back to JSON.
-    return null;
+  if (res.ok && ct.includes('text/event-stream') && res.body) {
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    let size = 0;
+    const collected: ReturnType<typeof parseExecStreamSseBlocks>['events'] = [];
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > REMOTE_MAX_BYTES) {
+        try { await reader.cancel(); } catch { /* ignore */ }
+        throw new Error(`云电脑响应过大（>${REMOTE_MAX_BYTES} 字节）`);
+      }
+      buf += decoder.decode(value, { stream: true });
+      const parsed = parseExecStreamSseBlocks(buf);
+      buf = parsed.rest;
+      collected.push(...parsed.events);
+    }
+    if (buf.trim()) {
+      const parsed = parseExecStreamSseBlocks(buf + '\n\n');
+      collected.push(...parsed.events);
+    }
+    const formatted = foldExecStreamToFormatted(collected);
+    if (formatted == null) throw new Error('流结束但没有 done，未再次执行');
+    return formatted;
   }
-  const reader = (res.body as ReadableStream<Uint8Array>).getReader();
-  const decoder = new TextDecoder();
-  let buf = '';
-  const collected: ReturnType<typeof parseExecStreamSseBlocks>['events'] = [];
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    const parsed = parseExecStreamSseBlocks(buf);
-    buf = parsed.rest;
-    collected.push(...parsed.events);
-  }
-  if (buf.trim()) {
-    const parsed = parseExecStreamSseBlocks(buf + '\n\n');
-    collected.push(...parsed.events);
-  }
-  return foldExecStreamToFormatted(collected);
+  const text = await readResponseText(res);
+  const json = parseRemoteJson(text, res.status);
+  if (typeof json.formatted === 'string') return json.formatted;
+  return JSON.stringify(json);
 }
 
 /** HTTP client for apps/sandbox-agent cloud computer. */
@@ -369,19 +419,7 @@ export function createRemoteExecutionBackend(target: RemoteComputerTarget): Exec
     label,
     async runShell(command, cwd, signal) {
       try {
-        // Prefer SSE when the sandbox supports it — same ExecStreamEvent model as
-        // sandbox-agent; fold to formatted so tools share one consumption path.
-        const sseFormatted = await remoteShellSse(target, command, cwd, signal);
-        if (sseFormatted != null) return truncate(sseFormatted);
-        const json = await remoteJson(
-          target,
-          'POST',
-          '/v1/shell',
-          { command, cwd },
-          signal,
-        );
-        if (typeof json.formatted === 'string') return truncate(json.formatted);
-        return truncate(JSON.stringify(json));
+        return truncate(await remoteShellOnce(target, command, cwd, signal));
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return truncate(`云电脑 (${label}) shell 失败: ${msg}`);
@@ -477,10 +515,13 @@ export function resolveExecutionBackend(input: {
   const list = Array.isArray(input.computers) ? input.computers : [];
   const entry = list.find((c) => c.id === id);
   if (!entry) {
-    const local = createLocalExecutionBackend();
+    const message = `错误: 没有 id 为 ${id} 的电脑，已拒绝执行（不会改在本机）。`;
     return {
-      ...local,
-      label: `本机（未找到云电脑 ${id}）`,
+      label: `未找到电脑 ${id}`,
+      async runShell() { return message; },
+      async readFile() { return message; },
+      async writeFile() { return message; },
+      async editFile() { return message; },
     };
   }
   const host = entry.host.trim() || '127.0.0.1';

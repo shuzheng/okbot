@@ -14,14 +14,13 @@ export type SandboxConfig = {
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): SandboxConfig {
-  const host = (env.SANDBOX_HOST || '0.0.0.0').trim() || '0.0.0.0';
+  const host = (env.SANDBOX_HOST || '127.0.0.1').trim() || '127.0.0.1';
   let port = Number(env.SANDBOX_PORT || 18790);
   if (!Number.isFinite(port) || port < 1 || port > 65535) port = 18790;
   let token = (env.SANDBOX_TOKEN || '').trim();
   if (!token) {
     token = randomBytes(24).toString('hex');
-    console.warn('[okbot-sandbox-agent] SANDBOX_TOKEN unset; generated ephemeral token (set env for stable auth)');
-    console.warn(`[okbot-sandbox-agent] token=${token}`);
+    console.warn('[okbot-sandbox-agent] SANDBOX_TOKEN unset; generated an ephemeral token and did not print it. Set SANDBOX_TOKEN for stable auth.');
   }
   return { host, port, token };
 }

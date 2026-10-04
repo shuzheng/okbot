@@ -21,7 +21,7 @@ Each assistant is a **person** with a name, avatar, and personality, so conversa
 - **Squads** — Group assistants into a team; you assign the task, they collaborate
 - **Shared assistants** — Export and import assistant packs (name, avatar, persona, skills)
 - **Remote computers** — Connect cloud computers and run on different machines
-- **Private deployment** — Turn on the LAN gateway and open the same chat in a browser; data stays on your machine
+- **Private deployment** — Run `okbot serve` without a window, or turn on the LAN gateway and open the same chat in a browser; data stays on your machine
 - **Immersive chat** — Stream replies like an IM window, steer mid-turn, retry a failed send, stay on the latest message
 - **Skills and memory** — Skills open only when needed; important things are remembered across chats
 - **Models** — Connect the providers you already have and pick a model

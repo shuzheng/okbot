@@ -1988,6 +1988,11 @@ input, textarea { user-select: text; }
   /* Attach stack expands above the input; BorderBeam sets overflow:hidden — override so gooey stack is not clipped. */
   overflow: visible !important;
 }
+/* VoiceBeam clips its glow to the shell. The attach override above would spill it.
+   Listening has no fan, so put the library clip back. */
+.composer-row .composer-beam:has(.composer-inner.listening) {
+  overflow: hidden !important;
+}
 .composer-attach {
   /* Prefix control nested inside the rounded composer shell. */
   position: relative;
@@ -2967,6 +2972,8 @@ input, textarea { user-select: text; }
   }
 }
 .composer-inner.listening {
+  /* The attach fan lifts the shell to z-index 6, which paints over VoiceBeam (z-index 2–4). */
+  z-index: auto;
   border-color: #8a8a8a;
 }
 .composer-inner.listening textarea {

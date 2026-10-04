@@ -1,4 +1,12 @@
-import { ipcMain } from 'electron';
+import { createRequire } from 'node:module';
+import type { IpcMain } from 'electron';
+
+/** Loaded only when registering IPC, so `okbot serve` can import chat turns under plain Node. */
+function loadIpcMain(): IpcMain {
+  const require = createRequire(import.meta.url);
+  return (require('electron') as { ipcMain: IpcMain }).ipcMain;
+}
+
 import {
   IpcChannels,
   createId,
@@ -30,6 +38,7 @@ import {
   ensureSessionCompressed,
   resolveTopicCompressForce,
 } from '../storage/sessionCompression';
+import { dedupeMemoryFacts, extractDurableFacts } from '../storage/durableFacts';
 import {
   createRunGuards,
   handleRunFailure,
@@ -41,6 +50,7 @@ import {
   acquireSteerGate,
 } from './steerGate';
 import { abortChatOwner, resolveLiveToolApproval } from './chatControl';
+
 
 /** Bind `read_skill` to this bot's local + enabled-global skills. */
 function skillLookupFor(storage: IpcContext['storage'], botId: string): SkillLookup {
@@ -149,11 +159,11 @@ export async function startChatTurn(
         // Persist steer text before abort+restart so rapid sends keep full history.
         ctx.storage.appendMessage(squad.id, userMsg);
         ctx.storage.touchSquad(squad.id);
+        ctx.sendRuntimeEvent({ type: 'user_message', botId: squad.id, message: userMsg });
 
         const steerGate = await acquireSteerGate(ctx, squad.id);
         try {
           if (!steerGate.proceed) {
-            ctx.sendRuntimeEvent({ type: 'user_message', botId: squad.id, message: userMsg });
             return { userMessage: userMsg, superseded: true };
           }
 
@@ -248,22 +258,23 @@ export async function startChatTurn(
             newUserText: text,
             signal: controller.signal,
           });
-          const { sessionSummary, summaryState } = await ensureSessionCompressed({
+          const { sessionSummary, summaryState, omitRecordIds } = await ensureSessionCompressed({
             storage: ctx.storage,
             ownerId: squad.id,
             model: modelConfig,
             contextCompression: settings.contextCompression,
             staticText,
             prior,
+            sessionRows: ctx.storage.listSessionBudgetRows(squad.id),
             signal: controller.signal,
             force: topicForce,
+            enforceBudget: true,
           });
-
-          ctx.sendRuntimeEvent({ type: 'user_message', botId: squad.id, message: userMsg });
 
           const fileSession = createOkbotFileSession(
             ctx.storage.createSessionStore(squad.id, {
               afterMessageId: summaryState?.coveredThroughId ?? null,
+              omitRecordIds,
             }),
           );
 
@@ -546,11 +557,11 @@ export async function startChatTurn(
       // Persist steer text before abort+restart so rapid sends keep full history.
       ctx.storage.appendMessage(bot.id, userMsg);
       ctx.storage.touchBot(bot.id);
+      ctx.sendRuntimeEvent({ type: 'user_message', botId: bot.id, message: userMsg });
 
       const steerGate = await acquireSteerGate(ctx, bot.id);
       try {
         if (!steerGate.proceed) {
-          ctx.sendRuntimeEvent({ type: 'user_message', botId: bot.id, message: userMsg });
           return { userMessage: userMsg, superseded: true };
         }
 
@@ -601,27 +612,24 @@ export async function startChatTurn(
           newUserText: text,
           signal: controller.signal,
         });
-        const { sessionSummary, summaryState } = await ensureSessionCompressed({
+        const { sessionSummary, summaryState, omitRecordIds } = await ensureSessionCompressed({
           storage: ctx.storage,
           ownerId: bot.id,
           model: modelConfig,
           contextCompression: settings.contextCompression,
           staticText,
           prior,
+          sessionRows: ctx.storage.listSessionBudgetRows(bot.id),
           signal: controller.signal,
           force: topicForce,
-        });
-
-        ctx.sendRuntimeEvent({
-          type: 'user_message',
-          botId: bot.id,
-          message: userMsg,
+          enforceBudget: true,
         });
 
         // Model session view = yet-uncompressed tail after coveredThroughId (full jsonl unchanged).
         const fileSession = createOkbotFileSession(
           ctx.storage.createSessionStore(bot.id, {
             afterMessageId: summaryState?.coveredThroughId ?? null,
+            omitRecordIds,
           }),
         );
 
@@ -845,7 +853,17 @@ export async function startChatTurn(
               signal: controller.signal,
             });
             if (memResult.action === 'upsert') {
+              const summaryFacts = extractDurableFacts(
+                ctx.storage.readSessionSummary(bot.id)?.summary || '',
+              );
+              const existing = [
+                ...ctx.storage.listGlobalMemories().map((e) => e.memory),
+                ...ctx.storage.listBotMemories(bot.id).map((e) => e.memory),
+                ...summaryFacts,
+              ];
+              const fresh = new Set(dedupeMemoryFacts(memResult.entries.map((e) => e.memory), existing));
               for (const e of memResult.entries) {
+                if (!fresh.has(e.memory.trim())) continue;
                 ctx.storage.upsertMemory(e.scope, {
                   id: createId('mem'),
                   bot_id: bot.id,
@@ -1207,6 +1225,7 @@ export async function respondToToolApproval(
 }
 
 export function registerChatIpc(ctx: IpcContext): void {
+  const ipcMain = loadIpcMain();
   ipcMain.handle(
     IpcChannels.toolRespond,
     (
@@ -1322,6 +1341,7 @@ export function registerChatIpc(ctx: IpcContext): void {
           contextCompression: settings.contextCompression,
           staticText,
           prior,
+          sessionRows: ctx.storage.listSessionBudgetRows(ownerId),
           signal: controller.signal,
           force: mode,
         });

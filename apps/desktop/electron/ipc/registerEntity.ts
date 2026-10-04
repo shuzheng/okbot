@@ -1,4 +1,12 @@
-import { dialog, ipcMain } from 'electron';
+import { createRequire } from 'node:module';
+import type { Dialog, IpcMain } from 'electron';
+
+/** Loaded only when registering IPC, so the gateway process does not import Electron. */
+function loadElectronUi(): { ipcMain: IpcMain; dialog: Dialog } {
+  const require = createRequire(import.meta.url);
+  return require('electron') as { ipcMain: IpcMain; dialog: Dialog };
+}
+
 import {
   IpcChannels,
   DEFAULT_TOOL_PREFERENCES,
@@ -63,6 +71,7 @@ export function persistAppSettings(
 }
 
 export function registerEntityIpc(ctx: IpcContext): void {
+  const { ipcMain, dialog } = loadElectronUi();
 
   ipcMain.handle(
     IpcChannels.probeComputer,
@@ -231,6 +240,10 @@ export function registerEntityIpc(ctx: IpcContext): void {
   );
 
   ipcMain.handle(IpcChannels.getSettings, () => ctx.storage.getSettings());
+  ipcMain.handle(IpcChannels.getGatewayAccessToken, () => {
+    const token = ctx.storage.getSettings().localHttpApi?.token;
+    return typeof token === 'string' ? token : '';
+  });
   ipcMain.handle(IpcChannels.getUsageStats, () => ctx.storage.getUsageStats());
   ipcMain.handle(IpcChannels.saveSettings, (_e, settings: AppSettings) =>
     persistAppSettings(ctx, settings),

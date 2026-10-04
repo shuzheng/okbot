@@ -47,12 +47,30 @@ import { UsagePanel } from './UsagePanel';
 import { ComputersSettingsPanel } from './ComputersSettingsPanel';
 
 
+function keptNumber(raw: string, previous: number): number {
+  const trimmed = raw.trim();
+  if (!trimmed) return previous;
+  const n = Number(trimmed);
+  return Number.isFinite(n) ? n : previous;
+}
+
 function gatewayWebUiUrl(portRaw: string, token: string): string {
   const n = Number(portRaw);
   const port = Number.isInteger(n) && n >= 1024 && n <= 65535 ? n : DEFAULT_LOCAL_HTTP_API_PORT;
   const base = `http://127.0.0.1:${port}/`;
   const secret = token.trim();
   return secret ? `${base}?token=${encodeURIComponent(secret)}` : base;
+}
+
+/** Token the running server checks. Gateway bootstrap blanks it, so attached windows use a separate call. */
+async function readSavedGatewayToken(): Promise<string> {
+  const bridge = window.okbot as { getGatewayAccessToken?: () => Promise<string> };
+  if (typeof bridge.getGatewayAccessToken === 'function') {
+    const live = await bridge.getGatewayAccessToken();
+    return typeof live === 'string' ? live : '';
+  }
+  const saved = await window.okbot.getSettings();
+  return saved.localHttpApi?.token || '';
 }
 
 export function SettingsModal({
@@ -108,6 +126,24 @@ export function SettingsModal({
   const [localHttpApiEnabled, setLocalHttpApiEnabled] = useState(initialLocalHttpApi.enabled);
   const [localHttpApiPort, setLocalHttpApiPort] = useState(String(initialLocalHttpApi.port));
   const [localHttpApiToken, setLocalHttpApiToken] = useState(initialLocalHttpApi.token);
+  // Bootstrap / settings JSON blanks the token on the wire. Prefer the live value from
+  // getGatewayAccessToken (and any already-hydrated settings.localHttpApi.token).
+  useEffect(() => {
+    const fromSettings = settings.localHttpApi?.token;
+    if (typeof fromSettings === 'string' && fromSettings) {
+      setLocalHttpApiToken((prev) => (prev === fromSettings ? prev : fromSettings));
+    }
+    const bridge = window.okbot as { getGatewayAccessToken?: () => Promise<string> };
+    if (typeof bridge.getGatewayAccessToken !== 'function') return;
+    let cancelled = false;
+    void bridge.getGatewayAccessToken().then((token) => {
+      if (cancelled || typeof token !== 'string' || !token) return;
+      setLocalHttpApiToken((prev) => (prev === token ? prev : token));
+    }).catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [settings.localHttpApi?.token]);
   const [showLocalHttpApiToken, setShowLocalHttpApiToken] = useState(false);
   const [localHttpApiBindLan, setLocalHttpApiBindLan] = useState(initialLocalHttpApi.bindLan === true);
   const [localHttpApiServeUi, setLocalHttpApiServeUi] = useState(initialLocalHttpApi.serveUi === true);
@@ -331,8 +367,9 @@ export function SettingsModal({
       return;
     }
     const persist = async () => {
-      const pct = Number(compressRatioPct);
-      const ratio = Number.isFinite(pct) ? pct / 100 : DEFAULT_CONTEXT_COMPRESSION.ratio;
+      const prevRatio = normalizeContextCompression(settings.contextCompression).ratio;
+      const pct = keptNumber(compressRatioPct, Math.round(prevRatio * 100));
+      const ratio = pct / 100;
       const security = normalizeSecuritySettings({
         enabled: securityEnabled,
         restrictToHome,
@@ -358,7 +395,7 @@ export function SettingsModal({
         localHttpApi: (() => {
           const nextApi = normalizeLocalHttpApiSettings({
             enabled: localHttpApiEnabled,
-            port: Number(localHttpApiPort),
+            port: keptNumber(localHttpApiPort, normalizeLocalHttpApiSettings(settings.localHttpApi).port),
             token: localHttpApiToken,
             bindLan: localHttpApiBindLan,
             serveUi: localHttpApiServeUi,
@@ -375,37 +412,37 @@ export function SettingsModal({
         autoApprovalRules,
         tools,
         toolRun: normalizeToolRunSettings({
-          maxToolCalls: Number(maxToolCalls),
-          maxDurationSec: Number(maxDurationSec),
+          maxToolCalls: keptNumber(maxToolCalls, normalizeToolRunSettings(settings.toolRun).maxToolCalls),
+          maxDurationSec: keptNumber(maxDurationSec, normalizeToolRunSettings(settings.toolRun).maxDurationSec),
           recordTrajectory,
         }),
         security,
         model: normalizeModelSettings(modelSettings),
         contextCompression: normalizeContextCompression({
           ratio,
-          keepRecentMax: Number(keepRecentMax),
-          keepRecentMin: Number(keepRecentMin),
-          summaryMaxChars: Number(summaryMaxChars),
+          keepRecentMax: keptNumber(keepRecentMax, normalizeContextCompression(settings.contextCompression).keepRecentMax),
+          keepRecentMin: keptNumber(keepRecentMin, normalizeContextCompression(settings.contextCompression).keepRecentMin),
+          summaryMaxChars: keptNumber(summaryMaxChars, normalizeContextCompression(settings.contextCompression).summaryMaxChars),
           autoTopicCompress,
         }),
         // Empty field → default (normalizeMaxTurns treats ''/null as fallback).
-        maxTurns: normalizeMaxTurns(maxTurns),
+        maxTurns: normalizeMaxTurns(keptNumber(maxTurns, normalizeMaxTurns(settings.maxTurns))),
         instructions: normalizeInstructionsSettings({
           assistantRoleTemplate,
           agentsMdRefreshSystemPrompt,
-          agentsMdRecentMessageLimit: Number(agentsMdRecentMessageLimit),
+          agentsMdRecentMessageLimit: keptNumber(agentsMdRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).agentsMdRecentMessageLimit),
           skillsCreateUpdateInstruction,
-          skillsRecentMessageLimit: Number(skillsRecentMessageLimit),
+          skillsRecentMessageLimit: keptNumber(skillsRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).skillsRecentMessageLimit),
         }),
         memory: normalizeMemorySettings({
           scopeInstruction,
-          recentMessageLimit: Number(memoryRecentMessageLimit),
+          recentMessageLimit: keptNumber(memoryRecentMessageLimit, normalizeMemorySettings(settings.memory).recentMessageLimit),
         }),
         squad: normalizeSquadSettings({
           captainPersona,
           playbook: squadPlaybook,
-          captainMaxTurns: Number(captainMaxTurns),
-          memberMaxTurns: Number(memberMaxTurns),
+          captainMaxTurns: keptNumber(captainMaxTurns, normalizeSquadSettings(settings.squad).captainMaxTurns),
+          memberMaxTurns: keptNumber(memberMaxTurns, normalizeSquadSettings(settings.squad).memberMaxTurns),
         }),
       });
     };
@@ -787,7 +824,7 @@ export function SettingsModal({
                         <button
                           type="button"
                           className="settings-eye"
-                          disabled={!localHttpApiEnabled || !localHttpApiToken}
+                          disabled={!localHttpApiEnabled}
                           aria-label={t(lang, 'localHttpApiCopyToken')}
                           title={t(lang, 'localHttpApiCopyToken')}
                           onClick={() => {
@@ -799,8 +836,7 @@ export function SettingsModal({
                               const pending = pendingSaveRef.current;
                               pendingSaveRef.current = null;
                               if (pending) await pending();
-                              const saved = await window.okbot.getSettings();
-                              const token = saved.localHttpApi?.token || '';
+                              const token = await readSavedGatewayToken();
                               if (!token) {
                                 toast.info(t(lang, 'localHttpApiTokenEmpty'));
                                 return;
@@ -997,7 +1033,7 @@ export function SettingsModal({
                       value={maxToolCalls}
                       onChange={(e) => setMaxToolCalls(e.target.value)}
                       onBlur={() => {
-                        setMaxToolCalls(String(normalizeToolRunMaxToolCalls(Number(maxToolCalls))));
+                        setMaxToolCalls(String(normalizeToolRunMaxToolCalls(keptNumber(maxToolCalls, normalizeToolRunSettings(settings.toolRun).maxToolCalls))));
                       }}
                     />
                   </div>
@@ -1018,7 +1054,7 @@ export function SettingsModal({
                       onChange={(e) => setMaxDurationSec(e.target.value)}
                       onBlur={() => {
                         setMaxDurationSec(
-                          String(normalizeToolRunMaxDurationSec(Number(maxDurationSec))),
+                          String(normalizeToolRunMaxDurationSec(keptNumber(maxDurationSec, normalizeToolRunSettings(settings.toolRun).maxDurationSec))),
                         );
                       }}
                     />
@@ -1176,9 +1212,9 @@ export function SettingsModal({
                       onBlur={() => {
                         const cc = normalizeContextCompression({
                           ratio: Number(compressRatioPct) / 100,
-                          keepRecentMax: Number(keepRecentMax),
-                          keepRecentMin: Number(keepRecentMin),
-                          summaryMaxChars: Number(summaryMaxChars),
+                          keepRecentMax: keptNumber(keepRecentMax, normalizeContextCompression(settings.contextCompression).keepRecentMax),
+                          keepRecentMin: keptNumber(keepRecentMin, normalizeContextCompression(settings.contextCompression).keepRecentMin),
+                          summaryMaxChars: keptNumber(summaryMaxChars, normalizeContextCompression(settings.contextCompression).summaryMaxChars),
                         });
                         setKeepRecentMax(String(cc.keepRecentMax));
                         setKeepRecentMin(String(cc.keepRecentMin));
@@ -1201,9 +1237,9 @@ export function SettingsModal({
                       onBlur={() => {
                         const cc = normalizeContextCompression({
                           ratio: Number(compressRatioPct) / 100,
-                          keepRecentMax: Number(keepRecentMax),
-                          keepRecentMin: Number(keepRecentMin),
-                          summaryMaxChars: Number(summaryMaxChars),
+                          keepRecentMax: keptNumber(keepRecentMax, normalizeContextCompression(settings.contextCompression).keepRecentMax),
+                          keepRecentMin: keptNumber(keepRecentMin, normalizeContextCompression(settings.contextCompression).keepRecentMin),
+                          summaryMaxChars: keptNumber(summaryMaxChars, normalizeContextCompression(settings.contextCompression).summaryMaxChars),
                         });
                         setKeepRecentMax(String(cc.keepRecentMax));
                         setKeepRecentMin(String(cc.keepRecentMin));
@@ -1226,9 +1262,9 @@ export function SettingsModal({
                       onBlur={() => {
                         const cc = normalizeContextCompression({
                           ratio: Number(compressRatioPct) / 100,
-                          keepRecentMax: Number(keepRecentMax),
-                          keepRecentMin: Number(keepRecentMin),
-                          summaryMaxChars: Number(summaryMaxChars),
+                          keepRecentMax: keptNumber(keepRecentMax, normalizeContextCompression(settings.contextCompression).keepRecentMax),
+                          keepRecentMin: keptNumber(keepRecentMin, normalizeContextCompression(settings.contextCompression).keepRecentMin),
+                          summaryMaxChars: keptNumber(summaryMaxChars, normalizeContextCompression(settings.contextCompression).summaryMaxChars),
                         });
                         setSummaryMaxChars(String(cc.summaryMaxChars));
                       }}
@@ -1255,7 +1291,7 @@ export function SettingsModal({
                       value={maxTurns}
                       onChange={(e) => setMaxTurns(e.target.value)}
                       onBlur={() => {
-                        setMaxTurns(String(normalizeMaxTurns(maxTurns)));
+                        setMaxTurns(String(normalizeMaxTurns(keptNumber(maxTurns, normalizeMaxTurns(settings.maxTurns)))));
                       }}
                     />
                   </div>
@@ -1342,9 +1378,9 @@ export function SettingsModal({
                             const s = normalizeInstructionsSettings({
                               assistantRoleTemplate,
                               agentsMdRefreshSystemPrompt,
-                              agentsMdRecentMessageLimit: Number(agentsMdRecentMessageLimit),
+                              agentsMdRecentMessageLimit: keptNumber(agentsMdRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).agentsMdRecentMessageLimit),
                               skillsCreateUpdateInstruction,
-                              skillsRecentMessageLimit: Number(skillsRecentMessageLimit),
+                              skillsRecentMessageLimit: keptNumber(skillsRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).skillsRecentMessageLimit),
                             });
                             setAssistantRoleTemplate(s.assistantRoleTemplate);
                           }}
@@ -1376,8 +1412,8 @@ export function SettingsModal({
                             const s = normalizeSquadSettings({
                               captainPersona,
                               playbook: squadPlaybook,
-                              captainMaxTurns: Number(captainMaxTurns),
-                              memberMaxTurns: Number(memberMaxTurns),
+                              captainMaxTurns: keptNumber(captainMaxTurns, normalizeSquadSettings(settings.squad).captainMaxTurns),
+                              memberMaxTurns: keptNumber(memberMaxTurns, normalizeSquadSettings(settings.squad).memberMaxTurns),
                             });
                             setCaptainPersona(s.captainPersona);
                           }}
@@ -1401,8 +1437,8 @@ export function SettingsModal({
                             const s = normalizeSquadSettings({
                               captainPersona,
                               playbook: squadPlaybook,
-                              captainMaxTurns: Number(captainMaxTurns),
-                              memberMaxTurns: Number(memberMaxTurns),
+                              captainMaxTurns: keptNumber(captainMaxTurns, normalizeSquadSettings(settings.squad).captainMaxTurns),
+                              memberMaxTurns: keptNumber(memberMaxTurns, normalizeSquadSettings(settings.squad).memberMaxTurns),
                             });
                             setSquadPlaybook(s.playbook);
                           }}
@@ -1428,8 +1464,8 @@ export function SettingsModal({
                             const s = normalizeSquadSettings({
                               captainPersona,
                               playbook: squadPlaybook,
-                              captainMaxTurns: Number(captainMaxTurns),
-                              memberMaxTurns: Number(memberMaxTurns),
+                              captainMaxTurns: keptNumber(captainMaxTurns, normalizeSquadSettings(settings.squad).captainMaxTurns),
+                              memberMaxTurns: keptNumber(memberMaxTurns, normalizeSquadSettings(settings.squad).memberMaxTurns),
                             });
                             setCaptainMaxTurns(String(s.captainMaxTurns));
                           }}
@@ -1455,8 +1491,8 @@ export function SettingsModal({
                             const s = normalizeSquadSettings({
                               captainPersona,
                               playbook: squadPlaybook,
-                              captainMaxTurns: Number(captainMaxTurns),
-                              memberMaxTurns: Number(memberMaxTurns),
+                              captainMaxTurns: keptNumber(captainMaxTurns, normalizeSquadSettings(settings.squad).captainMaxTurns),
+                              memberMaxTurns: keptNumber(memberMaxTurns, normalizeSquadSettings(settings.squad).memberMaxTurns),
                             });
                             setMemberMaxTurns(String(s.memberMaxTurns));
                           }}
@@ -1493,9 +1529,9 @@ export function SettingsModal({
                             const s = normalizeInstructionsSettings({
                               assistantRoleTemplate,
                               agentsMdRefreshSystemPrompt,
-                              agentsMdRecentMessageLimit: Number(agentsMdRecentMessageLimit),
+                              agentsMdRecentMessageLimit: keptNumber(agentsMdRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).agentsMdRecentMessageLimit),
                               skillsCreateUpdateInstruction,
-                              skillsRecentMessageLimit: Number(skillsRecentMessageLimit),
+                              skillsRecentMessageLimit: keptNumber(skillsRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).skillsRecentMessageLimit),
                             });
                             setAgentsMdRefreshSystemPrompt(s.agentsMdRefreshSystemPrompt);
                           }}
@@ -1521,9 +1557,9 @@ export function SettingsModal({
                             const s = normalizeInstructionsSettings({
                               assistantRoleTemplate,
                               agentsMdRefreshSystemPrompt,
-                              agentsMdRecentMessageLimit: Number(agentsMdRecentMessageLimit),
+                              agentsMdRecentMessageLimit: keptNumber(agentsMdRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).agentsMdRecentMessageLimit),
                               skillsCreateUpdateInstruction,
-                              skillsRecentMessageLimit: Number(skillsRecentMessageLimit),
+                              skillsRecentMessageLimit: keptNumber(skillsRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).skillsRecentMessageLimit),
                             });
                             setAgentsMdRecentMessageLimit(String(s.agentsMdRecentMessageLimit));
                           }}
@@ -1556,7 +1592,7 @@ export function SettingsModal({
                           onBlur={() => {
                             const s = normalizeMemorySettings({
                               scopeInstruction,
-                              recentMessageLimit: Number(memoryRecentMessageLimit),
+                              recentMessageLimit: keptNumber(memoryRecentMessageLimit, normalizeMemorySettings(settings.memory).recentMessageLimit),
                             });
                             setScopeInstruction(s.scopeInstruction);
                           }}
@@ -1581,7 +1617,7 @@ export function SettingsModal({
                           onBlur={() => {
                             const s = normalizeMemorySettings({
                               scopeInstruction,
-                              recentMessageLimit: Number(memoryRecentMessageLimit),
+                              recentMessageLimit: keptNumber(memoryRecentMessageLimit, normalizeMemorySettings(settings.memory).recentMessageLimit),
                             });
                             setMemoryRecentMessageLimit(String(s.recentMessageLimit));
                           }}
@@ -1618,9 +1654,9 @@ export function SettingsModal({
                             const s = normalizeInstructionsSettings({
                               assistantRoleTemplate,
                               agentsMdRefreshSystemPrompt,
-                              agentsMdRecentMessageLimit: Number(agentsMdRecentMessageLimit),
+                              agentsMdRecentMessageLimit: keptNumber(agentsMdRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).agentsMdRecentMessageLimit),
                               skillsCreateUpdateInstruction,
-                              skillsRecentMessageLimit: Number(skillsRecentMessageLimit),
+                              skillsRecentMessageLimit: keptNumber(skillsRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).skillsRecentMessageLimit),
                             });
                             setSkillsCreateUpdateInstruction(s.skillsCreateUpdateInstruction);
                           }}
@@ -1646,9 +1682,9 @@ export function SettingsModal({
                             const s = normalizeInstructionsSettings({
                               assistantRoleTemplate,
                               agentsMdRefreshSystemPrompt,
-                              agentsMdRecentMessageLimit: Number(agentsMdRecentMessageLimit),
+                              agentsMdRecentMessageLimit: keptNumber(agentsMdRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).agentsMdRecentMessageLimit),
                               skillsCreateUpdateInstruction,
-                              skillsRecentMessageLimit: Number(skillsRecentMessageLimit),
+                              skillsRecentMessageLimit: keptNumber(skillsRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).skillsRecentMessageLimit),
                             });
                             setSkillsRecentMessageLimit(String(s.skillsRecentMessageLimit));
                           }}

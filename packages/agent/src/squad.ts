@@ -18,6 +18,7 @@ import {
   formatHistoryBlock,
   formatSessionSummarySection,
   listEnabledToolIds,
+  REPLY_STYLE_INSTRUCTION,
 } from './instructions.js';
 import { VISION_TURN_INSTRUCTION } from './visionInput.js';
 import {
@@ -28,7 +29,7 @@ import {
 } from './hitl.js';
 import { buildTools, type SkillLookup } from './tools.js';
 import type { ExecutionBackend } from './executionBackend.js';
-import { formatComputerRoutingSection, type ComputerRoute } from './computerSelection.js';
+import { shellFsRoutingSection, type ComputerRoute } from './computerSelection.js';
 import { wrapToolExecute, type ToolRunBudget } from './toolRunBudget.js';
 import { assertModel } from './model.js';
 import type { HitlLoopHooks, RunChatResult } from './types.js';
@@ -137,7 +138,8 @@ function buildMemberSquadInstructions(
       member.skillsText?.trim()
         ? `## Skills（目录；须先加载再遵循）\n\n下方为技能目录。匹配时须先调用 read_skill（传入 slug）加载完整正文再执行；有匹配技能时不要另起炉灶。\n\n${member.skillsText.trim()}`
         : '',
-      '用简洁、清楚的中文回答。只处理队长通过工具传入的任务，完成后把结论返回给队长。',
+      REPLY_STYLE_INSTRUCTION,
+      '只处理队长通过工具传入的任务。完成后把结论返回给队长。',
       computerRouting?.trim() || '',
       (() => {
         const enabled = listEnabledToolIds(prefs);
@@ -192,7 +194,8 @@ export function buildCaptainSquadInstructions(input: {
       localTools,
       input.hasVisionInput ? VISION_TURN_INSTRUCTION : '',
       input.computerRouting?.trim() || '',
-      '用简洁、清楚的中文回答用户；整合队员结果后给出最终答复。',
+      REPLY_STYLE_INSTRUCTION,
+      '整合队员结果后，向用户给出最终答复。',
       formatHistoryBlock(input.history),
     ]
       .filter(Boolean)
@@ -253,13 +256,19 @@ export async function runSquadChat(input: RunSquadChatInput): Promise<
             toolName: capturedName,
             content: taskText,
           });
+          const memberRoute = input.computerRoute
+            ? {
+                ...input.computerRoute,
+                userText: [input.computerRoute.userText, taskText].filter(Boolean).join('\n'),
+              }
+            : undefined;
           const memberAgent = new Agent({
             name: capturedMember.name || capturedName,
             instructions: buildMemberSquadInstructions(
               input.squadName,
               capturedMember,
               toolPrefs,
-              input.computerRoute ? formatComputerRoutingSection(input.computerRoute) : '',
+              shellFsRoutingSection(memberRoute, toolPrefs),
             ),
             model: input.model.model,
             ...(typeof input.model.maxTokens === 'number' && input.model.maxTokens >= 1
@@ -274,13 +283,8 @@ export async function runSquadChat(input: RunSquadChatInput): Promise<
                 providerName: input.model.providerName,
               },
               imageAssets: { ownerId: input.ownerId, resourcesDir: input.resourcesDir },
-              backend: input.computerRoute ? undefined : input.executionBackend,
-              computerRoute: input.computerRoute
-                ? {
-                    ...input.computerRoute,
-                    userText: [input.computerRoute.userText, taskText].filter(Boolean).join('\n'),
-                  }
-                : undefined,
+              backend: memberRoute ? undefined : input.executionBackend,
+              computerRoute: memberRoute,
             }),
           });
           const memberRunner = new Runner({
@@ -361,7 +365,7 @@ export async function runSquadChat(input: RunSquadChatInput): Promise<
       sessionSummary: input.sessionSummary,
       history: historyForInstructions,
       hasVisionInput: input.hasVisionInput === true,
-      computerRouting: input.computerRoute ? formatComputerRoutingSection(input.computerRoute) : '',
+      computerRouting: shellFsRoutingSection(input.computerRoute, toolPrefs),
     }),
     model: input.model.model,
     modelSettings: {

@@ -93,7 +93,11 @@ export function buildTools(
     .describe('目标电脑的 id 或名称。省略时：用户只点了一台就用那台，否则用默认电脑。用户点了多台时必填。');
 
   function backendFor(requested?: string): ExecutionBackend | string {
-    if (!route) return backend;
+    const req = (requested || '').trim();
+    if (!route) {
+      if (req) return `当前会话没有电脑路由，不能按 computer=${req} 执行。`;
+      return backend;
+    }
     const picked = selectComputerForTool(route, requested);
     if (!picked.ok) return picked.message;
     return resolveExecutionBackend({ computerId: picked.id, computers: route.computers });

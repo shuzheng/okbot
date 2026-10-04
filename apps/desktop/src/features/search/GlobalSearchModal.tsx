@@ -20,6 +20,8 @@ type Props = {
   lang: UiLang;
   bots: Bot[];
   squads: Squad[];
+  /** System-instruction rows are hidden unless developer mode is on. */
+  developerMode?: boolean;
   onClose: () => void;
   onSelect: (target: GlobalSearchSelect) => void;
 };
@@ -37,7 +39,7 @@ function matchText(hay: string, q: string): boolean {
   return hay.toLowerCase().includes(q);
 }
 
-export function GlobalSearchModal({ lang, bots, squads, onClose, onSelect }: Props) {
+export function GlobalSearchModal({ lang, bots, squads, developerMode = false, onClose, onSelect }: Props) {
   const [query, setQuery] = useState('');
   const [messageHits, setMessageHits] = useState<MessageSearchHit[]>([]);
   const [messagesLoading, setMessagesLoading] = useState(false);
@@ -94,6 +96,7 @@ export function GlobalSearchModal({ lang, bots, squads, onClose, onSelect }: Pro
   const settingsHits = useMemo(() => {
     if (!q) return [];
     return SETTINGS_SEARCH_ITEMS.filter((item) => {
+      if (item.tab === 'instructions' && !developerMode) return false;
       const label = t(lang, item.labelKey);
       if (matchText(label, q)) return true;
       if (item.keywords?.some((k) => matchText(k, q))) return true;
@@ -101,7 +104,7 @@ export function GlobalSearchModal({ lang, bots, squads, onClose, onSelect }: Pro
       if (matchText(item.id, q) || matchText(item.tab, q)) return true;
       return false;
     }).slice(0, 12);
-  }, [lang, q]);
+  }, [developerMode, lang, q]);
 
   useEffect(() => {
     if (!q) {

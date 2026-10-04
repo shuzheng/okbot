@@ -4,6 +4,19 @@ import { normalizeMarkdownHeadings } from './promptContext.js';
 import { TOOL_BLURBS } from './tools.js';
 import { VISION_TURN_INSTRUCTION } from './visionInput.js';
 
+/**
+ * Reply-style rules on every assistant turn (1:1 and squad).
+ * Four writing constraints only — not a procedure manual.
+ */
+export const REPLY_STYLE_INSTRUCTION = [
+  '用简洁、清楚的中文回答。',
+  '一个概念只用一个词。不要为了避免重复而换同义词（例如不要混用「点击」和「点选」）。',
+  '一句只说一件事。步骤按顺序编号，一步只写一个动作。',
+  '用主动语态，写清谁对谁做了什么。不要写没有主语的句子。',
+  '有前提时，先写条件，再写动作。',
+  '闲聊和短答复保持自然，不要把每条回复写成操作手册。',
+].join('\n');
+
 /** Rolling session-summary section shared by 1:1 bot and squad captain prompts. */
 export function formatSessionSummarySection(sessionSummary?: string | null): string {
   const t = sessionSummary?.trim();
@@ -76,7 +89,7 @@ export function buildAgentInstructions(
       summaryBlock,
       skillsBlock,
       hasVisionInput ? VISION_TURN_INSTRUCTION : '',
-      '用简洁、清楚的中文回答。',
+      REPLY_STYLE_INSTRUCTION,
       toolLine,
       computerRouting?.trim() || '',
       enabled.includes('edit_file') || enabled.includes('write_file')

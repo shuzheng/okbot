@@ -13,6 +13,7 @@ const shellOut = await local.runShell('echo local-backend-ok');
 assert.match(shellOut, /local-backend-ok/);
 
 const TOKEN = 'backend-test-token';
+let shellPosts = 0;
 const server = http.createServer((req, res) => {
   const pathOnly = (req.url || '').split('?')[0];
   if (req.method === 'GET' && pathOnly === '/v1/health') {
@@ -36,6 +37,7 @@ const server = http.createServer((req, res) => {
       return;
     }
     if (path === '/v1/shell') {
+      shellPosts += 1;
       let parsed: { command?: string } = {};
       try { parsed = body.trim() ? JSON.parse(body) : {}; } catch { parsed = {}; }
       if (!parsed.command || !String(parsed.command).trim()) {
@@ -76,7 +78,9 @@ const remote = createRemoteExecutionBackend({
   token: TOKEN,
 });
 assert.equal(remote.label, 'TestCloud');
+const postsBefore = shellPosts;
 const remoteOut = await remote.runShell('echo ignored');
+assert.equal(shellPosts, postsBefore + 1);
 assert.match(remoteOut, /remote-shell-ok/);
 const readOut = await remote.readFile('/x');
 assert.match(readOut, /hello/);
@@ -111,6 +115,11 @@ const down = await probeRemoteComputer({
 });
 assert.equal(down.ok, false);
 if (!down.ok) assert.equal(down.error, 'unreachable');
+
+const missing = resolveExecutionBackend({ computerId: 'missing-computer', computers: [] });
+const refused = await missing.runShell('echo should-not-run');
+assert.match(refused, /拒绝/);
+assert.doesNotMatch(refused, /should-not-run/);
 
 await new Promise<void>((resolve) => server.close(() => resolve()));
 console.log('executionBackend.test.ts: ok');

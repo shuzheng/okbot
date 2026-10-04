@@ -147,7 +147,7 @@ export function MemoryEntriesList({
           cancelEdit();
           return;
         }
-        void saveEdit();
+        void saveEdit().catch((err) => { console.error("[okbot] memory save failed", err); });
       }}
     >
       <textarea
@@ -174,7 +174,7 @@ export function MemoryEntriesList({
           title={t(lang, 'botMemorySave')}
           aria-label={t(lang, 'botMemorySave')}
           disabled={!draftMemory.trim()}
-          onClick={() => void saveEdit()}
+          onClick={() => { void saveEdit().catch((err) => { console.error("[okbot] memory save failed", err); }); }}
         >
           <CheckIcon />
         </button>

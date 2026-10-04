@@ -19,7 +19,7 @@ export type RoutedComputer = {
  * An explicit tool arg (id or name) always wins when it matches.
  */
 export type ComputerRoute = {
-  /** Settings default. Missing or unknown falls back to local. */
+  /** Settings default. Missing means local. Unknown or disabled does not fall back to local. */
   defaultComputerId?: string | null;
   /** Optional per-request override (HTTP API computerId), below a named computer. */
   turnComputerId?: string | null;
@@ -50,12 +50,19 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function spanHits(text: string, label: string): Array<{ index: number; length: number }> {
+function spanHits(
+  text: string,
+  label: string,
+  mode: 'id' | 'name',
+): Array<{ index: number; length: number }> {
   if (!label) return [];
   const hits: Array<{ index: number; length: number }> = [];
   if (/^[\x00-\x7F]+$/.test(label)) {
+    // Names treat "-" as a separator so "Mac mini-MacBook Air" matches both.
+    // Ids keep "-" inside the token so one id is not a prefix of another.
+    const edge = mode === 'name' ? 'A-Za-z0-9_' : 'A-Za-z0-9_-';
     const re = new RegExp(
-      `(?:^|[^A-Za-z0-9_-])(${escapeRegExp(label)})(?=$|[^A-Za-z0-9_-])`,
+      `(?:^|[^${edge}])(${escapeRegExp(label)})(?=$|[^${edge}])`,
       'gi',
     );
     let m: RegExpExecArray | null;
@@ -77,7 +84,10 @@ function spanHits(text: string, label: string): Array<{ index: number; length: n
   return hits;
 }
 
-/** Computers named in text (id, name, or 本机 / local). Longer names win over inner ones. */
+/** Computers named in text (id, name, or 本机). Longer names win over inner ones.
+ *  The id `local` is not a text mention — paths like /usr/local/bin must not select this machine.
+ *  Pass `local` only as an explicit computer argument.
+ */
 export function computersMentioned(text: string, route: ComputerRoute): ComputerChoice[] {
   const raw = text || '';
   if (!raw.trim()) return [];
@@ -85,15 +95,21 @@ export function computersMentioned(text: string, route: ComputerRoute): Computer
   type Hit = ComputerChoice & { index: number; length: number };
   const hits: Hit[] = [];
   for (const c of list) {
-    const labels = c.id === LOCAL_COMPUTER_ID ? [LOCAL_COMPUTER_ID, LOCAL_NAME] : [c.id, c.name];
+    const labels =
+      c.id === LOCAL_COMPUTER_ID
+        ? [{ label: LOCAL_NAME, mode: 'name' as const }]
+        : [
+            { label: c.id, mode: 'id' as const },
+            { label: c.name, mode: 'name' as const },
+          ];
     const seenLabel = new Set<string>();
-    for (const label of labels) {
-      const trimmed = (label || '').trim();
+    for (const item of labels) {
+      const trimmed = (item.label || '').trim();
       if (trimmed.length < 2) continue;
       const key = trimmed.toLowerCase();
       if (seenLabel.has(key)) continue;
       seenLabel.add(key);
-      for (const span of spanHits(raw, trimmed)) {
+      for (const span of spanHits(raw, trimmed, item.mode)) {
         hits.push({ ...c, ...span });
       }
     }
@@ -117,30 +133,53 @@ export function formatComputerChoices(list: ComputerChoice[]): string {
   return list.map((c) => `${c.name}（id=${c.id}）`).join('、');
 }
 
-/** Settings default if it still exists, otherwise local. Ignores turn override and user text. */
+/** Settings default if it still exists. Unknown or disabled ids are empty, not local. */
 export function settingsDefaultComputerId(route: ComputerRoute): string {
   const list = computerCatalog(route);
   const id = (route.defaultComputerId || '').trim();
-  if (id && list.some((c) => c.id === id)) return id;
-  return LOCAL_COMPUTER_ID;
+  if (!id || id === LOCAL_COMPUTER_ID) return LOCAL_COMPUTER_ID;
+  if (list.some((c) => c.id === id)) return id;
+  return '';
 }
 
-/** Computer used when this turn names none: API turn id, else settings default, else local. */
+/**
+ * Why this turn must not run on local.
+ * Empty default means local. A set id that is missing or disabled is a hard stop.
+ * An unknown turnComputerId does not fall through to the settings default.
+ */
+export function configuredComputerProblem(route: ComputerRoute): string | null {
+  const list = computerCatalog(route);
+  const known = (id: string) => id === LOCAL_COMPUTER_ID || list.some((c) => c.id === id);
+  const turn = (route.turnComputerId || '').trim();
+  if (turn) {
+    if (known(turn)) return null;
+    return `指定电脑「${turn}」不存在或已禁用，不会改在本机执行。`;
+  }
+  const id = (route.defaultComputerId || '').trim();
+  if (!id || known(id)) return null;
+  return `默认电脑「${id}」不存在或已禁用，不会改在本机执行。`;
+}
+
+/** Computer used when this turn names none. Empty string means the configured id is unusable. */
 export function effectiveDefaultComputerId(route: ComputerRoute): string {
   const list = computerCatalog(route);
   const turn = (route.turnComputerId || '').trim();
+  if (turn === LOCAL_COMPUTER_ID) return LOCAL_COMPUTER_ID;
   if (turn && list.some((c) => c.id === turn)) return turn;
+  if (turn) return '';
   return settingsDefaultComputerId(route);
 }
 
 export function defaultComputerLabel(route: ComputerRoute): string {
   const id = effectiveDefaultComputerId(route);
+  if (!id) return '不可用';
   return computerCatalog(route).find((c) => c.id === id)?.name || LOCAL_NAME;
 }
 
 export type ImplicitComputer =
   | { kind: 'one'; id: string }
-  | { kind: 'ambiguous'; labels: string[] };
+  | { kind: 'ambiguous'; labels: string[] }
+  | { kind: 'invalid'; message: string };
 
 export function resolveImplicitComputer(route: ComputerRoute): ImplicitComputer {
   const mentioned = computersMentioned(route.userText || '', route);
@@ -148,7 +187,14 @@ export function resolveImplicitComputer(route: ComputerRoute): ImplicitComputer 
     return { kind: 'ambiguous', labels: mentioned.map((c) => `${c.name}（${c.id}）`) };
   }
   if (mentioned.length === 1) return { kind: 'one', id: mentioned[0]!.id };
-  return { kind: 'one', id: effectiveDefaultComputerId(route) };
+  const id = effectiveDefaultComputerId(route);
+  if (!id) {
+    return {
+      kind: 'invalid',
+      message: configuredComputerProblem(route) || '默认电脑不可用，不会改在本机执行。',
+    };
+  }
+  return { kind: 'one', id };
 }
 
 function matchRequested(
@@ -190,12 +236,29 @@ export function selectComputerForTool(
       message: `这轮对话点了多台电脑（${implicit.labels.join('、')}）。请在 computer 参数里指定其中一台。`,
     };
   }
+  if (implicit.kind === 'invalid') return { ok: false, message: implicit.message };
   return { ok: true, id: implicit.id };
 }
 
 /** System-prompt section. Same policy as selectComputerForTool. */
+type ShellFsPrefs = {
+  run_shell?: { enabled?: boolean };
+  read_file?: { enabled?: boolean };
+  write_file?: { enabled?: boolean };
+  edit_file?: { enabled?: boolean };
+};
+
 export function formatComputerRoutingSection(route: ComputerRoute): string {
   const list = computerCatalog(route);
+  const problem = configuredComputerProblem(route);
+  if (problem) {
+    return [
+      '## 执行电脑',
+      `可用电脑：${formatComputerChoices(list)}。`,
+      problem,
+      '在该问题解决前，不要调用 run_shell / read_file / write_file / edit_file。',
+    ].join('\n');
+  }
   const id = effectiveDefaultComputerId(route);
   const current = list.find((c) => c.id === id) || list[0]!;
   return [
@@ -206,4 +269,20 @@ export function formatComputerRoutingSection(route: ComputerRoute): string {
     '用户要求在多台电脑上执行时，每次调用上述工具都必须传 computer（填 id 或名称），分别在对应电脑上执行。',
     'read_skill 与 generate_image 始终在运行 OkBot 的桌面主机上，不随电脑切换。',
   ].join('\n');
+}
+
+/** Omit the routing section when no shell/fs tool is enabled. */
+export function shellFsRoutingSection(
+  route: ComputerRoute | undefined,
+  prefs?: ShellFsPrefs | null,
+): string {
+  if (!route) return '';
+  const on = Boolean(
+    prefs?.run_shell?.enabled ||
+      prefs?.read_file?.enabled ||
+      prefs?.write_file?.enabled ||
+      prefs?.edit_file?.enabled,
+  );
+  if (!on) return '';
+  return formatComputerRoutingSection(route);
 }

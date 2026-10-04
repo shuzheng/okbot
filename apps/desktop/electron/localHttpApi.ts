@@ -11,6 +11,7 @@ import { gatewayBootJs, gatewayLoginHtml, injectGatewayBoot, shouldServeGatewayL
 import { runtimeEventChannel } from './sessionEvents';
 import { respondToToolApproval, startChatTurn } from './ipc/registerChat';
 import { persistAppSettings } from './ipc/registerEntity';
+import { parseMessagesLimit, resolveGatewaySettingsWrite } from './gatewaySettingsWrite';
 
 const LOOPBACK_HOST = '127.0.0.1';
 const LAN_HOST = '0.0.0.0';
@@ -31,6 +32,26 @@ function gatewaySquadsForUi<T extends { members?: unknown }>(squads: T[]): T[] {
     Array.isArray(squad.members) ? squad : { ...squad, members: [] },
   );
 }
+
+/** Strip credentials and the absolute data directory before a gateway response. */
+function projectSettingsForGateway(settings: AppSettings): AppSettings {
+  const model = settings.model;
+  return {
+    ...settings,
+    model: {
+      ...model,
+      providers: Array.isArray(model?.providers)
+        ? model.providers.map((provider) => ({ ...provider, apiKey: '' }))
+        : [],
+    },
+    localHttpApi: { ...settings.localHttpApi, token: '' },
+    computers: Array.isArray(settings.computers)
+      ? settings.computers.map((computer) => ({ ...computer, token: '' }))
+      : [],
+  };
+}
+
+
 
 
 function readBody(req: IncomingMessage, limit = 1_000_000): Promise<string> {
@@ -162,6 +183,12 @@ function openSse(res: ServerResponse): void {
  */
 export function createLocalHttpApi(deps: LocalHttpApiDeps): {
   sync: (settings: LocalHttpApiSettings) => void;
+  /**
+   * Bind using port / token / bindLan / serveUi even when the desktop switch is off.
+   * `okbot serve` and an Electron launch that owns the gateway both use this.
+   * Rejects if the port cannot be bound (for example EADDRINUSE).
+   */
+  listen: (settings: LocalHttpApiSettings) => Promise<void>;
   stop: () => void;
   /** Fan-in from main sendRuntimeEvent → active SSE subscribers. */
   bridgeRuntimeEvent: (event: RuntimeEvent) => void;
@@ -303,7 +330,7 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
         (cookieToken && cookieToken === currentToken) ||
         false;
       // Static SPA assets (js/css/img/fonts) are not secret; browsers cannot attach Bearer on <script src>.
-      const isStaticAsset = /\.(js|css|map|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|otf|wasm)(\?|$)/i.test(pathname);
+      const isStaticAsset = /\.(js|css|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|otf|wasm)(\?|$)/i.test(pathname);
       // If browser asks for HTML without auth, send to login
       const accept = String(req.headers.accept || '');
       const wantsHtml = accept.includes('text/html') || pathname === '/' || pathname.endsWith('.html');
@@ -380,6 +407,19 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
 
     const token = extractToken(req);
     if (!currentToken || token !== currentToken) {
+      // A query token skips the login gate but is not an API credential.
+      // When the built UI is not served, GET / would otherwise be this JSON,
+      // which Electron shows as the whole window. Keep API routes JSON.
+      const deniedUrl = new URL(req.url || '/', 'http://127.0.0.1');
+      const deniedPath = deniedUrl.pathname || '/';
+      if (method === 'GET' && (deniedPath === '/' || deniedPath === '/index.html')) {
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-store',
+        });
+        res.end(gatewayLoginHtml());
+        return;
+      }
       sendJson(res, 401, { ok: false, error: 'unauthorized' });
       return;
     }
@@ -441,6 +481,14 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
         return;
       }
 
+      // GET /v1/gateway-token — the credential this process is checking.
+      // Bootstrap and settings responses keep the token blank. This route is the
+      // only JSON that returns it, and only after the auth gate above.
+      if (method === 'GET' && parts.length === 2 && parts[0] === 'v1' && parts[1] === 'gateway-token') {
+        sendJson(res, 200, { ok: true, token: currentToken });
+        return;
+      }
+
       // GET /v1/bootstrap — same shape as desktop getBootstrap so the pre-bridge renderer can render.
       if (method === 'GET' && parts.length === 2 && parts[0] === 'v1' && parts[1] === 'bootstrap') {
         const settings = deps.ctx.storage.getSettings();
@@ -453,9 +501,8 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
           ok: true,
           bots,
           squads,
-          settings,
+          settings: projectSettingsForGateway(settings),
           hardwareAccelerationActive: deps.ctx.hardwareAccelerationActive,
-          dataDir: deps.ctx.storage.root,
           busyBotIds: runs.busyBotIds ?? [],
           pendingToolRequests: runs.pendingToolRequests ?? [],
           activeRuns: runs,
@@ -472,7 +519,13 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
         parts[3] === 'messages'
       ) {
         const id = parts[2] || '';
-        const page = deps.ctx.storage.getMessagesPage(id, { limit: 50 });
+        const url = new URL(req.url || '/', 'http://127.0.0.1');
+        const limit = parseMessagesLimit(url.searchParams.get('limit'));
+        const before = (url.searchParams.get('beforeMessageId') || '').trim();
+        const page = deps.ctx.storage.getMessagesPage(id, {
+          limit,
+          beforeMessageId: before || null,
+        });
         sendJson(res, 200, { ok: true, ...page });
         return;
       }
@@ -534,10 +587,20 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
           return;
         }
         try {
-          const saved = persistAppSettings(deps.ctx, settings as AppSettings, {
+          const current = deps.ctx.storage.getSettings();
+          const decision = resolveGatewaySettingsWrite(current, settings as Record<string, unknown>);
+          if (!decision.ok) {
+            sendJson(res, 409, {
+              ok: false,
+              error: 'settings_not_allowed',
+              rejectedKeys: decision.rejectedKeys,
+            });
+            return;
+          }
+          const saved = persistAppSettings(deps.ctx, decision.next, {
             deferListenerRestart: true,
           });
-          sendJson(res, 200, { ok: true, settings: saved });
+          sendJson(res, 200, { ok: true, settings: projectSettingsForGateway(saved) });
         } catch (err) {
           sendJson(res, 400, {
             ok: false,
@@ -789,6 +852,22 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
     });
   };
 
+  const listen = (settings: LocalHttpApiSettings): Promise<void> => {
+    const port = settings.port;
+    const token = settings.token;
+    const lan = settings.bindLan === true;
+    const ui = settings.serveUi === true;
+    if (!token) return Promise.reject(new Error('missing_token'));
+    if (server && listeningPort === port && currentToken === token && bindLan === lan && serveUi === ui) {
+      return Promise.resolve();
+    }
+    const run = start(port, token, lan, ui);
+    starting = run;
+    return run.finally(() => {
+      if (starting === run) starting = null;
+    });
+  };
+
   return {
     sync(settings: LocalHttpApiSettings) {
       if (!settings.enabled) {
@@ -800,21 +879,11 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
         starting = null;
         return;
       }
-      const port = settings.port;
-      const token = settings.token;
-      const lan = settings.bindLan === true;
-      const ui = settings.serveUi === true;
-      if (server && listeningPort === port && currentToken === token && bindLan === lan && serveUi === ui) {
-        return;
-      }
-      const run = start(port, token, lan, ui).catch((err) => {
+      void listen(settings).catch((err) => {
         console.error('[okbot] localHttpApi failed to start', err);
       });
-      starting = run;
-      void run.finally(() => {
-        if (starting === run) starting = null;
-      });
     },
+    listen,
     stop() {
       stopSync();
       currentToken = '';

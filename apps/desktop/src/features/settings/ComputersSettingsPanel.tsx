@@ -164,13 +164,31 @@ function ComputerEditDialog({
 
   async function submit() {
     if (probe.kind === 'loading') return;
+    const next: Draft = {
+      ...draft,
+      port: draft.port.trim() || (mode === 'edit' ? initial.port : ''),
+    };
+    if (next.port !== draft.port) setDraft(next);
+    const connectionUnchanged =
+      mode === 'edit' &&
+      next.host.trim() === initial.host.trim() &&
+      next.port.trim() === initial.port.trim() &&
+      next.token.trim() === initial.token.trim();
+    if (connectionUnchanged) {
+      if (!next.name.trim()) {
+        setProbe({ kind: 'error', message: t(lang, 'computerProbeNeedFields') });
+        return;
+      }
+      onSave(next);
+      return;
+    }
     setProbe({ kind: 'loading', message: t(lang, 'computerProbing') });
-    const result = await probeDraft(lang, draft);
+    const result = await probeDraft(lang, next);
     if (!result.ok) {
       setProbe({ kind: 'error', message: result.message });
       return;
     }
-    onSave(draft);
+    onSave(next);
   }
 
   if (typeof document === 'undefined') return null;

@@ -10,6 +10,7 @@ const preloadMethods = [...block.matchAll(/^\s{2}([A-Za-z0-9_]+)\s*(?::|\()/gm)]
 assert.ok(preloadMethods.includes('getBootstrap'));
 assert.ok(preloadMethods.includes('onRuntimeEvent'));
 assert.ok(preloadMethods.includes('getAppInfo'));
+assert.ok(preloadMethods.includes('getGatewayAccessToken'));
 
 const startupMethods = [
   'getAppInfo',
@@ -63,6 +64,12 @@ bootGlobal.fetch = (async (input: RequestInfo | URL) => {
         controller.close();
       },
     });
+  if (url.includes('/v1/gateway-token')) {
+    return {
+      ok: true,
+      text: async () => JSON.stringify({ ok: true, token: 'live-gateway-token' }),
+    };
+  }
   if (url.includes('/v1/bootstrap')) {
     return {
       ok: true,
@@ -74,6 +81,7 @@ bootGlobal.fetch = (async (input: RequestInfo | URL) => {
             theme: 'dark',
             tools: {},
             model: { providers: [{ id: 'p', name: 'P', models: [{ id: 'm' }] }] },
+            localHttpApi: { enabled: true, port: 18765, token: '', bindLan: true, serveUi: true },
           },
           dataDir: '/tmp/okbot',
           hardwareAccelerationActive: true,
@@ -95,6 +103,7 @@ const shaped = (await sandbox.window.okbot!.getBootstrap!()) as {
   settings: {
     tools: Record<string, { enabled: boolean }>;
     model: { providers: Array<{ models: Array<{ enabled: boolean }> }> };
+    localHttpApi: { token: string };
   };
   busyBotIds: string[];
   pendingToolRequests: unknown[];
@@ -103,8 +112,11 @@ assert.equal(JSON.stringify(shaped.squads[0]?.members), '[]');
 assert.equal(shaped.settings.tools.read_file?.enabled, true);
 assert.equal(shaped.settings.tools.run_shell?.enabled, true);
 assert.equal(shaped.settings.model.providers[0]?.models[0]?.enabled, true);
+assert.equal(shaped.settings.localHttpApi.token, 'live-gateway-token');
 assert.equal(JSON.stringify(shaped.busyBotIds), JSON.stringify(['b1']));
 assert.ok(Array.isArray(shaped.pendingToolRequests));
+const liveToken = await sandbox.window.okbot!.getGatewayAccessToken!();
+assert.equal(liveToken, 'live-gateway-token');
 const listed = (await sandbox.window.okbot!.listSquads!()) as Array<{ members: unknown[] }>;
 assert.equal(JSON.stringify(listed[0]?.members), '[]');
 const listedSettings = (await sandbox.window.okbot!.getSettings!()) as {
