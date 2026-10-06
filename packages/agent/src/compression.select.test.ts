@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import type { ChatMessage } from '@okbot/shared';
-import { selectDeltaForSummary } from './compression.js';
+import { nextSummarySlice, selectDeltaForSummary } from './compression.js';
 
 function msg(id: string, content: string, role: 'user' | 'assistant' = 'user'): ChatMessage {
   return { id, role, content, createdAt: '2026-01-01T00:00:00.000Z' };
@@ -47,3 +47,47 @@ function msg(id: string, content: string, role: 'user' | 'assistant' = 'user'): 
 }
 
 console.log('compression.select.test.ts: ok');
+
+{
+  let rest = [msg('big', 'q'.repeat(100))];
+  let sawPartial = false;
+  let consumed = false;
+  for (let i = 0; i < 20; i++) {
+    const slice = nextSummarySlice(rest, { maxIn: 36, perItem: 10 });
+    if (slice.kind === 'partial') {
+      sawPartial = true;
+      assert.equal(slice.messageId, 'big');
+      assert.ok(slice.dialogue.length <= 36);
+      assert.ok(slice.rest[0]?.content.length < rest[0]!.content.length);
+      rest = slice.rest;
+      continue;
+    }
+    assert.equal(slice.kind, 'batch');
+    if (slice.kind === 'batch') {
+      assert.deepEqual(slice.consumedIds, ['big']);
+      assert.equal(slice.rest.length, 0);
+      consumed = true;
+    }
+    break;
+  }
+  assert.equal(sawPartial, true);
+  assert.equal(consumed, true);
+}
+
+{
+  const slice = nextSummarySlice([msg('a', 'hello'), msg('b', 'world')], { maxIn: 10_000, perItem: 100 });
+  assert.equal(slice.kind, 'batch');
+  if (slice.kind === 'batch') assert.deepEqual(slice.consumedIds, ['a', 'b']);
+}
+
+console.log('compression.select.test.ts: ok');
+
+{
+  const slice = nextSummarySlice([msg('big', 'q'.repeat(80))], { maxIn: 36, perItem: 0 });
+  assert.notEqual(slice.kind, 'stuck');
+  const selected = selectDeltaForSummary([msg('a', 'hello')], { maxIn: 100, perItem: -5 });
+  assert.deepEqual(selected.consumedIds, ['a']);
+}
+
+console.log('compression.select.test.ts: perItem guard ok');
+

@@ -13,6 +13,8 @@ type Props = {
   onChange: (rules: AutoApprovalRule[]) => void;
   /** When true, start with a blank draft row (e.g. from the header「添加规则」button). */
   requestAdd?: number;
+  /** Gateway clients: show rules, no edits (rules change only from the desktop or a tool card). */
+  readOnly?: boolean;
 };
 
 function EditIcon() {
@@ -51,7 +53,7 @@ function normName(s: string) {
   return s.trim().toLowerCase();
 }
 
-export function AutoApprovalRulesList({ lang, rules, onChange, requestAdd = 0 }: Props) {
+export function AutoApprovalRulesList({ lang, rules, onChange, requestAdd = 0, readOnly = false }: Props) {
   const [editingId, setEditingId] = useState<string | 'new' | null>(null);
   const [draftDesc, setDraftDesc] = useState('');
   const [draftAction, setDraftAction] = useState<AutoApprovalAction>('allow');
@@ -245,6 +247,7 @@ export function AutoApprovalRulesList({ lang, rules, onChange, requestAdd = 0 }:
               </div>
               <select
                 className="tool-mgmt-approval-select"
+                disabled={readOnly}
                 value={rule.action}
                 aria-label={t(lang, 'autoApprovalPolicy')}
                 onChange={(e) =>
@@ -260,6 +263,7 @@ export function AutoApprovalRulesList({ lang, rules, onChange, requestAdd = 0 }:
                   className="model-icon-btn"
                   title={t(lang, 'autoApprovalEditTitle')}
                   aria-label={t(lang, 'autoApprovalEditTitle')}
+                  disabled={readOnly}
                   onClick={() => startEdit(rule)}
                 >
                   <EditIcon />
@@ -269,6 +273,7 @@ export function AutoApprovalRulesList({ lang, rules, onChange, requestAdd = 0 }:
                   className="model-icon-btn"
                   title={t(lang, 'autoApprovalDelete')}
                   aria-label={t(lang, 'autoApprovalDelete')}
+                  disabled={readOnly}
                   onClick={() => deleteRule(rule.id)}
                 >
                   <TrashIcon />
@@ -279,7 +284,9 @@ export function AutoApprovalRulesList({ lang, rules, onChange, requestAdd = 0 }:
         )}
         {editingId === 'new' ? renderEditorRow('new') : null}
       </div>
-      <p className="aar-hint settings-aar-hint">{t(lang, 'autoApprovalHint')}</p>
+      <p className="aar-hint settings-aar-hint">
+        {t(lang, readOnly ? 'autoApprovalGatewayReadOnly' : 'autoApprovalHint')}
+      </p>
     </div>
   );
 }

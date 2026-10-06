@@ -68,10 +68,11 @@ okbot/
 - **展开态**：搜索、会话列表（助手 + 小队）、底部 FAB（搜索 / 设置 / 创建菜单）。会话行名称右上角显示**上次更新时间**（`formatSessionUpdatedAt`，用 `SessionItem.updatedAt`）：当天 `HH:mm`；昨天 `昨天 HH:mm`（EN: `Yesterday HH:mm`）；一周内为星期（`星期x` / EN 本地化短星期）；一月内为 `MM/DD`；更早为 `YYYY/MM/DD`。次要 muted 文案，不挤占标题/未读。  
 - **折叠态**：窄轨头像列表；悬停约 **500ms** 后显示 dock tip；底部紧凑 FAB。Mac Dock 式头像放大动效默认**关闭**（`settings.sidebarDockMagnify`，设置 → 通用 →「缩放特效」）；仅开关打开时才缩放。  
 - **宽度**：可拖拽，上限约 **400px**；点击 splitter 可折叠/展开；宽度持久化（`sidebarPersistence`）。  
-- **创建菜单**：创建助手 / 创建小队 / **导入助手**（独立图标；导入在「新建小队」之后）。  
+- **创建菜单**：创建助手 / 创建小队 / **助手库** / **导入助手**（各有独立图标）。  
 - **会话项**：头像 + 名称 + 最近回复预览。助手右键：改名 / 资料 / **导出助手** / 删除。小队右键：改名 / 资料 / 删除。  
 - **两边列表同步**：桌面窗口与局域网网关页面共用同一份 `~/.okbot`。新消息、改名、新建、删除会发 `sessions_changed`（桌面走 IPC，网关走 `GET /v1/events` 长连接，只转发花名册变更、不转发对话 delta）。收到后约 **120ms** 内重新拉助手与小队列表；当前会话若已被删掉则清空选中。  
-- **未读回复**：非当前会话、且该会话 `hasUnreadReply` 且不在「工作中」时，头像外壳加 **unread 脉冲光晕**（`session-avatar-shell.unread`，文案 `unreadReply`）。切回会话会清未读（IPC `setChatUnread`）。  
+- **未读回复**：非当前会话、且该会话 `hasUnreadReply` 且不在「工作中」时，头像外壳加 **unread 脉冲光晕**（`session-avatar-shell.unread`，文案 `unreadReply`）。切回会话会清未读（IPC `setChatUnread`）。窗口不在前台时，当前会话的回复完成或工具等待批准也会标未读；窗口重新获得焦点时清掉当前会话的未读。  
+- **系统通知**（设置 → 通用 → 系统 →「系统通知」，`settings.notifications`，默认开）：窗口不在前台时，回复完成、工具等待批准各发一条系统通知（同一会话同类通知用 `tag` 合并）。点通知会把窗口拉到前台（IPC `windowFocus`）并打开对应助手或小队。实现：`src/utils/systemNotify.ts`（Web Notification API，网关页同样可用，需浏览器授权）。同一设备开了多个窗口时只弹一条：先在同源窗口间用 localStorage 按 `tag` 抢占，再向主进程申请（桌面 IPC `claimNotification`，网关页 `POST /v1/notify-claim`，`electron/notifyClaim.ts`）。主进程把桌面窗口、本机回环地址、以及本机网卡上的局域网地址都算作同一设备（网关页用局域网 IP 打开时不会和桌面窗口各弹一条）；其它网关客户端按来源地址区分。`tag` 含会话、种类和事件 id（消息 id / 批准 requestId），所以 5 秒内同一种类的两条不同事件都会弹。未读：回复完成和出错都适用；在前台正看着这个聊天的窗口会在约 400 ms 后再写一次「已读」，盖过别的窗口为同一事件写的「未读」。  
 - **小队头像**：`SquadAvatar` 田字格拼接成员 emoji/颜色（不强制 bot-avatar 造型）。
 
 ### 3.2 对话区顶栏
@@ -141,6 +142,22 @@ okbot/
 - **导出**：侧栏该助手右键 **导出助手**。默认文件名是助手名称（去掉不能做文件名的字符），扩展名 `.okbot`。`.okbot` 是**未加密** zip（系统 `zip`，无密码）。导出前剥掉密钥类字段（apiKey、token、password 等），**不含**会话、记忆、供应商配置。保存路径若没写 `.okbot` 会自动补上。  
 - **导入**：侧栏 **+** → **导入助手**，可选 `.okbot` 或含 `manifest.json` 的文件夹。始终**新建**一名助手（头像 / 名称 / 人设 / 技能），并标成已完成引导；不改本机模型密钥。成功后刷新会话列表。
 
+### 4.4 助手库（内置入门助手）
+
+- 侧栏 **+** → **助手库**，或首次使用引导第 2 步。点卡片即新建一名可直接聊天的助手，随后选中它并聚焦输入框。没有模型时卡片不可点，并提示先去「模型接入」添加模型。已有同名助手的卡片显示「已添加」，不能再点。
+- 内置 5 个：写作助手、学习辅导、计划助手、翻译助手、电脑小帮手。每个含人设（`AGENTS.md`）和 1–2 个技能（slug 以 `okbot-` 开头），中英两套文案按界面语言安装。人设与技能用 ASD-STE100 风格的短句。
+- 数据在 `packages/agent/src/assistantGallery.ts`（`listAssistantGallery` / `galleryAssistantPackage`），复用助手包格式，经 `FileStorage.installAssistantPackage` 落盘（与导入同一路径）。IPC `listAssistantGallery` / `installGalleryAssistant`；网关同名 RPC 可用。
+
+### 4.5 首次使用引导
+
+没有任何助手和小队、且未选中会话时，主区显示「三步开始使用 OkBot」（`features/onboarding/QuickStartPanel`）：
+
+1. **接入一个模型**：还没有带模型的供应商时，按钮打开设置 → 模型接入。完成后显示勾。
+2. **选一个助手**：内嵌助手库卡片，一点即用；或「自己创建」走原有新建助手流程。没有模型前这一步看起来不可操作。
+3. **发出第一条消息**。
+
+高级设置默认隐藏（见 §6「显示高级设置」），新手只看到常用项。
+
 ---
 
 ## 5. 小队（Squad）
@@ -153,7 +170,7 @@ okbot/
   - 默认队长人设强调编排与把关（目标约束、角色边界、中立务实、效率可控、结果负责）；空字符串会回落到 `DEFAULT_SQUAD_CAPTAIN_PERSONA`。已写入 `settings.json` 的自定义文案不会被新默认覆盖。  
   - 默认 Playbook 覆盖准备→澄清→拆解→路由→校验→冲突→汇总→异常→边界→跨队员传递；空字符串回落 `DEFAULT_SQUAD_PLAYBOOK`，已存自定义同样不覆盖。  
 - 会话 UI：成员呼叫/回复气泡带 speaker 头像；队长终泡无头像。列表仍用 `SquadAvatar`。队长分段封印后若终泡为空，聚合 usage 挂到最后一段已封印队长气泡；用量统计只记在小队 owner（不向成员 byOwner 分摊）。  
-- 全局搜索 **排除** 小队聊天消息（仅助手私聊消息可搜）。  
+- 全局搜索包括小队聊天消息，与私聊一致。  
 - **中途改向（steer）**：`chatStart`（1:1 与小队）对同一 owner 不再硬拒绝并发。策略为 **abort + restart**（`@openai/agents` 无可靠 mid-query inject）：先 `appendMessage` 落盘新用户消息 → 中止当前运行（含进行中的 HITL 审批等待，reject 为已取消并清 disk pending）→ 等上一 handler 链结束 → 若仍是最新一次发送则立即以完整历史开新跑；被更新发送/停止 supersede 的请求只保留用户消息、不开跑。显式 **停止**（`chatAbort`）会 bump 代次以取消排队中的改向重启。每 owner 同时仅一条 in-flight agent run。被中止的旧跑以 `done.aborted` 正常结束（**不**再把 AbortError 抛回 `ipcRenderer.invoke`），避免连发时出现 `Request was aborted` 红字失败。
 
 实现：`packages/agent/src/squad.ts`（`runSquadChat` + 导出 `buildCaptainSquadInstructions` / `allocateAskToolNames` + `onSquadExchange`）；压缩共用 `apps/desktop/electron/storage/sessionCompression.ts`。
@@ -164,13 +181,16 @@ okbot/
 
 左侧导航 Tab：
 
+**显示高级设置**（`settings.showAdvancedSettings`，默认关）关闭时，侧栏不显示 **安全防护 / 网关服务 / 电脑连接 / 扩展**，模型页不显示上下文压缩与单次运行最大回合，工具页不显示运行限制；全局搜索也不列出这些项。功能本身不变，只是收起。从别处直接跳到高级页（例如「复制请求地址」提示去开网关）只在这次打开的设置窗口里显示高级页，不改保存的开关。已有的 `settings.json` 缺这个字段时（旧配置，那时所有页都显示），读盘时按「已打开」处理；新装没有 `settings.json`，按「关」处理。
+
 | Tab（侧栏文案） | 内容 |
 |-----|------|
-| **通用设置** | 主题（系统/浅/深）、语言（系统/中/英）、缩放特效（默认关；? 说明仿 MacOS Dock 动效）、麦克风、硬件加速（改后需重启）、数据目录说明（**不含**更新控件，**不含**网关服务与电脑连接）。**高级**：`developerMode`（开发者模式，默认关）。关闭时侧栏不显示「系统指令」；若当时正停在该页，回到通用设置 |
+| **通用设置** | 主题（系统/浅/深）、语言（系统/中/英）、缩放特效（默认关；? 说明仿 MacOS Dock 动效）、麦克风、硬件加速（改后需重启）、**系统通知**（默认开，见 §3.1）。**高级**：**显示高级设置**（`showAdvancedSettings`，默认关）、`developerMode`（开发者模式，默认关；关闭时侧栏不显示「系统指令」，若当时正停在该页，回到通用设置）。**数据**：数据目录、备份时不含密钥（默认开）、导出备份、从备份恢复（见 §12.1）。**不含**更新控件、网关服务与电脑连接 |
 | **模型接入** | **自定义供应商**（可多条：名称 / BaseURL / API Format / API Key / 每供应商模型目录）；模型行**连通测试**（按该供应商 baseURL/apiKey/apiFormat 对模型 id 发最小探针，IPC `testModelConnection`）；全局**默认模型**（下方下拉，供应商→模型；列表行不再用星标设默认）；列表顺序稳定（存盘数组序，启停不重排）；助手/小队覆盖同为 `providerId`+`modelId`；上下文压缩（自动换题、比例、保留上下限默认 5、摘要字数）、**单次运行最大回合**（1:1 `maxTurns`，默认 50） |
 | **工具授权** | 六工具启用 + 审批策略（自动允许 / 询问；含 `read_skill`）；**自动审批规则（AAR）** 列表（允许/先询问、关键词、失焦自动保存草稿；空规则丢弃；重名校验；列表限高滚动）；**运行限制**（`settings.toolRun`：单轮最大工具调用 / 最大时长秒 / 记录运行轨迹，见下） |
 | **安全防护** | 总开关、拦截模式（reject / tripwire）、限制在家目录、允许/拒绝路径前缀、危险 shell 正则；与审批关系说明 |
 | **网关服务** | 页内小节为「网关配置」。说明在「HTTP API」一行（小节标题不再带问号）。其下为端口、访问令牌、局域网网关、提供 Web UI（默认关；见 §6.1）。Web UI 开关打开时，开关左侧有「打开 Web UI」链接（`http://127.0.0.1:<端口>/?token=`，与登录页打开方式相同）；关掉则不显示 |
+| **扩展** | MCP 服务器（默认关，见 §7.1）。只在桌面端可改；网关页只读 |
 | **电脑连接** | 列表表头「电脑名称 / 添加电脑」。本机在列表中但没有连通测试、编辑、删除、开关。远程行有这四项；关闭后不能当默认、也不参与路由。下拉只含本机和已启用的远程电脑。见 §6.2 |
 | **系统指令** | 仅开发者模式打开时出现在侧栏。子 Tab 顺序：助手 / 小队 / AGENTS.md / 记忆 / 技能。「助手」：1:1 角色句模板（`settings.instructions.assistantRoleTemplate`，`{name}` 占位，空则恢复默认）；「小队」：队长人设、Playbook、队长/队员 maxTurns（`settings.squad`，与 1:1 无关）；「AGENTS.md」：静默维护完整 system 模版（`agentsMdRefreshSystemPrompt`）+ 分析最近消息条数（`agentsMdRecentMessageLimit`，默认 12，钳制 1–100）；「记忆」：范围判定说明（`settings.memory.scopeInstruction`）+ 分析最近消息条数（`recentMessageLimit`，默认 20）；「技能」：生成/更新 skill 判定指令（`skillsCreateUpdateInstruction`，仅替换 system 中那一行）+ 分析最近消息条数（`skillsRecentMessageLimit`，默认 20）。空字符串恢复默认；缺字段读盘时由 normalize 填回，下次保存写回。侧栏图标为文档形（与小队区分）。 |
 | **全局记忆** | **全局记忆**列表（`~/.okbot/memory.md`，增删改，限高滚动）。scope 判定说明已迁至 **系统指令 → 记忆**。助手资料抽屉 **高级 → 记忆** 仍只管理本助手记忆 |
@@ -217,6 +237,7 @@ okbot/
   - `GET /v1/approvals` → 进行中的回合与待审批工具（与桌面 HITL 同一份内存 / 磁盘状态）
   - `POST /v1/tool-respond`，JSON `{ "requestId", "approved", "message"? }`：与桌面「允许 / 拒绝」同一条 `respondToToolApproval`（含冷启动恢复）
   - `POST /v1/bots/:id/abort` / `POST /v1/squads/:id/abort`：与桌面停止相同（中止运行并拒绝挂起的审批）
+  - `POST /v1/rpc/:op`，JSON 为该操作的参数：新建 / 编辑 / 删除助手与小队、完成引导、AGENTS.md、记忆、技能、全局搜索、prompt context、本轮轨迹、错误日志、模型发现与连通测试、立即压缩。与桌面 IPC 调同一份 `entityOps`。`op` 不在允许列表里是 404 `unknown_op`；存储报错是 400 并带原因。数据备份与恢复、按文件路径导入导出助手包不在列表里，只能在桌面端做
   - `GET /v1/events`：需令牌的 SSE 长连接，只推 `sessions_changed`（新消息、改名、新建、删除），供另一边刷新会话列表；不推本轮 `delta`。约 25s 一次注释心跳。  
   - `POST /v1/bots/:id/messages` / `POST /v1/squads/:id/messages`，JSON `{ "text": "..." }`（文本过长 413；过频 429）：
     - **默认（非 SSE）** → **202** `{ ok: true, sessionId }`（`sessionId` 即 bot/squad id）。这不是后台队列：与 UI 一样走 `startChatTurn`，若该会话已有一轮在跑，会 **steer**（中止旧轮再开新轮），HTTP 响应本身不等最终回复。
@@ -247,7 +268,7 @@ curl -N -X POST "http://127.0.0.1:<port>/v1/bots/<botId>/messages" \
 pnpm --filter @okbot/desktop build
 ```
 
-该命令先构建 `@okbot/agent`，再跑 `electron-vite build`。`pnpm dev` 不会产出给 `okbot serve` 用的 `cli.js`。没有单独下载成品的安装脚本，需在本仓库构建后使用。
+该命令先构建 `@okbot/agent`，再跑 `electron-vite build`。`pnpm dev` 同样会按 vite 配置产出 `out/main/cli.js`（与 build 同一套 main input）。没有单独下载成品的安装脚本，需在本仓库构建后使用。
 
 **用法**
 
@@ -282,7 +303,7 @@ Electron 启动时做同样检查：
 
 远程执行目标：独立进程/容器 `apps/sandbox-agent`（包名 `@okbot/sandbox-agent`）。即使在裸服务器上运行 sandbox-agent，也可在 OkBot 设置中登记为云电脑。
 
-- 设置 → **电脑连接**：列表与模型列表同一套表头/行。表头是「电脑名称」和「添加电脑」。添加、编辑共用名称 / 主机 / 端口 / 令牌（`SANDBOX_TOKEN`）表单。**本机**始终出现在列表里（id=`local`），没有连通测试、编辑、删除、启用开关，也不写入 `computers`。远程行有这四项。`enabled: false` 的电脑不能选为默认，也不进入路由。同一页下拉选择**恰好一台**默认电脑（本机或已启用的远程电脑）。没选过、所选电脑已删除或被关闭时，默认是本机。默认值存在 `settings.defaultComputerId`。  
+- 设置 → **电脑连接**：列表与模型列表同一套表头/行。表头是「电脑名称」和「添加电脑」。添加、编辑共用名称 / 主机 / 端口 / 令牌（`SANDBOX_TOKEN`）表单。**本机**始终出现在列表里（id=`local`），没有连通测试、编辑、删除、启用开关，也不写入 `computers`。远程行有这四项。`enabled: false` 的电脑不能选为默认，也不进入路由。同一页下拉选择**恰好一台**默认电脑（本机或已启用的远程电脑）。没选过时默认是本机（空的 `defaultComputerId` 即本机）。所选电脑已删除或被关闭时不会偷偷改回本机，需要重新选。默认值存在 `settings.defaultComputerId`。  
 - **先探测再保存**：添加和编辑点保存时都先 `probeComputer`（约 5 秒超时）。`GET /v1/health` 必须返回 `ok: true` 且 `service` 为 `okbot-sandbox-agent`；再用该令牌 `POST /v1/shell` 空正文，期望 **400** `command_required`（只验令牌，不执行命令）。连不上、不是 sandbox-agent、令牌不对或响应异常时**不写入**，并在对话框里提示。列表上的连通测试只检查、不保存。
 - 对话区没有电脑选择。用户没点名电脑时，shell 与文件工具在默认电脑上执行。点名恰好一台（名称或 id；本机可以说「本机」）时改到那台。点名多台时，每次 `run_shell` / `read_file` / `write_file` / `edit_file` 须带 `computer`（id 或名称），分别在对应电脑上执行。HTTP API 请求体里的 `computerId` 只作为这一轮的默认电脑，对话点名优先。选择规则集中在 `packages/agent` 的 `computerSelection`，并写入当轮系统提示。
 - 协议：Bearer；`GET /v1/health`；`POST /v1/shell`（可选 SSE）；`POST /v1/fs/read|write|edit`。
@@ -294,7 +315,10 @@ Electron 启动时做同样检查：
 - `localHttpApi.bindLan` + `serveUi`：主进程在 LAN 上提供既有 HTTP API，并托管 renderer 构建产物。
 - 浏览器无 Electron preload 时，`src/bridge/httpOkbot.ts` 安装同源 HTTP/SSE 适配器，复用同一 React UI（不另建移动端 SPA）。
 - 桌面与网关的会话列表经 `sessions_changed` 互相同步（见 §3.1）；网关页用 `GET /v1/events` 收这一条，不靠当前会话的聊天 SSE。  
-- 早期产品：网关侧创建助手/保存设置/HITL/语音等能力可能受限；聊天与会话列表为验收主路径。
+- 附着窗口和 Web UI 能像桌面端一样新建、编辑、删除助手和小队，走完新助手引导，发现模型、测连通、立即压缩（经 `POST /v1/rpc/:op`）。网关返回的 API Key 是空的：发现模型和连通测试只带供应商 id，服务端只在 BaseURL 和已保存的一致时才用已保存的密钥。经网关测试时 BaseURL 必须是已保存的某个地址（否则 400 `probe_url_not_saved`，界面提示先保存再测试），避免借网关去请求内网任意地址。
+- **令牌等同于完全控制**：拿到令牌的人能聊天、批准工具（含运行命令和改文件）、改助手人设、记忆和技能、立即压缩会话。登录页和设置里的令牌说明都写明了这一点。
+- 网关只能用工具卡上的「总是允许」加规则，规则内容必须正好是一个内置工具名；也可以做只会多问的改动（加「询问」规则、删「允许」规则、关自动审批）。宽泛的关键词「允许」规则和改已有规则只能在桌面端做，设置页的规则列表在网关页只读（见 DESIGN「网关可写的设置」）。网关还可以保存 `notifications`、`showAdvancedSettings`。模型密钥、工具启用与审批策略、安全防护、电脑连接、网关配置、MCP 仍只能在桌面端改；网关写这些键返回 409 `settings_not_allowed`。网关返回的 MCP 环境变量和请求头的值是空的。
+- 网关可以用助手库新建助手。网关不能按文件路径导入、导出助手包，也不能做数据备份与恢复（这一节在网关页显示为不可操作）。语音转写在网关页不可用。
 
 ---
 
@@ -312,6 +336,20 @@ Electron 启动时做同样检查：
 
 - **不是** OS 沙箱：`run_shell` 走本机 shell + 用户环境；防护 = 路径前缀 + 危险命令 denylist + HITL/AAR。  
 - 适合可信个人本机；勿当多租户沙箱。
+
+### 7.1 MCP 扩展（可选，默认关）
+
+- 设置 → **扩展**（需打开「显示高级设置」）。总开关 `settings.mcp.enabled` 默认关。服务器列表与添加/编辑对话框和电脑连接同一套样式。
+- 两种连接：**本地命令（stdio）**（命令、每行一个参数、`KEY=VALUE` 环境变量）与 **HTTP（Streamable HTTP）**（地址、`Name: Value` 请求头）。每台可单独启停，可「测试连接」看到工具数。
+- 运行时（`packages/agent/src/mcp/mcpHub.ts` + `apps/desktop/electron/mcpRuntime.ts`）：每次开跑前按设置同步连接，把每个 MCP 工具包成函数工具，名字为 `mcp_<服务器名前 20 字符>_<标签>_<工具名>`（标签是服务器 id 的 sha256 前 4 位十六进制；最长 64 字符，重名加后缀；按服务器 id 排序后命名，所以改名或增删别的服务器不会让已有工具改名），经 `extraTools` 交给 1:1 助手、HITL 恢复和小队队长。
+- **每次调用都要审批**（`needsApproval: true`），走与 `run_shell` 相同的工具卡。自动审批规则对 MCP 工具无效（`resolveToolApproval`），工具卡不显示「总是允许」。工具调用计入运行限制（`ToolRunBudget`）。
+- 每次调用最长 120 秒，参数 JSON 最长 100,000 字符，超出时返回错误给模型。
+- 本地命令的子进程只继承少量环境变量（如 `PATH`、`HOME`、`LANG`、临时目录；Windows 另有 `SystemRoot` 等），再加上配置里的环境变量，不继承 API Key 等其它变量。
+- HTTP 地址：远程服务器必须用 `https`；`http` 只允许主机名正好是 `localhost`、`::1`、127.0.0.0/8 内的 IPv4，或 IPv4 映射形式（`[::ffff:127.0.0.1]` / `[::ffff:7f00:1]`；`isLoopbackHostname`，`127.evil.com` 不算本机）。地址里的用户名密码和像令牌的查询参数（名字含 token、key、secret、auth 等）在网关响应和不含密钥的备份里会被清空。不含密钥的备份和网关设置投影共用 `redactSecretArgs`（词表与 URL 查询共用；URL 查询另支持复数/子串如 `tokens`、`passphrase`，参数名仍按整词，避免误伤 `--pass-through`）：清空 `--token=…`、`--pass=…`、`--session=…`、`--sig=…`、`--api-key …`、`--bearer=…`、`-p`/`-p=`/`-phunter2`（非端口）、`API_KEY=…`、`sk-…`，以及 `--header` / `-H` 里凭证头或令牌形值；URL 形参数会走 `redactSecretUrl`。不误伤 `--monkey`、`--pass-through`、`--sort-key`、`--credentials-file` 这类名字。裸 `--key=` 仍会清空（`key` 本身是密钥词）。恢复时只在命令、地址和清空后的参数都一致时才把原参数放回。最好还是把令牌放在环境变量或请求头里。
+- 工具返回 `isError: true` 时，按工具出错交给模型（`MCP 工具返回错误：…`），不当作成功结果。
+- 设置 → 扩展的服务器列表在打开时读取连接状态（`mcpStatus`），每台已启用的服务器显示「已连接 · N 个工具」或「连接失败」（悬停看原因），不用手动测试就能看到连不上。
+- 从备份恢复后 MCP 总开关一律关掉；重启后弹一条提示，让用户检查服务器后自己再打开。
+- 只支持 MCP 工具；不接 resources / prompts。应用退出时关闭全部连接。
 
 HITL UI：工具卡上「允许 / 永久允许 / 拒绝」。
 - **停止 × 审批等待**：HITL 循环会清空工具前念叨后返回空 content；此时 **跳过** `upsertAssistantMessage`，且 storage 拒绝「无 id 匹配的空助手 upsert」，避免把上一轮助手回复 rebind 成空消息。
@@ -421,7 +459,11 @@ HITL UI：工具卡上「允许 / 永久允许 / 拒绝」。
 
 - 入口：侧栏搜索。分区：会话、设置项、消息命中。  
 - 可选中跳转会话 / 打开设置对应区块 / 跳到消息。  
-- 小队消息不参与消息搜索。
+- 消息命中包括助手私聊和小队聊天（`MessageSearchHit.ownerKind` 区分）；点小队命中会打开该小队并定位到消息。
+- 实现：`electron/storage/messageSearch.ts`。用异步读取从每个聊天文件末尾往前读（`ReverseLineReader`），每次先读「读到的位置最新」的那个聊天，命中按时间从新到旧放进最多 `limit` 条的列表。已有 `limit` 条、且每个聊天读到的位置都不比最旧的那条新时就停，不再读更早的记录；所以不会读完所有文件，也不会长时间卡住主进程。一个聊天的命中多不会挤掉别的聊天的新命中。
+- 聊天文件里的 `createdAt` 可能偶发回退（先写了较新的行，再补写较早的行）。每个文件有一份时间索引（约每 64 KiB 一个检查点，记下「此偏移之前的最大时间」），早期停止用检查点上界，不会因为回退行漏掉更早位置上的更新命中。索引按 inode / 头尾签名复用，文件只往后长时增量扩展。搜索过程中尚未打开的文件若被追加或重写，会按 size/mtime 刷新索引后再决定是否早停。只增长时增量扩展索引，缩小或头尾签名变了才整份重建。
+- 小队里的成员回复显示成员名（`MessageSearchHit.speakerName`）；没有发言人的运行中间记录不算消息。
+- 经网关调用时，搜索同时最多 2 个、每 10 秒最多 20 次，超出返回 429 `rate_limited`（`gatewayRpc.createRateLimiter`）。桌面端输入有 280 ms 去抖。
 
 ---
 
@@ -444,7 +486,8 @@ HITL UI：工具卡上「允许 / 永久允许 / 拒绝」。
 - **electron-updater**：`autoDownload=false`；设置 `autoUpdate`（默认开）。  
 - **签名现状**：Release CI 对 mac/win 关闭自动签名发现（`CSC_IDENTITY_AUTO_DISCOVERY=false`）。未签名包上自动更新可能被 OS 拦截；文档与设置文案需保持诚实，勿暗示已 notarize / 已签名。  
 - **下载稳定性**：`disableDifferentialDownload=true`（跳过 Windows blockmap 差分，避免慢网回退全量导致进度条从约 90% 跳回约 1%）；UI 侧对同一次下载会话做单调进度（`Math.max(floor, percent)`），且下载中忽略后台 `checking-for-update` 对状态的覆盖。  
-- UI：检查更新、下载、安装并重启；标题栏「下载更新」按钮。  
+- UI：检查更新、下载、安装并重启；标题栏「下载更新」按钮。
+- **macOS 自装**（`electron/macUpdateInstall.ts`）：按下载的 zip 文件名在更新清单里找 sha512（文件名不含 `?` 和 `#` 之后的部分）；安装前要求 app 所在目录可写、可用空间至少为 zip 大小的 5 倍（实测解压加暂存峰值约 4.4 倍）。退出时没能开始安装，或安装助手在退出后因 sha 不符、解压失败、替换失败、重新打开失败等停下，都会写入 `update-install-failed.json`（并记 `update-install.log`），下次启动弹提示。下次启动的自愈只把 `CFBundleIdentifier` 为 OkBot 的隐藏 `.*.app.previous` 改回原名。  
 - **关于**：应用信息、构建日期等（`getAppInfo`）。
 
 开发未打包时通常不强制网络检查更新。
@@ -494,6 +537,13 @@ HITL UI：工具卡上「允许 / 永久允许 / 拒绝」。
     resources/                  # generate_image 等中间媒体（与 bot 同布局）
 ```
 
+### 12.1 备份与恢复
+
+- 设置 → 通用 → **数据**。**导出备份**把整个数据目录打成一个 `.zip`（默认存到下载文件夹，文件名带日期），根目录有标记文件 `okbot-backup.json`。不打包 `server.json`、`window.json`。
+- **备份时不含密钥**（默认开）：`settings.json` 里的模型 API Key、网关令牌、电脑令牌、MCP 环境变量与请求头的值被清空，`settings.json.*` 备份副本不打包。
+- **从备份恢复**：先确认（危险操作），再选 `.zip`。校验标记文件和压缩包内路径（拒绝绝对路径、`..` 和链接）。有助手正在工作时拒绝。当前数据目录先整体移到旁边的 `<目录名>-before-restore-<时间>`，再解压；若备份不含密钥，沿用当前设置里的密钥，但只在端点相同时（模型供应商 BaseURL、电脑地址和端口、MCP 命令或地址都相同），避免把密钥交给备份里换过的地址。恢复后 MCP 总开关关闭，重启后提示用户（`restore-notice.json`，读一次即删）。不含密钥的备份里，像密钥的 MCP 参数也被清空。解压后总大小超过 16 GiB 的备份会被拒绝；读不出总大小时也拒绝。大小检查用 `unzip -Z -t`，并固定 `LC_ALL=C` 再解析；上限看的是 zip 声明的未压缩大小，不是解压时实测。选文件前后都会检查有没有助手在工作或等待批准。完成后应用自动重启。
+- 实现：`apps/desktop/electron/backup.ts`，IPC `backupExport` / `backupRestore`（`ipc/registerExtensions.ts`）。网关不提供。
+
 **错误日志**（`apps/desktop/electron/storage/errorLog.ts`）：1:1 `chatStart`、HITL `resumeHitl`、小队 `squadChat` 在 catch 并发 `type: 'error'` 时追加一行 JSON（`ts` / `ownerId` / `messageId?` / `phase` / `error` / `stack?`），含熔断（`CircuitBreakError`）。不写 API Key、不写用户正文；仍 `console.error`。每次写入时按日历日剪枝，删除早于「今天−2 天」的 `errors-*.jsonl`。与 `last-run-trace.json` 互补：前者按日汇总失败，后者保留每会话最近一轮结构化轨迹。
 
 ---
@@ -527,10 +577,10 @@ Preload 暴露 `window.okbot.*`；渲染进程不直连 Node fs。
 
 ## 15. 明确未做 / 边界
 
-- 无 MCP。  
+- MCP 只接工具，不接 resources / prompts；默认关闭。  
 - `run_shell` 非容器/seatbelt 沙箱。  
 - 模型目录 **仅手动 + discover**，无复杂厂商 OAuth。  
-- 小队搜索排除、虚拟队长非真实 bot——改相关逻辑时勿回归。  
+- 虚拟队长非真实 bot；小队消息搜索按 `ownerKind: 'squad'` 跳转——改相关逻辑时勿回归。  
 - 本地 HTTP API **默认仅 loopback**。只有打开局域网网关才绑定 `0.0.0.0`，仍靠访问令牌；没有面向公网的入口。不打开窗口时用 `okbot serve`（见 §6.1.1）。
 
 ---
@@ -542,8 +592,8 @@ Preload 暴露 `window.okbot.*`；渲染进程不直连 Node fs。
 3. 本指南不要写死产品号（以 Releases / `package.json` 为准）。  
 4. 以代码与近期 commit 为准，避免凭记忆写「计划中」能力。
 
-## 已知限制（小队冷启动审批）
+## 已知限制
 
-应用重启后，**小队**会话里挂起的工具审批无法从磁盘恢复（队长成员图尚未支持冷启动重建）。重启后再次批准会提示重新发送该轮消息；普通单助手的待审批仍可冷恢复。
+应用重启后，单助手和**小队**挂起的工具审批都能从磁盘恢复。小队成员的审批恢复后，队长会拿到成员结果，接着完成这一轮；队长不会再派一次同样的子任务。每条待审批单独落盘，并行的成员审批互不覆盖。
 
-`pending-hitl.json` 仍是每个 owner 一份（并行小队多条审批会互相覆盖落盘）。监听端口失败目前只打主进程日志，设置页没有单独的失败状态。
+监听端口失败目前只打主进程日志，设置页没有单独的失败状态。

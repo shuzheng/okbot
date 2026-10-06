@@ -14,7 +14,7 @@ open -a OrbStack
 export SANDBOX_TOKEN="$(openssl rand -hex 24)"
 echo "$SANDBOX_TOKEN" > /tmp/okbot-sandbox-agent.token
 
-cd ~/git/github/okbot-dev
+# from the repository root
 docker build -t okbot-sandbox-agent:local apps/sandbox-agent
 docker rm -f okbot-sandbox-agent 2>/dev/null || true
 docker run -d --name okbot-sandbox-agent \
@@ -89,8 +89,7 @@ Loopback-only mode (bindLan off) remains 127.0.0.1 for scripts.
 | Endpoint | http://127.0.0.1:18790 |
 | Token file | /tmp/okbot-sandbox-agent.token |
 | Registered computerId | computer_sandbox_agent_local in ~/.okbot/settings.json |
-| LAN IP (Mac mini) | 172.28.2.89 |
-| Gateway URL | http://172.28.2.89:18765/gateway-login |
+| LAN IP | `<your-lan-ip>` |
+| Gateway URL | `http://<your-lan-ip>:18765/gateway-login` |
 | Secrets note | /tmp/okbot-acceptance-secrets.txt (not in git) |
-| Commits pushed | e52a631..71cd0b3 on origin/main |
 | E2E | container shell returns Linux/Debian; ExecutionBackend remote ok |

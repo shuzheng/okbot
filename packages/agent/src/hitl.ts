@@ -5,6 +5,7 @@ import {
   type AgentInputItem,
   type Session,
   type SessionInputCallback,
+  type Tool,
 } from '@openai/agents';
 import type { ChatMessage, ResolvedModelConfig, SecuritySettings, ToolPreferences } from '@okbot/shared';
 import { createId, DEFAULT_SECURITY, DEFAULT_TOOL_PREFERENCES } from '@okbot/shared';
@@ -94,6 +95,8 @@ export function createAgentAndRunner(input: {
   executionBackend?: ExecutionBackend;
   /** Per-call computer selection for shell/fs tools. */
   computerRoute?: ComputerRoute;
+  /** Extra tools appended after the built-ins (for example MCP tools; see mcp/). */
+  extraTools?: readonly Tool[];
 }) {
   const toolPrefs = input.tools ?? DEFAULT_TOOL_PREFERENCES;
   const security = input.security ?? DEFAULT_SECURITY;
@@ -122,7 +125,8 @@ export function createAgentAndRunner(input: {
     ...(typeof input.model.maxTokens === 'number' && input.model.maxTokens >= 1
       ? { modelSettings: { maxTokens: input.model.maxTokens } }
       : {}),
-    tools: buildTools(toolPrefs, security, input.toolRunBudget, {
+    tools: [
+      ...buildTools(toolPrefs, security, input.toolRunBudget, {
       skillLookup: input.skillLookup,
       imageApi: {
         baseURL: input.model.baseURL,
@@ -136,7 +140,9 @@ export function createAgentAndRunner(input: {
           : undefined,
       backend: input.computerRoute ? undefined : input.executionBackend,
       computerRoute: input.computerRoute,
-    }),
+      }),
+      ...(input.extraTools ?? []),
+    ],
   });
   const runner = new Runner({
     modelProvider: provider,
@@ -293,4 +299,44 @@ export async function runHitlStreamLoop(
   const content = resolveFinalContent(current, streamed);
   if (!content.trim()) throw new Error('模型返回为空');
   return { content, usage: tokenUsageFromRunResult(current) };
+}
+
+/**
+ * Cold-start resume: find the interrupted call in a restored RunState and apply
+ * the user's decision. Throws when the call cannot be found.
+ */
+export function applyResumeDecision(
+  state: {
+    getInterruptions: () => Array<{ name?: string }>;
+    approve: (item: any) => void;
+    reject: (item: any, options?: { message?: string }) => void;
+  },
+  input: Pick<HitlLoopHooks, 'onToolResult'> & {
+    requestId: string;
+    toolName: string;
+    decision: { approved: boolean; message?: string };
+  },
+): void {
+  const interruptions = state.getInterruptions();
+  // Prefer exact toolName; only fall back to the sole interruption (never a random
+  // same-name sibling / interruptions[0] when several are pending).
+  const byName = interruptions.filter((item) => (item.name || '') === input.toolName);
+  const match =
+    byName.length >= 1 ? byName[0] : interruptions.length === 1 ? interruptions[0] : undefined;
+  if (!match) {
+    throw new Error(
+      interruptions.length
+        ? `恢复失败：找不到工具「${input.toolName}」的待审批中断（共 ${interruptions.length} 个中断）`
+        : '恢复失败：找不到待审批的工具调用（RunState.getInterruptions 为空）',
+    );
+  }
+  const toolName = match.name || input.toolName || 'unknown_tool';
+  if (input.decision.approved) {
+    state.approve(match);
+    input.onToolResult?.({ requestId: input.requestId, toolName, approved: true });
+  } else {
+    const message = input.decision.message?.trim() || '用户拒绝了该工具调用';
+    state.reject(match, { message });
+    input.onToolResult?.({ requestId: input.requestId, toolName, approved: false, output: message });
+  }
 }

@@ -5,7 +5,7 @@ import type {
   TokenUsage,
   ToolPreferences,
 } from '@okbot/shared';
-import type { Session, SessionInputCallback } from '@openai/agents';
+import type { Session, SessionInputCallback, Tool } from '@openai/agents';
 import type { ToolRunBudget } from './toolRunBudget.js';
 import type { SkillLookup } from './tools.js';
 import type { ExecutionBackend } from './executionBackend.js';
@@ -46,6 +46,11 @@ export interface ToolApprovalRequest {
   arguments: unknown;
   /** Serialized SDK RunState at the interruption (for cold-start resume). Empty if serialize failed. */
   serializedRunState: string;
+  /**
+   * Squad only: the call came from a member run inside `ask_*`. Then
+   * `serializedRunState` is the member's run, and a cold resume rebuilds that member.
+   */
+  squadMember?: { botId: string; toolName: string; task: string };
 }
 
 export interface ToolApprovalDecision {
@@ -83,6 +88,8 @@ export interface RunAgentChatInput extends RunChatInput {
   executionBackend?: ExecutionBackend;
   /** Per-call computer selection for shell/fs tools. */
   computerRoute?: ComputerRoute;
+  /** Extra tools appended after the built-ins (for example MCP tools). Resume must pass the same set. */
+  extraTools?: readonly Tool[];
   onToolApprovalRequest: (req: ToolApprovalRequest) => Promise<ToolApprovalDecision>;
   onToolResult?: (info: {
     requestId: string;
@@ -121,6 +128,8 @@ export interface ResumeAgentChatAfterHitlInput {
   executionBackend?: ExecutionBackend;
   /** Per-call computer selection for shell/fs tools. */
   computerRoute?: ComputerRoute;
+  /** Extra tools appended after the built-ins (for example MCP tools). Resume must pass the same set. */
+  extraTools?: readonly Tool[];
   signal?: AbortSignal;
   onDelta?: (delta: string) => void;
   onToolApprovalRequest: (req: ToolApprovalRequest) => Promise<ToolApprovalDecision>;

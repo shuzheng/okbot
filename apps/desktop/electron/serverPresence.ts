@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
+import { verifyOkbotChallenge } from './authChallenge';
 
 /** One OkBot backend per data directory. Electron and `okbot serve` share this file. */
 export type ServerLock = {
@@ -94,8 +95,7 @@ export function releaseServerLock(root: string, pid = process.pid): void {
   }
 }
 
-/** True when GET /v1/health is this gateway, not some other listener. */
-export function probeOkbotHealth(port: number, timeoutMs = 400): Promise<boolean> {
+function readHealthMarker(port: number, timeoutMs: number): Promise<boolean> {
   return new Promise((resolve) => {
     const req = http.get(
       {
@@ -129,22 +129,48 @@ export function probeOkbotHealth(port: number, timeoutMs = 400): Promise<boolean
   });
 }
 
+/**
+ * Without a saved token, GET /v1/health must be this gateway.
+ * With a token, prove the peer knows it via HMAC challenge — never send the token
+ * to an unverified port (a faker that only mirrors Authorization must not pass).
+ */
+export async function probeOkbotHealth(port: number, timeoutMs = 400, token?: string): Promise<boolean> {
+  const saved = typeof token === 'string' ? token.trim() : '';
+  if (!saved) return readHealthMarker(port, timeoutMs);
+  return verifyOkbotChallenge(port, saved, timeoutMs);
+}
+
 export type RunningServer =
   | { state: 'free' }
   | { state: 'running'; port: number; pid?: number };
 
 /**
- * Health wins. A live lock with no health yet means another OkBot still owns the data dir
- * (it may be binding, or it is the desktop app between restarts of the listener).
+ * Health wins. A live lock with no successful probe is not treated as OkBot —
+ * otherwise Electron would attach and send the real token to a faker, and a
+ * reused pid after crash would block a fresh start forever.
  */
-export async function inspectRunningServer(root: string, port: number): Promise<RunningServer> {
-  if (await probeOkbotHealth(port)) return { state: 'running', port };
+export async function inspectRunningServer(
+  root: string,
+  port: number,
+  token?: string,
+): Promise<RunningServer> {
+  if (await probeOkbotHealth(port, 400, token)) return { state: 'running', port };
   const lock = readServerLock(root);
   if (!lock || lock.pid === process.pid || !isPidAlive(lock.pid)) return { state: 'free' };
   const lockPort = lock.port > 0 ? lock.port : port;
   for (let i = 0; i < 10; i++) {
-    if (await probeOkbotHealth(lockPort)) return { state: 'running', port: lockPort, pid: lock.pid };
+    if (await probeOkbotHealth(lockPort, 400, token)) {
+      return { state: 'running', port: lockPort, pid: lock.pid };
+    }
     await new Promise((r) => setTimeout(r, 200));
   }
-  return { state: 'running', port: lockPort, pid: lock.pid };
+  // Pid still alive but never answered the challenge — not a verified OkBot.
+  // Drop the lock so a fresh start is not stuck attaching to a faker / reused pid.
+  try {
+    const latest = readServerLock(root);
+    if (latest && latest.pid === lock.pid) fs.unlinkSync(serverLockPath(root));
+  } catch {
+    /* ignore */
+  }
+  return { state: 'free' };
 }

@@ -4,7 +4,7 @@ import { stripThinkContent, type Bot, type Squad } from '@okbot/shared';
 import { t, type UiLang } from '../../i18n';
 import type { MenuState, RenameTarget, Selection, SessionItem } from '../../types';
 import { FlatAvatar, SquadAvatar } from '../../components/ui/avatars';
-import { ImportAssistantIcon, PersonIcon, SearchIcon, SettingsIcon, SquadNavIcon } from '../../components/ui/icons';
+import { AssistantGalleryIcon, ImportAssistantIcon, PersonIcon, SearchIcon, SettingsIcon, SquadNavIcon } from '../../components/ui/icons';
 import { QuickTip } from '../../components/ui/QuickTip';
 import { formatSessionUpdatedAt } from '../../utils/formatSessionUpdatedAt';
 
@@ -35,6 +35,7 @@ export type SessionSidebarProps = {
   onStartCreateBot: () => void;
   onOpenSquadWizard: () => void;
   onImportAssistant: () => void;
+  onOpenAssistantGallery: () => void;
   onSelect: (selection: Selection) => void;
   onOpenSessionMenu: (menu: NonNullable<MenuState>) => void;
   onRenameValueChange: (value: string) => void;
@@ -75,6 +76,7 @@ export const SessionSidebar = memo(function SessionSidebar({
   onStartCreateBot,
   onOpenSquadWizard,
   onImportAssistant,
+  onOpenAssistantGallery,
   onSelect,
   onOpenSessionMenu,
   onRenameValueChange,
@@ -206,6 +208,18 @@ export const SessionSidebar = memo(function SessionSidebar({
               <SquadNavIcon />
             </span>
             {t(lang, 'newSquadPlaceholder')}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setFooterMenuOpen(false);
+              onOpenAssistantGallery();
+            }}
+          >
+            <span className="create-menu-icon" aria-hidden>
+              <AssistantGalleryIcon />
+            </span>
+            {t(lang, 'galleryTitle')}
           </button>
           <button
             type="button"

@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Socket } from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
-import { normalizeUsageStats, type AppSettings, type RuntimeEvent, type LocalHttpApiSettings } from '@okbot/shared';
+import { isLoopbackHostname, normalizeUsageStats, type AppSettings, type RuntimeEvent, type LocalHttpApiSettings } from '@okbot/shared';
 import { acceptRuntimeEventForSseTurn, encodeRuntimeEventSse, isRuntimeEventTurnTerminal } from '@okbot/agent';
 import type { IpcContext } from './ipc/context';
 import { abortChatOwner } from './ipc/chatControl';
@@ -11,7 +11,12 @@ import { gatewayBootJs, gatewayLoginHtml, injectGatewayBoot, shouldServeGatewayL
 import { runtimeEventChannel } from './sessionEvents';
 import { respondToToolApproval, startChatTurn } from './ipc/registerChat';
 import { persistAppSettings } from './ipc/registerEntity';
-import { parseMessagesLimit, resolveGatewaySettingsWrite } from './gatewaySettingsWrite';
+import { blankMcpSecrets, parseMessagesLimit, resolveGatewaySettingsWrite } from './gatewaySettingsWrite';
+import { isProbeNonce, probeChallengeMac } from './authChallenge';
+import { readDesktopAppVersion } from './appVersion';
+import { createEntityOps } from './entityOps';
+import { runGatewayRpc } from './gatewayRpc';
+import { claimNotify, notifyDeviceKey } from './notifyClaim';
 
 const LOOPBACK_HOST = '127.0.0.1';
 const LAN_HOST = '0.0.0.0';
@@ -20,6 +25,8 @@ type LocalHttpApiDeps = {
   ctx: IpcContext;
   /** Absolute path to renderer build (electron-vite out/renderer). Optional. */
   uiRoot?: string | null;
+  /** Desktop package / Electron app version for gateway getAppInfo. */
+  appVersion?: string;
 };
 
 type JsonBody = Record<string, unknown>;
@@ -32,6 +39,7 @@ function gatewaySquadsForUi<T extends { members?: unknown }>(squads: T[]): T[] {
     Array.isArray(squad.members) ? squad : { ...squad, members: [] },
   );
 }
+
 
 /** Strip credentials and the absolute data directory before a gateway response. */
 function projectSettingsForGateway(settings: AppSettings): AppSettings {
@@ -48,6 +56,7 @@ function projectSettingsForGateway(settings: AppSettings): AppSettings {
     computers: Array.isArray(settings.computers)
       ? settings.computers.map((computer) => ({ ...computer, token: '' }))
       : [],
+    mcp: blankMcpSecrets(settings.mcp),
   };
 }
 
@@ -129,8 +138,14 @@ function isLoopbackHost(req: IncomingMessage): boolean {
   const raw = req.headers.host;
   const host = String(Array.isArray(raw) ? raw[0] : raw || '').trim().toLowerCase();
   if (!host) return false;
-  const name = host.replace(/:\d+$/, '').replace(/^\[|\]$/g, '');
-  return name === '127.0.0.1' || name === 'localhost' || name === '::1';
+  let name = host;
+  if (name.startsWith('[')) {
+    const end = name.indexOf(']');
+    if (end > 0) name = name.slice(0, end + 1);
+  } else {
+    name = name.replace(/:\d+$/, '');
+  }
+  return isLoopbackHostname(name) || name === 'localhost';
 }
 
 
@@ -205,6 +220,7 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
   const sessionPings = new Set<ReturnType<typeof setInterval>>();
   const sockets = new Set<Socket>();
   const rateHits: number[] = [];
+  const entityOps = createEntityOps(deps.ctx);
 
   const subscribeRuntimeEvent = (listener: RuntimeEventListener): (() => void) => {
     runtimeListeners.add(listener);
@@ -282,6 +298,22 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
       return;
     }
 
+    // GET /v1/auth-challenge?nonce= — prove we know the gateway token without receiving it.
+    if (method === 'GET' && parts.length === 2 && parts[0] === 'v1' && parts[1] === 'auth-challenge') {
+      const urlObj = new URL(req.url || '/', 'http://127.0.0.1');
+      const nonce = (urlObj.searchParams.get('nonce') || '').trim();
+      if (!isProbeNonce(nonce) || !currentToken) {
+        sendJson(res, 400, { ok: false, error: 'invalid_nonce' });
+        return;
+      }
+      sendJson(res, 200, {
+        ok: true,
+        service: 'okbot-local-http-api',
+        mac: probeChallengeMac(currentToken, nonce),
+      });
+      return;
+    }
+
     // Boot script must exist before the renderer module. No secrets.
     if (method === 'GET' && parts.length === 1 && parts[0] === 'gateway-boot.js') {
       const js = gatewayBootJs();
@@ -290,6 +322,39 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
         'Cache-Control': 'no-store',
       });
       res.end(js);
+      return;
+    }
+
+    // POST /gateway-login — set HttpOnly cookie, never put the token in the URL.
+    if (method === 'POST' && parts.length === 1 && parts[0] === 'gateway-login') {
+      const raw = await readBody(req, 8_000);
+      let token = '';
+      const ctype = String(req.headers['content-type'] || '');
+      if (ctype.includes('application/json')) {
+        try {
+          const json = JSON.parse(raw || '{}') as { token?: unknown };
+          token = typeof json.token === 'string' ? json.token.trim() : '';
+        } catch {
+          token = '';
+        }
+      } else {
+        const params = new URLSearchParams(raw);
+        token = (params.get('token') || '').trim();
+      }
+      if (!currentToken || token !== currentToken) {
+        res.writeHead(401, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-store',
+        });
+        res.end(gatewayLoginHtml('令牌不正确 / Invalid token'));
+        return;
+      }
+      res.writeHead(302, {
+        Location: '/',
+        'Set-Cookie': `okbot_gateway_token=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax`,
+        'Cache-Control': 'no-store',
+      });
+      res.end();
       return;
     }
 
@@ -489,6 +554,34 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
         return;
       }
 
+      // POST /v1/notify-claim — one system notification per event per device (see notifyClaim).
+      if (method === 'POST' && parts.length === 2 && parts[0] === 'v1' && parts[1] === 'notify-claim') {
+        let tag = '';
+        try {
+          const raw = await readBody(req);
+          const body = raw.trim() ? (JSON.parse(raw) as { tag?: unknown }) : {};
+          tag = typeof body.tag === 'string' ? body.tag : '';
+        } catch {
+          sendJson(res, 400, { ok: false, error: 'invalid_json' });
+          return;
+        }
+        sendJson(res, 200, { ok: true, granted: claimNotify(notifyDeviceKey(req.socket.remoteAddress), tag) });
+        return;
+      }
+
+      // GET /v1/app-info — version for attach/Web UI settings (no secrets).
+      if (method === 'GET' && parts.length === 2 && parts[0] === 'v1' && parts[1] === 'app-info') {
+        const version = (deps.appVersion || readDesktopAppVersion() || '').trim() || '0.0.0';
+        sendJson(res, 200, {
+          ok: true,
+          name: 'OkBot',
+          version,
+          platform: process.platform,
+          arch: process.arch,
+        });
+        return;
+      }
+
       // GET /v1/bootstrap — same shape as desktop getBootstrap so the pre-bridge renderer can render.
       if (method === 'GET' && parts.length === 2 && parts[0] === 'v1' && parts[1] === 'bootstrap') {
         const settings = deps.ctx.storage.getSettings();
@@ -607,6 +700,29 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
             error: err instanceof Error ? err.message : 'save_failed',
           });
         }
+        return;
+      }
+
+      // POST /v1/rpc/:op — bot / squad / memory / skill / model-probe ops (allowlist in gatewayRpc).
+      if (method === 'POST' && parts.length === 3 && parts[0] === 'v1' && parts[1] === 'rpc') {
+        if (!allowRate()) {
+          sendJson(res, 429, { ok: false, error: 'rate_limited' });
+          return;
+        }
+        let args: unknown = {};
+        try {
+          const raw = await readBody(req);
+          args = raw.trim() ? JSON.parse(raw) : {};
+        } catch (err) {
+          if (err instanceof Error && err.message === 'payload_too_large') {
+            sendJson(res, 413, { ok: false, error: 'payload_too_large' });
+            return;
+          }
+          sendJson(res, 400, { ok: false, error: 'invalid_json' });
+          return;
+        }
+        const out = await runGatewayRpc(entityOps, parts[2] || '', args, deps.ctx.storage.getSettings());
+        sendJson(res, out.status, out.body);
         return;
       }
 
@@ -825,7 +941,13 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
     const host = lan ? LAN_HOST : LOOPBACK_HOST;
     return new Promise((resolve, reject) => {
       const s = http.createServer((req, res) => {
-        void handle(req, res);
+        // Any throw in a route (bad body, oversize login form, storage error) must not
+        // become an unhandled rejection: that ends `okbot serve`.
+        handle(req, res).catch((err: unknown) => {
+          const tooLarge = err instanceof Error && err.message === 'payload_too_large';
+          if (!tooLarge) console.error('[okbot] localHttpApi request failed', err);
+          sendJson(res, tooLarge ? 413 : 500, { ok: false, error: tooLarge ? 'payload_too_large' : 'internal_error' });
+        });
       });
       s.on('connection', (sock) => {
         sockets.add(sock);

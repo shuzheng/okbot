@@ -13,7 +13,6 @@ import {
   clipQuotePreview,
   formatUserTextWithQuote,
   resolveModelConfig,
-  resolveAutoApproval,
   SQUAD_CAPTAIN_SPEAKER_ID,
   type ChatMessage,
 } from '@okbot/shared';
@@ -28,8 +27,6 @@ import {
   quoteSessionInputCallback,
   resolveSessionInputCallbackForTurn,
   stripImageLinesFromAttachedBlock,
-  type SkillLookup,
-  type ComputerRoute,
 } from '@okbot/agent';
 import type { IpcContext } from './context';
 import { isSquadOwnerId } from '../storage/ids';
@@ -50,22 +47,11 @@ import {
   acquireSteerGate,
 } from './steerGate';
 import { abortChatOwner, resolveLiveToolApproval } from './chatControl';
+import { createApprovalWaiter, releaseRunApprovals } from './approvalWaiter';
+import { mcpToolsForRun } from '../mcpRuntime';
+import { buildSquadMemberSpecs, computerRouteFor, skillLookupFor } from './chatTurnHelpers';
+import { resumeSquadAfterRestart } from './squadResume';
 
-
-/** Bind `read_skill` to this bot's local + enabled-global skills. */
-function skillLookupFor(storage: IpcContext['storage'], botId: string): SkillLookup {
-  return (slug) => {
-    const hit = storage.resolveEnabledSkill(botId, slug);
-    if (!hit) return null;
-    return {
-      slug: hit.slug,
-      name: hit.name,
-      description: hit.description,
-      body: hit.body,
-      global: hit.source === 'global',
-    };
-  };
-}
 
 function resolveQuoteFields(
   storage: IpcContext['storage'],
@@ -97,19 +83,6 @@ function resolveQuoteFields(
  * Persist assistant text as-is. showThinking only affects renderer projection;
  * stripping on write used to irreversibly truncate when parseThink misfired.
  */
-
-function computerRouteFor(
-  settings: { defaultComputerId?: string; computers?: ComputerRoute['computers'] },
-  userText?: string,
-  turnComputerId?: string,
-): ComputerRoute {
-  return {
-    defaultComputerId: settings.defaultComputerId,
-    turnComputerId,
-    computers: settings.computers,
-    userText,
-  };
-}
 
 function persistAssistantContent(content: string, _showThinking: boolean): string {
   return content;
@@ -177,6 +150,8 @@ export async function startChatTurn(
         };
         let sealedCaptainSegments = 0;
         let lastSealedCaptainId: string | null = null;
+        /** Approvals parked by this run; only these are released at the end. */
+        const parkedRequestIds = new Set<string>();
 
         const controller = new AbortController();
         ctx.abortControllers.set(squad.id, controller);
@@ -214,19 +189,7 @@ export async function startChatTurn(
         };
 
         try {
-          const memberSpecs = squad.members.map((m) => {
-            const bot = byId.get(m.botId)!;
-            return {
-              botId: bot.id,
-              name: bot.name,
-              description: bot.description,
-              role: m.role,
-              agentsMd: ctx.storage.readAgentsMd(bot.id),
-              skillsText: ctx.storage.formatSkillsForPrompt(bot.id),
-              skillLookup: skillLookupFor(ctx.storage, bot.id),
-              memoriesText: ctx.storage.formatMemoriesForPrompt(bot.id),
-            };
-          });
+          const memberSpecs = buildSquadMemberSpecs(ctx.storage, squad);
 
           // Prior turns (exclude empty assistant placeholders / current user msg).
           const allMessages = ctx.storage
@@ -296,6 +259,7 @@ export async function startChatTurn(
             tools: settings.tools,
             security: settings.security,
             toolRunBudget: guards.budget,
+            extraTools: await mcpToolsForRun(settings, guards.budget),
             history: [],
             session: fileSession,
             sessionInputCallback,
@@ -323,63 +287,16 @@ export async function startChatTurn(
                 delta,
               });
             },
-            onToolApprovalRequest: ({ requestId, toolName, arguments: toolArgs, serializedRunState }) =>
-              new Promise<{ approved: boolean; message?: string }>((resolve) => {
-                if (controller.signal.aborted) {
-                  resolve({ approved: false, message: '已取消' });
-                  return;
-                }
-                const decision = resolveAutoApproval(
-                  settings.autoApprovalEnabled === true,
-                  settings.autoApprovalRules,
-                  toolName,
-                  toolArgs,
-                );
-                if (decision === 'allow') {
-                  resolve({ approved: true, message: '自动审批规则已允许' });
-                  return;
-                }
-                ctx.pendingToolApprovals.set(requestId, {
-                  computerId: payload.computerId,
-                  botId: squad.id,
-                  messageId: assistantId,
-                  toolName,
-                  arguments: toolArgs,
-                  resolve,
-                });
-                if (serializedRunState) {
-                  try {
-                    ctx.storage.savePendingHitl(squad.id, {
-                      computerId: payload.computerId,
-                      userText: text,
-                      v: 1,
-                      requestId,
-                      messageId: assistantId,
-                      toolName,
-                      arguments: toolArgs,
-                      serializedRunState,
-                      createdAt: new Date().toISOString(),
-                    });
-                  } catch (err) {
-                    console.error('[okbot] save pending hitl failed', err);
-                  }
-                }
-                ctx.sendRuntimeEvent({
-                  type: 'tool_request',
-                  botId: squad.id,
-                  messageId: assistantId,
-                  requestId,
-                  toolName,
-                  arguments: toolArgs,
-                });
-                const onAbort = () => {
-                  if (!ctx.pendingToolApprovals.has(requestId)) return;
-                  ctx.pendingToolApprovals.delete(requestId);
-                  ctx.storage.clearPendingHitl(squad.id);
-                  resolve({ approved: false, message: '已取消' });
-                };
-                controller.signal.addEventListener('abort', onAbort, { once: true });
-              }),
+            onToolApprovalRequest: createApprovalWaiter(ctx, {
+              ownerId: squad.id,
+              messageId: () => assistantId,
+              settings,
+              signal: controller.signal,
+              computerId: payload.computerId,
+              userText: text,
+              turnId: userMsg.id,
+              onParked: (id) => parkedRequestIds.add(id),
+            }),
             onToolResult: ({ requestId, toolName, approved, output }) => {
               if (!approved) {
                 guards.budget.recordRejection(toolName, {}, output);
@@ -533,7 +450,8 @@ export async function startChatTurn(
         } finally {
           guards.dispose();
           ctx.abortControllers.delete(squad.id);
-          ctx.rejectPendingApprovalsForBot(squad.id, '已结束');
+          // Only this run's approvals: cold approvals of other turns are not this run's to drop.
+          releaseRunApprovals(ctx, squad.id, parkedRequestIds, '已结束');
         }
         } finally {
           steerGate.release();
@@ -656,6 +574,7 @@ export async function startChatTurn(
           security: settings.security,
           maxTurns: settings.maxTurns,
           toolRunBudget: guards.budget,
+          extraTools: await mcpToolsForRun(settings, guards.budget),
           history: [], // model history via session
           session: fileSession,
           sessionInputCallback,
@@ -683,63 +602,14 @@ export async function startChatTurn(
               delta,
             });
           },
-          onToolApprovalRequest: ({ requestId, toolName, arguments: toolArgs, serializedRunState }) =>
-            new Promise<{ approved: boolean; message?: string }>((resolve) => {
-              if (controller.signal.aborted) {
-                resolve({ approved: false, message: '已取消' });
-                return;
-              }
-              const decision = resolveAutoApproval(
-                settings.autoApprovalEnabled === true,
-                settings.autoApprovalRules,
-                toolName,
-                toolArgs,
-              );
-              if (decision === 'allow') {
-                resolve({ approved: true, message: '自动审批规则已允许' });
-                return;
-              }
-              ctx.pendingToolApprovals.set(requestId, {
-                computerId: payload.computerId,
-                botId: bot.id,
-                messageId: assistantId,
-                toolName,
-                arguments: toolArgs,
-                resolve,
-              });
-              if (serializedRunState) {
-                try {
-                  ctx.storage.savePendingHitl(bot.id, {
-                    computerId: payload.computerId,
-                    userText: text,
-                    v: 1,
-                    requestId,
-                    messageId: assistantId,
-                    toolName,
-                    arguments: toolArgs,
-                    serializedRunState,
-                    createdAt: new Date().toISOString(),
-                  });
-                } catch (err) {
-                  console.error('[okbot] save pending hitl failed', err);
-                }
-              }
-              ctx.sendRuntimeEvent({
-                type: 'tool_request',
-                botId: bot.id,
-                messageId: assistantId,
-                requestId,
-                toolName,
-                arguments: toolArgs,
-              });
-              const onAbort = () => {
-                if (!ctx.pendingToolApprovals.has(requestId)) return;
-                ctx.pendingToolApprovals.delete(requestId);
-                ctx.storage.clearPendingHitl(bot.id);
-                resolve({ approved: false, message: '已取消' });
-              };
-              controller.signal.addEventListener('abort', onAbort, { once: true });
-            }),
+          onToolApprovalRequest: createApprovalWaiter(ctx, {
+            ownerId: bot.id,
+            messageId: () => assistantId,
+            settings,
+            signal: controller.signal,
+            computerId: payload.computerId,
+            userText: text,
+          }),
           onToolResult: ({ requestId, toolName, approved, output }) => {
             if (!approved) {
               guards.budget.recordRejection(toolName, {}, output);
@@ -955,15 +825,7 @@ export async function respondToToolApproval(
           ctx.storage.clearPendingHitl(disk.botId);
           return { ok: false, error: '小队不存在' };
         }
-        // Cold-start resume for squad captain local-tool HITL: rebuild is not yet
-        // wired (member ask_* graph). Keep pending and ask user to finish while live,
-        // or clear so the next turn is clean — prefer clear + honest error.
-        ctx.storage.clearPendingHitl(disk.botId);
-        return {
-          ok: false,
-          error:
-            '小队工具审批无法在应用重启后恢复，请重新发送该轮消息并再次批准。',
-        };
+        return resumeSquadAfterRestart(ctx, squad, disk, decision);
       }
 
       const bot = ctx.storage.listBots().find((b) => b.id === disk.botId);
@@ -1028,6 +890,7 @@ export async function respondToToolApproval(
           security: settings.security,
           maxTurns: settings.maxTurns,
           toolRunBudget: guards.budget,
+          extraTools: await mcpToolsForRun(settings, guards.budget),
           session: fileSession,
           ownerId: bot.id,
           resourcesDir: ctx.storage.ownerResourcesDir(bot.id),
@@ -1055,63 +918,14 @@ export async function respondToToolApproval(
               delta,
             });
           },
-          onToolApprovalRequest: ({ requestId, toolName, arguments: toolArgs, serializedRunState }) =>
-            new Promise<{ approved: boolean; message?: string }>((resolve) => {
-              if (controller.signal.aborted) {
-                resolve({ approved: false, message: '已取消' });
-                return;
-              }
-              const auto = resolveAutoApproval(
-                settings.autoApprovalEnabled === true,
-                settings.autoApprovalRules,
-                toolName,
-                toolArgs,
-              );
-              if (auto === 'allow') {
-                resolve({ approved: true, message: '自动审批规则已允许' });
-                return;
-              }
-              ctx.pendingToolApprovals.set(requestId, {
-                computerId: disk.computerId,
-                botId: bot.id,
-                messageId: assistantId,
-                toolName,
-                arguments: toolArgs,
-                resolve,
-              });
-              if (serializedRunState) {
-                try {
-                  ctx.storage.savePendingHitl(bot.id, {
-                    computerId: disk.computerId,
-                    userText: disk.userText,
-                    v: 1,
-                    requestId,
-                    messageId: assistantId,
-                    toolName,
-                    arguments: toolArgs,
-                    serializedRunState,
-                    createdAt: new Date().toISOString(),
-                  });
-                } catch (err) {
-                  console.error('[okbot] save pending hitl failed', err);
-                }
-              }
-              ctx.sendRuntimeEvent({
-                type: 'tool_request',
-                botId: bot.id,
-                messageId: assistantId,
-                requestId,
-                toolName,
-                arguments: toolArgs,
-              });
-              const onAbort = () => {
-                if (!ctx.pendingToolApprovals.has(requestId)) return;
-                ctx.pendingToolApprovals.delete(requestId);
-                ctx.storage.clearPendingHitl(bot.id);
-                resolve({ approved: false, message: '已取消' });
-              };
-              controller.signal.addEventListener('abort', onAbort, { once: true });
-            }),
+          onToolApprovalRequest: createApprovalWaiter(ctx, {
+            ownerId: bot.id,
+            messageId: () => assistantId,
+            settings,
+            signal: controller.signal,
+            computerId: disk.computerId,
+            userText: disk.userText,
+          }),
           onToolResult: ({ requestId, toolName, approved, output }) => {
             if (!approved) {
               guards.budget.recordRejection(toolName, {}, output);
@@ -1224,6 +1038,116 @@ export async function respondToToolApproval(
       }
 }
 
+/**
+ * Manual Summary+Buffer: bypass ratio threshold.
+ * mode=compress → keep recent buffer per settings; mode=newTopic → cover all prior (keep=0).
+ * UI transcript (session.jsonl) is never trimmed. Disabled while owner is streaming.
+ */
+export async function compressSessionNow(
+  ctx: IpcContext,
+  payload: { botId?: string; squadId?: string; mode: 'compress' | 'newTopic' },
+): Promise<{
+  ok: boolean;
+  didCompress?: boolean;
+  coveredThroughId?: string | null;
+  error?: string;
+}> {
+  const mode = payload?.mode === 'newTopic' ? 'newTopic' : 'compress';
+  const botId = typeof payload?.botId === 'string' ? payload.botId.trim() : '';
+  const squadId = typeof payload?.squadId === 'string' ? payload.squadId.trim() : '';
+  if ((botId && squadId) || (!botId && !squadId)) {
+    return { ok: false, error: 'invalid_owner' };
+  }
+
+  const ownerId = botId || squadId;
+  if (ctx.abortControllers.has(ownerId)) {
+    return { ok: false, error: 'busy' };
+  }
+
+  const settings = ctx.storage.getSettings();
+  let modelConfig;
+  let staticText: string;
+
+  if (botId) {
+    const bot = ctx.storage.listBots().find((b) => b.id === botId);
+    if (!bot) return { ok: false, error: 'not_found' };
+    modelConfig = resolveModelConfig(settings.model, {
+      providerId: bot.providerId,
+      modelId: bot.modelId,
+    });
+    const agentsMd = ctx.storage.readAgentsMd(bot.id);
+    const skillsText = ctx.storage.formatSkillsForPrompt(bot.id);
+    const memoriesText = ctx.storage.formatMemoriesForPrompt(bot.id);
+    staticText = [agentsMd, skillsText, memoriesText, bot.name, bot.description]
+      .filter(Boolean)
+      .join('\n');
+  } else {
+    const squad = ctx.storage.listSquads().find((s) => s.id === squadId);
+    if (!squad) return { ok: false, error: 'not_found' };
+    modelConfig = resolveModelConfig(settings.model, {
+      providerId: squad.providerId,
+      modelId: squad.modelId,
+    });
+    const bots = ctx.storage.listBots();
+    const rosterText = squad.members
+      .map((m) => {
+        const b = bots.find((x) => x.id === m.botId);
+        return b ? `${b.name}（${m.role || '成员'}）` : '';
+      })
+      .filter(Boolean)
+      .join('、');
+    staticText = [
+      squad.name,
+      squad.description,
+      settings.squad?.captainPersona,
+      settings.squad?.playbook,
+      rosterText,
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  const prior = ctx.storage
+    .getMessages(ownerId)
+    .filter((m) => m.role === 'user' || m.role === 'assistant')
+    .filter((m) => Boolean(m.content?.trim()));
+
+  if (!prior.length) {
+    return { ok: true, didCompress: false, coveredThroughId: null };
+  }
+
+  const controller = new AbortController();
+  // Reuse abortControllers so chatStart/chatAbort treat compress as busy.
+  ctx.abortControllers.set(ownerId, controller);
+  try {
+    const { summaryState, didCompress } = await ensureSessionCompressed({
+      storage: ctx.storage,
+      ownerId,
+      model: modelConfig,
+      contextCompression: settings.contextCompression,
+      staticText,
+      prior,
+      sessionRows: ctx.storage.listSessionBudgetRows(ownerId),
+      signal: controller.signal,
+      force: mode,
+    });
+    return {
+      ok: true,
+      didCompress,
+      coveredThroughId: summaryState?.coveredThroughId ?? null,
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[okbot] compressSessionNow failed', err);
+    return { ok: false, error: msg || 'compress_failed' };
+  } finally {
+    // Only clear if we still own the slot — a raced chatStart must keep Stop working.
+    if (ctx.abortControllers.get(ownerId) === controller) {
+      ctx.abortControllers.delete(ownerId);
+    }
+  }
+}
+
 export function registerChatIpc(ctx: IpcContext): void {
   const ipcMain = loadIpcMain();
   ipcMain.handle(
@@ -1250,117 +1174,7 @@ export function registerChatIpc(ctx: IpcContext): void {
 
   ipcMain.handle(IpcChannels.chatAbort, (_e, botId: string) => abortChatOwner(ctx, botId));
 
-  /**
-   * Manual Summary+Buffer: bypass ratio threshold.
-   * mode=compress → keep recent buffer per settings; mode=newTopic → cover all prior (keep=0).
-   * UI transcript (session.jsonl) is never trimmed. Disabled while owner is streaming.
-   */
-  ipcMain.handle(
-    IpcChannels.compressSessionNow,
-    async (
-      _e,
-      payload: { botId?: string; squadId?: string; mode: 'compress' | 'newTopic' },
-    ): Promise<{
-      ok: boolean;
-      didCompress?: boolean;
-      coveredThroughId?: string | null;
-      error?: string;
-    }> => {
-      const mode = payload?.mode === 'newTopic' ? 'newTopic' : 'compress';
-      const botId = typeof payload?.botId === 'string' ? payload.botId.trim() : '';
-      const squadId = typeof payload?.squadId === 'string' ? payload.squadId.trim() : '';
-      if ((botId && squadId) || (!botId && !squadId)) {
-        return { ok: false, error: 'invalid_owner' };
-      }
-
-      const ownerId = botId || squadId;
-      if (ctx.abortControllers.has(ownerId)) {
-        return { ok: false, error: 'busy' };
-      }
-
-      const settings = ctx.storage.getSettings();
-      let modelConfig;
-      let staticText: string;
-
-      if (botId) {
-        const bot = ctx.storage.listBots().find((b) => b.id === botId);
-        if (!bot) return { ok: false, error: 'not_found' };
-        modelConfig = resolveModelConfig(settings.model, {
-          providerId: bot.providerId,
-          modelId: bot.modelId,
-        });
-        const agentsMd = ctx.storage.readAgentsMd(bot.id);
-        const skillsText = ctx.storage.formatSkillsForPrompt(bot.id);
-        const memoriesText = ctx.storage.formatMemoriesForPrompt(bot.id);
-        staticText = [agentsMd, skillsText, memoriesText, bot.name, bot.description]
-          .filter(Boolean)
-          .join('\n');
-      } else {
-        const squad = ctx.storage.listSquads().find((s) => s.id === squadId);
-        if (!squad) return { ok: false, error: 'not_found' };
-        modelConfig = resolveModelConfig(settings.model, {
-          providerId: squad.providerId,
-          modelId: squad.modelId,
-        });
-        const bots = ctx.storage.listBots();
-        const rosterText = squad.members
-          .map((m) => {
-            const b = bots.find((x) => x.id === m.botId);
-            return b ? `${b.name}（${m.role || '成员'}）` : '';
-          })
-          .filter(Boolean)
-          .join('、');
-        staticText = [
-          squad.name,
-          squad.description,
-          settings.squad?.captainPersona,
-          settings.squad?.playbook,
-          rosterText,
-        ]
-          .filter(Boolean)
-          .join('\n');
-      }
-
-      const prior = ctx.storage
-        .getMessages(ownerId)
-        .filter((m) => m.role === 'user' || m.role === 'assistant')
-        .filter((m) => Boolean(m.content?.trim()));
-
-      if (!prior.length) {
-        return { ok: true, didCompress: false, coveredThroughId: null };
-      }
-
-      const controller = new AbortController();
-      // Reuse abortControllers so chatStart/chatAbort treat compress as busy.
-      ctx.abortControllers.set(ownerId, controller);
-      try {
-        const { summaryState, didCompress } = await ensureSessionCompressed({
-          storage: ctx.storage,
-          ownerId,
-          model: modelConfig,
-          contextCompression: settings.contextCompression,
-          staticText,
-          prior,
-          sessionRows: ctx.storage.listSessionBudgetRows(ownerId),
-          signal: controller.signal,
-          force: mode,
-        });
-        return {
-          ok: true,
-          didCompress,
-          coveredThroughId: summaryState?.coveredThroughId ?? null,
-        };
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error('[okbot] compressSessionNow failed', err);
-        return { ok: false, error: msg || 'compress_failed' };
-      } finally {
-        // Only clear if we still own the slot — a raced chatStart must keep Stop working.
-        if (ctx.abortControllers.get(ownerId) === controller) {
-          ctx.abortControllers.delete(ownerId);
-        }
-      }
-    },
+  ipcMain.handle(IpcChannels.compressSessionNow, (_e, payload) =>
+    compressSessionNow(ctx, payload),
   );
-
 }

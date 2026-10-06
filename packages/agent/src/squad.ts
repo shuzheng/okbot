@@ -1,4 +1,4 @@
-import { Agent, OpenAIProvider, Runner, tool, type Session, type SessionInputCallback } from '@openai/agents';
+import { Agent, OpenAIProvider, RunState, Runner, tool, type Session, type SessionInputCallback, type Tool } from '@openai/agents';
 import { addTokenUsage, emptyTokenUsage, type TokenUsage } from '@okbot/shared';
 import { z } from 'zod';
 import type {
@@ -22,6 +22,7 @@ import {
 } from './instructions.js';
 import { VISION_TURN_INSTRUCTION } from './visionInput.js';
 import {
+  applyResumeDecision,
   buildRunOpts,
   consumeAgentTextStream,
   runHitlStreamLoop,
@@ -32,7 +33,7 @@ import type { ExecutionBackend } from './executionBackend.js';
 import { shellFsRoutingSection, type ComputerRoute } from './computerSelection.js';
 import { wrapToolExecute, type ToolRunBudget } from './toolRunBudget.js';
 import { assertModel } from './model.js';
-import type { HitlLoopHooks, RunChatResult } from './types.js';
+import type { HitlLoopHooks, RunChatResult, ToolApprovalDecision } from './types.js';
 
 export interface SquadMemberAgentSpec {
   botId: string;
@@ -72,6 +73,8 @@ export interface RunSquadChatInput extends HitlLoopHooks {
   executionBackend?: ExecutionBackend;
   /** Per-call computer selection for captain and member shell/fs tools. */
   computerRoute?: ComputerRoute;
+  /** Extra captain tools (for example MCP tools). Members do not get them. */
+  extraTools?: readonly Tool[];
   history?: ChatMessage[];
   userText: string;
 }
@@ -203,18 +206,42 @@ export function buildCaptainSquadInstructions(input: {
   );
 }
 
-/**
- * Squad chat: built-in captain Agent with members exposed as ask_* tools (parallel star topology).
- * Captain remains the only hub; members do not talk to each other. When the model emits multiple
- * ask_* tool calls in one turn, the Agents SDK runs their execute handlers concurrently
- * (maxFunctionToolConcurrency unset → all in-flight).
- */
-export async function runSquadChat(input: RunSquadChatInput): Promise<
-  RunChatResult & { memberUsageByBot?: Record<string, TokenUsage> }
-> {
-  assertModel(input.model);
-  if (input.signal?.aborted) return { content: '' };
+/** One member reply that finished during a cold resume, before the captain continues. */
+export type SquadResumedReply = {
+  memberBotId: string;
+  memberName: string;
+  task: string;
+  reply: string;
+};
 
+/**
+ * Captain instruction block for a continuation after a cold resume.
+ * ASD-STE100 style: short sentences, active voice, one instruction per sentence.
+ */
+export function formatSquadResumeNote(replies: SquadResumedReply[]): string {
+  if (!replies.length) return '';
+  const rows = replies
+    .map(
+      (r) =>
+        `- 队员「${r.memberName}」\n  子任务：${r.task.trim() || '（无）'}\n  结果：${r.reply.trim() || '（无）'}`,
+    )
+    .join('\n');
+  return [
+    '## 恢复的队员结果',
+    '应用重启前，你把下面的子任务交给了队员。队员已完成这些子任务。',
+    '不要再次分配这些子任务。用这些结果继续完成用户的最新请求。',
+    rows,
+  ].join('\n\n');
+}
+
+type MemberUsageState = { acc: TokenUsage; byBot: Record<string, TokenUsage> };
+
+/**
+ * Builds the captain, its runner, and the member agents for one squad run.
+ * The live run and the cold resume share this, so a resumed run sees the same
+ * agent graph (tool names, instructions, budgets).
+ */
+function createSquadRuntime(input: RunSquadChatInput & { resumeNote?: string }) {
   const toolPrefs = input.tools ?? DEFAULT_TOOL_PREFERENCES;
   const security = input.security ?? DEFAULT_SECURITY;
   const squadSettings = input.squadSettings ?? DEFAULT_SQUAD_SETTINGS;
@@ -226,147 +253,146 @@ export async function runSquadChat(input: RunSquadChatInput): Promise<
     useResponses: input.model.apiFormat === 'responses',
   });
   const historyForInstructions = input.session ? [] : (input.history ?? []);
-
-  const memberTools = [];
-  const memberUsageState: { acc: TokenUsage; byBot: Record<string, TokenUsage> } = {
-    acc: emptyTokenUsage(),
-    byBot: {},
-  };
+  const memberUsageState: MemberUsageState = { acc: emptyTokenUsage(), byBot: {} };
   const askToolNames = allocateAskToolNames(input.members);
-  for (let i = 0; i < input.members.length; i++) {
-    const member = input.members[i]!;
-    const capturedName = askToolNames[i]!;
-    const capturedMember = member;
-    memberTools.push(
-      tool({
-        name: capturedName,
-        description: `向小队成员「${capturedMember.name}」咨询（角色：${capturedMember.role || '成员'}）。传入清晰的子任务说明；成员会自行作答并返回给你。`,
-        parameters: z.object({
-          task: z.string().describe('交给该成员的子任务说明（越具体越好）'),
+
+  const buildMember = (member: SquadMemberAgentSpec, taskText: string) => {
+    const memberRoute = input.computerRoute
+      ? {
+          ...input.computerRoute,
+          userText: [input.computerRoute.userText, taskText].filter(Boolean).join('\n'),
+        }
+      : undefined;
+    const agent = new Agent({
+      name: member.name || member.botId,
+      instructions: buildMemberSquadInstructions(
+        input.squadName,
+        member,
+        toolPrefs,
+        shellFsRoutingSection(memberRoute, toolPrefs),
+      ),
+      model: input.model.model,
+      ...(typeof input.model.maxTokens === 'number' && input.model.maxTokens >= 1
+        ? { modelSettings: { maxTokens: input.model.maxTokens } }
+        : {}),
+      tools: buildTools(toolPrefs, security, input.toolRunBudget, {
+        skillLookup: member.skillLookup,
+        imageApi: {
+          baseURL: input.model.baseURL,
+          apiKey: input.model.apiKey,
+          catalogModelIds: input.model.providerModelIds,
+          providerName: input.model.providerName,
+        },
+        imageAssets: { ownerId: input.ownerId, resourcesDir: input.resourcesDir },
+        backend: memberRoute ? undefined : input.executionBackend,
+        computerRoute: memberRoute,
+      }),
+    });
+    const runner = new Runner({ modelProvider: provider, model: input.model.model });
+    const runOpts: { stream: true; signal?: AbortSignal; maxTurns?: number } = {
+      stream: true,
+      signal: input.signal,
+      maxTurns: memberMaxTurns,
+    };
+    return { agent, runner, runOpts };
+  };
+
+  /** Run the member HITL loop to its reply. Approvals carry the member tag for cold resume. */
+  const finishMember = async (
+    member: SquadMemberAgentSpec,
+    toolName: string,
+    taskText: string,
+    built: ReturnType<typeof buildMember>,
+    result: AgentRunStreamResult,
+  ): Promise<string> => {
+    // Do not stream member tokens into the captain bubble.
+    const streamed = await consumeAgentTextStream(result, undefined, input.signal);
+    const out = await runHitlStreamLoop(built.agent, built.runner, built.runOpts, result, streamed, {
+      signal: input.signal,
+      onDelta: undefined,
+      toolRunBudget: input.toolRunBudget,
+      onToolApprovalRequest: (req) =>
+        input.onToolApprovalRequest({
+          ...req,
+          squadMember: { botId: member.botId, toolName, task: taskText },
         }),
-        // No HITL for squad handoffs — the exchange is shown in the transcript instead.
-        execute: wrapToolExecute(capturedName, input.toolRunBudget, async ({ task }) => {
-          try {
+      onToolResult: input.onToolResult,
+    });
+    const reply = out.content?.trim() || '（成员未返回内容）';
+    const usage = out.usage ?? emptyTokenUsage();
+    recordMemberTokenUsage(memberUsageState, member.botId, usage);
+    input.onSquadExchange?.({
+      kind: 'reply',
+      memberBotId: member.botId,
+      memberName: member.name,
+      toolName,
+      content: reply,
+      usage,
+    });
+    return reply;
+  };
+
+  const memberTools = input.members.map((member, i) => {
+    const toolName = askToolNames[i]!;
+    return tool({
+      name: toolName,
+      description: `向小队成员「${member.name}」咨询（角色：${member.role || '成员'}）。传入清晰的子任务说明；成员会自行作答并返回给你。`,
+      parameters: z.object({
+        task: z.string().describe('交给该成员的子任务说明（越具体越好）'),
+      }),
+      // No HITL for squad handoffs — the exchange is shown in the transcript instead.
+      execute: wrapToolExecute(toolName, input.toolRunBudget, async ({ task }) => {
+        try {
           const taskText = String(task ?? '').trim();
           if (!taskText) return '（空任务，已跳过）';
           input.onSquadExchange?.({
             kind: 'ask',
-            memberBotId: capturedMember.botId,
-            memberName: capturedMember.name,
-            toolName: capturedName,
+            memberBotId: member.botId,
+            memberName: member.name,
+            toolName,
             content: taskText,
           });
-          const memberRoute = input.computerRoute
-            ? {
-                ...input.computerRoute,
-                userText: [input.computerRoute.userText, taskText].filter(Boolean).join('\n'),
-              }
-            : undefined;
-          const memberAgent = new Agent({
-            name: capturedMember.name || capturedName,
-            instructions: buildMemberSquadInstructions(
-              input.squadName,
-              capturedMember,
-              toolPrefs,
-              shellFsRoutingSection(memberRoute, toolPrefs),
-            ),
-            model: input.model.model,
-            ...(typeof input.model.maxTokens === 'number' && input.model.maxTokens >= 1
-              ? { modelSettings: { maxTokens: input.model.maxTokens } }
-              : {}),
-            tools: buildTools(toolPrefs, security, input.toolRunBudget, {
-              skillLookup: capturedMember.skillLookup,
-              imageApi: {
-                baseURL: input.model.baseURL,
-                apiKey: input.model.apiKey,
-                catalogModelIds: input.model.providerModelIds,
-                providerName: input.model.providerName,
-              },
-              imageAssets: { ownerId: input.ownerId, resourcesDir: input.resourcesDir },
-              backend: memberRoute ? undefined : input.executionBackend,
-              computerRoute: memberRoute,
-            }),
-          });
-          const memberRunner = new Runner({
-            modelProvider: provider,
-            model: input.model.model,
-          });
-          const memberRunOpts: {
-            stream: true;
-            signal?: AbortSignal;
-            maxTurns?: number;
-          } = { stream: true, signal: input.signal, maxTurns: memberMaxTurns };
-          let memberResult = (await memberRunner.run(
-            memberAgent,
-            taskText,
-            memberRunOpts,
-          )) as AgentRunStreamResult;
-          // Do not stream member tokens into the captain bubble.
-          let memberStreamed = await consumeAgentTextStream(
-            memberResult,
-            undefined,
-            input.signal,
-          );
-          const memberOut = await runHitlStreamLoop(
-            memberAgent,
-            memberRunner,
-            memberRunOpts,
-            memberResult,
-            memberStreamed,
-            {
-              signal: input.signal,
-              onDelta: undefined,
-              toolRunBudget: input.toolRunBudget,
-              onToolApprovalRequest: input.onToolApprovalRequest,
-              onToolResult: input.onToolResult,
-            },
-          );
-          const reply = memberOut.content?.trim() || '（成员未返回内容）';
-          const mu = memberOut.usage ?? emptyTokenUsage();
-          recordMemberTokenUsage(memberUsageState, capturedMember.botId, mu);
+          const built = buildMember(member, taskText);
+          const result = (await built.runner.run(built.agent, taskText, built.runOpts)) as AgentRunStreamResult;
+          return await finishMember(member, toolName, taskText, built, result);
+        } catch (err) {
+          // One member's failure must not cancel sibling ask_* calls (SDK sibling cancellation).
+          if (input.signal?.aborted) throw err;
+          const msg = err instanceof Error ? err.message : String(err);
+          const failed = `（成员「${member.name}」执行失败：${msg}）`;
           input.onSquadExchange?.({
             kind: 'reply',
-            memberBotId: capturedMember.botId,
-            memberName: capturedMember.name,
-            toolName: capturedName,
-            content: reply,
-            usage: mu,
+            memberBotId: member.botId,
+            memberName: member.name,
+            toolName,
+            content: failed,
           });
-          return reply;
-          } catch (err) {
-            // One member's failure must not cancel sibling ask_* calls (SDK sibling cancellation).
-            if (input.signal?.aborted) throw err;
-            const msg = err instanceof Error ? err.message : String(err);
-            const failed = `（成员「${capturedMember.name}」执行失败：${msg}）`;
-            input.onSquadExchange?.({
-              kind: 'reply',
-              memberBotId: capturedMember.botId,
-              memberName: capturedMember.name,
-              toolName: capturedName,
-              content: failed,
-            });
-            return failed;
-          }
-        }),
+          return failed;
+        }
       }),
-    );
-  }
+    });
+  });
 
   const captain = new Agent({
     name: input.squadName || '小队队长',
-    instructions: buildCaptainSquadInstructions({
-      squadName: input.squadName,
-      squadDescription: input.squadDescription,
-      persona: squadSettings.captainPersona,
-      playbook: squadSettings.playbook,
-      members: input.members,
-      askToolNames,
-      prefs: toolPrefs,
-      sessionSummary: input.sessionSummary,
-      history: historyForInstructions,
-      hasVisionInput: input.hasVisionInput === true,
-      computerRouting: shellFsRoutingSection(input.computerRoute, toolPrefs),
-    }),
+    instructions: [
+      buildCaptainSquadInstructions({
+        squadName: input.squadName,
+        squadDescription: input.squadDescription,
+        persona: squadSettings.captainPersona,
+        playbook: squadSettings.playbook,
+        members: input.members,
+        askToolNames,
+        prefs: toolPrefs,
+        sessionSummary: input.sessionSummary,
+        history: historyForInstructions,
+        hasVisionInput: input.hasVisionInput === true,
+        computerRouting: shellFsRoutingSection(input.computerRoute, toolPrefs),
+      }),
+      input.resumeNote?.trim() || '',
+    ]
+      .filter(Boolean)
+      .join('\n\n'),
     model: input.model.model,
     modelSettings: {
       // Provider may emit multiple ask_* in one turn; SDK then runs executes concurrently.
@@ -388,22 +414,111 @@ export async function runSquadChat(input: RunSquadChatInput): Promise<
         computerRoute: input.computerRoute,
       }),
       ...memberTools,
+      ...(input.extraTools ?? []),
     ],
   });
 
-  const runner = new Runner({
-    modelProvider: provider,
-    model: input.model.model,
-  });
+  const runner = new Runner({ modelProvider: provider, model: input.model.model });
   const runOpts = { ...buildRunOpts(input), maxTurns: captainMaxTurns };
+  return { captain, runner, runOpts, memberUsageState, askToolNames, buildMember, finishMember };
+}
 
-  let result = (await runner.run(captain, input.userText, runOpts)) as AgentRunStreamResult;
+/**
+ * Squad chat: built-in captain Agent with members exposed as ask_* tools (parallel star topology).
+ * Captain remains the only hub; members do not talk to each other. When the model emits multiple
+ * ask_* tool calls in one turn, the Agents SDK runs their execute handlers concurrently
+ * (maxFunctionToolConcurrency unset → all in-flight).
+ *
+ * `resumeNote` (see formatSquadResumeNote) continues a turn after a cold resume.
+ */
+export async function runSquadChat(input: RunSquadChatInput & { resumeNote?: string }): Promise<
+  RunChatResult & { memberUsageByBot?: Record<string, TokenUsage> }
+> {
+  assertModel(input.model);
+  if (input.signal?.aborted) return { content: '' };
+  const rt = createSquadRuntime(input);
+  const result = (await rt.runner.run(rt.captain, input.userText, rt.runOpts)) as AgentRunStreamResult;
   const streamed = await consumeAgentTextStream(result, input.onDelta, input.signal);
-  const captainOut = await runHitlStreamLoop(captain, runner, runOpts, result, streamed, input);
-  const usage = addTokenUsage(captainOut.usage ?? emptyTokenUsage(), memberUsageState.acc);
+  const captainOut = await runHitlStreamLoop(rt.captain, rt.runner, rt.runOpts, result, streamed, input);
   return {
     content: captainOut.content,
-    usage,
-    memberUsageByBot: memberUsageState.byBot,
+    usage: addTokenUsage(captainOut.usage ?? emptyTokenUsage(), rt.memberUsageState.acc),
+    memberUsageByBot: rt.memberUsageState.byBot,
   };
+}
+
+export type ResumeSquadChatAfterHitlInput = RunSquadChatInput & {
+  serializedRunState: string;
+  requestId: string;
+  toolName: string;
+  decision: ToolApprovalDecision;
+  /** Set when the approval came from a member run (see ToolApprovalRequest.squadMember). */
+  squadMember?: { botId: string; toolName: string; task: string };
+};
+
+export type ResumeSquadChatResult =
+  | ({ kind: 'captain' } & RunChatResult)
+  | { kind: 'member'; reply: SquadResumedReply; usage?: TokenUsage };
+
+/**
+ * Cold-start resume of a squad approval.
+ * Captain approval: rebuild the captain, restore its RunState, and run to the final reply.
+ * Member approval: rebuild that member, restore the member RunState, and run it to its reply.
+ * The caller then continues the captain with formatSquadResumeNote (the captain run that
+ * called ask_* did not survive the restart).
+ */
+export async function resumeSquadChatAfterHitl(
+  input: ResumeSquadChatAfterHitlInput,
+): Promise<ResumeSquadChatResult> {
+  assertModel(input.model);
+  const rt = createSquadRuntime(input);
+
+  if (input.squadMember) {
+    const tag = input.squadMember;
+    const member = input.members.find((m) => m.botId === tag.botId);
+    if (!member) throw new Error(`恢复失败：小队里没有这名队员（${tag.botId}）`);
+    const built = rt.buildMember(member, tag.task);
+    const state = await RunState.fromString(built.agent, input.serializedRunState);
+    applyResumeDecision(state, input);
+    const result = (await built.runner.run(built.agent, state, built.runOpts)) as AgentRunStreamResult;
+    const reply = await rt.finishMember(member, tag.toolName, tag.task, built, result);
+    return {
+      kind: 'member',
+      reply: { memberBotId: member.botId, memberName: member.name, task: tag.task, reply },
+      usage: rt.memberUsageState.acc,
+    };
+  }
+
+  const state = await RunState.fromString(rt.captain, input.serializedRunState);
+  applyResumeDecision(state, input);
+  const result = (await rt.runner.run(rt.captain, state, rt.runOpts)) as AgentRunStreamResult;
+  const streamed = await consumeAgentTextStream(result, input.onDelta, input.signal);
+  const out = await runHitlStreamLoop(rt.captain, rt.runner, rt.runOpts, result, streamed, input);
+  return {
+    kind: 'captain',
+    content: out.content,
+    usage: addTokenUsage(out.usage ?? emptyTokenUsage(), rt.memberUsageState.acc),
+  };
+}
+
+/**
+ * Session view for a captain continuation after a cold resume: drop tool calls
+ * that never got a result (the process stopped inside them). Providers reject a
+ * history with an unanswered tool call.
+ */
+export function dropUnansweredToolCalls<T>(history: T[]): T[] {
+  const callIdOf = (item: Record<string, unknown>): string => {
+    const id = item.callId ?? item.call_id;
+    return typeof id === 'string' ? id : '';
+  };
+  const answered = new Set<string>();
+  for (const raw of history) {
+    const item = raw as Record<string, unknown>;
+    if (item && item.type === 'function_call_result' && callIdOf(item)) answered.add(callIdOf(item));
+  }
+  return history.filter((raw) => {
+    const item = raw as Record<string, unknown>;
+    if (!item || item.type !== 'function_call') return true;
+    return answered.has(callIdOf(item));
+  });
 }

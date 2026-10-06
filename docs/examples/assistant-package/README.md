@@ -19,7 +19,7 @@ skills/<slug>/SKILL.md
 ## 自测
 
 ```bash
-cd ~/git/github/okbot-dev
+# from the repository root
 pnpm --filter @okbot/agent exec node --import tsx src/skills/catalog.test.ts
 # 或跑脚本：
 node --import tsx docs/examples/assistant-package/selftest.mjs

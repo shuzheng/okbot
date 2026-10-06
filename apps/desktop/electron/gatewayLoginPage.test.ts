@@ -12,12 +12,19 @@ const html = gatewayLoginHtml();
 assert.match(html, /type="password"/);
 assert.match(html, /网关服务/);
 assert.doesNotMatch(html, /unauthorized/);
+assert.match(html, /method="POST"/);
+assert.match(html, /action="\/gateway-login"/);
+assert.doesNotMatch(html, /sessionStorage/);
+assert.doesNotMatch(html, /\?token=/);
 
 const boot = gatewayBootJs();
 assert.match(boot, /setTrafficLightPosition/);
+assert.doesNotMatch(boot, /sessionStorage/);
+assert.match(boot, /credentials:'include'/);
+assert.match(boot, /\/v1\/app-info/);
+assert.match(boot, /phase:'idle'/);
 const injected = injectGatewayBoot('<html><head><meta charset="utf-8"></head><body></body></html>');
 assert.match(injected, /<head><script src="\/gateway-boot.js"><\/script>/);
 assert.equal(injectGatewayBoot(injected), injected);
 
 console.log('gatewayLoginPage.test.ts: ok');
-

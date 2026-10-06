@@ -1,3 +1,7 @@
+import { isMcpToolName } from './mcp.js';
+import type { McpSettings } from './mcp.js';
+
+export * from './mcp.js';
 export type ThemeMode = 'system' | 'light' | 'dark';
 export type LanguageCode = 'system' | 'zh' | 'en';
 
@@ -1429,6 +1433,19 @@ export interface AppSettings {
    * `local` or a `computers` id. Missing / unknown normalizes to `local`.
    */
   defaultComputerId: string;
+  /**
+   * System notification + unread when the window is not focused and a reply
+   * finishes or a tool approval waits. Default true.
+   */
+  notifications: boolean;
+  /**
+   * Shows advanced settings (security, gateway, computers, extensions, run limits,
+   * compression). Default false for new users; migrated on for users who already
+   * use an advanced feature.
+   */
+  showAdvancedSettings: boolean;
+  /** Optional MCP servers ("advanced extensions"). Default off. */
+  mcp: McpSettings;
 }
 
 /** Roster row in `~/.okbot/bots.json` (name card only). */
@@ -1786,9 +1803,12 @@ export interface MessagesPage {
 
 export const MESSAGE_PAGE_SIZE = 50;
 
-/** One chat-history hit from global search (across private bot sessions only). */
+/** One chat-history hit from global search (assistant and squad chats). */
 export interface MessageSearchHit {
+  /** Chat owner id (bot or squad). */
   botId: string;
+  /** Owner type; omitted means `bot`. */
+  ownerKind?: 'bot' | 'squad';
   botName: string;
   botEmoji: string;
   botColor: string;
@@ -1797,6 +1817,8 @@ export interface MessageSearchHit {
   message: ChatMessage;
   /** Short plain-text snippet around the match. */
   snippet: string;
+  /** Squad hits: name of the member who wrote the message (assistant rows). */
+  speakerName?: string;
 }
 
 
@@ -1820,6 +1842,9 @@ export const DEFAULT_AGENTS_MD = `# 角色与目标
 
 
 export const DEFAULT_SETTINGS: AppSettings = {
+  notifications: true,
+  showAdvancedSettings: false,
+  mcp: { enabled: false, servers: [] },
   theme: 'system',
   language: 'system',
   microphoneId: '',
@@ -1897,6 +1922,8 @@ export const IpcChannels = {
   getSettings: 'okbot:get-settings',
   /** Live gateway access token this process checks (or the saved one when owning the server). */
   getGatewayAccessToken: 'okbot:get-gateway-access-token',
+  /** One-shot: attach preload reads the gateway token. Never put it on the command line. */
+  attachGatewayToken: 'okbot:attach-gateway-token',
   saveSettings: 'okbot:save-settings',
   discoverModels: 'okbot:discover-models',
   testModelConnection: 'okbot:test-model-connection',
@@ -1954,6 +1981,18 @@ export const IpcChannels = {
   exportAssistantPackage: 'okbot:export-assistant-package',
   /** Import assistant install package (folder or .okbot zip). */
   importAssistantPackage: 'okbot:import-assistant-package',
+  /** Built-in starter assistants (gallery). */
+  listAssistantGallery: 'okbot:list-assistant-gallery',
+  installGalleryAssistant: 'okbot:install-gallery-assistant',
+  /** Desktop only: MCP connection status / one-off test. */
+  mcpStatus: 'okbot:mcp-status',
+  mcpTestServer: 'okbot:mcp-test-server',
+  /** Desktop only: full data directory backup / restore. */
+  backupExport: 'okbot:backup-export',
+  backupRestore: 'okbot:backup-restore',
+  /** Bring this window to the front (notification click). */
+  windowFocus: 'okbot:window-focus',
+  claimNotification: 'okbot:claim-notification',
 } as const;
 
 export type PendingToolRequest = {
@@ -2039,6 +2078,11 @@ export interface UpdaterStatus {
   availableVersion?: string;
   progress?: number;
   error?: string;
+  /**
+   * The update could not start installing when the app last quit (reason code, for
+   * example `no_space`, `not_writable`). Set on the next launch so the UI can tell the user.
+   */
+  lastInstallFailed?: string;
 }
 
 export interface BootstrapPayload {
@@ -2054,6 +2098,8 @@ export interface BootstrapPayload {
   pendingToolRequests?: PendingToolRequest[];
   /** Corrupt settings.json detected on load (backup kept; defaults not written over it). */
   settingsLoadWarning?: string;
+  /** Set once after a restore turned MCP off (the user must turn it on again). */
+  restoreMcpTurnedOff?: boolean;
 }
 
 
@@ -2136,9 +2182,30 @@ export function resolveAutoApproval(
   return 'ask';
 }
 
+/** Rule text that is exactly a built-in tool id matches that tool by name only. */
+const BUILT_IN_TOOL_RULE_IDS: ReadonlySet<string> = new Set<string>(TOOL_IDS);
+
+/**
+ * Tool approval for one call. MCP tools (`mcp_` prefix) always ask: keyword rules
+ * written for built-in tools (for example `run_shell`) must not match
+ * `mcp_<server>_run_shell`, and MCP calls are never whitelisted.
+ */
+export function resolveToolApproval(
+  settings: { autoApprovalEnabled?: boolean; autoApprovalRules?: AutoApprovalRule[] },
+  toolName: string,
+  toolArgs: unknown,
+): AutoApprovalAction {
+  if (isMcpToolName(toolName)) return 'ask';
+  return resolveAutoApproval(settings.autoApprovalEnabled === true, settings.autoApprovalRules, toolName, toolArgs);
+}
+
 function ruleMatchesKeywords(description: string, haystack: string): boolean {
   const raw = description.trim().toLowerCase();
   if (!raw) return false;
+  if (BUILT_IN_TOOL_RULE_IDS.has(raw)) {
+    const nl = haystack.indexOf('\n');
+    return (nl >= 0 ? haystack.slice(0, nl) : haystack) === raw;
+  }
   if (haystack.includes(raw)) return true;
   const parts = raw
     .split(/[,，、;；\n]+/)

@@ -89,7 +89,13 @@ export function recordTokenUsage(
   file: string,
   ownerId: string,
   usage: TokenUsage,
-  opts?: { alsoOwnerIds?: string[]; /** When true, only bump byOwner (e.g. member slice). */ skipLifetime?: boolean },
+  opts?: {
+    alsoOwnerIds?: string[];
+    /** When true, only bump byOwner (e.g. member slice). */
+    skipLifetime?: boolean;
+    /** Deleted owners: no per-owner entry is written for them. */
+    skipOwnerIds?: ReadonlySet<string>;
+  },
 ): UsageStats {
   const next = loadUsageStats(file);
   const u = normalizeTokenUsage(usage) ?? emptyTokenUsage();
@@ -108,7 +114,9 @@ export function recordTokenUsage(
     next.daily[day] = addTokenUsage(next.daily[day] ?? emptyTokenUsage(), u);
   }
 
-  const owners = new Set<string>([ownerId, ...(opts?.alsoOwnerIds ?? [])].filter(Boolean));
+  const owners = new Set<string>(
+    [ownerId, ...(opts?.alsoOwnerIds ?? [])].filter((id) => id && !opts?.skipOwnerIds?.has(id)),
+  );
   for (const id of owners) {
     next.byOwner[id] = addTokenUsage(next.byOwner[id] ?? emptyTokenUsage(), u);
     if (!opts?.skipLifetime) {

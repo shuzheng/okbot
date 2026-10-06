@@ -31,5 +31,12 @@ export type PendingHitlRecord = {
   computerId?: string;
   /** User text for this turn, so a cold resume keeps the same computer routing. */
   userText?: string;
+  /**
+   * Squad only: the approval came from a member run inside `ask_*`.
+   * `serializedRunState` is then the member's run, not the captain's.
+   */
+  squadMember?: { botId: string; toolName: string; task: string };
+  /** Squad only: stable id of the user turn (bubble ids rotate between captain segments). */
+  turnId?: string;
   createdAt: string;
 };

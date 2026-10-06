@@ -16,7 +16,7 @@
 ## 自测命令
 
 ```bash
-cd ~/git/github/okbot-dev
+# from the repository root
 pnpm --filter @okbot/agent exec node --import tsx src/skills/catalog.test.ts
 ```
 

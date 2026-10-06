@@ -28,6 +28,11 @@ export { buildAgentInstructions } from './instructions.js';
 export { runAgentChat, resumeAgentChatAfterHitl } from './runAgentChat.js';
 export {
   runSquadChat,
+  resumeSquadChatAfterHitl,
+  formatSquadResumeNote,
+  dropUnansweredToolCalls,
+  type SquadResumedReply,
+  type ResumeSquadChatResult,
   allocateAskToolNames,
   buildCaptainSquadInstructions,
   recordMemberTokenUsage,
@@ -183,3 +188,11 @@ export {
   foldExecStreamToFormatted,
   type ExecStreamEvent,
 } from './runtime/execStream.js';
+
+export * from './mcp/index.js';
+export {
+  listAssistantGallery,
+  galleryAssistantPackage,
+  type AssistantGalleryItem,
+  type GalleryLang,
+} from './assistantGallery.js';

@@ -106,6 +106,7 @@ async function testOpenAIRoundTrip() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'okbot-img-oai-'));
   const ownerId = 'bot_test_oai';
   const resourcesDir = path.join(root, ownerId, 'resources');
+  await fs.mkdir(path.join(root, ownerId));
   let calledUrl = '';
   let calledBody: Record<string, unknown> = {};
   const fakeFetch: typeof fetch = async (input, init) => {
@@ -159,6 +160,7 @@ async function testDispatchAndErrors() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'okbot-img-disp-'));
   const ownerId = 'bot_disp';
   const resourcesDir = path.join(root, ownerId, 'resources');
+  await fs.mkdir(path.join(root, ownerId));
 
   // Dispatch via catalog on non-OpenAI host
   let hit = '';
@@ -215,6 +217,19 @@ async function testDispatchAndErrors() {
       ),
     /HTTP 404/,
   );
+
+  // Owner deleted while the image was being generated: nothing is recreated.
+  await fs.rm(path.join(root, ownerId), { recursive: true, force: true });
+  await assert.rejects(
+    () =>
+      generateImage(
+        { baseURL: 'https://proxy.local/v1', apiKey: 'k', catalogModelIds: ['dall-e-3'] },
+        { prompt: 'x' },
+        { fetchImpl: fakeFetch, resourcesDir, ownerId },
+      ),
+    /owner_deleted/,
+  );
+  assert.equal(await fs.stat(path.join(root, ownerId)).then(() => true, () => false), false);
 
   await fs.rm(root, { recursive: true, force: true });
 }

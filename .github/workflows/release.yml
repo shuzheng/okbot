@@ -165,8 +165,7 @@ jobs:
 
           if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
             gh release upload "$TAG" upload/* --repo "${{ github.repository }}" --clobber
-            # Do not replace notes: the release is published with a changelog first.
-            gh release edit "$TAG" --repo "${{ github.repository }}" --latest
+            gh release edit "$TAG" --repo "${{ github.repository }}" --notes "$NOTES" --latest
           else
             gh release create "$TAG" upload/* \
               --repo "${{ github.repository }}" \

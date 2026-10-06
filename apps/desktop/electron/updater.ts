@@ -1,6 +1,19 @@
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
 import { BrowserWindow, app, autoUpdater as nativeAutoUpdater, dialog } from 'electron';
 import electronUpdater from 'electron-updater';
-import type { UpdateInfo, ProgressInfo } from 'electron-updater';
+import type { ProgressInfo, UpdateDownloadedEvent, UpdateInfo } from 'electron-updater';
+import {
+  MAC_UPDATE_INSTALL_SCRIPT,
+  isCachedUpdateZip,
+  macBundleFromExe,
+  macInstallTargetReady,
+  macUpdaterCacheRoot,
+  MAC_INSTALL_SPACE_FACTOR,
+  pickDownloadedSha512,
+  updateSha512ToHex,
+} from './macUpdateInstall';
 import { setAllowQuit } from './quitState';
 import { IpcChannels, type AppSettings, type UpdaterStatus } from '@okbot/shared';
 
@@ -21,6 +34,14 @@ let downloadProgressFloor = 0;
 
 /** In-flight download promise for single-flight; cleared when download settles. */
 let downloadInFlight: Promise<UpdaterStatus> | null = null;
+
+/** Zip electron-updater sha512-checked. Mac install uses this; Squirrel cannot. */
+let downloadedZip: string | null = null;
+/** Hex sha512 from the update manifest, re-checked by the install helper. */
+let downloadedSha512Hex: string | null = null;
+
+/** Detached mac install helper already spawned for this download. */
+let macInstallStarted = false;
 
 function isDownloadActive(): boolean {
   return (
@@ -51,13 +72,57 @@ export function getUpdaterStatus(): UpdaterStatus {
   return { ...status, currentVersion: app.getVersion() };
 }
 
+const INSTALL_FAILED_FILE = 'update-install-failed.json';
+
+/** will-quit cannot show UI: keep the reason for the next launch, and log it. */
+function rememberQuitInstallFailure(reason: string): void {
+  try {
+    fs.writeFileSync(
+      path.join(app.getPath('userData'), INSTALL_FAILED_FILE),
+      JSON.stringify({ reason, at: new Date().toISOString() }),
+    );
+  } catch (err) {
+    console.error('[okbot] could not save update install failure', err);
+  }
+  try {
+    fs.appendFileSync(
+      path.join(app.getPath('logs'), 'update-install.log'),
+      `${new Date().toISOString()} install on quit did not start: ${reason}\n`,
+    );
+  } catch {
+    /* logs dir missing */
+  }
+}
+
+function takeQuitInstallFailure(): string | undefined {
+  const file = path.join(app.getPath('userData'), INSTALL_FAILED_FILE);
+  try {
+    if (!fs.existsSync(file)) return undefined;
+    const data = JSON.parse(fs.readFileSync(file, 'utf8')) as { reason?: unknown };
+    fs.rmSync(file, { force: true });
+    return typeof data.reason === 'string' && data.reason ? data.reason : 'unknown';
+  } catch {
+    // Corrupt / unreadable: drop it so the next launch does not keep failing.
+    try {
+      fs.rmSync(file, { force: true });
+    } catch {
+      /* ignore */
+    }
+    return undefined;
+  }
+}
+
 export function initAutoUpdater(readSettings: SettingsReader) {
   if (initialized) return;
   initialized = true;
   getSettings = readSettings;
+  const lastInstallFailed = takeQuitInstallFailure();
+  if (lastInstallFailed) setStatus({ lastInstallFailed });
 
   autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = true;
+  // MacUpdater only hooks quit-install through Squirrel, which rejects this
+  // unsigned build. Windows/Linux BaseUpdater really does install on quit.
+  autoUpdater.autoInstallOnAppQuit = process.platform !== 'darwin';
   // Dev / unpackaged: skip network checks unless explicitly forced.
   autoUpdater.forceDevUpdateConfig = false;
   // Windows NSIS: skip blockmap/differential → full package only (avoids ~90%→1% jumps on slow nets).
@@ -104,8 +169,16 @@ export function initAutoUpdater(readSettings: SettingsReader) {
       error: undefined,
     });
   });
-  autoUpdater.on('update-downloaded', (info: UpdateInfo) => {
+  autoUpdater.on('update-downloaded', (info: UpdateDownloadedEvent) => {
     downloadProgressFloor = 100;
+    downloadedZip = info.downloadedFile || null;
+    // Match the manifest entry of the file MacUpdater picked (arm64 vs x64), not files[0].
+    downloadedSha512Hex =
+      pickDownloadedSha512(Array.isArray(info.files) ? info.files : [], downloadedZip) ??
+      (Array.isArray(info.files) && info.files.length <= 1 && typeof info.sha512 === 'string'
+        ? updateSha512ToHex(info.sha512)
+        : null);
+    macInstallStarted = false;
     setStatus({
       phase: 'downloaded',
       availableVersion: info.version,
@@ -114,11 +187,26 @@ export function initAutoUpdater(readSettings: SettingsReader) {
     });
   });
   autoUpdater.on('error', (err: Error) => {
-    // Errors during download must still surface.
+    // Mac Squirrel emits this when the unsigned bundle fails its code
+    // requirement. The zip is already verified; do not hide the install UI.
+    if (status.phase === 'downloaded' && downloadedZip) return;
     setStatus({
       phase: 'error',
       error: err?.message || String(err),
     });
+  });
+
+  // Normal quit does not call quitAndInstall. On macOS Squirrel never
+  // prepared an update (signature check failed), so install the zip ourselves
+  // once quit is committed. Relaunch only when the user asked to restart.
+  app.on('will-quit', () => {
+    if (process.platform !== 'darwin') return;
+    if (status.phase !== 'downloaded' || !downloadedZip) return;
+    const started = startMacUpdateInstall(false);
+    if (!started.ok) {
+      console.error('[okbot] mac update install could not start on quit:', started.reason);
+      rememberQuitInstallFailure(started.reason);
+    }
   });
 
   // Background check shortly after launch (always when packaged).
@@ -211,27 +299,112 @@ export async function installUpdate(): Promise<void> {
   }
 }
 
-/**
- * quitAndInstall installs only after the window list is empty. The restart
- * dialog used to be a sheet on the main window, so that window would not
- * close and the installer never ran. Destroying windows inside
- * before-quit-for-update happens before Electron checks the list.
- */
 function restartToInstall(): void {
   setAllowQuit(true);
+  if (process.platform === 'darwin') {
+    // MacUpdater.quitAndInstall() does not quit unless native Squirrel has
+    // already accepted the bundle. Unsigned builds never get there, so the
+    // button returns and the app stays open. Swap the verified zip instead.
+    const started = startMacUpdateInstall(true);
+    if (!started.ok) {
+      const detail =
+        started.reason === 'not_writable'
+          ? '当前应用所在目录不可写（例如还在 DMG 里运行，或没有 /Applications 的写入权限）。请先把 OkBot 复制到「应用程序」后再更新。'
+          : started.reason === 'no_space'
+            ? '磁盘空间不足，无法展开安装包。请腾出空间后重试。'
+            : started.reason === 'no_sha'
+              ? '安装包校验信息不完整。请重新检查更新并下载。'
+              : '已下载的安装包不在更新缓存里。请退出 OkBot，从 Release 手动安装。';
+      void dialog.showMessageBox({
+        type: 'error',
+        buttons: ['好'],
+        message: '无法安装更新',
+        detail,
+      });
+      return;
+    }
+    quitForUpdate();
+    return;
+  }
   // Let the dialog finish tearing down its modal session before we quit.
   setTimeout(() => {
     nativeAutoUpdater.once('before-quit-for-update', () => {
-      // The relaunched process must be able to take the single-instance lock.
-      app.releaseSingleInstanceLock();
-      for (const win of BrowserWindow.getAllWindows()) {
-        if (win.isDestroyed()) continue;
-        win.removeAllListeners('close');
-        win.destroy();
-      }
+      releaseAndDestroyWindows();
     });
     autoUpdater.quitAndInstall(false, true);
   }, 0);
+}
+
+function releaseAndDestroyWindows(): void {
+  // The relaunched process must be able to take the single-instance lock.
+  app.releaseSingleInstanceLock();
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed()) continue;
+    win.removeAllListeners('close');
+    win.destroy();
+  }
+}
+
+function quitForUpdate(): void {
+  releaseAndDestroyWindows();
+  app.quit();
+  // before-quit can still cancel app.quit(). The helper waits on this pid,
+  // so exit if quit does not finish.
+  setTimeout(() => app.exit(0), 2000);
+}
+
+/**
+ * Spawn a detached helper that waits for this process to exit, then replaces
+ * the .app with the zip electron-updater already verified. Returns false when
+ * there is nothing safe to install.
+ */
+type MacInstallStart =
+  | { ok: true }
+  | { ok: false; reason: 'platform' | 'no_zip' | 'no_bundle' | 'not_writable' | 'no_space' | 'no_sha' };
+
+function startMacUpdateInstall(relaunch: boolean): MacInstallStart {
+  if (process.platform !== 'darwin' || !app.isPackaged) return { ok: false, reason: 'platform' };
+  if (macInstallStarted) return { ok: true };
+  const zip = downloadedZip;
+  if (!zip || !isCachedUpdateZip(zip, macUpdaterCacheRoot())) return { ok: false, reason: 'no_zip' };
+  const bundle = macBundleFromExe(app.getPath('exe'));
+  if (!bundle) return { ok: false, reason: 'no_bundle' };
+  const sha = downloadedSha512Hex;
+  if (!sha) return { ok: false, reason: 'no_sha' };
+  // Writability and free-space check happen before quit.
+  try {
+    fs.accessSync(path.dirname(bundle), fs.constants.W_OK);
+  } catch {
+    return { ok: false, reason: 'not_writable' };
+  }
+  if (!macInstallTargetReady(bundle, zip)) {
+    // Distinguish space vs other readiness failures when possible.
+    try {
+      if (typeof fs.statfsSync === 'function') {
+        const st = fs.statfsSync(path.dirname(bundle));
+        const free = Number(st.bavail) * Number(st.bsize);
+        const zipBytes = fs.statSync(zip).size;
+        if (Number.isFinite(free) && zipBytes > 0 && free < zipBytes * MAC_INSTALL_SPACE_FACTOR) {
+          return { ok: false, reason: 'no_space' };
+        }
+      }
+    } catch {
+      /* fall through */
+    }
+    return { ok: false, reason: 'not_writable' };
+  }
+  const scriptPath = path.join(app.getPath('temp'), 'okbot-update-install.sh');
+  fs.writeFileSync(scriptPath, MAC_UPDATE_INSTALL_SCRIPT, { mode: 0o700 });
+  const logPath = path.join(app.getPath('logs'), 'update-install.log');
+  const statusPath = path.join(app.getPath('userData'), INSTALL_FAILED_FILE);
+  const child = spawn(
+    '/bin/bash',
+    [scriptPath, String(process.pid), zip, bundle, logPath, relaunch ? '1' : '0', sha, statusPath],
+    { detached: true, stdio: 'ignore' },
+  );
+  child.unref();
+  macInstallStarted = true;
+  return { ok: true };
 }
 
 /** Call when settings.autoUpdate flips on — schedule a check / resume download. */

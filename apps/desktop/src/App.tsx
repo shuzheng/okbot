@@ -20,7 +20,8 @@ import {
   RunTraceIcon,
 } from './components/ui/icons';
 import { AboutModal } from './features/about';
-import { BotFormModal } from './features/bots';
+import { AssistantGalleryModal, BotFormModal } from './features/bots';
+import { QuickStartPanel } from './features/onboarding';
 import {
   ChatComposer,
   ChatTranscript,
@@ -59,12 +60,13 @@ import {
   transcribeWithLocalWhisper,
 } from './voice';
 import { formatSystemError } from './utils/formatSystemError';
+import { showSystemNotification, windowIsFocused } from './utils/systemNotify';
 import { applyOptimisticSendFailure, rememberReconciledLocalId } from './utils/optimisticSend';
 import {
   formatMessageWithAttachments,
   resolveMessageAttachments,
 } from './utils/messageAttachments';
-import { isAbortLikeError } from '@okbot/shared';
+import { isAbortLikeError, isMcpToolName } from '@okbot/shared';
 import { toast, ToastHost, requestConfirm, ConfirmHost } from './components/ui';
 import type {
   Selection,
@@ -126,6 +128,8 @@ export function App() {
     usage?: import('@okbot/shared').TokenUsage;
   }>(null);
   const [updaterStatus, setUpdaterStatus] = useState<UpdaterStatus | null>(null);
+  /** Boot notices fired after `lang` is known (not on the first empty-deps frame). */
+  const [bootToast, setBootToast] = useState<null | 'restoreMcp' | 'installFailed' | 'installNoSpace'>(null);
   const [highlightMessageId, setHighlightMessageId] = useState<string | null>(null);
   const pendingMessageFocusRef = useRef<{ botId: string; messageId: string } | null>(null);
   const [selection, setSelection] = useState<Selection>(null);
@@ -177,6 +181,7 @@ export function App() {
   const [profileBot, setProfileBot] = useState<Bot | null>(null);
   const [createTarget, setCreateTarget] = useState<Bot | null>(null);
   const [createMenu, setCreateMenu] = useState(false);
+  const [galleryOpen, setGalleryOpen] = useState(false);
   const [createMenuPos, setCreateMenuPos] = useState<{ top: number; left: number } | null>(null);
   const [listening, setListening] = useState(false);
   const [micStream, setMicStream] = useState<MediaStream | null>(null);
@@ -527,6 +532,46 @@ export function App() {
   const squadsRef = useRef(squads);
   squadsRef.current = squads;
 
+  /** Unfocused window: system notification for a finished reply or a waiting approval. */
+  const notifyUnfocusedRef = useRef<
+    (ownerId: string, kind: 'reply' | 'approval', toolName?: string, eventId?: string) => void
+  >(() => {});
+  notifyUnfocusedRef.current = (ownerId, kind, toolName, eventId) => {
+    if (!ownerId || settings?.notifications === false || windowIsFocused()) return;
+    const isSquad = ownerId.startsWith('squad_');
+    const name = isSquad
+      ? squads.find((s) => s.id === ownerId)?.name
+      : bots.find((b) => b.id === ownerId)?.name;
+    // Include the event id so two replies of the same kind within 5s both notify.
+    const idPart = (eventId || '').trim().slice(0, 64);
+    showSystemNotification({
+      title: name || 'OkBot',
+      body:
+        kind === 'reply'
+          ? t(lang, 'notifyReplyDone')
+          : t(lang, 'notifyApprovalWaiting', { tool: toolName || '' }),
+      tag: idPart ? `${ownerId}:${kind}:${idPart}` : `${ownerId}:${kind}`,
+      onClick: () => {
+        window.focus();
+        void window.okbot.windowFocus?.();
+        selectSession({ kind: isSquad ? 'squad' : 'bot', id: ownerId });
+      },
+    });
+  };
+
+  // Back in the window: the open chat is read.
+  useEffect(() => {
+    const onFocus = () => {
+      const sel = selectionRef.current;
+      if (sel?.kind !== 'bot' && sel?.kind !== 'squad') return;
+      const owner =
+        sel.kind === 'squad' ? squads.find((s) => s.id === sel.id) : bots.find((b) => b.id === sel.id);
+      if (owner?.hasUnreadReply) markSessionUnread(sel.id, false);
+    };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [bots, squads]);
+
   const selectedBotId = selectedBot?.id;
   const chatOwnerId = selectedBot?.id ?? selectedSquad?.id ?? null;
 
@@ -635,6 +680,7 @@ export function App() {
     if (boot.settingsLoadWarning) {
       toast.error(boot.settingsLoadWarning, { duration: 12000 });
     }
+    if (boot.restoreMcpTurnedOff) setBootToast('restoreMcp');
 
     // Re-open the last session after cold start / window remount.
     const last = loadLastSelection();
@@ -790,7 +836,11 @@ export function App() {
   useEffect(() => {
     let cancelled = false;
     void window.okbot.updaterGetStatus().then((s) => {
-      if (!cancelled) setUpdaterStatus(s);
+      if (cancelled) return;
+      setUpdaterStatus(s);
+      if (s?.lastInstallFailed) {
+        setBootToast(s.lastInstallFailed === 'no_space' ? 'installNoSpace' : 'installFailed');
+      }
     });
     const off = window.okbot.onUpdaterEvent((s) => setUpdaterStatus(s));
     return () => {
@@ -798,6 +848,15 @@ export function App() {
       off();
     };
   }, []);
+
+  // Resolve toast text at show time so the first-frame language is not locked in.
+  useEffect(() => {
+    if (!bootToast) return;
+    if (bootToast === 'restoreMcp') toast.info(t(lang, 'restoreMcpTurnedOff'), { duration: 12000 });
+    else if (bootToast === 'installNoSpace') toast.error(t(lang, 'updateQuitInstallNoSpace'), { duration: 12000 });
+    else toast.error(t(lang, 'updateQuitInstallFailed'), { duration: 12000 });
+    setBootToast(null);
+  }, [bootToast, lang]);
 
   useEffect(() => {
     type PendingStream = {
@@ -1033,6 +1092,8 @@ export function App() {
         });
         setBusyByBot((prev) => ({ ...prev, [event.botId]: true }));
         setTurnPhaseByBot((prev) => ({ ...prev, [event.botId]: 'awaiting_approval' }));
+        if (!isActive || !windowIsFocused()) markSessionUnread(event.botId, true);
+        notifyUnfocusedRef.current(event.botId, 'approval', event.toolName, event.requestId || event.messageId);
         return;
       }
       if (event.type === 'tool_result') {
@@ -1080,11 +1141,20 @@ export function App() {
             setTurnPhaseByBot((prev) => ({ ...prev, [event.botId]: 'wrapping_up' }));
           }
         }
-        if (event.type === 'done' && !isActive && !event.aborted) {
-          markSessionUnread(event.botId, true);
-        }
-        if (event.type === 'error' && !isActive) {
-          markSessionUnread(event.botId, true);
+        if ((event.type === 'done' && !event.aborted) || event.type === 'error') {
+          if (!isActive || !windowIsFocused()) {
+            markSessionUnread(event.botId, true);
+          } else {
+            // This window shows the chat in front. Another window may mark it unread
+            // for the same event; write "read" a moment later so the viewer wins.
+            const ownerId = event.botId;
+            window.setTimeout(() => {
+              if (windowIsFocused()) markSessionUnread(ownerId, false);
+            }, 400);
+          }
+          if (event.type === 'done') {
+            notifyUnfocusedRef.current(event.botId, 'reply', undefined, event.messageId);
+          }
         }
       }
 
@@ -1373,7 +1443,7 @@ export function App() {
         })();
         return;
       }
-      selectSession({ kind: 'bot', id: target.botId });
+      selectSession({ kind: target.ownerKind, id: target.botId });
     },
     [],
   );
@@ -1708,6 +1778,24 @@ export function App() {
     }
   }
 
+  function openAssistantGallery() {
+    setCreateMenu(false);
+    setCreateMenuPos(null);
+    setGalleryOpen(true);
+  }
+
+  async function onGalleryAssistantInstalled(bot: Bot) {
+    setGalleryOpen(false);
+    try {
+      setBots(await window.okbot.listBots());
+    } catch {
+      /* keep list; the select below still works once the list refreshes */
+    }
+    selectSession({ kind: 'bot', id: bot.id });
+    toast.success(t(lang, 'galleryInstalled', { name: bot.name }));
+    requestAnimationFrame(() => composerRef.current?.focus());
+  }
+
   function openSquadWizard() {
     setCreateMenu(false);
     setCreateMenuPos(null);
@@ -1864,6 +1952,8 @@ export function App() {
     const botId = chatOwnerId;
     if (!botId) return;
     const card = (toolCardsByBot[botId] ?? []).find((c) => c.requestId === requestId);
+    // Cold resume awaits the whole model turn. Mark the card first so a second
+    // click does not toast "没有待处理的工具审批", then roll back on failure.
     setToolCardsByBot((prev) => ({
       ...prev,
       [botId]: (prev[botId] ?? []).map((c) =>
@@ -1879,19 +1969,36 @@ export function App() {
     } else {
       setTurnPhaseByBot((prev) => ({ ...prev, [botId]: 'thinking' }));
     }
+    const rollback = () => {
+      setToolCardsByBot((prev) => ({
+        ...prev,
+        [botId]: (prev[botId] ?? []).map((c) =>
+          c.requestId === requestId ? { ...c, status: 'pending' } : c,
+        ),
+      }));
+    };
+    let result: { ok?: boolean; error?: string } | undefined;
     try {
-      await window.okbot.toolRespond({
+      result = await window.okbot.toolRespond({
         requestId,
         approved,
         message: approved ? undefined : '用户拒绝了该工具调用',
       });
     } catch (err) {
+      rollback();
       toast.error(formatSystemError(err));
+      return;
+    }
+    if (!result || result.ok === false) {
+      rollback();
+      toast.error((result?.error || '').trim() || t(lang, 'actionFailed'));
+      return;
     }
   }
 
   async function respondToolForever(card: { requestId: string; toolName: string }) {
-    if (settings) {
+    // MCP tools always ask: approve this call once, never save a rule.
+    if (settings && !isMcpToolName(card.toolName)) {
       try {
         const key = card.toolName.trim().toLowerCase();
         const prevRules = settings.autoApprovalRules ?? [];
@@ -1935,7 +2042,12 @@ export function App() {
           toast.success(t(lang, 'autoAllowRewroteAsk'));
         }
       } catch (err) {
-        toast.error(formatSystemError(err));
+        const raw = err instanceof Error ? err.message : String(err);
+        if (raw.includes('settings_not_allowed')) {
+          toast.error(t(lang, 'autoAllowNotOnGateway'));
+        } else {
+          toast.error(formatSystemError(err));
+        }
       }
     }
     await respondTool(card.requestId, true);
@@ -2122,15 +2234,38 @@ async function handleSend(retry?: {
     const ownerId = chatOwnerId;
     // Drop in-flight send counts so an aborted steer restart cannot keep the beam on.
     sendsInFlightRef.current[ownerId] = 0;
-    void window.okbot.chatAbort(ownerId);
-    setBusyByBot((prev) => ({ ...prev, [ownerId]: false }));
-    setTurnPhaseByBot((prev) => {
-      if (!(ownerId in prev)) return prev;
-      const next = { ...prev };
-      delete next[ownerId];
-      return next;
-    });
-    requestAnimationFrame(() => composerRef.current?.focus());
+    void (async () => {
+      let result: unknown;
+      try {
+        result = await window.okbot.chatAbort(ownerId);
+      } catch (err) {
+        toast.error(formatSystemError(err));
+        return;
+      }
+      const failed =
+        result === false ||
+        (result != null &&
+          typeof result === 'object' &&
+          (result as { ok?: boolean }).ok === false);
+      if (failed) {
+        const error =
+          result != null &&
+          typeof result === 'object' &&
+          typeof (result as { error?: unknown }).error === 'string'
+            ? (result as { error: string }).error
+            : '';
+        toast.error(error.trim() || t(lang, 'actionFailed'));
+        return;
+      }
+      setBusyByBot((prev) => ({ ...prev, [ownerId]: false }));
+      setTurnPhaseByBot((prev) => {
+        if (!(ownerId in prev)) return prev;
+        const next = { ...prev };
+        delete next[ownerId];
+        return next;
+      });
+      requestAnimationFrame(() => composerRef.current?.focus());
+    })();
   }
 
   function handleQuoteMessage(message: ChatMessage) {
@@ -2339,7 +2474,16 @@ async function handleSend(retry?: {
     setListening(true);
     setVoiceStatusLabel(t(lang, 'listeningRecord'));
     setError('');
-    recorder.start(250);
+    try {
+      recorder.start(250);
+    } catch (err) {
+      mediaRecorderRef.current = null;
+      listeningRef.current = false;
+      setListening(false);
+      setVoiceStatusLabel('');
+      releaseMicStream();
+      setError(err instanceof Error ? err.message : t(lang, 'speechUnsupported'));
+    }
   }
 
   async function toggleVoice() {
@@ -2649,6 +2793,7 @@ async function handleSend(retry?: {
         onImportAssistant={() => {
           void importAssistantPackage();
         }}
+        onOpenAssistantGallery={openAssistantGallery}
         onSelect={selectSession}
         onOpenSessionMenu={setMenu}
         onRenameValueChange={setRenameValue}
@@ -2684,7 +2829,21 @@ async function handleSend(retry?: {
 
       <main className="main">
         <div className="main-topdrag" />
-        {!selection && <ChatWatermark />}
+        {!selection && settings && bots.length === 0 && squads.length === 0 ? (
+          <QuickStartPanel
+            lang={lang}
+            modelReady={(settings.model?.providers ?? []).some((p) => p.models.length > 0)}
+            existingNames={bots.map((b) => b.name)}
+            onOpenModelSettings={() => {
+              setSettingsFocus({ tab: 'model', sectionId: '' });
+              setSettingsOpen(true);
+            }}
+            onCreateOwn={onStartCreateBot}
+            onInstalled={(bot) => void onGalleryAssistantInstalled(bot)}
+          />
+        ) : !selection ? (
+          <ChatWatermark />
+        ) : null}
         {!selection && platform === 'win32' ? (
           <div className="window-controls-float">
             <WindowControls lang={lang} />
@@ -3277,12 +3436,22 @@ async function handleSend(retry?: {
         />
       )}
 
+      {galleryOpen ? (
+        <AssistantGalleryModal
+          lang={lang}
+          modelReady={(settings?.model?.providers ?? []).some((p) => p.models.length > 0)}
+          existingNames={bots.map((b) => b.name)}
+          onClose={() => setGalleryOpen(false)}
+          onInstalled={(bot) => void onGalleryAssistantInstalled(bot)}
+        />
+      ) : null}
       {searchOpen ? (
         <GlobalSearchModal
           lang={lang}
           bots={bots}
           squads={squads}
           developerMode={settings?.developerMode === true}
+          showAdvancedSettings={settings?.showAdvancedSettings === true}
           onClose={() => setSearchOpen(false)}
           onSelect={handleGlobalSearchSelect}
         />

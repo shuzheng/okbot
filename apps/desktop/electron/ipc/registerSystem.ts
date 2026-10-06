@@ -1,4 +1,5 @@
 import { BrowserWindow, clipboard, dialog, ipcMain, shell, systemPreferences, app } from 'electron';
+import { claimNotify } from '../notifyClaim';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -11,16 +12,12 @@ import {
   installUpdate,
 } from '../updater';
 
-export function registerSystemIpc(_ctx: IpcContext): void {
-  ipcMain.handle(
-    IpcChannels.setTrafficLightPosition,
-    (_e, pos: { x: number; y: number }) => {
-      const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
-      if (!win || process.platform !== 'darwin') return false;
-      win.setWindowButtonPosition({ x: Math.round(pos.x), y: Math.round(pos.y) });
-      return true;
-    },
-  );
+let windowControlsRegistered = false;
+
+/** Min/max/close for frameless windows, including the attach client (no full IPC backend). */
+export function registerWindowControlIpc(): void {
+  if (windowControlsRegistered) return;
+  windowControlsRegistered = true;
 
   const windowFromEvent = (e: Electron.IpcMainInvokeEvent) =>
     BrowserWindow.fromWebContents(e.sender);
@@ -43,6 +40,20 @@ export function registerSystemIpc(_ctx: IpcContext): void {
     return true;
   });
 
+  ipcMain.handle(IpcChannels.claimNotification, (_e, payload: { tag?: unknown }) =>
+    claimNotify('local', String(payload?.tag ?? '')),
+  );
+
+  ipcMain.handle(IpcChannels.windowFocus, (e) => {
+    const win = windowFromEvent(e);
+    if (!win || win.isDestroyed()) return false;
+    if (win.isMinimized()) win.restore();
+    if (!win.isVisible()) win.show();
+    win.focus();
+    app.focus({ steal: true });
+    return true;
+  });
+
   ipcMain.handle(IpcChannels.windowIsMaximized, (e) => {
     return windowFromEvent(e)?.isMaximized() ?? false;
   });
@@ -57,6 +68,20 @@ export function registerSystemIpc(_ctx: IpcContext): void {
   };
   for (const win of BrowserWindow.getAllWindows()) attachMaximizedPush(win);
   app.on('browser-window-created', (_e, win) => attachMaximizedPush(win));
+}
+
+export function registerSystemIpc(_ctx: IpcContext): void {
+  ipcMain.handle(
+    IpcChannels.setTrafficLightPosition,
+    (_e, pos: { x: number; y: number }) => {
+      const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+      if (!win || process.platform !== 'darwin') return false;
+      win.setWindowButtonPosition({ x: Math.round(pos.x), y: Math.round(pos.y) });
+      return true;
+    },
+  );
+
+  registerWindowControlIpc();
 
   const electronAppPath = (() => {
     // .../Electron.app/Contents/MacOS/Electron → .../Electron.app

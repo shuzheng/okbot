@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { ensureDir } from './fs';
+import { ensureDir, isInDeletedDir, writeText } from './fs';
 
 export type RunTraceStatus =
   | 'running'
@@ -58,7 +58,8 @@ export class RunTraceRecorder {
   constructor(ownerDir: string, enabled: boolean, runId: string) {
     this.enabled = enabled;
     this.filePath = runTracePath(ownerDir);
-    if (!enabled) return;
+    // Owner deleted before the run started: record nothing.
+    if (!enabled || isInDeletedDir(ownerDir)) return;
     ensureDir(ownerDir);
     const startedAt = nowIso();
     this.data = {
@@ -89,8 +90,10 @@ export class RunTraceRecorder {
   private flush(): void {
     if (!this.data) return;
     try {
+      // Owner deleted mid-run: stop writing; the directory must not come back.
+      if (isInDeletedDir(this.filePath)) return;
       ensureDir(path.dirname(this.filePath));
-      fs.writeFileSync(this.filePath, `${JSON.stringify(this.data, null, 2)}\n`, 'utf8');
+      writeText(this.filePath, `${JSON.stringify(this.data, null, 2)}\n`);
     } catch (err) {
       console.error('[okbot] write run trace failed', err);
     }
@@ -145,7 +148,7 @@ export function markAbandonedIfRunning(ownerDir: string): boolean {
       events,
     };
     ensureDir(path.dirname(file));
-    fs.writeFileSync(file, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
+    writeText(file, `${JSON.stringify(next, null, 2)}\n`);
     return true;
   } catch (err) {
     console.error('[okbot] markAbandonedIfRunning failed', err);

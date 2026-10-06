@@ -10,11 +10,44 @@ type Json = Record<string, unknown>;
 
 type AttachConfig = { base?: string; token?: string; platform?: string };
 
+type AttachWindowFns = {
+  windowMinimize?: () => Promise<boolean>;
+  windowMaximizeToggle?: () => Promise<boolean>;
+  windowClose?: () => Promise<boolean>;
+  windowIsMaximized?: () => Promise<boolean>;
+  windowFocus?: () => Promise<boolean>;
+  onWindowMaximizedChanged?: (cb: (maximized: boolean) => void) => () => void;
+};
+
+type AttachRaw = AttachConfig & AttachWindowFns;
+
+function attachRaw(): AttachRaw | null {
+  const raw = (globalThis as { __okbotAttach?: AttachRaw }).__okbotAttach;
+  if (!raw || typeof raw.base !== 'string' || !raw.base.trim()) return null;
+  return raw;
+}
+
 /** Set by the Electron preload when this window is only a client of an existing server. */
 function attachConfig(): AttachConfig | null {
-  const raw = (globalThis as { __okbotAttach?: AttachConfig }).__okbotAttach;
-  if (!raw || typeof raw.base !== 'string' || !raw.base.trim()) return null;
-  return { base: raw.base.replace(/\/+$/, ''), token: typeof raw.token === 'string' ? raw.token : '' };
+  const raw = attachRaw();
+  if (!raw?.base) return null;
+  return {
+    base: raw.base.replace(/\/+$/, ''),
+    token: typeof raw.token === 'string' ? raw.token : '',
+    platform: typeof raw.platform === 'string' ? raw.platform : undefined,
+  };
+}
+
+async function callAttachWindow(
+  name: 'windowMinimize' | 'windowMaximizeToggle' | 'windowClose' | 'windowIsMaximized' | 'windowFocus',
+): Promise<boolean> {
+  const fn = attachRaw()?.[name];
+  if (typeof fn !== 'function') return false;
+  try {
+    return Boolean(await fn());
+  } catch {
+    return false;
+  }
 }
 
 function endpoint(path: string): string {
@@ -25,20 +58,9 @@ function endpoint(path: string): string {
 }
 
 function gatewayToken(): string {
-  const attached = attachConfig()?.token?.trim();
-  if (attached) return attached;
-  try {
-    const loc = globalThis.location;
-    const storage = globalThis.sessionStorage;
-    const q = new URLSearchParams(loc?.search || '').get('token');
-    if (q?.trim()) {
-      storage?.setItem('okbot.gatewayToken', q.trim());
-      return q.trim();
-    }
-    return storage?.getItem('okbot.gatewayToken') || '';
-  } catch {
-    return '';
-  }
+  // Attach preload only. Browser login uses an HttpOnly cookie (credentials: include).
+  // Never read ?token= or sessionStorage — those leave the secret in the address bar / storage.
+  return attachConfig()?.token?.trim() || '';
 }
 
 async function api<T = Json>(
@@ -56,6 +78,7 @@ async function api<T = Json>(
   const res = await fetch(endpoint(path), {
     method,
     headers,
+    credentials: 'include',
     body: body === undefined ? undefined : JSON.stringify(body),
     ...init,
   });
@@ -70,6 +93,12 @@ async function api<T = Json>(
     throw new Error(json?.error || `HTTP ${res.status}`);
   }
   return json as T;
+}
+
+/** Entity ops share one authenticated route: POST /v1/rpc/:op (see electron/gatewayRpc.ts). */
+async function rpc<T = any>(op: string, args: Record<string, unknown> = {}): Promise<T> {
+  const json = await api<{ ok?: boolean; result?: T }>('POST', `/v1/rpc/${encodeURIComponent(op)}`, args);
+  return json?.result as T;
 }
 
 const runtimeListeners = new Set<(event: any) => void>();
@@ -87,6 +116,7 @@ function startGatewaySessionEvents(): void {
       try {
         const token = gatewayToken();
         const res = await fetch(endpoint('/v1/events'), {
+          credentials: 'include',
           headers: {
             Accept: 'text/event-stream',
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -220,6 +250,11 @@ export function fillGatewaySettings(settings: unknown) {
     model: fillGatewayModel(s.model),
     autoApprovalEnabled: s.autoApprovalEnabled === true,
     autoApprovalRules: Array.isArray(s.autoApprovalRules) ? s.autoApprovalRules : [],
+    notifications: s.notifications !== false,
+    showAdvancedSettings: s.showAdvancedSettings === true,
+    mcp: s.mcp && typeof s.mcp === 'object'
+      ? { enabled: s.mcp.enabled === true, servers: Array.isArray(s.mcp.servers) ? s.mcp.servers : [] }
+      : { enabled: false, servers: [] },
     microphoneId: typeof s.microphoneId === 'string' ? s.microphoneId : '',
     localHttpApi: {
       enabled: local.enabled === true,
@@ -305,8 +340,13 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
         return await api('GET', `/v1/squads/${encodeURIComponent(ownerId)}/messages?${q}`);
       }
     },
-    getMessages: async (botId: string) => {
-      const page = await okbot.getMessagesPage(botId, { limit: 50 });
+    getMessages: async (botId: string, opts?: { limit?: number }) => {
+      const raw = opts?.limit;
+      const limit =
+        typeof raw === 'number' && Number.isFinite(raw) && raw > 0
+          ? Math.min(200, Math.max(1, Math.floor(raw)))
+          : 50;
+      const page = await okbot.getMessagesPage(botId, { limit });
       return page.messages || [];
     },
     chatStart: async (
@@ -317,8 +357,9 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
       const token = gatewayToken();
       const res = await fetch(endpoint(`/v1/bots/${encodeURIComponent(botId)}/messages`), {
         method: 'POST',
+        credentials: 'include',
         headers: {
-          Authorization: `Bearer ${token}`,
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
           'Content-Type': 'application/json',
           Accept: 'text/event-stream',
         },
@@ -366,8 +407,9 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
       const token = gatewayToken();
       const res = await fetch(endpoint(`/v1/squads/${encodeURIComponent(squadId)}/messages`), {
         method: 'POST',
+        credentials: 'include',
         headers: {
-          Authorization: `Bearer ${token}`,
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
           'Content-Type': 'application/json',
           Accept: 'text/event-stream',
         },
@@ -399,7 +441,23 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
       }
       return { ok: true };
     },
-    chatAbort: async () => ({ ok: true }),
+    chatAbort: async (ownerId?: string) => {
+      const id = (ownerId || '').trim();
+      if (!id) return { ok: false as const, error: 'missing_id' };
+      try {
+        return await api<{ ok: boolean }>('POST', `/v1/bots/${encodeURIComponent(id)}/abort`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : '';
+        if (message !== 'bot_not_found') {
+          return { ok: false as const, error: message || 'abort_failed' };
+        }
+      }
+      try {
+        return await api<{ ok: boolean }>('POST', `/v1/squads/${encodeURIComponent(id)}/abort`);
+      } catch (err) {
+        return { ok: false as const, error: err instanceof Error ? err.message : 'abort_failed' };
+      }
+    },
     onRuntimeEvent: (cb: (e: any) => void) => {
       runtimeListeners.add(cb);
       return () => runtimeListeners.delete(cb);
@@ -417,28 +475,76 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
         return false;
       }
     },
-    getAppInfo: async () => ({
-      name: 'OkBot Gateway',
-      version: 'gateway',
-      platform: attachConfig()?.platform || 'web',
-      arch: '',
-      electron: '',
-      chrome: '',
-      buildDate: '',
-    }),
+    getAppInfo: async () => {
+      const fallbackPlatform = attachConfig()?.platform || 'web';
+      try {
+        const info = await api<{
+          name?: string;
+          version?: string;
+          platform?: string;
+          arch?: string;
+        }>('GET', '/v1/app-info');
+        return {
+          name: info?.name?.trim() || 'OkBot',
+          version: info?.version?.trim() || '0.0.0',
+          platform: info?.platform?.trim() || fallbackPlatform,
+          arch: info?.arch?.trim() || '',
+          electron: '',
+          chrome: '',
+          buildDate: '',
+        };
+      } catch {
+        return {
+          name: 'OkBot',
+          version: '0.0.0',
+          platform: fallbackPlatform,
+          arch: '',
+          electron: '',
+          chrome: '',
+          buildDate: '',
+        };
+      }
+    },
     setTrafficLightPosition: async () => false,
     probeComputer: async () => ({ ok: false as const, error: 'unreachable' }),
-    // Stubs for APIs not yet exposed over gateway — keep UI from crashing
-    toolRespond: async () => ({ ok: false, error: 'not_supported_on_gateway' }),
-    setChatUnread: async () => true,
-    updaterGetStatus: async () => ({ state: 'idle' }),
+    toolRespond: async (payload?: { requestId?: string; approved?: boolean; message?: string }) => {
+      try {
+        return await api<{ ok: boolean; error?: string }>('POST', '/v1/tool-respond', {
+          requestId: payload?.requestId,
+          approved: payload?.approved === true,
+          message: payload?.message,
+        });
+      } catch (err) {
+        return { ok: false as const, error: err instanceof Error ? err.message : 'tool_respond_failed' };
+      }
+    },
+    setChatUnread: (ownerId: string, hasUnread: boolean) =>
+      rpc<boolean>('setChatUnread', { ownerId, hasUnread }),
+    updaterGetStatus: async () => {
+      const info = await okbot.getAppInfo();
+      return { phase: 'idle' as const, currentVersion: info?.version || '0.0.0' };
+    },
     onUpdaterEvent: () => () => {},
     onNativeThemeUpdated: () => () => {},
-    windowMinimize: async () => false,
-    windowMaximizeToggle: async () => false,
-    windowClose: async () => false,
-    windowIsMaximized: async () => false,
-    onWindowMaximizedChanged: () => () => {},
+    windowMinimize: () => callAttachWindow('windowMinimize'),
+    windowMaximizeToggle: () => callAttachWindow('windowMaximizeToggle'),
+    windowClose: () => callAttachWindow('windowClose'),
+    windowIsMaximized: () => callAttachWindow('windowIsMaximized'),
+    // Browser tab: window.focus() is the best a page can do.
+    windowFocus: async () => (attachRaw() ? callAttachWindow('windowFocus') : (window.focus(), true)),
+    claimNotification: async (tag: string) => {
+      const json = await api<{ granted?: unknown }>('POST', '/v1/notify-claim', { tag });
+      return json.granted !== false;
+    },
+    onWindowMaximizedChanged: (cb: (maximized: boolean) => void) => {
+      const fn = attachRaw()?.onWindowMaximizedChanged;
+      if (typeof fn !== 'function') return () => {};
+      try {
+        return fn(cb) || (() => {});
+      } catch {
+        return () => {};
+      }
+    },
     ensureMicrophoneAccess: async () => ({ granted: false }),
     openMicrophoneSettings: async () => false,
     getUsageStats: async () => {
@@ -447,52 +553,70 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
     },
     pickPaths: async () => ({ canceled: true, paths: [] }),
     readGeneratedAssetDataUrl: async () => null,
-    getPromptContext: async () => ({ text: null }),
-    getLastRunTrace: async () => null,
-    searchMessages: async () => [],
-    listBotMemories: async () => [],
-    listGlobalMemories: async () => [],
-    listBotSkills: async () => [],
-    listGlobalAgentsSkills: async () => [],
-    readAgentsMd: async () => '',
-    createBot: async () => {
-      throw new Error('Create bot from gateway not supported yet');
-    },
-    createSquad: async () => {
-      throw new Error('Create squad from gateway not supported yet');
-    },
-    updateBot: async () => {
-      throw new Error('Update bot from gateway not supported yet');
-    },
-    finishBotOnboarding: async () => {
-      throw new Error('Bot onboarding from gateway not supported yet');
-    },
-    deleteBot: async () => {
-      throw new Error('Delete bot from gateway not supported yet');
-    },
-    updateSquad: async () => {
-      throw new Error('Update squad from gateway not supported yet');
-    },
-    deleteSquad: async () => {
-      throw new Error('Delete squad from gateway not supported yet');
-    },
-    writeAgentsMd: async () => true,
-    upsertBotMemory: async () => true,
-    deleteBotMemory: async () => true,
-    upsertGlobalMemory: async () => true,
-    deleteGlobalMemory: async () => true,
-    writeBotSkill: async () => true,
-    deleteBotSkill: async () => true,
+    getPromptContext: (botId: string, messageId: string) =>
+      rpc('getPromptContext', { botId, messageId }),
+    getLastRunTrace: (ownerId: string) => rpc('getLastRunTrace', { ownerId }),
+    searchMessages: (query: string, opts?: { limit?: number }) =>
+      rpc('searchMessages', { query, limit: opts?.limit }),
+    listBotMemories: (botId: string) => rpc('listBotMemories', { botId }),
+    listGlobalMemories: () => rpc('listGlobalMemories'),
+    listBotSkills: (botId: string) => rpc('listBotSkills', { botId }),
+    listGlobalAgentsSkills: () => rpc('listGlobalAgentsSkills'),
+    readAgentsMd: (botId: string) => rpc<string>('readAgentsMd', { botId }),
+    createBot: (input: Record<string, unknown>) => rpc('createBot', input ?? {}),
+    createSquad: (input: Record<string, unknown>) => rpc('createSquad', input ?? {}),
+    updateBot: (id: string, patch: Record<string, unknown>) => rpc('updateBot', { id, patch }),
+    finishBotOnboarding: (botId: string, answers: Record<string, unknown>) =>
+      rpc('finishBotOnboarding', { botId, answers }),
+    deleteBot: (id: string) => rpc<boolean>('deleteBot', { id }),
+    updateSquad: (id: string, patch: Record<string, unknown>) => rpc('updateSquad', { id, patch }),
+    deleteSquad: (id: string) => rpc<boolean>('deleteSquad', { id }),
+    writeAgentsMd: (botId: string, content: string) => rpc<boolean>('writeAgentsMd', { botId, content }),
+    upsertBotMemory: (entry: Record<string, unknown>) => rpc<boolean>('upsertBotMemory', { entry }),
+    deleteBotMemory: (botId: string, memoryId: string) =>
+      rpc<boolean>('deleteBotMemory', { botId, memoryId }),
+    upsertGlobalMemory: (entry: Record<string, unknown>) => rpc<boolean>('upsertGlobalMemory', { entry }),
+    deleteGlobalMemory: (memoryId: string) => rpc<boolean>('deleteGlobalMemory', { memoryId }),
+    writeBotSkill: (botId: string, skill: Record<string, unknown>) =>
+      rpc<boolean>('writeBotSkill', { botId, skill }),
+    deleteBotSkill: (botId: string, slug: string) => rpc<boolean>('deleteBotSkill', { botId, slug }),
+    // Package files live on the gateway host; picking a path there is a desktop-only action.
     exportAssistantPackage: async () => ({ canceled: true }),
     importAssistantPackage: async () => ({ canceled: true }),
-    discoverModels: async () => ({ ok: false, error: 'not_supported_on_gateway' }),
-    testModelConnection: async () => ({ ok: false, error: 'not_supported_on_gateway' }),
-    clearModelBindingsForProvider: async () => ({ cleared: 0 }),
-    getRecentErrorLog: async () => ({ entries: [] }),
-    updaterCheck: async () => ({ state: 'idle' }),
-    updaterDownload: async () => ({ state: 'idle' }),
+    listAssistantGallery: (lang?: string) => rpc('listAssistantGallery', { lang }),
+    installGalleryAssistant: (id: string, lang?: string) => rpc('installGalleryAssistant', { id, lang }),
+    // Desktop-only: MCP starts host processes; backup reads / replaces the whole data dir.
+    mcpStatus: async () => [],
+    mcpTestServer: async () => ({ id: '', name: '', ok: false, toolCount: 0, error: 'desktop_only' }),
+    backupExport: async () => ({ ok: false as const, error: 'desktop_only' }),
+    backupRestore: async () => ({ ok: false as const, error: 'desktop_only' }),
+    discoverModels: async (payload: Record<string, unknown>) => {
+      try {
+        return await rpc('discoverModels', payload ?? {});
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : 'discover_failed' };
+      }
+    },
+    testModelConnection: async (payload: Record<string, unknown>) => {
+      try {
+        return await rpc('testModelConnection', payload ?? {});
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : 'test_failed' };
+      }
+    },
+    clearModelBindingsForProvider: (payload: { providerId: string; removedModelIds?: string[] }) =>
+      rpc('clearModelBindingsForProvider', payload ?? {}),
+    getRecentErrorLog: (limit?: number) => rpc('getRecentErrorLog', { limit }),
+    updaterCheck: async () => okbot.updaterGetStatus(),
+    updaterDownload: async () => okbot.updaterGetStatus(),
     updaterInstall: async () => undefined,
-    compressSessionNow: async () => ({ ok: false, error: 'not_supported_on_gateway' }),
+    compressSessionNow: async (payload: Record<string, unknown>) => {
+      try {
+        return await rpc('compressSessionNow', payload ?? {});
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : 'compress_failed' };
+      }
+    },
   };
 
   return okbot;

@@ -16,6 +16,7 @@ import { ModelEditDialog } from './ModelEditDialog';
 import { ModelRefSelect } from './ModelRefSelect';
 import { requestConfirm, toast } from '../../components/ui';
 import { formatSystemError } from '../../utils/formatSystemError';
+import { isGatewayClient } from '../../utils/gatewayClient';
 
 export type ModelProvidersPanelProps = {
   lang: UiLang;
@@ -29,6 +30,14 @@ function patchProvider(
   patch: Partial<ModelProvider>,
 ): ModelProvider[] {
   return providers.map((p) => (p.id === id ? { ...p, ...patch } : p));
+}
+
+
+/** Gateway refuses probes of unsaved base URLs (no SSRF); show a readable reason. */
+function probeErrorText(lang: UiLang, error: unknown): string {
+  const raw = typeof error === 'string' ? error : '';
+  if (raw.includes('probe_url_not_saved')) return t(lang, 'modelProbeGatewaySavedOnly');
+  return raw;
 }
 
 export function ModelProvidersPanel({ lang, value, onChange }: ModelProvidersPanelProps) {
@@ -258,7 +267,8 @@ export function ModelProvidersPanel({ lang, value, onChange }: ModelProvidersPan
     const b = active.baseURL.trim();
     const k = active.apiKey.trim();
     const modelsSnapshot = active.models;
-    if (!b || !k) {
+    // Gateway clients see a blank key; the server uses the saved key for this provider.
+    if (!b || (!k && !isGatewayClient())) {
       if (!opts.soft) {
         setDiscoverStatus({ kind: 'error', message: t(lang, 'modelDiscoverFail') });
       }
@@ -276,13 +286,13 @@ export function ModelProvidersPanel({ lang, value, onChange }: ModelProvidersPan
     const seq = ++discoverSeqRef.current;
     setDiscoverStatus({ kind: 'loading', message: t(lang, 'modelDiscovering') });
     try {
-      const res = await window.okbot.discoverModels({ baseURL: b, apiKey: k });
+      const res = await window.okbot.discoverModels({ baseURL: b, apiKey: k, providerId });
       // Stale response (newer keystroke/discover started) — do not write back.
       if (seq !== discoverSeqRef.current) return;
       if (!res.ok || !res.models?.length) {
         setDiscoverStatus({
           kind: 'error',
-          message: res.error || t(lang, 'modelDiscoverFail'),
+          message: probeErrorText(lang, res.error) || t(lang, 'modelDiscoverFail'),
         });
         return;
       }
@@ -328,7 +338,7 @@ export function ModelProvidersPanel({ lang, value, onChange }: ModelProvidersPan
     const providerId = active.id;
     const b = active.baseURL.trim();
     const k = active.apiKey.trim();
-    if (!b || !k) {
+    if (!b || (!k && !isGatewayClient())) {
       setConnTest({
         providerId,
         modelId,
@@ -344,6 +354,7 @@ export function ModelProvidersPanel({ lang, value, onChange }: ModelProvidersPan
         apiKey: k,
         apiFormat: active.apiFormat,
         modelId,
+        providerId,
       });
       // Drop stale results if user switched provider mid-flight.
       if (activeProviderId !== providerId) return;
@@ -352,7 +363,7 @@ export function ModelProvidersPanel({ lang, value, onChange }: ModelProvidersPan
           providerId,
           modelId,
           kind: 'error',
-          message: res.error || t(lang, 'modelTestFail'),
+          message: probeErrorText(lang, res.error) || t(lang, 'modelTestFail'),
         });
         return;
       }

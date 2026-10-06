@@ -51,6 +51,7 @@ import {
   type SessionsChangedReason,
   normalizeLocalHttpApiSettings,
   normalizeComputers,
+  normalizeMcpSettings,
   normalizeDefaultComputerId,
 } from '@okbot/shared';
 import {
@@ -64,7 +65,16 @@ import {
   stripSecrets,
   type AssistantPackageContents,
 } from '@okbot/agent';
-import { ensureDir, readJson, readJsonResult, backupFileAside, writeJson } from './fs';
+import {
+  appendText,
+  ensureDir,
+  markDirDeleted,
+  readJson,
+  readJsonResult,
+  backupFileAside,
+  writeJson,
+  writeText,
+} from './fs';
 import { formatCappedMemoriesForPrompt } from './memoryPrompt';
 import { loadUsageStats, recordTokenUsage, removeOwnerUsage } from './usageStore';
 import {
@@ -96,8 +106,13 @@ import {
   readAssistantPackageArchive,
 } from './assistantPackageIo';
 import { readLastRunTrace, markAbandonedIfRunning, type RunTraceFile } from './runTrace';
+import { searchSessionFiles, type SearchOwner } from './messageSearch';
 
 export type { SessionRecordV2, PendingHitlRecord } from './types';
+
+/** Squad avatar in search hits (matches the sidebar / search squad rows). */
+const SQUAD_SEARCH_EMOJI = '👥';
+const SQUAD_SEARCH_COLOR = '#6366F1';
 
 export class FileStorage {
   readonly root: string;
@@ -106,6 +121,25 @@ export class FileStorage {
   private settingsPath: string;
   /** One-shot warning after corrupt settings.json (shown on bootstrap). */
   private settingsLoadWarning: string | null = null;
+  /**
+   * Owners deleted in this process. A run that was still finishing when its
+   * assistant / squad was deleted must not recreate the directory.
+   */
+  private readonly deletedOwners = new Set<string>();
+
+  private assertOwnerAlive(ownerId: string): void {
+    if (this.deletedOwners.has(ownerId)) throw new Error(`owner_deleted:${ownerId}`);
+  }
+
+  /** Tombstone: later writes under this owner dir throw `owner_deleted` (see `fs.ts`). */
+  private markOwnerDeleted(ownerId: string): void {
+    this.deletedOwners.add(ownerId);
+    markDirDeleted(this.ownerDir(ownerId));
+  }
+
+  isOwnerDeleted(ownerId: string): boolean {
+    return this.deletedOwners.has(ownerId);
+  }
   /** Main process fans this out as RuntimeEvent sessions_changed. */
   private sessionsChangedListener:
     | ((ownerId: string, reason: SessionsChangedReason) => void)
@@ -122,9 +156,11 @@ export class FileStorage {
     this.windowPath = path.join(this.root, 'window.json');
     this.usagePath = path.join(this.root, 'usage.json');
     ensureDir(this.root);
+    this.restrictDataDir();
     if (!fs.existsSync(this.botsPath)) writeJson(this.botsPath, [] as BotRosterEntry[]);
     if (!fs.existsSync(this.squadsPath)) writeJson(this.squadsPath, [] as Squad[]);
     if (!fs.existsSync(this.settingsPath)) this.writeSettingsFile(DEFAULT_SETTINGS);
+    else this.restrictSettingsFile();
     this.ensureMemoryFile(this.globalMemoryPath());
   }
 
@@ -177,9 +213,23 @@ export class FileStorage {
     return path.join(this.botDir(botId), 'session.jsonl');
   }
 
-  /** `~/.okbot/<botId>/pending-hitl.json` — at most one pending tool approval (V1). */
-  private pendingHitlFile(botId: string): string {
+  /** Legacy `~/.okbot/<owner>/pending-hitl.json` — one record per owner. Read-only now. */
+  private legacyPendingHitlFile(botId: string): string {
     return path.join(this.botDir(botId), 'pending-hitl.json');
+  }
+
+  /** `~/.okbot/<owner>/pending-hitl/<requestId>.json` — one file per pending approval. */
+  private pendingHitlDir(botId: string): string {
+    return path.join(this.botDir(botId), 'pending-hitl');
+  }
+
+  private pendingHitlRequestFile(botId: string, requestId: string): string {
+    return path.join(this.pendingHitlDir(botId), `${assertSafeOwnerSegment(requestId)}.json`);
+  }
+
+  /** Squad cold resume: member replies already collected for one captain turn. */
+  private squadResumeFile(squadId: string, turnId: string): string {
+    return path.join(this.botDir(squadId), 'pending-hitl-replies', `${assertSafeOwnerSegment(turnId)}.json`);
   }
 
   /** `~/.okbot/<botId>/skills` */
@@ -208,6 +258,7 @@ export class FileStorage {
   }
 
   private ensureBotLayout(botId: string): void {
+    this.assertOwnerAlive(botId);
     if (isSquadOwnerId(botId)) {
       this.ensureSquadLayout(botId);
       return;
@@ -217,7 +268,7 @@ export class FileStorage {
     ensureDir(this.botResourcesDir(botId));
     const agents = this.agentsMdPath(botId);
     if (!fs.existsSync(agents)) {
-      fs.writeFileSync(agents, DEFAULT_AGENTS_MD, 'utf8');
+      writeText(agents, DEFAULT_AGENTS_MD);
     }
     this.ensureMemoryFile(this.botMemoryPath(botId));
   }
@@ -229,10 +280,11 @@ export class FileStorage {
   }
 
   private ensureSquadLayout(squadId: string): void {
+    this.assertOwnerAlive(squadId);
     ensureDir(this.squadDir(squadId));
     ensureDir(path.join(this.squadDir(squadId), 'resources'));
     const sf = this.sessionFile(squadId);
-    if (!fs.existsSync(sf)) fs.writeFileSync(sf, '', 'utf8');
+    if (!fs.existsSync(sf)) writeText(sf, '');
   }
 
   /** Bot full layout, or squad session layout. */
@@ -256,7 +308,7 @@ export class FileStorage {
     // Never persist model CoT into system instructions (refresh / UI / sync).
     const stripped = stripThinkContent(typeof content === 'string' ? content : '').trimEnd();
     const text = stripped.endsWith('\n') ? stripped : `${stripped}\n`;
-    fs.writeFileSync(this.agentsMdPath(botId), text, 'utf8');
+    writeText(this.agentsMdPath(botId), text);
   }
 
 
@@ -328,7 +380,7 @@ export class FileStorage {
         expires: e.expires,
       }),
     );
-    fs.writeFileSync(file, `${header.join('\n')}${body.join('\n')}${body.length ? '\n' : ''}`, 'utf8');
+    writeText(file, `${header.join('\n')}${body.join('\n')}${body.length ? '\n' : ''}`);
   }
 
   listGlobalMemories(): MemoryEntry[] {
@@ -583,7 +635,9 @@ export class FileStorage {
     usage: TokenUsage,
     opts?: { alsoOwnerIds?: string[]; skipLifetime?: boolean },
   ): UsageStats {
-    return recordTokenUsage(this.usagePath, ownerId, usage, opts);
+    // Tokens of a run that ended after its owner was deleted still count in the
+    // totals, but no per-owner entry comes back for the deleted owner.
+    return recordTokenUsage(this.usagePath, ownerId, usage, { ...opts, skipOwnerIds: this.deletedOwners });
   }
 
 
@@ -595,6 +649,7 @@ export class FileStorage {
   /** `~/.okbot/<botId|squadId>/resources` — generated images / media. */
   ownerResourcesDir(ownerId: string): string {
     const id = assertSafeOwnerSegment(ownerId);
+    this.assertOwnerAlive(id);
     const dir = path.join(this.ownerDir(id), 'resources');
     ensureDir(dir);
     return dir;
@@ -660,6 +715,7 @@ export class FileStorage {
         computers: [],
         defaultComputerId: 'local',
         autoApprovalRules: [...DEFAULT_SETTINGS.autoApprovalRules],
+        mcp: normalizeMcpSettings(DEFAULT_SETTINGS.mcp),
       };
     }
 
@@ -695,7 +751,15 @@ export class FileStorage {
         (raw as { defaultComputerId?: unknown }).defaultComputerId,
         normalizeComputers((raw as { computers?: unknown }).computers),
       ),
+      notifications: (raw as { notifications?: unknown }).notifications !== false,
+      showAdvancedSettings: false,
+      mcp: normalizeMcpSettings((raw as { mcp?: unknown }).mcp),
     };
+    const rawShowAdvanced = (raw as { showAdvancedSettings?: unknown }).showAdvancedSettings;
+    // Missing in an existing settings.json: written by an older build, where every
+    // tab was visible. Keep them visible so a user who changed security, tool limits,
+    // compression and so on does not lose them. New installs start with it off.
+    next.showAdvancedSettings = typeof rawShowAdvanced === 'boolean' ? rawShowAdvanced : true;
     // Rewrite legacy shapes in place (no dual-read forever). Only when we actually
     // read a file from disk — never after parse failure.
     if (loaded.status === 'ok') {
@@ -749,14 +813,29 @@ export class FileStorage {
   }
 
 
-  /** settings.json holds API tokens; keep it owner-readable only. */
-  private writeSettingsFile(data: unknown): void {
-    writeJson(this.settingsPath, data);
+  /** Data dir holds the gateway token and model API keys. Owner-only, not other local accounts. */
+  private restrictDataDir(): void {
     try {
+      fs.chmodSync(this.root, 0o700);
+    } catch (err) {
+      console.error('[okbot] chmod data dir failed', err);
+    }
+  }
+
+  /** settings.json holds API tokens; keep it owner-readable only. */
+  private restrictSettingsFile(): void {
+    try {
+      if (!fs.existsSync(this.settingsPath)) return;
       fs.chmodSync(this.settingsPath, 0o600);
     } catch (err) {
       console.error('[okbot] chmod settings.json failed', err);
     }
+  }
+
+  private writeSettingsFile(data: unknown): void {
+    // Owner-only from the first byte — do not rely on a later chmod alone.
+    writeJson(this.settingsPath, data, { mode: 0o600 });
+    this.restrictSettingsFile();
   }
 
   saveSettings(settings: AppSettings): AppSettings {
@@ -802,6 +881,9 @@ export class FileStorage {
         settings.defaultComputerId,
         normalizeComputers(settings.computers),
       ),
+      notifications: settings.notifications !== false,
+      showAdvancedSettings: settings.showAdvancedSettings === true,
+      mcp: normalizeMcpSettings(settings.mcp),
     };
     this.writeSettingsFile(next);
     return next;
@@ -994,7 +1076,8 @@ export class FileStorage {
    */
   private allocateNewBotId(): string {
     const dateYmd = localDateYyyyMmDd();
-    const known = this.collectKnownBotIds();
+    // Ids deleted in this process stay taken so a tombstoned directory is never reused.
+    const known = new Set<string>([...this.collectKnownBotIds(), ...this.deletedOwners]);
     let maxSeq = 0;
     for (const id of known) {
       const seq = parseBotIdSeqForDate(id, dateYmd);
@@ -1055,7 +1138,7 @@ export class FileStorage {
     // Layout + bot.json first so a crash never leaves a roster ghost without config.
     this.ensureBotLayout(id);
     this.writeBotConfig(config);
-    fs.writeFileSync(this.sessionFile(id), '', 'utf8');
+    writeText(this.sessionFile(id), '');
     const roster = this.listRoster();
     roster.unshift(entry);
     this.writeRoster(roster);
@@ -1158,6 +1241,7 @@ export class FileStorage {
     this.assertKnownBotId(safe);
     const roster = this.listRoster().filter((b) => b.id !== safe);
     this.writeRoster(roster);
+    this.markOwnerDeleted(safe);
     const dir = this.botDir(safe);
     if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
     this.purgeBotFromSquads(safe);
@@ -1302,7 +1386,8 @@ export class FileStorage {
 
   private allocateNewSquadId(): string {
     const dateYmd = localDateYyyyMmDd();
-    const known = this.collectKnownSquadIds();
+    // Ids deleted in this process stay taken so a tombstoned directory is never reused.
+    const known = new Set<string>([...this.collectKnownSquadIds(), ...this.deletedOwners]);
     let maxSeq = 0;
     for (const id of known) {
       const seq = parseSquadIdSeqForDate(id, dateYmd);
@@ -1423,6 +1508,7 @@ export class FileStorage {
       this.squadsPath,
       this.listSquads().filter((s) => s.id !== safe),
     );
+    this.markOwnerDeleted(safe);
     const dir = this.squadDir(safe);
     if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
     try {
@@ -1436,17 +1522,28 @@ export class FileStorage {
   /** Drop a deleted bot from all squads; delete squads that fall below 2 members. */
   private purgeBotFromSquads(botId: string): void {
     const kept: Squad[] = [];
+    const removed: string[] = [];
     for (const s of this.listSquads()) {
       const members = s.members.filter((m) => m.botId !== botId);
       if (members.length < 2) {
+        this.markOwnerDeleted(s.id);
         const dir = this.squadDir(s.id);
         if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
+        removed.push(s.id);
         continue;
       }
       const next: Squad = { ...s, members, updatedAt: new Date().toISOString() };
       kept.push(next);
     }
     writeJson(this.squadsPath, kept);
+    for (const id of removed) {
+      try {
+        removeOwnerUsage(this.usagePath, id);
+      } catch (err) {
+        console.error('[okbot] removeOwnerUsage failed', id, err);
+      }
+      this.noteSessionsChanged(id, 'deleted');
+    }
   }
 
   /** One-time upgrade: rewrite legacy ChatMessage jsonl → v2 envelopes. */
@@ -1520,7 +1617,7 @@ export class FileStorage {
       };
       chunks.push(`${JSON.stringify(rec)}\n`);
     }
-    fs.appendFileSync(file, chunks.join(''), 'utf8');
+    appendText(file, chunks.join(''));
   }
 
   popSessionItem(botId: string): Record<string, unknown> | undefined {
@@ -1533,7 +1630,7 @@ export class FileStorage {
 
   clearSessionItems(botId: string): void {
     this.ensureBotLayout(botId);
-    fs.writeFileSync(this.sessionFile(botId), '', 'utf8');
+    writeText(this.sessionFile(botId), '');
   }
 
   /** Full rewrite used by Session.replaceHistoryWithCompaction. Does not trim for Summary+Buffer. */
@@ -1681,55 +1778,49 @@ export class FileStorage {
   }
 
   /**
-   * Search UI chat bubbles across private bot sessions only (case-insensitive substring).
-   * Intentionally does not scan squad transcripts (squad_* session.jsonl / listSquads).
-   * Squads remain findable by name/description in the renderer session search.
-   * Scans newest bots first; stops after limit hits. Empty query → [].
+   * Search UI chat bubbles across bot and squad sessions (case-insensitive substring).
+   * Async, newest first, with a global early stop (see `searchSessionFiles`).
+   * Empty query → [].
    */
-  searchMessages(query: string, opts?: { limit?: number }): MessageSearchHit[] {
-    const q = query.trim().toLowerCase();
+  async searchMessages(query: string, opts?: { limit?: number }): Promise<MessageSearchHit[]> {
+    const q = query.trim();
     if (!q) return [];
     const limit = Math.min(100, Math.max(1, opts?.limit ?? 40));
-    const hits: MessageSearchHit[] = [];
+    const owners: SearchOwner[] = [];
     const bots = this.listBots();
+    const botNames = new Map(bots.map((b) => [b.id, b.name] as const));
     for (const bot of bots) {
-      if (hits.length >= limit) break;
-      // Defensive: never index squad owner session files as message hits.
+      // Defensive: never index squad owner session files as bot hits.
       if (isSquadOwnerId(bot.id)) continue;
-      const records = this.readSessionRecords(bot.id);
-      // Newest first
-      for (let i = records.length - 1; i >= 0; i--) {
-        if (hits.length >= limit) break;
-        const msg = recordToUiMessage(records[i]!);
-        if (!msg) continue;
-        const plain = plainTextFromMarkdown(msg.content || '');
-        const hay = plain.toLowerCase();
-        const idx = hay.indexOf(q);
-        if (idx < 0) continue;
-        const radius = 48;
-        const start = Math.max(0, idx - radius);
-        const end = Math.min(plain.length, idx + q.length + radius);
-        let snippet = plain.slice(start, end).replace(/\s+/g, ' ').trim();
-        if (start > 0) snippet = '…' + snippet;
-        if (end < plain.length) snippet = snippet + '…';
-        const avatarKind = normalizeBotAvatarKind(bot.avatarKind);
-        hits.push({
-          botId: bot.id,
-          botName: bot.name,
-          botEmoji: bot.emoji,
-          botColor: bot.color,
-          botAvatarKind: avatarKind,
-          ...(avatarKind === 'bot-avatar'
-            ? { botAvatarType: normalizeBotAvatarType(bot.botAvatarType) }
-            : {}),
-          message: msg,
-          snippet,
-        });
-      }
+      const avatarKind = normalizeBotAvatarKind(bot.avatarKind);
+      owners.push({
+        file: this.sessionFile(bot.id),
+        botId: bot.id,
+        ownerKind: 'bot',
+        botName: bot.name,
+        botEmoji: bot.emoji,
+        botColor: bot.color,
+        botAvatarKind: avatarKind,
+        ...(avatarKind === 'bot-avatar'
+          ? { botAvatarType: normalizeBotAvatarType(bot.botAvatarType) }
+          : {}),
+      });
     }
-    return hits;
+    for (const squad of this.listSquads()) {
+      owners.push({
+        file: this.sessionFile(squad.id),
+        squad: true,
+        speakerNames: botNames,
+        botId: squad.id,
+        ownerKind: 'squad',
+        botName: squad.name,
+        botEmoji: SQUAD_SEARCH_EMOJI,
+        botColor: SQUAD_SEARCH_COLOR,
+        botAvatarKind: 'emoji',
+      });
+    }
+    return searchSessionFiles(owners, q, limit);
   }
-
 
   /** Newest assistant message text for sidebar subtitle; empty if none. */
   getLastReplyPreview(ownerId: string): string {
@@ -1875,7 +1966,7 @@ export class FileStorage {
     this.ensureBotLayout(botId);
     this.ensureSessionV2(botId);
     const rec = legacyMessageToRecord(message);
-    fs.appendFileSync(this.sessionFile(botId), `${JSON.stringify(rec)}\n`, 'utf8');
+    appendText(this.sessionFile(botId), `${JSON.stringify(rec)}\n`);
     this.noteSessionsChanged(botId, 'message');
   }
 
@@ -1969,35 +2060,131 @@ export class FileStorage {
       ...(typeof data.userText === 'string' && data.userText
         ? { userText: data.userText }
         : {}),
+      ...(data.squadMember && typeof data.squadMember.botId === 'string'
+        ? {
+            squadMember: {
+              botId: data.squadMember.botId,
+              toolName: String(data.squadMember.toolName || ''),
+              task: String(data.squadMember.task || ''),
+            },
+          }
+        : {}),
+      ...(typeof data.turnId === 'string' && data.turnId ? { turnId: data.turnId } : {}),
     };
-    writeJson(this.pendingHitlFile(botId), record);
+    this.assertOwnerAlive(botId);
+    ensureDir(this.pendingHitlDir(botId));
+    writeJson(this.pendingHitlRequestFile(botId, record.requestId), record);
   }
 
-  loadPendingHitl(botId: string): PendingHitlRecord | null {
-    const file = this.pendingHitlFile(botId);
-    if (!fs.existsSync(file)) return null;
-    try {
-      const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as unknown;
-      if (this.isPendingHitlRecord(raw)) return raw;
-      // Allow a one-element array for forward compatibility.
-      if (Array.isArray(raw) && raw.length && this.isPendingHitlRecord(raw[0])) {
-        return raw[0];
+  /** Every pending approval for one owner (parallel squad members get one file each). */
+  listPendingHitl(botId: string): PendingHitlRecord[] {
+    const out: PendingHitlRecord[] = [];
+    const seen = new Set<string>();
+    const push = (raw: unknown) => {
+      if (!this.isPendingHitlRecord(raw) || seen.has(raw.requestId)) return;
+      seen.add(raw.requestId);
+      out.push(raw);
+    };
+    const dir = this.pendingHitlDir(botId);
+    if (fs.existsSync(dir)) {
+      for (const name of fs.readdirSync(dir)) {
+        if (!name.endsWith('.json')) continue;
+        try {
+          push(JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8')));
+        } catch {
+          /* skip unreadable */
+        }
       }
-      return null;
-    } catch {
-      return null;
     }
+    const legacy = this.legacyPendingHitlFile(botId);
+    if (fs.existsSync(legacy)) {
+      try {
+        const raw = JSON.parse(fs.readFileSync(legacy, 'utf8')) as unknown;
+        if (Array.isArray(raw)) raw.forEach(push);
+        else push(raw);
+      } catch {
+        /* skip unreadable */
+      }
+    }
+    out.sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0));
+    return out;
   }
 
-  clearPendingHitl(botId: string): void {
-    const file = this.pendingHitlFile(botId);
-    if (fs.existsSync(file)) {
+  /** Oldest pending approval for one owner, or null. */
+  loadPendingHitl(botId: string): PendingHitlRecord | null {
+    return this.listPendingHitl(botId)[0] ?? null;
+  }
+
+  /** Drop one approval. Other parallel approvals of the same owner stay. */
+  clearPendingHitlRequest(botId: string, requestId: string): void {
+    const id = (requestId || '').trim();
+    if (!id) return;
+    try {
+      const file = this.pendingHitlRequestFile(botId, id);
+      if (fs.existsSync(file)) fs.unlinkSync(file);
+    } catch {
+      /* ignore */
+    }
+    const legacy = this.legacyPendingHitlFile(botId);
+    if (fs.existsSync(legacy)) {
       try {
-        fs.unlinkSync(file);
+        const raw = JSON.parse(fs.readFileSync(legacy, 'utf8')) as { requestId?: unknown };
+        if (raw && raw.requestId === id) fs.unlinkSync(legacy);
       } catch {
         /* ignore */
       }
     }
+  }
+
+  /** Drop every pending approval of one owner (stop, steer, delete, quit). */
+  clearPendingHitl(botId: string): void {
+    const legacy = this.legacyPendingHitlFile(botId);
+    if (fs.existsSync(legacy)) {
+      try {
+        fs.unlinkSync(legacy);
+      } catch {
+        /* ignore */
+      }
+    }
+    for (const dir of [this.pendingHitlDir(botId), path.dirname(this.squadResumeFile(botId, 'x'))]) {
+      if (!fs.existsSync(dir)) continue;
+      try {
+        fs.rmSync(dir, { recursive: true, force: true });
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  readSquadResumeReplies(
+    squadId: string,
+    turnId: string,
+  ): Array<{ memberBotId: string; memberName: string; task: string; reply: string }> {
+    try {
+      const raw = JSON.parse(fs.readFileSync(this.squadResumeFile(squadId, turnId), 'utf8')) as unknown;
+      return Array.isArray(raw) ? (raw as never) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  writeSquadResumeReplies(
+    squadId: string,
+    turnId: string,
+    replies: Array<{ memberBotId: string; memberName: string; task: string; reply: string }>,
+  ): void {
+    const file = this.squadResumeFile(squadId, turnId);
+    if (!replies.length) {
+      try {
+        if (fs.existsSync(file)) fs.unlinkSync(file);
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+    this.assertOwnerAlive(squadId);
+    ensureDir(path.dirname(file));
+    writeJson(file, replies);
   }
 
   /**
@@ -2060,15 +2247,10 @@ export class FileStorage {
     return cleared;
   }
 
-    listAllPendingHitl(): Array<PendingHitlRecord & { botId: string }> {
+  listAllPendingHitl(): Array<PendingHitlRecord & { botId: string }> {
     const out: Array<PendingHitlRecord & { botId: string }> = [];
-    for (const entry of this.listRoster()) {
-      const data = this.loadPendingHitl(entry.id);
-      if (data) out.push({ ...data, botId: entry.id });
-    }
-    for (const s of this.listSquads()) {
-      const data = this.loadPendingHitl(s.id);
-      if (data) out.push({ ...data, botId: s.id });
+    for (const owner of [...this.listRoster(), ...this.listSquads()]) {
+      for (const data of this.listPendingHitl(owner.id)) out.push({ ...data, botId: owner.id });
     }
     return out;
   }
@@ -2127,6 +2309,11 @@ export class FileStorage {
     const pkg = fs.statSync(src).isDirectory()
       ? readAssistantPackageDir(src)
       : readAssistantPackageArchive(src);
+    return this.installAssistantPackage(pkg);
+  }
+
+  /** Create a bot from parsed package contents (file import and the built-in gallery). */
+  installAssistantPackage(pkg: AssistantPackageContents): Bot {
     const clean = stripSecrets(pkg);
     const bot = this.createBot({
       name: clean.manifest.name,

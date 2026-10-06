@@ -19,6 +19,8 @@ import {
   generateLocalHttpApiToken,
   normalizeComputers,
   normalizeDefaultComputerId,
+  normalizeMcpSettings,
+  type McpSettings,
   type ComputerEntry,
   type MemoryEntry,
   type AppSettings,
@@ -35,7 +37,7 @@ import { AutoApprovalRulesList } from './AutoApprovalRulesList';
 import { MemoryEntriesList } from './MemoryEntriesList';
 import { CompressRatioSlider } from './CompressRatioSlider';
 import type { InstructionsSubTab, SettingsTab } from './types';
-import { SettingsIcon, ModelNavIcon, SecurityNavIcon, InstructionsNavIcon, MemoryNavIcon, DownloadUpdateIcon, CopyIcon } from '../../components/ui/icons';
+import { SettingsIcon, ModelNavIcon, SecurityNavIcon, InstructionsNavIcon, MemoryNavIcon, DownloadUpdateIcon, CopyIcon, ExtensionsNavIcon } from '../../components/ui/icons';
 import { applyTheme } from '../../utils/theme';
 import { updateScrollFade } from '../../utils/scrollFade';
 import { formatSystemError } from '../../utils/formatSystemError';
@@ -45,6 +47,10 @@ import { SettingsToggle } from './SettingsToggle';
 import { ModelProvidersPanel } from './ModelProvidersPanel';
 import { UsagePanel } from './UsagePanel';
 import { ComputersSettingsPanel } from './ComputersSettingsPanel';
+import { McpSettingsPanel } from './McpSettingsPanel';
+import { isAdvancedSettingsTab } from './settingsSearch';
+import { isGatewayClient } from '../../utils/gatewayClient';
+import { requestConfirm } from '../../components/ui';
 
 
 function keptNumber(raw: string, previous: number): number {
@@ -54,12 +60,11 @@ function keptNumber(raw: string, previous: number): number {
   return Number.isFinite(n) ? n : previous;
 }
 
-function gatewayWebUiUrl(portRaw: string, token: string): string {
+function gatewayWebUiUrl(portRaw: string, _token?: string): string {
   const n = Number(portRaw);
   const port = Number.isInteger(n) && n >= 1024 && n <= 65535 ? n : DEFAULT_LOCAL_HTTP_API_PORT;
-  const base = `http://127.0.0.1:${port}/`;
-  const secret = token.trim();
-  return secret ? `${base}?token=${encodeURIComponent(secret)}` : base;
+  // Login sets an HttpOnly cookie. Never put the access token in the address bar.
+  return `http://127.0.0.1:${port}/`;
 }
 
 /** Token the running server checks. Gateway bootstrap blanks it, so attached windows use a separate call. */
@@ -119,9 +124,24 @@ export function SettingsModal({
     settings.sidebarDockMagnify === true,
   );
   const [developerMode, setDeveloperMode] = useState(settings.developerMode === true);
+  const [notifications, setNotifications] = useState(settings.notifications !== false);
+  const [showAdvancedSettings, setShowAdvancedSettings] = useState(settings.showAdvancedSettings === true);
+  // A direct jump to an advanced tab (e.g. from a toast) shows advanced tabs for this
+  // dialog only. It does not change the saved preference.
+  const [revealAdvanced, setRevealAdvanced] = useState(
+    initialTab != null && isAdvancedSettingsTab(initialTab),
+  );
+  const advancedVisible = showAdvancedSettings || revealAdvanced;
+  const [mcpDraft, setMcpDraft] = useState<McpSettings>(() => normalizeMcpSettings(settings.mcp));
+  const [backupExcludeSecrets, setBackupExcludeSecrets] = useState(true);
+  const [backupBusy, setBackupBusy] = useState(false);
+  const gatewayClient = isGatewayClient();
   useEffect(() => {
     if (!developerMode && tab === 'instructions') setTab('general');
   }, [developerMode, tab]);
+  useEffect(() => {
+    if (!advancedVisible && isAdvancedSettingsTab(tab)) setTab('general');
+  }, [advancedVisible, tab]);
   const initialLocalHttpApi = normalizeLocalHttpApiSettings(settings.localHttpApi);
   const [localHttpApiEnabled, setLocalHttpApiEnabled] = useState(initialLocalHttpApi.enabled);
   const [localHttpApiPort, setLocalHttpApiPort] = useState(String(initialLocalHttpApi.port));
@@ -286,6 +306,8 @@ export function SettingsModal({
         ? t(lang, 'gateway')
         : tab === 'computers'
           ? t(lang, 'computers')
+          : tab === 'extensions'
+            ? t(lang, 'extensionsTab')
           : tab === 'tools'
         ? t(lang, 'tools')
         : tab === 'security'
@@ -304,7 +326,9 @@ export function SettingsModal({
   const needsHwRestart = hardwareAcceleration !== hwAccelActive;
 
   useEffect(() => {
-    if (initialTab) setTab(initialTab);
+    if (!initialTab) return;
+    if (isAdvancedSettingsTab(initialTab)) setShowAdvancedSettings(true);
+    setTab(initialTab);
   }, [initialTab]);
 
   useEffect(() => {
@@ -392,6 +416,9 @@ export function SettingsModal({
         autoUpdate,
         sidebarDockMagnify,
         developerMode,
+        notifications,
+        showAdvancedSettings,
+        mcp: normalizeMcpSettings(mcpDraft),
         localHttpApi: (() => {
           const nextApi = normalizeLocalHttpApiSettings({
             enabled: localHttpApiEnabled,
@@ -468,6 +495,9 @@ export function SettingsModal({
     autoUpdate,
     sidebarDockMagnify,
     developerMode,
+    notifications,
+    showAdvancedSettings,
+    mcpDraft,
     localHttpApiEnabled,
     localHttpApiPort,
     localHttpApiToken,
@@ -520,6 +550,41 @@ export function SettingsModal({
     };
   }, []);
 
+  async function exportBackup() {
+    setBackupBusy(true);
+    try {
+      const res = await window.okbot.backupExport({ excludeSecrets: backupExcludeSecrets });
+      if (!res || 'canceled' in res) return;
+      if (res.ok) toast.success(t(lang, 'backupExported'));
+      else toast.error(t(lang, res.error === 'busy' ? 'backupBusy' : 'backupExportFailed'));
+    } catch (err) {
+      toast.error(formatSystemError(err));
+    } finally {
+      setBackupBusy(false);
+    }
+  }
+
+  async function restoreBackup() {
+    const ok = await requestConfirm({
+      title: t(lang, 'backupRestore'),
+      message: t(lang, 'backupRestoreConfirm'),
+      confirmLabel: t(lang, 'backupRestoreAction'),
+      danger: true,
+    });
+    if (!ok) return;
+    setBackupBusy(true);
+    try {
+      const res = await window.okbot.backupRestore();
+      if (res && !('canceled' in res) && !res.ok) {
+        toast.error(t(lang, res.error === 'busy' ? 'backupBusy' : 'backupRestoreFailed'));
+      }
+    } catch (err) {
+      toast.error(formatSystemError(err));
+    } finally {
+      setBackupBusy(false);
+    }
+  }
+
   return (
     <>
     <div className="modal-backdrop" onClick={onClose}>
@@ -557,42 +622,56 @@ export function SettingsModal({
             </span>
             {t(lang, 'tools')}
           </button>
-          <button
-            type="button"
-            className={`settings-nav-item${tab === 'security' ? ' active' : ''}`}
-            onClick={() => setTab('security')}
-          >
-            <span className="ico" aria-hidden>
-              <SecurityNavIcon />
-            </span>
-            {t(lang, 'security')}
-          </button>
-          <button
-            type="button"
-            className={`settings-nav-item${tab === 'gateway' ? ' active' : ''}`}
-            onClick={() => setTab('gateway')}
-          >
-            <span className="ico" aria-hidden>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                <path d="M4 8h16M4 16h16M8 4v4M16 16v4" strokeLinecap="round" />
-                <circle cx="12" cy="12" r="2" />
-              </svg>
-            </span>
-            {t(lang, 'gateway')}
-          </button>
-          <button
-            type="button"
-            className={`settings-nav-item${tab === 'computers' ? ' active' : ''}`}
-            onClick={() => setTab('computers')}
-          >
-            <span className="ico" aria-hidden>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                <rect x="3" y="4" width="18" height="12" rx="2" />
-                <path d="M8 20h8M12 16v4" strokeLinecap="round" />
-              </svg>
-            </span>
-            {t(lang, 'computers')}
-          </button>
+          {advancedVisible ? (
+            <>
+            <button
+              type="button"
+              className={`settings-nav-item${tab === 'security' ? ' active' : ''}`}
+              onClick={() => setTab('security')}
+            >
+              <span className="ico" aria-hidden>
+                <SecurityNavIcon />
+              </span>
+              {t(lang, 'security')}
+            </button>
+            <button
+              type="button"
+              className={`settings-nav-item${tab === 'gateway' ? ' active' : ''}`}
+              onClick={() => setTab('gateway')}
+            >
+              <span className="ico" aria-hidden>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <path d="M4 8h16M4 16h16M8 4v4M16 16v4" strokeLinecap="round" />
+                  <circle cx="12" cy="12" r="2" />
+                </svg>
+              </span>
+              {t(lang, 'gateway')}
+            </button>
+            <button
+              type="button"
+              className={`settings-nav-item${tab === 'computers' ? ' active' : ''}`}
+              onClick={() => setTab('computers')}
+            >
+              <span className="ico" aria-hidden>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <rect x="3" y="4" width="18" height="12" rx="2" />
+                  <path d="M8 20h8M12 16v4" strokeLinecap="round" />
+                </svg>
+              </span>
+              {t(lang, 'computers')}
+            </button>
+            <button
+              type="button"
+              className={`settings-nav-item${tab === 'extensions' ? ' active' : ''}`}
+              onClick={() => setTab('extensions')}
+            >
+              <span className="ico" aria-hidden>
+                <ExtensionsNavIcon />
+              </span>
+              {t(lang, 'extensionsTab')}
+            </button>
+            </>
+          ) : null}
           <button
             type="button"
             className={`settings-nav-item${tab === 'memory' ? ' active' : ''}`}
@@ -726,6 +805,13 @@ export function SettingsModal({
                     <span className="settings-row-label">{t(lang, 'hardwareAcceleration')}</span>
                       <SettingsToggle checked={hardwareAcceleration} onChange={() => setHardwareAcceleration((v) => !v)} />
                   </div>
+                  <div className="settings-row" data-settings-id="notifications">
+                    <span className="settings-row-label">
+                      <span className="settings-row-label-text">{t(lang, 'notificationsSetting')}</span>
+                      <SettingsHelpTip text={t(lang, 'notificationsSettingHint')} />
+                    </span>
+                    <SettingsToggle checked={notifications} onChange={() => setNotifications((v) => !v)} />
+                  </div>
                 </div>
                 {needsHwRestart ? (
                   <div className="settings-restart-hint">{t(lang, 'hardwareRestart')}</div>
@@ -736,6 +822,19 @@ export function SettingsModal({
                   {t(lang, 'advanced')}
                 </div>
                 <div className="settings-card">
+                  <div className="settings-row" data-settings-id="showAdvancedSettings">
+                    <span className="settings-row-label">
+                      <span className="settings-row-label-text">{t(lang, 'showAdvancedSettings')}</span>
+                      <SettingsHelpTip text={t(lang, 'showAdvancedSettingsHint')} />
+                    </span>
+                    <SettingsToggle
+                      checked={showAdvancedSettings}
+                      onChange={() => {
+                        setShowAdvancedSettings((v) => !v);
+                        setRevealAdvanced(false);
+                      }}
+                    />
+                  </div>
                   <div className="settings-row" data-settings-id="developerMode">
                     <span className="settings-row-label">{t(lang, 'developerMode')}</span>
                     <SettingsToggle
@@ -748,8 +847,54 @@ export function SettingsModal({
                 <div className="settings-section-label" style={{ marginTop: 16 }} data-settings-id="data">
                   {t(lang, 'data')}
                 </div>
-                <div className="settings-hint">
-                  {t(lang, 'dataDir')}：{dataDir}
+                <div
+                  className="settings-card"
+                  aria-disabled={gatewayClient ? 'true' : undefined}
+                  title={gatewayClient ? t(lang, 'backupDesktopOnly') : undefined}
+                >
+                  <div className="settings-row settings-row-stack" data-settings-id="dataDir">
+                    <span className="settings-row-label">{t(lang, 'dataDir')}</span>
+                    <span className="settings-hint settings-data-dir">{dataDir}</span>
+                  </div>
+                  <div className="settings-row" data-settings-id="backupExcludeSecrets">
+                    <span className="settings-row-label">
+                      <span className="settings-row-label-text">{t(lang, 'backupExcludeSecrets')}</span>
+                      <SettingsHelpTip text={t(lang, 'backupExcludeSecretsHint')} />
+                    </span>
+                    <SettingsToggle
+                      checked={backupExcludeSecrets}
+                      disabled={gatewayClient}
+                      onChange={() => setBackupExcludeSecrets((v) => !v)}
+                    />
+                  </div>
+                  <div className="settings-row" data-settings-id="backupExport">
+                    <span className="settings-row-label">
+                      <span className="settings-row-label-text">{t(lang, 'backupExport')}</span>
+                      <SettingsHelpTip text={t(lang, 'backupExportHint')} />
+                    </span>
+                    <button
+                      type="button"
+                      className="settings-aar-add-btn"
+                      disabled={gatewayClient || backupBusy}
+                      onClick={() => void exportBackup()}
+                    >
+                      {t(lang, 'backupExportAction')}
+                    </button>
+                  </div>
+                  <div className="settings-row" data-settings-id="backupRestore">
+                    <span className="settings-row-label">
+                      <span className="settings-row-label-text">{t(lang, 'backupRestore')}</span>
+                      <SettingsHelpTip text={t(lang, 'backupRestoreHint')} />
+                    </span>
+                    <button
+                      type="button"
+                      className="settings-aar-add-btn"
+                      disabled={gatewayClient || backupBusy}
+                      onClick={() => void restoreBackup()}
+                    >
+                      {t(lang, 'backupRestoreAction')}
+                    </button>
+                  </div>
                 </div>
               </div>
             ) : tab === 'gateway' ? (
@@ -917,6 +1062,13 @@ export function SettingsModal({
                 onChange={setComputersDraft}
                 onDefaultComputerIdChange={setDefaultComputerId}
               />
+            ) : tab === 'extensions' ? (
+              <McpSettingsPanel
+                lang={lang}
+                value={mcpDraft}
+                onChange={setMcpDraft}
+                readOnly={gatewayClient}
+              />
             ) : tab === 'tools' ? (
               <div>
                 <div className="settings-section-label" data-settings-id="toolManagement">{t(lang, 'toolManagement')}</div>
@@ -988,31 +1140,37 @@ export function SettingsModal({
                 <div className="settings-section-label" style={{ marginTop: 16 }} data-settings-id="autoApproval">
                   {t(lang, 'autoApproval')}
                 </div>
-                <div className="settings-card">
+                <div className="settings-card" aria-disabled={gatewayClient ? 'true' : undefined}>
                   <div className="settings-row">
                     <span className="settings-row-label">{t(lang, 'autoApproval')}</span>
                     <div className="settings-row-trailing">
                       <button
                         type="button"
                         className="settings-aar-add-btn"
-                        disabled={!autoApprovalEnabled}
+                        disabled={!autoApprovalEnabled || gatewayClient}
                         onClick={() => setAarAddRequest((n) => n + 1)}
                       >
                         {t(lang, 'autoApprovalAdd')}
                       </button>
-                      <SettingsToggle checked={autoApprovalEnabled} onChange={() => setAutoApprovalEnabled((v) => !v)} />
+                      <SettingsToggle
+                        checked={autoApprovalEnabled}
+                        disabled={gatewayClient}
+                        onChange={() => setAutoApprovalEnabled((v) => !v)}
+                      />
                     </div>
                   </div>
-                  {autoApprovalEnabled ? (
+                  {autoApprovalEnabled || gatewayClient ? (
                     <AutoApprovalRulesList
                       lang={lang}
                       rules={autoApprovalRules}
                       onChange={setAutoApprovalRules}
                       requestAdd={aarAddRequest}
+                      readOnly={gatewayClient}
                     />
                   ) : null}
                 </div>
 
+                {advancedVisible ? (<>
                 <div className="settings-section-label" style={{ marginTop: 16 }} data-settings-id="toolRunLimits">
                   {t(lang, 'toolRunLimits')}
                 </div>
@@ -1070,6 +1228,7 @@ export function SettingsModal({
                     />
                   </div>
                 </div>
+                </>) : null}
 
               </div>
             ) : tab === 'security' ? (
@@ -1173,6 +1332,7 @@ export function SettingsModal({
                   onChange={setModelSettings}
                 />
 
+                {advancedVisible ? (<>
                 <div className="settings-section-label" style={{ marginTop: 16 }} data-settings-id="contextCompression">
                   <span>{t(lang, 'contextCompression')}</span>
                 </div>
@@ -1296,6 +1456,7 @@ export function SettingsModal({
                     />
                   </div>
                 </div>
+                </>) : null}
               </div>
 
             ) : tab === 'instructions' ? (
@@ -1759,6 +1920,13 @@ export function SettingsModal({
                   {t(lang, 'updateSection')}
                 </div>
                 <div className="settings-card">
+                  <div className="settings-row" data-settings-id="currentVersion">
+                    <span className="settings-row-label">
+                      <span className="settings-row-label-text">{t(lang, 'currentVersion')}</span>
+                      <SettingsHelpTip text={t(lang, 'currentVersionHint')} />
+                    </span>
+                    <span className="settings-row-meta">{updaterStatus?.currentVersion || '—'}</span>
+                  </div>
                   <div className="settings-row" data-settings-id="autoUpdate">
                     <span className="settings-row-label">
                       <span className="settings-row-label-text">{t(lang, 'autoUpdate')}</span>

@@ -7,14 +7,14 @@ import {
 } from '@okbot/shared';
 import { t, type UiLang } from '../../i18n';
 import type { SettingsTab } from '../settings/types';
-import { SETTINGS_SEARCH_ITEMS } from '../settings/settingsSearch';
+import { SETTINGS_SEARCH_ITEMS, SETTINGS_TAB_LABEL_KEYS, isAdvancedSettingsItem } from '../settings/settingsSearch';
 import { FlatAvatar } from '../../components/ui/avatars';
 
 export type GlobalSearchSelect =
   | { kind: 'bot'; id: string }
   | { kind: 'squad'; id: string }
   | { kind: 'settings'; tab: SettingsTab; sectionId: string }
-  | { kind: 'message'; botId: string; messageId: string };
+  | { kind: 'message'; ownerKind: 'bot' | 'squad'; botId: string; messageId: string };
 
 type Props = {
   lang: UiLang;
@@ -22,6 +22,8 @@ type Props = {
   squads: Squad[];
   /** System-instruction rows are hidden unless developer mode is on. */
   developerMode?: boolean;
+  /** Advanced tabs and rows are hidden unless 「显示高级设置」 is on. */
+  showAdvancedSettings?: boolean;
   onClose: () => void;
   onSelect: (target: GlobalSearchSelect) => void;
 };
@@ -39,7 +41,7 @@ function matchText(hay: string, q: string): boolean {
   return hay.toLowerCase().includes(q);
 }
 
-export function GlobalSearchModal({ lang, bots, squads, developerMode = false, onClose, onSelect }: Props) {
+export function GlobalSearchModal({ lang, bots, squads, developerMode = false, showAdvancedSettings = false, onClose, onSelect }: Props) {
   const [query, setQuery] = useState('');
   const [messageHits, setMessageHits] = useState<MessageSearchHit[]>([]);
   const [messagesLoading, setMessagesLoading] = useState(false);
@@ -97,6 +99,7 @@ export function GlobalSearchModal({ lang, bots, squads, developerMode = false, o
     if (!q) return [];
     return SETTINGS_SEARCH_ITEMS.filter((item) => {
       if (item.tab === 'instructions' && !developerMode) return false;
+      if (!showAdvancedSettings && isAdvancedSettingsItem(item)) return false;
       const label = t(lang, item.labelKey);
       if (matchText(label, q)) return true;
       if (item.keywords?.some((k) => matchText(k, q))) return true;
@@ -104,7 +107,7 @@ export function GlobalSearchModal({ lang, bots, squads, developerMode = false, o
       if (matchText(item.id, q) || matchText(item.tab, q)) return true;
       return false;
     }).slice(0, 12);
-  }, [developerMode, lang, q]);
+  }, [developerMode, showAdvancedSettings, lang, q]);
 
   useEffect(() => {
     if (!q) {
@@ -273,26 +276,7 @@ export function GlobalSearchModal({ lang, bots, squads, developerMode = false, o
                   <span className="global-search-row-main">
                     <span className="global-search-row-title">{t(lang, item.labelKey)}</span>
                     <span className="global-search-row-sub">
-                      {t(
-                        lang,
-                        item.tab === 'general'
-                          ? 'general'
-                          : item.tab === 'tools'
-                            ? 'tools'
-                            : item.tab === 'security'
-                              ? 'security'
-                              : item.tab === 'model'
-                                ? 'model'
-                                : item.tab === 'instructions'
-                                  ? 'instructions'
-                                  : item.tab === 'memory'
-                                    ? 'memoryTab'
-                                    : item.tab === 'usage'
-                                      ? 'usageTab'
-                                      : item.tab === 'updates'
-                                        ? 'updatesTab'
-                                        : 'model',
-                      )}
+                      {t(lang, SETTINGS_TAB_LABEL_KEYS[item.tab])}
                     </span>
                   </span>
                 </button>
@@ -312,7 +296,12 @@ export function GlobalSearchModal({ lang, bots, squads, developerMode = false, o
                   type="button"
                   className="global-search-row"
                   onClick={() =>
-                    pick({ kind: 'message', botId: hit.botId, messageId: hit.message.id })
+                    pick({
+                      kind: 'message',
+                      ownerKind: hit.ownerKind === 'squad' ? 'squad' : 'bot',
+                      botId: hit.botId,
+                      messageId: hit.message.id,
+                    })
                   }
                 >
                   <FlatAvatar
@@ -329,7 +318,7 @@ export function GlobalSearchModal({ lang, bots, squads, developerMode = false, o
                         ·{' '}
                         {hit.message.role === 'user'
                           ? t(lang, 'searchRoleUser')
-                          : t(lang, 'searchRoleAssistant')}
+                          : hit.speakerName || t(lang, 'searchRoleAssistant')}
                       </span>
                     </span>
                     <span className="global-search-row-sub">{hit.snippet}</span>

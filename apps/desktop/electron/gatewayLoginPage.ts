@@ -8,19 +8,22 @@ export function shouldServeGatewayLogin(method: string, pathname: string, authed
   return pathname === '/' && !authed;
 }
 
-export function gatewayLoginHtml(): string {
+export function gatewayLoginHtml(errorMessage = ''): string {
+  const err = errorMessage
+    ? `<p style="color:#f87171">${errorMessage.replace(/</g, '&lt;')}</p>`
+    : '';
   return `<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>OkBot Gateway</title>
 <style>body{font-family:system-ui,sans-serif;padding:24px;max-width:420px;margin:auto;background:#111;color:#eee}input,button{font-size:16px;width:100%;box-sizing:border-box;padding:12px;margin:8px 0;border-radius:8px;border:1px solid #444;background:#222;color:#fff}button{background:#3b82f6;border:none;font-weight:600}p{line-height:1.45;color:#ccc}</style></head><body>
 <h1>OkBot</h1>
 <p>输入桌面「设置 → 网关服务」里的访问令牌，即可在这台设备上打开 OkBot。</p>
 <p>Enter the access token from Settings → Gateway service.</p>
-<input id="t" type="password" placeholder="访问令牌 / Access token" autocomplete="current-password"/>
-<button id="g" type="button">打开 OkBot</button>
-<script>
-const t=document.getElementById('t'); const g=document.getElementById('g');
-const go=()=>{ const v=(t.value||'').trim(); if(!v) return; try{sessionStorage.setItem('okbot.gatewayToken', v);}catch(e){} location.href='/?token='+encodeURIComponent(v); };
-g.onclick=go; t.addEventListener('keydown',e=>{ if(e.key==='Enter') go(); });
-</script></body></html>`;
+<p style="font-size:12px;opacity:.75">持有令牌的人等同于这台电脑上的你：能聊天、批准工具（包括运行命令和改文件），能改助手的人设、记忆和技能。只在自己的设备上输入。<br/>Anyone with the token acts as you on this computer: chat, approve tools (including commands and file edits), and change assistant personas, memories and skills. Enter it only on your own devices.</p>
+${err}
+<form method="POST" action="/gateway-login">
+<input name="token" id="t" type="password" placeholder="访问令牌 / Access token" autocomplete="current-password" required/>
+<button type="submit">打开 OkBot</button>
+</form>
+</body></html>`;
 }
 
 /** Methods the desktop preload exposes, plus the legacy onChatEvent alias. */
@@ -49,6 +52,12 @@ export const GATEWAY_BRIDGE_METHOD_NAMES = [
   'listGlobalAgentsSkills',
   'exportAssistantPackage',
   'importAssistantPackage',
+  'listAssistantGallery',
+  'installGalleryAssistant',
+  'mcpStatus',
+  'mcpTestServer',
+  'backupExport',
+  'backupRestore',
   'getSettings',
   'getGatewayAccessToken',
   'saveSettings',
@@ -74,6 +83,8 @@ export const GATEWAY_BRIDGE_METHOD_NAMES = [
   'windowMaximizeToggle',
   'windowClose',
   'windowIsMaximized',
+  'windowFocus',
+  'claimNotification',
   'onWindowMaximizedChanged',
   'ensureMicrophoneAccess',
   'openMicrophoneSettings',
@@ -116,18 +127,16 @@ export function gatewayBootJs(): string {
   function noopUnsubscribe(){return function(){};}
   function gatewayToken(){
     try{
-      var loc=globalThis.location;
-      var storage=globalThis.sessionStorage;
-      var q=new URLSearchParams(loc&&loc.search||'').get('token');
-      if(q&&q.trim()){ storage&&storage.setItem('okbot.gatewayToken', q.trim()); return q.trim(); }
-      return (storage&&storage.getItem('okbot.gatewayToken'))||'';
-    }catch(e){ return ''; }
+      var attach=globalThis.__okbotAttach;
+      if(attach && typeof attach.token==='string' && attach.token.trim()) return attach.token.trim();
+    }catch(e){}
+    return '';
   }
   function api(method, path, body){
     var token=gatewayToken();
     var headers={Accept:'application/json'};
     if(token) headers.Authorization='Bearer '+token;
-    var init={method:method, headers:headers};
+    var init={method:method, headers:headers, credentials:'include'};
     if(body!==undefined){ headers['Content-Type']='application/json'; init.body=JSON.stringify(body); }
     return fetch(path, init).then(function(res){
       return res.text().then(function(text){
@@ -177,9 +186,12 @@ export function gatewayBootJs(): string {
   }
   function postChat(path, body){
     var token=gatewayToken();
+    var headers={Authorization:'Bearer '+token,'Content-Type':'application/json',Accept:'text/event-stream'};
+    if(!token) delete headers.Authorization;
     return fetch(path,{
       method:'POST',
-      headers:{Authorization:'Bearer '+token,'Content-Type':'application/json',Accept:'text/event-stream'},
+      headers:headers,
+      credentials:'include',
       body:JSON.stringify(body)
     }).then(readSse);
   }
@@ -354,8 +366,10 @@ export function gatewayBootJs(): string {
           return api('GET','/v1/squads/'+encodeURIComponent(ownerId)+'/messages'+suffix);
         });
       },
-      getMessages:function(botId){
-        return okbot.getMessagesPage(botId,{limit:50}).then(function(page){ return (page&&page.messages)||[]; });
+      getMessages:function(botId, opts){
+        var limit=50;
+        if(opts&&typeof opts.limit==='number'&&opts.limit>0) limit=Math.min(200, Math.max(1, Math.floor(opts.limit)));
+        return okbot.getMessagesPage(botId,{limit:limit}).then(function(page){ return (page&&page.messages)||[]; });
       },
       chatStart:function(botId, text, opts){
         return postChat('/v1/bots/'+encodeURIComponent(botId)+'/messages',{
@@ -372,7 +386,15 @@ export function gatewayBootJs(): string {
           quoteMessageId:opts&&opts.quoteMessageId
         });
       },
-      chatAbort:function(){ return Promise.resolve({ok:true}); },
+      chatAbort:function(ownerId){
+        var id=String(ownerId||'').trim();
+        if(!id) return Promise.resolve({ok:false, error:'missing_id'});
+        return api('POST','/v1/bots/'+encodeURIComponent(id)+'/abort').catch(function(err){
+          var message=err&&err.message?String(err.message):'';
+          if(message!=='bot_not_found') return {ok:false, error:message||'abort_failed'};
+          return api('POST','/v1/squads/'+encodeURIComponent(id)+'/abort');
+        });
+      },
       onRuntimeEvent:addListener,
       onChatEvent:addListener,
       copyText:function(text){
@@ -382,13 +404,47 @@ export function gatewayBootJs(): string {
         return Promise.resolve(false);
       },
       getAppInfo:function(){
-        return Promise.resolve({name:'OkBot Gateway', version:'gateway', platform:'web', arch:'', electron:'', chrome:'', buildDate:''});
+        var platform='web';
+        try{
+          var attach=globalThis.__okbotAttach;
+          if(attach && typeof attach.platform==='string' && attach.platform) platform=attach.platform;
+        }catch(e){}
+        var fallback={name:'OkBot', version:'0.0.0', platform:platform, arch:'', electron:'', chrome:'', buildDate:''};
+        try{
+          return api('GET','/v1/app-info').then(function(info){
+            info=info||{};
+            return {
+              name:typeof info.name==='string'&&info.name?info.name:'OkBot',
+              version:typeof info.version==='string'&&info.version?info.version:'0.0.0',
+              platform:typeof info.platform==='string'&&info.platform?info.platform:platform,
+              arch:typeof info.arch==='string'?info.arch:'',
+              electron:'',
+              chrome:'',
+              buildDate:''
+            };
+          }, function(){ return fallback; });
+        }catch(e){
+          return Promise.resolve(fallback);
+        }
       },
       setTrafficLightPosition:function(){ return Promise.resolve(false); },
       probeComputer:function(){ return Promise.resolve({ok:false, error:'unreachable'}); },
-      toolRespond:function(){ return Promise.resolve({ok:false, error:'not_supported_on_gateway'}); },
+      toolRespond:function(payload){
+        var body=payload&&typeof payload==='object'?payload:{};
+        return api('POST','/v1/tool-respond',{
+          requestId:typeof body.requestId==='string'?body.requestId:'',
+          approved:body.approved===true,
+          message:typeof body.message==='string'?body.message:undefined
+        }).catch(function(err){
+          return {ok:false, error:(err&&err.message)||'tool_respond_failed'};
+        });
+      },
       setChatUnread:function(){ return Promise.resolve(true); },
-      updaterGetStatus:function(){ return Promise.resolve({state:'idle'}); },
+      updaterGetStatus:function(){
+        return okbot.getAppInfo().then(function(info){
+          return {phase:'idle', currentVersion:(info&&info.version)||'0.0.0'};
+        }, function(){ return {phase:'idle', currentVersion:'0.0.0'}; });
+      },
       onUpdaterEvent:noopUnsubscribe,
       onNativeThemeUpdated:noopUnsubscribe,
       windowMinimize:function(){ return Promise.resolve(false); },
@@ -453,8 +509,8 @@ export function gatewayBootJs(): string {
       testModelConnection:function(){ return Promise.resolve({ok:false, error:'not_supported_on_gateway'}); },
       clearModelBindingsForProvider:function(){ return Promise.resolve({cleared:0}); },
       getRecentErrorLog:function(){ return Promise.resolve({entries:[]}); },
-      updaterCheck:function(){ return Promise.resolve({state:'idle'}); },
-      updaterDownload:function(){ return Promise.resolve({state:'idle'}); },
+      updaterCheck:function(){ return okbot.updaterGetStatus(); },
+      updaterDownload:function(){ return okbot.updaterGetStatus(); },
       updaterInstall:function(){ return Promise.resolve(undefined); },
       compressSessionNow:function(){ return Promise.resolve({ok:false, error:'not_supported_on_gateway'}); }
     };

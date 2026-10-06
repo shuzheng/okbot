@@ -1,6 +1,6 @@
 {
   "name": "@okbot/sandbox-agent",
-  "version": "0.5.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "description": "OkBot sandbox-agent \u2014 cloud computer remote shell + fs execution API",

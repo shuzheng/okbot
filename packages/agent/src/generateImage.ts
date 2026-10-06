@@ -279,6 +279,14 @@ async function decodeImageBytes(
   throw new Error('响应中没有可用的图片数据（base64 / url）');
 }
 
+async function isDir(p: string): Promise<boolean> {
+  try {
+    return (await fs.stat(p)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 async function saveImageBytes(
   bytes: Buffer,
   opts: { ownerId: string; resourcesDir: string },
@@ -297,8 +305,15 @@ async function saveImageBytes(
   const fileName = `${id}${ext}`;
   const assetRel = ownerResourceAssetRel(ownerId, fileName);
   const filePath = path.join(resourcesDir, fileName);
-  await fs.mkdir(resourcesDir, { recursive: true });
-  await fs.writeFile(filePath, bytes);
+  // The owner folder must still exist: a deleted bot / squad is not recreated
+  // by a late image (only `resources/` itself is created here).
+  if (!(await isDir(path.dirname(resourcesDir)))) throw new Error('owner_deleted');
+  try {
+    await fs.mkdir(resourcesDir);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code !== 'EEXIST') throw err;
+  }
+  await fs.writeFile(filePath, bytes, { flag: 'wx' });
 
   const markdownSrc = okbotAssetMarkdownSrc(assetRel);
   const alt = prompt.length > 80 ? `${prompt.slice(0, 77)}…` : prompt;

@@ -1,8 +1,44 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+/**
+ * Owner directories deleted in this process. Every storage write goes through
+ * `assertWritable` (via `ensureDir`, `writeJson`, `writeText`, `appendText`), so a
+ * run that finishes after its assistant or squad was deleted cannot recreate the
+ * directory. Owner ids are never reused, so the set only grows.
+ */
+const deletedDirs = new Set<string>();
+
+export function markDirDeleted(dir: string): void {
+  deletedDirs.add(path.resolve(dir));
+}
+
+export function isInDeletedDir(target: string): boolean {
+  if (deletedDirs.size === 0) return false;
+  const p = path.resolve(target);
+  for (const d of deletedDirs) {
+    if (p === d || p.startsWith(d + path.sep)) return true;
+  }
+  return false;
+}
+
+export function assertWritable(target: string): void {
+  if (isInDeletedDir(target)) throw new Error('owner_deleted');
+}
+
 export function ensureDir(dir: string) {
+  assertWritable(dir);
   fs.mkdirSync(dir, { recursive: true });
+}
+
+export function writeText(file: string, text: string): void {
+  assertWritable(file);
+  fs.writeFileSync(file, text, 'utf8');
+}
+
+export function appendText(file: string, text: string): void {
+  assertWritable(file);
+  fs.appendFileSync(file, text, 'utf8');
 }
 
 export type ReadJsonResult<T> =
@@ -52,9 +88,22 @@ export function unquoteYamlScalar(v: string): string {
   return s;
 }
 
-export function writeJson(file: string, data: unknown) {
+export function writeJson(file: string, data: unknown, opts?: { mode?: number }) {
+  assertWritable(file);
   ensureDir(path.dirname(file));
   const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
+  const body = JSON.stringify(data, null, 2);
+  if (opts?.mode != null) {
+    fs.writeFileSync(tmp, body, { encoding: 'utf8', mode: opts.mode });
+  } else {
+    fs.writeFileSync(tmp, body, 'utf8');
+  }
   fs.renameSync(tmp, file);
+  if (opts?.mode != null) {
+    try {
+      fs.chmodSync(file, opts.mode);
+    } catch (err) {
+      console.error('[okbot] chmod after writeJson failed', file, err);
+    }
+  }
 }

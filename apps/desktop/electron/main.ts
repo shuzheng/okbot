@@ -1,13 +1,15 @@
-import { app, BrowserWindow, dialog, Menu, nativeTheme, screen, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, screen, session, shell } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { IpcChannels, type AppSettings, type RuntimeEvent } from '@okbot/shared';
 import { FileStorage } from './storage';
-import { registerAllIpc, type PendingToolApproval } from './ipc';
+import { registerAllIpc, registerWindowControlIpc, type PendingToolApproval } from './ipc';
 import { initAutoUpdater, onAutoUpdatePreferenceChanged } from './updater';
+import { recoverInterruptedMacUpdate } from './macUpdateInstall';
 import { getAllowQuit, setAllowQuit } from './quitState';
 import { createLocalHttpApi } from './localHttpApi';
+import { closeMcp } from './mcpRuntime';
 import { ensureGatewayToken, resolveGatewayUiRoot, startSkillWatch } from './gatewayRuntime';
 import {
   acquireServerLock,
@@ -89,6 +91,7 @@ function snapshotActiveRuns() {
 function rejectPendingApprovalsForBot(botId: string, message = '已取消') {
   for (const [requestId, pending] of [...pendingToolApprovals.entries()]) {
     if (pending.botId !== botId) continue;
+    pending.cancelTimeout?.();
     pendingToolApprovals.delete(requestId);
     pending.resolve({ approved: false, message });
   }
@@ -112,6 +115,16 @@ function isBoundsOnScreen(bounds: { x: number; y: number; width: number; height:
     if (wx2 > wx1 && wy2 > wy1) visible += (wx2 - wx1) * (wy2 - wy1);
   }
   return visible / area >= 0.3;
+}
+
+let attachTokenIpcRegistered = false;
+
+function registerAttachTokenIpc(): void {
+  if (attachTokenIpcRegistered) return;
+  attachTokenIpcRegistered = true;
+  ipcMain.on(IpcChannels.attachGatewayToken, (event) => {
+    event.returnValue = gatewayClient?.token ?? '';
+  });
 }
 
 function createWindow() {
@@ -138,7 +151,9 @@ function createWindow() {
     opts.webPreferences = {
       ...opts.webPreferences,
       preload: path.join(__dirname, '../preload/attach.mjs'),
-      additionalArguments: [`--okbot-api-base=${client.base}`, `--okbot-api-token=${client.token}`],
+      // Token is not a command-line argument (visible to ps). The attach preload
+      // reads it once over IPC. Never log it.
+      additionalArguments: [`--okbot-api-base=${client.base}`],
       // Renderer origin (file:// or the dev server) is not the gateway origin.
       webSecurity: false,
     };
@@ -285,6 +300,23 @@ app.whenReady().then(async () => {
     return permission === 'media' || permission === 'mediaKeySystem' || /speech/i.test(name);
   });
 
+  if (process.platform === 'darwin' && app.isPackaged) {
+    try {
+      const recovery = recoverInterruptedMacUpdate(app.getPath('exe'));
+      if (recovery.recovered && recovery.relaunch) {
+        const { spawn } = await import('node:child_process');
+        spawn('open', [recovery.restoredPath], { detached: true, stdio: 'ignore' }).unref();
+        app.exit(0);
+        return;
+      }
+      if (recovery.recovered) {
+        console.info('[okbot] restored app bundle from interrupted update:', recovery.restoredPath);
+      }
+    } catch (err) {
+      console.error('[okbot] mac update recovery failed', err);
+    }
+  }
+
   const uiRoot = resolveGatewayUiRoot(__dirname);
   const syncLocalHttpApi = () => {
     try {
@@ -294,7 +326,8 @@ app.whenReady().then(async () => {
     }
   };
 
-  const running = await inspectRunningServer(storage.root, storage.getSettings().localHttpApi.port);
+  const gatewaySettings = storage.getSettings().localHttpApi;
+  const running = await inspectRunningServer(storage.root, gatewaySettings.port, gatewaySettings.token);
   if (running.state === 'running') {
     rememberGatewayClient(running.port);
   } else {
@@ -305,7 +338,19 @@ app.whenReady().then(async () => {
       owner: 'electron',
     });
     if (!lock.ok) {
-      rememberGatewayClient(lock.existing.port || desiredPort);
+      const attachPort = lock.existing.port || desiredPort;
+      const verified = await probeOkbotHealth(
+        attachPort,
+        400,
+        storage.getSettings().localHttpApi.token,
+      );
+      if (verified) {
+        rememberGatewayClient(attachPort);
+      } else {
+        console.error(
+          `[okbot] data dir lock is held (pid ${lock.existing.pid}) but port ${attachPort} is not a verified OkBot; not attaching`,
+        );
+      }
     } else {
       ownsServer = true;
 
@@ -324,6 +369,7 @@ app.whenReady().then(async () => {
   localHttpApiController = createLocalHttpApi({
     ctx: ipcCtx,
     uiRoot,
+    appVersion: app.getVersion(),
   });
 
   registerAllIpc(ipcCtx);
@@ -333,7 +379,7 @@ app.whenReady().then(async () => {
     await localHttpApiController.listen(ownedSettings.localHttpApi);
   } catch (err) {
     const port = ownedSettings.localHttpApi.port;
-    const health = await probeOkbotHealth(port);
+    const health = await probeOkbotHealth(port, 400, ownedSettings.localHttpApi.token);
     if (health) {
       try {
         localHttpApiController.stop();
@@ -367,6 +413,8 @@ app.whenReady().then(async () => {
   }
   }
 
+  registerAttachTokenIpc();
+  registerWindowControlIpc();
   createWindow();
 
   app.on('activate', () => {
@@ -400,6 +448,8 @@ app.on('will-quit', () => {
   } catch (err) {
     console.error('[okbot] localHttpApi stop on quit failed', err);
   }
+  // Stop MCP stdio child processes.
+  void closeMcp().catch(() => {});
   releaseServerLock(storage.root);
 });
 

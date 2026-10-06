@@ -8,10 +8,12 @@ import type { RuntimeEvent } from '@okbot/shared';
 import {
   acquireServerLock,
   inspectRunningServer,
+  probeOkbotHealth,
   publicBase,
   releaseServerLock,
 } from './serverPresence';
 import { ensureGatewayToken, resolveGatewayUiRoot, startSkillWatch } from './gatewayRuntime';
+import { readDesktopAppVersion } from './appVersion';
 
 const abortControllers = new Map<string, AbortController>();
 const pendingToolApprovals = new Map<string, PendingToolApproval>();
@@ -19,6 +21,7 @@ const pendingToolApprovals = new Map<string, PendingToolApproval>();
 function rejectPendingApprovalsForBot(storage: FileStorage, botId: string, message = '已取消') {
   for (const [requestId, pending] of [...pendingToolApprovals.entries()]) {
     if (pending.botId !== botId) continue;
+    pending.cancelTimeout?.();
     pendingToolApprovals.delete(requestId);
     pending.resolve({ approved: false, message });
   }
@@ -28,7 +31,8 @@ function rejectPendingApprovalsForBot(storage: FileStorage, botId: string, messa
 async function serve(): Promise<number> {
   const storage = new FileStorage();
   const configuredPort = storage.getSettings().localHttpApi.port;
-  const existing = await inspectRunningServer(storage.root, configuredPort);
+  const configuredToken = storage.getSettings().localHttpApi.token;
+  const existing = await inspectRunningServer(storage.root, configuredPort, configuredToken);
   if (existing.state === 'running') {
     const where = publicBase(existing.port);
     const pid = existing.pid ? `（pid ${existing.pid}）` : '';
@@ -39,8 +43,16 @@ async function serve(): Promise<number> {
   const configured = storage.getSettings().localHttpApi;
   const lock = acquireServerLock(storage.root, { pid: process.pid, port: configured.port, owner: 'serve' });
   if (!lock.ok) {
+    const heldPort = lock.existing.port || configured.port;
+    const verified = await probeOkbotHealth(heldPort, 400, configured.token);
+    if (verified) {
+      console.error(
+        `OkBot 已在运行（pid ${lock.existing.pid}）：${publicBase(heldPort)}。未再启动一份。`,
+      );
+      return 1;
+    }
     console.error(
-      `OkBot 已在运行（pid ${lock.existing.pid}）：${publicBase(lock.existing.port)}。未再启动一份。`,
+      `数据目录锁被占用（pid ${lock.existing.pid}），但端口 ${heldPort} 不是已验证的 OkBot。未启动。`,
     );
     return 1;
   }
@@ -99,7 +111,7 @@ async function serve(): Promise<number> {
   storage.setSessionsChangedListener((ownerId, reason) => {
     sendRuntimeEvent({ type: 'sessions_changed', botId: ownerId, reason });
   });
-  const http = createLocalHttpApi({ ctx, uiRoot: resolveGatewayUiRoot(path.dirname(fileURLToPath(import.meta.url))) });
+  const http = createLocalHttpApi({ ctx, uiRoot: resolveGatewayUiRoot(path.dirname(fileURLToPath(import.meta.url))), appVersion: readDesktopAppVersion() });
   bridge = (event) => http.bridgeRuntimeEvent(event);
   let stopSkills = () => {};
 
@@ -125,7 +137,7 @@ async function serve(): Promise<number> {
   } catch (err) {
     http.stop();
     releaseServerLock(storage.root);
-    const again = await inspectRunningServer(storage.root, api.port);
+    const again = await inspectRunningServer(storage.root, api.port, api.token);
     if (again.state === 'running') {
       console.error(`OkBot 已在运行：${publicBase(again.port)}。未再启动一份。`);
       return 1;

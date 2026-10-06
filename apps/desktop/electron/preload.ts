@@ -3,11 +3,14 @@ import {
   IpcChannels,
   type AppInfo,
   type AppSettings,
+  type Bot,
   type BotOnboardingAnswers,
+  type McpServerEntry,
   type RuntimeEvent,
   type UpdaterStatus,
   type UsageStats,
 } from '@okbot/shared';
+import type { AssistantGalleryItem, McpServerStatus } from '@okbot/agent';
 
 const api = {
   getBootstrap: () => ipcRenderer.invoke(IpcChannels.getBootstrap),
@@ -59,6 +62,10 @@ const api = {
     },
   ) => ipcRenderer.invoke(IpcChannels.updateSquad, id, patch),
   deleteSquad: (id: string) => ipcRenderer.invoke(IpcChannels.deleteSquad, id),
+  listAssistantGallery: (lang?: 'zh' | 'en') =>
+    ipcRenderer.invoke(IpcChannels.listAssistantGallery, lang) as Promise<AssistantGalleryItem[]>,
+  installGalleryAssistant: (id: string, lang?: 'zh' | 'en') =>
+    ipcRenderer.invoke(IpcChannels.installGalleryAssistant, id, lang) as Promise<Bot>,
   readAgentsMd: (botId: string) =>
     ipcRenderer.invoke(IpcChannels.readAgentsMd, botId) as Promise<string>,
   writeAgentsMd: (botId: string, content: string) =>
@@ -102,7 +109,7 @@ const api = {
   getGatewayAccessToken: () =>
     ipcRenderer.invoke(IpcChannels.getGatewayAccessToken) as Promise<string>,
   saveSettings: (settings: AppSettings) => ipcRenderer.invoke(IpcChannels.saveSettings, settings),
-  discoverModels: (payload: { baseURL: string; apiKey: string }) =>
+  discoverModels: (payload: { baseURL: string; apiKey: string; providerId?: string }) =>
     ipcRenderer.invoke(IpcChannels.discoverModels, payload) as Promise<{
       ok: boolean;
       models?: Array<{
@@ -120,6 +127,7 @@ const api = {
     apiKey: string;
     apiFormat: 'chat_completions' | 'responses';
     modelId: string;
+    providerId?: string;
   }) =>
     ipcRenderer.invoke(IpcChannels.testModelConnection, payload) as Promise<{
       ok: boolean;
@@ -250,6 +258,20 @@ const api = {
       cleared: number;
     }>,
   getUsageStats: () => ipcRenderer.invoke(IpcChannels.getUsageStats) as Promise<UsageStats>,
+  mcpStatus: () => ipcRenderer.invoke(IpcChannels.mcpStatus) as Promise<McpServerStatus[]>,
+  mcpTestServer: (entry: McpServerEntry) =>
+    ipcRenderer.invoke(IpcChannels.mcpTestServer, entry) as Promise<McpServerStatus>,
+  backupExport: (payload: { excludeSecrets: boolean }) =>
+    ipcRenderer.invoke(IpcChannels.backupExport, payload) as Promise<
+      { canceled: true; ok?: undefined } | { ok: true; path: string } | { ok: false; error: string }
+    >,
+  backupRestore: () =>
+    ipcRenderer.invoke(IpcChannels.backupRestore) as Promise<
+      { canceled: true; ok?: undefined } | { ok: true; previousDir: string } | { ok: false; error: string }
+    >,
+  windowFocus: () => ipcRenderer.invoke(IpcChannels.windowFocus) as Promise<boolean>,
+  claimNotification: (tag: string) =>
+    ipcRenderer.invoke(IpcChannels.claimNotification, { tag }) as Promise<boolean>,
   updaterGetStatus: () =>
     ipcRenderer.invoke(IpcChannels.updaterGetStatus) as Promise<UpdaterStatus>,
   updaterCheck: () => ipcRenderer.invoke(IpcChannels.updaterCheck) as Promise<UpdaterStatus>,

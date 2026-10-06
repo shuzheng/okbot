@@ -10,6 +10,8 @@ export type PendingToolApproval = {
   /** Computer selected for the chat turn that requested this tool. */
   computerId?: string;
   resolve: (decision: { approved: boolean; message?: string }) => void;
+  /** Clears the default-deny timer once the waiter is settled. */
+  cancelTimeout?: () => void;
 };
 
 export type ActiveRunsSnapshot = {

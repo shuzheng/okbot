@@ -27,6 +27,12 @@ export const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
     keywords: ['GPU', '硬件加速'],
   },
   {
+    id: 'currentVersion',
+    tab: 'updates',
+    labelKey: 'currentVersion',
+    keywords: ['版本', 'version', '当前版本'],
+  },
+  {
     id: 'autoUpdate',
     tab: 'updates',
     labelKey: 'autoUpdate',
@@ -45,6 +51,36 @@ export const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
     keywords: ['自动更新', 'updates', 'release'],
   },
   { id: 'data', tab: 'general', labelKey: 'data', keywords: ['dataDir', '目录', 'folder'] },
+  {
+    id: 'backupExport',
+    tab: 'general',
+    labelKey: 'backupExport',
+    keywords: ['备份', 'backup', 'export', '导出', '迁移', 'migrate', 'zip'],
+  },
+  {
+    id: 'backupRestore',
+    tab: 'general',
+    labelKey: 'backupRestore',
+    keywords: ['恢复', 'restore', 'import', '导入', '迁移', 'migrate'],
+  },
+  {
+    id: 'notifications',
+    tab: 'general',
+    labelKey: 'notificationsSetting',
+    keywords: ['通知', 'notification', '提醒', 'alert', '未读', 'unread'],
+  },
+  {
+    id: 'showAdvancedSettings',
+    tab: 'general',
+    labelKey: 'showAdvancedSettings',
+    keywords: ['高级', 'advanced', '更多设置', 'more settings'],
+  },
+  {
+    id: 'mcpSection',
+    tab: 'extensions',
+    labelKey: 'mcpSection',
+    keywords: ['MCP', '扩展', 'extension', 'server', '服务器', 'plugin', '插件'],
+  },
   {
     id: 'developerMode',
     tab: 'general',
@@ -299,3 +335,47 @@ export const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
     keywords: ['记忆', 'memory', 'global memory', '全局记忆', '全局记忆管理', '列表'],
   },
 ];
+
+/** Nav label for each settings tab. */
+export const SETTINGS_TAB_LABEL_KEYS: Record<SettingsTab, I18nKey> = {
+  general: 'general',
+  gateway: 'gateway',
+  computers: 'computers',
+  extensions: 'extensionsTab',
+  tools: 'tools',
+  security: 'security',
+  model: 'model',
+  instructions: 'instructions',
+  memory: 'memoryTab',
+  usage: 'usageTab',
+  updates: 'updatesTab',
+};
+
+/** Tabs shown only when 「显示高级设置」 is on. */
+const ADVANCED_TABS: ReadonlySet<SettingsTab> = new Set<SettingsTab>([
+  'security',
+  'gateway',
+  'computers',
+  'extensions',
+]);
+
+/** Rows inside common tabs that are hidden until 「显示高级设置」 is on. */
+const ADVANCED_ITEM_IDS: ReadonlySet<string> = new Set([
+  'toolRunLimits',
+  'contextCompression',
+  'autoTopicCompress',
+  'maxTurns',
+]);
+
+export function isAdvancedSettingsTab(tab: SettingsTab): boolean {
+  return ADVANCED_TABS.has(tab);
+}
+
+export function isAdvancedSettingsItem(item: SettingsSearchItem): boolean {
+  return (
+    ADVANCED_TABS.has(item.tab) ||
+    ADVANCED_ITEM_IDS.has(item.id) ||
+    item.id.startsWith('toolRun') ||
+    item.id.startsWith('compress')
+  );
+}
