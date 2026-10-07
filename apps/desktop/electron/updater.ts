@@ -307,6 +307,8 @@ function restartToInstall(): void {
     // button returns and the app stays open. Swap the verified zip instead.
     const started = startMacUpdateInstall(true);
     if (!started.ok) {
+      // Install did not start — clear the quit bypass so before-quit stays protective.
+      setAllowQuit(false);
       const detail =
         started.reason === 'not_writable'
           ? '当前应用所在目录不可写（例如还在 DMG 里运行，或没有 /Applications 的写入权限）。请先把 OkBot 复制到「应用程序」后再更新。'
@@ -328,10 +330,22 @@ function restartToInstall(): void {
   }
   // Let the dialog finish tearing down its modal session before we quit.
   setTimeout(() => {
-    nativeAutoUpdater.once('before-quit-for-update', () => {
-      releaseAndDestroyWindows();
-    });
-    autoUpdater.quitAndInstall(false, true);
+    try {
+      nativeAutoUpdater.once('before-quit-for-update', () => {
+        releaseAndDestroyWindows();
+      });
+      autoUpdater.quitAndInstall(false, true);
+    } catch (err) {
+      // quitAndInstall did not start — clear the quit bypass so before-quit stays protective.
+      setAllowQuit(false);
+      const detail = err instanceof Error ? err.message : String(err);
+      void dialog.showMessageBox({
+        type: 'error',
+        buttons: ['好'],
+        message: '无法安装更新',
+        detail: detail || '安装程序未能启动，请稍后重试或手动安装。',
+      });
+    }
   }, 0);
 }
 

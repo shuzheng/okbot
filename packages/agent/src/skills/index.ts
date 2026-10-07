@@ -2,6 +2,9 @@ export {
   parseSkillMarkdown,
   formatSkillMarkdown,
   unquoteYamlScalar,
+  normalizeSkillSlug,
+  ensureOkbotSkillName,
+  OKBOT_SKILL_SLUG_PREFIX,
 } from './parse.js';
 export {
   formatSkillCatalog,

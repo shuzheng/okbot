@@ -157,6 +157,9 @@ export {
   parseSkillMarkdown,
   formatSkillMarkdown,
   unquoteYamlScalar,
+  normalizeSkillSlug,
+  ensureOkbotSkillName,
+  OKBOT_SKILL_SLUG_PREFIX,
   formatSkillCatalog,
   buildSkillCatalogEntries,
   watchSkillDirs,
@@ -200,3 +203,23 @@ export {
   type AssistantGalleryItem,
   type GalleryLang,
 } from './assistantGallery.js';
+export {
+  parseGithubAssistantSource,
+  githubRawFileUrl,
+  githubContentsApiUrl,
+  isAssistantArchivePath,
+  GITHUB_ASSISTANT_KNOWN_PATHS,
+  type GithubAssistantPlan,
+} from './githubAssistantSource.js';
+export {
+  ssrfHttpGet,
+  assertUrlAllowed,
+  isBlockedHostnameLiteral,
+  isBlockedResolvedAddress,
+  ipv4FromMappedIpv6,
+  ipv4FromCompatibleIpv6,
+  readBodyLimited,
+  type SsrfFetchOptions,
+  type SsrfFetchResult,
+  type ResolvedAddress,
+} from './ssrfHttp.js';

@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { plainTextFromMarkdown, type ChatMessage, type MessageSearchHit } from '@okbot/shared';
+import { plainTextFromMarkdown, stripThinkContent, type ChatMessage, type MessageSearchHit } from '@okbot/shared';
 import { parseSessionLine, recordToUiMessage } from './sessionJsonl';
 
 /** Reads a text file line by line from the end, with async I/O. */
@@ -333,7 +333,7 @@ export async function searchSessionFiles(
         const msg: ChatMessage | null = recordToUiMessage(rec);
         if (!msg) continue;
         if (pick.owner.squad && !(msg.role === 'user' || (msg.role === 'assistant' && msg.speakerBotId))) continue;
-        const plain = plainTextFromMarkdown(msg.content || '');
+        const plain = plainTextFromMarkdown(stripThinkContent(msg.content || ''));
         const idx = plain.toLowerCase().indexOf(q);
         if (idx < 0) continue;
         const { file: _f, squad: _s, speakerNames, ...base } = pick.owner;

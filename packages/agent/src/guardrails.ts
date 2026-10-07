@@ -7,27 +7,34 @@ import {
   type ToolInputGuardrailDefinition,
 } from '@openai/agents';
 import {
+  DEFAULT_DANGEROUS_SHELL_PATTERNS,
   normalizeSecuritySettings,
+  resolveShellPatterns,
+  tryCompileShellPattern,
+  type DangerousShellPattern,
   type SecuritySettings,
 } from '@okbot/shared';
 
+export type CompiledShellPattern = { id: string; re: RegExp; label: string };
+
+function compileShellPatterns(list: DangerousShellPattern[]): CompiledShellPattern[] {
+  const out: CompiledShellPattern[] = [];
+  for (const p of list) {
+    const re = tryCompileShellPattern(p.pattern);
+    if (!re) continue;
+    const label = (p.label?.trim() || p.pattern).trim();
+    out.push({ id: p.id, re, label });
+  }
+  return out;
+}
+
 /**
- * Dangerous shell patterns (case-insensitive). Documented for Settings UI / README.
- * Not a full sandbox — complementary to path scope + HITL approval.
+ * Built-in dangerous shell patterns (compiled). Prefer settings.security.shellPatterns
+ * via findDangerousShellPattern / buildToolInputGuardrails for live scans.
  */
-export const DANGEROUS_SHELL_PATTERNS: { id: string; re: RegExp; label: string }[] = [
-  { id: 'rm_rf_root', re: /\brm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+|-[a-zA-Z]*\s+)*\/\s*($|&&|\||;)/i, label: 'rm -rf /' },
-  { id: 'rm_rf_star', re: /\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*|-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*)\s+(\/\*|~\/\*|\$HOME\/\*)/i, label: 'rm -rf /*' },
-  { id: 'sudo', re: /(^|[;&|`\n]|\$\()\s*sudo\b/i, label: 'sudo' },
-  { id: 'mkfs', re: /\bmkfs(\.\w+)?\b/i, label: 'mkfs' },
-  { id: 'dd_if', re: /\bdd\s+.*\bif=/i, label: 'dd if=' },
-  { id: 'curl_pipe_sh', re: /\b(curl|wget)\b[^|\n]*\|\s*(ba)?sh\b/i, label: 'curl|sh / wget|sh' },
-  { id: 'chmod_777_root', re: /\bchmod\s+(-R\s+)?777\s+\/(\s|$)/i, label: 'chmod 777 /' },
-  { id: 'diskutil_erase', re: /\bdiskutil\s+erase/i, label: 'diskutil erase' },
-  { id: 'shutdown', re: /\b(shutdown|reboot|halt|poweroff)\b/i, label: 'shutdown/reboot' },
-  { id: 'fork_bomb', re: /:\(\)\s*\{\s*:\|:\s*&\s*\}\s*;?\s*:/, label: 'fork bomb' },
-  { id: 'write_disk', re: />\s*\/dev\/(sd|disk|rdisk|nvme)/i, label: 'write to /dev/disk' },
-];
+export const DANGEROUS_SHELL_PATTERNS: CompiledShellPattern[] = compileShellPatterns(
+  DEFAULT_DANGEROUS_SHELL_PATTERNS,
+);
 
 export function expandHome(p: string): string {
   if (p === '~') return homedir();
@@ -134,10 +141,26 @@ export function checkPathAllowed(
   };
 }
 
-export function findDangerousShellPattern(command: string): string | null {
+/**
+ * Scan a shell command against the effective denylist.
+ * Invalid regex entries are skipped (never throw).
+ * When `security` is omitted, built-in defaults are used.
+ */
+export function findDangerousShellPattern(
+  command: string,
+  security?: SecuritySettings | null,
+): string | null {
   const cmd = command ?? '';
-  for (const p of DANGEROUS_SHELL_PATTERNS) {
-    if (p.re.test(cmd)) return p.label;
+  const settings = security
+    ? normalizeSecuritySettings(security)
+    : normalizeSecuritySettings(undefined);
+  const compiled = compileShellPatterns(resolveShellPatterns(settings));
+  for (const p of compiled) {
+    try {
+      if (p.re.test(cmd)) return p.label;
+    } catch {
+      /* ignore pathological regex runtime errors */
+    }
   }
   return null;
 }
@@ -209,7 +232,7 @@ export function buildToolInputGuardrails(
           }
           const args = parseArgsJson(toolCall.arguments);
           const command = typeof args.command === 'string' ? args.command : '';
-          const hit = findDangerousShellPattern(command);
+          const hit = findDangerousShellPattern(command, security);
           if (hit) {
             return blockOutput(
               security,

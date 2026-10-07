@@ -25,6 +25,8 @@ export const GATEWAY_RPC_OPS = [
   'deleteSquad',
   'listAssistantGallery',
   'installGalleryAssistant',
+  'importAssistantFromUrl',
+  'cancelImportAssistantFromUrl',
   'setChatUnread',
   'readAgentsMd',
   'writeAgentsMd',

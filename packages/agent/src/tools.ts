@@ -285,7 +285,7 @@ export function buildTools(
       tool({
         name: 'manage_schedule',
         description:
-          '管理当前助手/小队的定时任务（到点后会像用户发消息一样唤醒一轮对话；定时轮次沿用当前工具审批/预算，无单独收紧）。action=create|list|pause|resume|delete。create 时传 schedule（如 daily 09:00、每天 09:00、hourly、every 15m、cron 0 9 * * 1-5）与 prompt；可选 title、timezone（IANA，省略则用运行 OkBot 的机器本地时区）、once。pause/resume/delete 传 job_id（或唯一 title）。create/delete 始终需要用户确认。',
+          '管理当前助手/小队的定时任务（到点后会像用户发消息一样唤醒一轮对话；定时轮次沿用当前工具审批/预算，无单独收紧）。action=create|list|pause|resume|delete。create 时传 schedule（如 daily 09:00、每天 09:00、hourly、every 15m、cron 0 9 * * 1-5）与 prompt；可选 title、timezone（IANA，省略则用运行 OkBot 的机器本地时区）、once。pause/resume/delete 传 job_id（或唯一 title）。未用到的可选字段请省略，不要传 null。create/delete 始终需要用户确认；list 不需确认。',
         parameters: z.object({
           action: z
             .enum(['create', 'list', 'pause', 'resume', 'delete'])
@@ -306,7 +306,9 @@ export function buildTools(
             input && typeof input === 'object' && input !== null && 'action' in input
               ? String((input as { action?: unknown }).action || '')
               : '';
+          // create/delete always HITL. list is read-only — never park a card.
           if (action === 'create' || action === 'delete') return true;
+          if (action === 'list') return false;
           return prefs.manage_schedule.approval === 'ask';
         },
         ...guardrailOpts,

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { type BotSkill, type MemoryEntry } from '@okbot/shared';
 import { t, type UiLang } from '../../i18n';
 import { MemoryEntriesList } from '../settings/MemoryEntriesList';
+import { SchedulesList } from '../settings/SchedulesList';
 import { SettingsToggle } from '../settings/SettingsToggle';
 import { updateScrollFade } from '../../utils/scrollFade';
 import { formatSystemError } from '../../utils/formatSystemError';
@@ -385,6 +386,12 @@ export function BotAdvancedSection({
                 </div>
               </div>
             )}
+          </div>
+
+          <div className="field">
+            <label>{t(lang, 'scheduledJobsList')}</label>
+            <p className="bot-form-model-hint">{t(lang, 'scheduledJobsOwnerHint')}</p>
+            <SchedulesList lang={lang} active={Boolean(botId)} ownerId={botId} compact />
           </div>
 
           <div className="field">

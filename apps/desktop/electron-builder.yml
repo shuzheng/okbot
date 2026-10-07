@@ -10,6 +10,9 @@ files:
   # Runtime BrowserWindow icon (Win/Linux); build-time win.icon still uses resources/.
   - resources/icon.ico
   - resources/icon.png
+  # macOS menu-bar template icons (black + alpha); see electron/appTray.ts
+  - resources/trayTemplate.png
+  - resources/trayTemplate@2x.png
 extraMetadata:
   name: okbot
   main: out/main/index.js

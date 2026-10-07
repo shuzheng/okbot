@@ -7,6 +7,7 @@ import {
   normalizeMaxTurns,
   normalizeModelSettings,
   normalizeSecuritySettings,
+  DEFAULT_DANGEROUS_SHELL_PATTERNS,
   normalizeSquadSettings,
   normalizeInstructionsSettings,
   normalizeMemorySettings,
@@ -22,6 +23,7 @@ import {
   normalizeDefaultComputerId,
   normalizeMcpSettings,
   normalizeWebSettings,
+  normalizeAssistantMarketplaceSettings,
   WEB_SEARCH_PROVIDER_IDS,
   type McpSettings,
   type WebSettings,
@@ -29,8 +31,11 @@ import {
   type ComputerEntry,
   type MemoryEntry,
   type AppSettings,
+  type CloseAction,
+  normalizeCloseAction,
   type ModelSettings,
   type SecurityBlockMode,
+  type DangerousShellPattern,
   type LanguageCode,
   type ThemeMode,
   type UpdaterStatus,
@@ -39,8 +44,8 @@ import {
 } from '@okbot/shared';
 import { resolveUiLang, t } from '../../i18n';
 import { AutoApprovalRulesList } from './AutoApprovalRulesList';
+import { ShellPatternsList } from './ShellPatternsList';
 import { MemoryEntriesList } from './MemoryEntriesList';
-import { SchedulesList } from './SchedulesList';
 import { CompressRatioSlider } from './CompressRatioSlider';
 import type { InstructionsSubTab, SettingsTab } from './types';
 import { SettingsIcon, ModelNavIcon, SecurityNavIcon, InstructionsNavIcon, MemoryNavIcon, DownloadUpdateIcon, CopyIcon, ExtensionsNavIcon } from '../../components/ui/icons';
@@ -56,6 +61,7 @@ import { ComputersSettingsPanel } from './ComputersSettingsPanel';
 import { McpSettingsPanel } from './McpSettingsPanel';
 import { isAdvancedSettingsTab } from './settingsSearch';
 import { isGatewayClient } from '../../utils/gatewayClient';
+import { omitGatewayDesktopOnlySettings } from '../../utils/settingsPatch';
 import { requestConfirm } from '../../components/ui';
 
 
@@ -131,6 +137,7 @@ export function SettingsModal({
   );
   const [developerMode, setDeveloperMode] = useState(settings.developerMode === true);
   const [notifications, setNotifications] = useState(settings.notifications !== false);
+  const [closeAction, setCloseAction] = useState<CloseAction>(() => normalizeCloseAction(settings.closeAction));
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(settings.showAdvancedSettings === true);
   // A direct jump to an advanced tab (e.g. from a toast) shows advanced tabs for this
   // dialog only. It does not change the saved preference.
@@ -150,6 +157,10 @@ export function SettingsModal({
   useEffect(() => {
     if (!advancedVisible && isAdvancedSettingsTab(tab)) setTab('general');
   }, [advancedVisible, tab]);
+  // Main may remember closeAction via the close dialog while this modal is open.
+  useEffect(() => {
+    setCloseAction(normalizeCloseAction(settings.closeAction));
+  }, [settings.closeAction]);
   const initialLocalHttpApi = normalizeLocalHttpApiSettings(settings.localHttpApi);
   const [localHttpApiEnabled, setLocalHttpApiEnabled] = useState(initialLocalHttpApi.enabled);
   const [localHttpApiPort, setLocalHttpApiPort] = useState(String(initialLocalHttpApi.port));
@@ -210,6 +221,11 @@ export function SettingsModal({
   const [shellPatternsEnabled, setShellPatternsEnabled] = useState(
     initialSecurity.shellPatternsEnabled,
   );
+  /** undefined = use built-in defaults; array (incl. empty) = custom list. */
+  const [shellPatterns, setShellPatterns] = useState<DangerousShellPattern[] | undefined>(
+    initialSecurity.shellPatterns,
+  );
+  const [shellPatternAddRequest, setShellPatternAddRequest] = useState(0);
   const [blockMode, setBlockMode] = useState<SecurityBlockMode>(initialSecurity.blockMode);
   const [modelSettings, setModelSettings] = useState<ModelSettings>(() =>
     normalizeModelSettings(settings.model),
@@ -414,9 +430,10 @@ export function SettingsModal({
           .map((s) => s.trim())
           .filter(Boolean),
         shellPatternsEnabled,
+        shellPatterns,
         blockMode,
       });
-      await onSaveRef.current({
+      const payload = {
         theme,
         language,
         microphoneId,
@@ -425,9 +442,11 @@ export function SettingsModal({
         sidebarDockMagnify,
         developerMode,
         notifications,
+        closeAction,
         showAdvancedSettings,
         mcp: normalizeMcpSettings(mcpDraft),
         web: normalizeWebSettings(webDraft),
+        assistantMarketplace: normalizeAssistantMarketplaceSettings(settings.assistantMarketplace),
         localHttpApi: (() => {
           const nextApi = normalizeLocalHttpApiSettings({
             enabled: localHttpApiEnabled,
@@ -483,7 +502,12 @@ export function SettingsModal({
           captainMaxTurns: keptNumber(captainMaxTurns, normalizeSquadSettings(settings.squad).captainMaxTurns),
           memberMaxTurns: keptNumber(memberMaxTurns, normalizeSquadSettings(settings.squad).memberMaxTurns),
         }),
-      });
+      };
+      // Gateway must not patch closeAction (Electron shell only); omit so a stale
+      // value cannot 409 against resolveGatewaySettingsWrite.
+      await onSaveRef.current(
+        gatewayClient ? (omitGatewayDesktopOnlySettings(payload) as AppSettings) : payload,
+      );
     };
     pendingSaveRef.current = persist;
     if (saveTimerRef.current != null) window.clearTimeout(saveTimerRef.current);
@@ -508,6 +532,8 @@ export function SettingsModal({
     sidebarDockMagnify,
     developerMode,
     notifications,
+    closeAction,
+    gatewayClient,
     showAdvancedSettings,
     mcpDraft,
     webDraft,
@@ -529,6 +555,7 @@ export function SettingsModal({
     allowedPathsText,
     deniedPathsText,
     shellPatternsEnabled,
+    shellPatterns,
     blockMode,
     modelSettings,
     compressRatioPct,
@@ -824,6 +851,26 @@ export function SettingsModal({
                       <SettingsHelpTip text={t(lang, 'notificationsSettingHint')} />
                     </span>
                     <SettingsToggle checked={notifications} onChange={() => setNotifications((v) => !v)} />
+                  </div>
+                  <div
+                    className="settings-row"
+                    data-settings-id="closeAction"
+                    aria-disabled={gatewayClient ? 'true' : undefined}
+                    title={gatewayClient ? t(lang, 'closeActionDesktopOnly') : undefined}
+                  >
+                    <span className="settings-row-label">
+                      <span className="settings-row-label-text">{t(lang, 'closeActionSetting')}</span>
+                      <SettingsHelpTip text={t(lang, 'closeActionSettingHint')} />
+                    </span>
+                    <select
+                      value={closeAction}
+                      disabled={gatewayClient}
+                      onChange={(e) => setCloseAction(normalizeCloseAction(e.target.value))}
+                    >
+                      <option value="ask">{t(lang, 'closeActionAsk')}</option>
+                      <option value="tray">{t(lang, 'closeActionTray')}</option>
+                      <option value="quit">{t(lang, 'closeActionQuit')}</option>
+                    </select>
                   </div>
                 </div>
                 {needsHwRestart ? (
@@ -1144,7 +1191,9 @@ export function SettingsModal({
                 <div className="settings-section-label" style={{ marginTop: 16 }} data-settings-id="scheduledJobsList">
                   {t(lang, 'scheduledJobsList')}
                 </div>
-                <SchedulesList lang={lang} active={tab === 'tools'} />
+                <div className="settings-card">
+                  <div className="settings-hint">{t(lang, 'scheduledJobsSettingsPointer')}</div>
+                </div>
 
                 <div className="settings-section-label" style={{ marginTop: 16 }} data-settings-id="webTools">
                   {t(lang, 'webTools')}
@@ -1420,8 +1469,42 @@ export function SettingsModal({
                       <span className="settings-row-label-text">{t(lang, 'securityShellPatterns')}</span>
                       <SettingsHelpTip text={t(lang, 'securityShellPatternsHint')} />
                     </span>
-                      <SettingsToggle checked={shellPatternsEnabled} onChange={() => setShellPatternsEnabled((v) => !v)} disabled={!securityEnabled} />
+                    <div className="settings-row-trailing">
+                      <button
+                        type="button"
+                        className="settings-aar-add-btn"
+                        disabled={!securityEnabled || !shellPatternsEnabled}
+                        onClick={() => setShellPatternAddRequest((n) => n + 1)}
+                      >
+                        {t(lang, 'securityShellPatternAdd')}
+                      </button>
+                      <button
+                        type="button"
+                        className="settings-aar-add-btn"
+                        disabled={!securityEnabled || !shellPatternsEnabled || shellPatterns === undefined}
+                        onClick={() => setShellPatterns(undefined)}
+                        title={t(lang, 'securityShellPatternsResetHint')}
+                      >
+                        {t(lang, 'securityShellPatternsReset')}
+                      </button>
+                      <SettingsToggle
+                        checked={shellPatternsEnabled}
+                        onChange={() => setShellPatternsEnabled((v) => !v)}
+                        disabled={!securityEnabled}
+                      />
+                    </div>
                   </div>
+                  {shellPatternsEnabled ? (
+                    <div className="settings-row settings-row-stack" data-settings-id="securityShellPatternsList">
+                      <ShellPatternsList
+                        lang={lang}
+                        patterns={shellPatterns ?? DEFAULT_DANGEROUS_SHELL_PATTERNS}
+                        disabled={!securityEnabled}
+                        requestAdd={shellPatternAddRequest}
+                        onChange={(next) => setShellPatterns(next)}
+                      />
+                    </div>
+                  ) : null}
                 </div>
 
                 <div className="settings-hint settings-security-approval-hint" data-settings-id="securityApprovalRelation">

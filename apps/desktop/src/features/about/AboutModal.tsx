@@ -108,6 +108,14 @@ export function AboutModal({
           <br />
           {copyright}
         </p>
+        <a
+          className="about-github"
+          href="https://github.com/shuzheng/okbot"
+          target="_blank"
+          rel="noreferrer noopener"
+        >
+          {t(lang, 'aboutGithub')}
+        </a>
         <button
           type="button"
           className={`about-copy-btn${copied ? ' copied' : ''}`}

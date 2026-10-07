@@ -7,6 +7,7 @@ import { FlatAvatar } from '../../components/ui/avatars';
 import { BotSearchSelect } from '../bots/BotSearchSelect';
 import { ModelRefSelect } from '../settings/ModelRefSelect';
 import { updateScrollFade } from '../../utils/scrollFade';
+import { SchedulesList } from '../settings/SchedulesList';
 
 export type SquadWizardModalProps = {
   lang: 'zh' | 'en';
@@ -223,6 +224,13 @@ export function SquadWizardModal({
             </div>
           )}
         </div>
+        {squadWizard.id ? (
+          <div className="field" style={{ marginTop: 12 }}>
+            <label>{t(lang, 'scheduledJobsList')}</label>
+            <p className="bot-form-model-hint">{t(lang, 'scheduledJobsOwnerHint')}</p>
+            <SchedulesList lang={lang} active compact ownerId={squadWizard.id} />
+          </div>
+        ) : null}
         <div className="modal-actions">
           <button type="button" className="ghost" onClick={() => onClose()}>
             {t(lang, 'cancel')}

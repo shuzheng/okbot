@@ -15,6 +15,7 @@ import {
 } from '@okbot/shared';
 import { assertModel } from './model.js';
 import { mergeAgentsMdFromModel } from './agentsMdPatch.js';
+import { ensureOkbotSkillName, normalizeSkillSlug } from './skills/parse.js';
 
 /**
  * Silently patch AGENTS.md from recent chat. Returns updated markdown, or null if unchanged.
@@ -151,8 +152,8 @@ export async function refreshBotSkills(input: {
     '若已有 skill 覆盖同一场景，应更新该 skill，而不是另起同义 slug。',
     '只输出 JSON，不要 markdown 围栏，不要解释。',
     '无更新时输出：{"action":"none"}',
-    '有更新时输出：{"action":"upsert","skill":{"slug":"kebab-case-en-or-pinyin","name":"短名称","description":"何时使用（一句）","body":"Markdown 正文，含 When / Steps"}}',
-    'body 用中文，步骤清晰可执行；slug 只用小写字母数字和连字符。',
+    '有更新时输出：{"action":"upsert","skill":{"slug":"okbot-kebab-case","name":"okbot-kebab-case","description":"何时使用（一句）","body":"Markdown 正文，含 When / Steps"}}',
+    'body 用中文，步骤清晰可执行；slug / name 均须以 okbot- 开头，只用小写字母数字和连字符；技能落盘为 skills/<slug>/SKILL.md。',
   ].join('\n');
 
   const user = [
@@ -191,14 +192,12 @@ export async function refreshBotSkills(input: {
       skill?: Partial<BotSkill>;
     };
     if (parsed.action !== 'upsert' || !parsed.skill) return { action: 'none' };
-    let slug = String(parsed.skill.slug || '')
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9-]+/g, '-')
-      .replace(/^-+|-+$/g, '');
-    if (slug && !slug.startsWith('okbot-')) slug = `okbot-${slug}`;
-    slug = slug.slice(0, 64);
-    const name = stripThinkContent(String(parsed.skill.name || slug)).trim();
+    const slug = normalizeSkillSlug(String(parsed.skill.slug || ''));
+    let name = ensureOkbotSkillName(
+      stripThinkContent(String(parsed.skill.name || '')).trim(),
+      slug,
+    );
+    if (!name) name = slug;
     const description = stripThinkContent(String(parsed.skill.description || name)).trim();
     const body = stripThinkContent(String(parsed.skill.body || '')).trim();
     if (!slug || !body) return { action: 'none' };

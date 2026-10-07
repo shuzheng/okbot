@@ -247,6 +247,7 @@ export function fillGatewaySettings(settings: unknown) {
       allowedPathPrefixes: Array.isArray(security.allowedPathPrefixes) ? security.allowedPathPrefixes : [],
       deniedPathPrefixes: Array.isArray(security.deniedPathPrefixes) ? security.deniedPathPrefixes : [],
       shellPatternsEnabled: security.shellPatternsEnabled !== false,
+      ...(Array.isArray(security.shellPatterns) ? { shellPatterns: security.shellPatterns } : {}),
       blockMode: security.blockMode === 'tripwire' ? 'tripwire' : 'reject',
     },
     model: fillGatewayModel(s.model),
@@ -375,6 +376,7 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
           computerId: opts?.computerId,
           quoteMessageId: opts?.quoteMessageId,
           clientTurnId: opts?.clientTurnId,
+          attachments: opts?.attachments,
         }),
       });
       if (!res.ok || !res.body) {
@@ -410,7 +412,12 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
     chatStartSquad: async (
       squadId: string,
       text: string,
-      opts?: { quoteMessageId?: string; computerId?: string; clientTurnId?: string },
+      opts?: {
+        quoteMessageId?: string;
+        computerId?: string;
+        attachments?: unknown;
+        clientTurnId?: string;
+      },
     ) => {
       const token = gatewayToken();
       const res = await fetch(endpoint(`/v1/squads/${encodeURIComponent(squadId)}/messages`), {
@@ -426,6 +433,7 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
           computerId: opts?.computerId,
           quoteMessageId: opts?.quoteMessageId,
           clientTurnId: opts?.clientTurnId,
+          attachments: opts?.attachments,
         }),
       });
       if (!res.ok || !res.body) throw new Error(await res.text());
@@ -539,6 +547,7 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
     },
     onUpdaterEvent: () => () => {},
     onNativeThemeUpdated: () => () => {},
+    onSettingsChanged: () => () => {},
     windowMinimize: () => callAttachWindow('windowMinimize'),
     windowMaximizeToggle: () => callAttachWindow('windowMaximizeToggle'),
     windowClose: () => callAttachWindow('windowClose'),
@@ -614,6 +623,10 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
     importAssistantPackage: async () => ({ canceled: true }),
     listAssistantGallery: (lang?: string) => rpc('listAssistantGallery', { lang }),
     installGalleryAssistant: (id: string, lang?: string) => rpc('installGalleryAssistant', { id, lang }),
+    importAssistantFromUrl: (url: string, opts?: { overwrite?: boolean }) =>
+      rpc('importAssistantFromUrl', { url, overwrite: opts?.overwrite === true }),
+    cancelImportAssistantFromUrl: () =>
+      rpc<boolean>('cancelImportAssistantFromUrl', {}).catch(() => false),
     // Desktop-only: MCP starts host processes; backup reads / replaces the whole data dir.
     mcpStatus: async () => [],
     mcpTestServer: async () => ({ id: '', name: '', ok: false, toolCount: 0, error: 'desktop_only' }),

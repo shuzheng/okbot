@@ -10,6 +10,7 @@ import { abortChatOwner } from './ipc/chatControl';
 import { gatewayBootJs, gatewayLoginHtml, injectGatewayBoot, shouldServeGatewayLogin } from './gatewayLoginPage';
 import { runtimeEventChannel } from './sessionEvents';
 import { respondToToolApproval, startChatTurn } from './ipc/registerChat';
+import { normalizeMessageAttachments } from './storage/sessionJsonl';
 import { persistAppSettings } from './ipc/registerEntity';
 import { blankMcpSecrets, parseMessagesLimit, resolveGatewaySettingsWrite } from './gatewaySettingsWrite';
 import { isProbeNonce, probeChallengeMac } from './authChallenge';
@@ -791,6 +792,11 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
           typeof parsed.clientTurnId === 'string' && parsed.clientTurnId.trim()
             ? parsed.clientTurnId.trim()
             : undefined;
+        const quoteMessageId =
+          typeof parsed.quoteMessageId === 'string' && parsed.quoteMessageId.trim()
+            ? parsed.quoteMessageId.trim()
+            : undefined;
+        const attachments = normalizeMessageAttachments(parsed.attachments);
 
         if (isBotMsg) {
           const bot = deps.ctx.storage.listBots().find((b) => b.id === id);
@@ -808,8 +814,22 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
 
         const sessionId = id;
         const payload = isBotMsg
-          ? { botId: id, text, computerId, ...(clientTurnId ? { clientTurnId } : {}) }
-          : { squadId: id, text, computerId, ...(clientTurnId ? { clientTurnId } : {}) };
+          ? {
+              botId: id,
+              text,
+              computerId,
+              ...(clientTurnId ? { clientTurnId } : {}),
+              ...(quoteMessageId ? { quoteMessageId } : {}),
+              ...(attachments ? { attachments } : {}),
+            }
+          : {
+              squadId: id,
+              text,
+              computerId,
+              ...(clientTurnId ? { clientTurnId } : {}),
+              ...(quoteMessageId ? { quoteMessageId } : {}),
+              ...(attachments ? { attachments } : {}),
+            };
 
         // SSE: Accept: text/event-stream → stream RuntimeEvent for this session until done/error.
         if (wantsSse(req)) {

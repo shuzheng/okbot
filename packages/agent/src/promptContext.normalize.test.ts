@@ -12,7 +12,7 @@ function assert(cond: unknown, msg: string): asserts cond {
 
 const bad = [
   '## instructions',
-  '你是「001」，一个可使用本机工具的桌面个人助手。',
+  '你是「001」，一个可使用授权工具在已连接电脑上工作的个人助手。',
   '## 助手资料（花名册，以这里为准）',
   '名称：001',
   '## 记忆（须遵守；过期项已过滤）',
@@ -26,7 +26,7 @@ assert(
   'expected blank line after ## instructions',
 );
 assert(
-  fixed.includes('桌面个人助手。\n\n## 助手资料'),
+  fixed.includes('个人助手。\n\n## 助手资料'),
   'expected blank line before ## 助手资料',
 );
 assert(
@@ -63,7 +63,7 @@ const instr = buildAgentInstructions(
   '### 全局记忆\n\n- [1] test',
 );
 assert(
-  instr.includes('桌面个人助手。\n\n## 助手资料'),
+  instr.includes('个人助手。\n\n## 助手资料'),
   'buildAgentInstructions: blank before profile heading',
 );
 assert(
@@ -90,7 +90,7 @@ assert(
   'formatSessionPromptContext: blank after ## instructions',
 );
 assert(
-  full.includes('桌面个人助手。\n\n## 助手资料'),
+  full.includes('个人助手。\n\n## 助手资料'),
   'formatSessionPromptContext: blank before profile heading',
 );
 

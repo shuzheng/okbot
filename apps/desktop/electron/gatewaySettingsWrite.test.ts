@@ -57,6 +57,14 @@ const current = {
   if (!decision.ok) assert.deepEqual(decision.rejectedKeys.sort(), ['computers', 'security', 'tools']);
 }
 
+
+{
+  // closeAction is desktop-only (window close / tray); gateway must not patch it.
+  const decision = resolveGatewaySettingsWrite(current, { closeAction: 'tray' });
+  assert.equal(decision.ok, false);
+  if (!decision.ok) assert.deepEqual(decision.rejectedKeys, ['closeAction']);
+}
+
 {
   // A broad keyword allow rule would silently allow every tool: desktop-only.
   const rules = [{ id: 'aar_x', description: 'a', action: 'allow', createdAt: 'x', updatedAt: 'x' }];

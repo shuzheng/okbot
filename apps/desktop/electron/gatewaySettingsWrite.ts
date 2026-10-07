@@ -8,7 +8,8 @@ import { redactSecretArgs, redactSecretUrl, TOOL_IDS, type AppSettings, type Aut
  *
  * Still desktop-only: model keys, `tools` (enable / per-tool approval), `security`
  * (path and shell guards), `computers`, `localHttpApi`, `mcp` (starts
- * processes on this host), and `web` (search API key / fetch private-network flag).
+ * processes on this host), `web` (search API key / fetch private-network flag),
+ * `closeAction` (window close / tray — Electron shell only), and backup.
  */
 export const GATEWAY_SETTINGS_PATCH_KEYS = [
   'theme',
@@ -27,6 +28,7 @@ export const GATEWAY_SETTINGS_PATCH_KEYS = [
   'toolRun',
   'notifications',
   'showAdvancedSettings',
+  'assistantMarketplace',
 ] as const;
 
 const SECRET_FIELD = new Set(['token', 'apiKey']);

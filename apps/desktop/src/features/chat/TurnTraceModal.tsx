@@ -12,6 +12,7 @@ import { t, type UiLang } from '../../i18n';
 import { CheckIcon, CloseIcon, CopyIcon } from '../../components/ui/icons';
 import { toast } from '../../components/ui/toast';
 import { formatSystemError } from '../../utils/formatSystemError';
+import { highlightJson } from '../../utils/highlightJson';
 
 async function copyTextToClipboard(text: string) {
   if (typeof window.okbot?.copyText === 'function') {
@@ -116,6 +117,8 @@ export function TurnTraceModal(props: {
                 </>
               ) : null}
               {t(lang, 'turnTraceSteps', { count: String(bars.length) })}
+              {' · '}
+              {t(lang, 'turnTraceProportional')}
             </p>
             <div className="turn-trace-list">
               {bars.map(({ span, leftPct, widthPct, durationMs }) => {
@@ -152,19 +155,19 @@ export function TurnTraceModal(props: {
                         {span.inputSummary ? (
                           <div className="turn-trace-detail-block">
                             <div className="turn-trace-detail-label">{t(lang, 'turnTraceInput')}</div>
-                            <pre>{span.inputSummary}</pre>
+                            <pre className="turn-trace-detail-body">{span.inputSummary}</pre>
                           </div>
                         ) : null}
                         {span.outputSummary ? (
                           <div className="turn-trace-detail-block">
                             <div className="turn-trace-detail-label">{t(lang, 'turnTraceOutput')}</div>
-                            <pre>{span.outputSummary}</pre>
+                            <pre className="turn-trace-detail-body">{span.outputSummary}</pre>
                           </div>
                         ) : null}
                         {span.error ? (
                           <div className="turn-trace-detail-block">
                             <div className="turn-trace-detail-label">{t(lang, 'turnTraceError')}</div>
-                            <pre>{span.error}</pre>
+                            <pre className="turn-trace-detail-body">{span.error}</pre>
                           </div>
                         ) : null}
                         {!span.inputSummary && !span.outputSummary && !span.error ? (
@@ -207,7 +210,12 @@ export function TurnTraceModal(props: {
               </button>
             </div>
             {showJson ? (
-              <pre className="turn-trace-json">{JSON.stringify(trace, null, 2)}</pre>
+              <pre
+                className="turn-trace-json"
+                dangerouslySetInnerHTML={{
+                  __html: highlightJson(JSON.stringify(trace, null, 2)),
+                }}
+              />
             ) : null}
           </>
         )}

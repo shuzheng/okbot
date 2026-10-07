@@ -55,6 +55,8 @@ import {
   normalizeComputers,
   normalizeMcpSettings,
   normalizeWebSettings,
+  normalizeAssistantMarketplaceSettings,
+  normalizeCloseAction,
   normalizeDefaultComputerId,
   type ScheduledJobInfo,
 } from '@okbot/shared';
@@ -67,6 +69,7 @@ import {
   parseAssistantPackage,
   assistantPackageToFileMap,
   stripSecrets,
+  normalizeSkillSlug,
   type AssistantPackageContents,
 } from '@okbot/agent';
 import {
@@ -518,9 +521,35 @@ export class FileStorage {
     return path.join(this.skillDir(botId, slug), 'SKILL.md');
   }
 
+  /**
+   * Migrate bare skill dirs to canonical `okbot-*` names.
+   * If bare exists and prefixed does not → rename; if both exist → drop bare.
+   */
+  private migrateSkillDirsToCanonical(botId: string): void {
+    const root = this.botSkillsDir(botId);
+    if (!fs.existsSync(root)) return;
+    for (const name of fs.readdirSync(root)) {
+      const dir = path.join(root, name);
+      try {
+        if (!fs.statSync(dir).isDirectory()) continue;
+      } catch {
+        continue;
+      }
+      const canon = normalizeSkillSlug(name);
+      if (!canon || canon === name) continue;
+      const dest = path.join(root, canon);
+      if (!fs.existsSync(dest)) {
+        fs.renameSync(dir, dest);
+      } else {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    }
+  }
+
   listSkills(botId: string): BotSkill[] {
     this.assertKnownBotId(botId);
     this.ensureBotLayout(botId);
+    this.migrateSkillDirsToCanonical(botId);
     const root = this.botSkillsDir(botId);
     if (!fs.existsSync(root)) return [];
     const out: BotSkill[] = [];
@@ -566,14 +595,21 @@ export class FileStorage {
     botId: string,
     slug: string,
   ): (BotSkill & { source: 'local' | 'global' }) | null {
-    const clean = slug.trim();
+    const clean = normalizeSkillSlug(slug) || slug.trim();
     if (!clean) return null;
-    const local = this.listSkills(botId).find((s) => s.slug === clean);
+    const local = this.listSkills(botId).find(
+      (s) => s.slug === clean || normalizeSkillSlug(s.slug) === clean,
+    );
     if (local) return { ...local, source: 'local' };
     try {
       const config = this.readBotConfig(botId);
-      if (config.useGlobalSkills && config.enabledGlobalSkills.includes(clean)) {
-        const global = this.listGlobalAgentsSkills().find((s) => s.slug === clean);
+      const enabled = config.enabledGlobalSkills.some(
+        (g) => g === clean || normalizeSkillSlug(g) === clean || g === slug.trim(),
+      );
+      if (config.useGlobalSkills && enabled) {
+        const global = this.listGlobalAgentsSkills().find(
+          (s) => s.slug === clean || normalizeSkillSlug(s.slug) === clean || s.slug === slug.trim(),
+        );
         if (global) return { ...global, source: 'global' };
       }
     } catch {
@@ -614,9 +650,26 @@ export class FileStorage {
 
   writeSkill(botId: string, skill: BotSkill): void {
     this.assertKnownBotId(botId);
-    const slug = sanitizeSkillSlug(skill.slug);
+    const slug = normalizeSkillSlug(skill.slug);
     if (!slug) throw new Error('invalid skill slug');
     this.ensureBotLayout(botId);
+    this.migrateSkillDirsToCanonical(botId);
+    // Match existing by normalized slug: migrate bare → prefixed, never create a sibling.
+    const root = this.botSkillsDir(botId);
+    if (fs.existsSync(root)) {
+      for (const name of fs.readdirSync(root)) {
+        if (normalizeSkillSlug(name) !== slug || name === slug) continue;
+        const from = path.join(root, name);
+        const to = path.join(root, slug);
+        try {
+          if (!fs.statSync(from).isDirectory()) continue;
+        } catch {
+          continue;
+        }
+        if (!fs.existsSync(to)) fs.renameSync(from, to);
+        else fs.rmSync(from, { recursive: true, force: true });
+      }
+    }
     ensureDir(this.skillDir(botId, slug));
     const nm = stripThinkContent(skill.name).trim() || slug;
     const desc = stripThinkContent(skill.description).trim() || nm;
@@ -630,8 +683,9 @@ export class FileStorage {
 
   deleteSkill(botId: string, slug: string): void {
     this.assertKnownBotId(botId);
-    const clean = sanitizeSkillSlug(slug);
+    const clean = normalizeSkillSlug(slug) || sanitizeSkillSlug(slug);
     if (!clean) return;
+    this.migrateSkillDirsToCanonical(botId);
     const root = path.resolve(this.botSkillsDir(botId));
     const dir = path.resolve(this.skillDir(botId, clean));
     const rel = path.relative(root, dir);
@@ -1008,6 +1062,9 @@ export class FileStorage {
         autoApprovalRules: [...DEFAULT_SETTINGS.autoApprovalRules],
         mcp: normalizeMcpSettings(DEFAULT_SETTINGS.mcp),
         web: normalizeWebSettings(DEFAULT_SETTINGS.web),
+        assistantMarketplace: normalizeAssistantMarketplaceSettings(
+          DEFAULT_SETTINGS.assistantMarketplace,
+        ),
       };
     }
 
@@ -1045,9 +1102,13 @@ export class FileStorage {
         normalizeComputers((raw as { computers?: unknown }).computers),
       ),
       notifications: (raw as { notifications?: unknown }).notifications !== false,
+      closeAction: normalizeCloseAction((raw as { closeAction?: unknown }).closeAction),
       showAdvancedSettings: false,
       mcp: normalizeMcpSettings((raw as { mcp?: unknown }).mcp),
       web: normalizeWebSettings((raw as { web?: unknown }).web),
+      assistantMarketplace: normalizeAssistantMarketplaceSettings(
+        (raw as { assistantMarketplace?: unknown }).assistantMarketplace,
+      ),
     };
     const rawShowAdvanced = (raw as { showAdvancedSettings?: unknown }).showAdvancedSettings;
     // Missing in an existing settings.json: written by an older build, where every
@@ -1178,9 +1239,11 @@ export class FileStorage {
         normalizeComputers(settings.computers),
       ),
       notifications: settings.notifications !== false,
+      closeAction: normalizeCloseAction(settings.closeAction),
       showAdvancedSettings: settings.showAdvancedSettings === true,
       mcp: normalizeMcpSettings(settings.mcp),
       web: normalizeWebSettings(settings.web),
+      assistantMarketplace: normalizeAssistantMarketplaceSettings(settings.assistantMarketplace),
     };
     this.writeSettingsFile(next);
     return next;

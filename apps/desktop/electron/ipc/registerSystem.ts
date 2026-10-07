@@ -49,8 +49,9 @@ export function registerWindowControlIpc(): void {
     if (!win || win.isDestroyed()) return false;
     if (win.isMinimized()) win.restore();
     if (!win.isVisible()) win.show();
-    win.focus();
-    app.focus({ steal: true });
+    // Avoid app.focus({ steal: true }) on every call — on macOS it can briefly
+    // stall the cursor when OkBot regains focus from another app.
+    if (!win.isFocused()) win.focus();
     return true;
   });
 

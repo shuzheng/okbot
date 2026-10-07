@@ -183,6 +183,22 @@ export function registerEntityIpc(ctx: IpcContext): void {
     ops.installGalleryAssistant({ id: id || '', lang }),
   );
   ipcMain.handle(
+    IpcChannels.importAssistantFromUrl,
+    (_e, payload: string | { url?: string; overwrite?: boolean }) => {
+      if (typeof payload === 'string') {
+        return ops.importAssistantFromUrl({ url: payload || '' });
+      }
+      const a = payload && typeof payload === 'object' ? payload : {};
+      return ops.importAssistantFromUrl({
+        url: typeof a.url === 'string' ? a.url : '',
+        overwrite: a.overwrite === true,
+      });
+    },
+  );
+  ipcMain.handle(IpcChannels.cancelImportAssistantFromUrl, () =>
+    ops.cancelImportAssistantFromUrl(),
+  );
+  ipcMain.handle(
     IpcChannels.setChatUnread,
     (_e, payload: { ownerId?: string; hasUnread?: boolean }) => ops.setChatUnread(payload ?? {}),
   );

@@ -4,6 +4,7 @@ export { SettingsHelpTip } from './SettingsHelpTip';
 export { SettingsToggle } from './SettingsToggle';
 export { CompressRatioSlider } from './CompressRatioSlider';
 export { AutoApprovalRulesList } from './AutoApprovalRulesList';
+export { ShellPatternsList } from './ShellPatternsList';
 export { MemoryEntriesList } from './MemoryEntriesList';
 export { SchedulesList } from './SchedulesList';
 export type { InstructionsSubTab, SettingsTab } from './types';

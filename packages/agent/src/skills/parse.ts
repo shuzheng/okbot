@@ -1,5 +1,34 @@
 import type { BotSkill } from '@okbot/shared';
 
+/** Canonical skill directory / slug prefix. */
+export const OKBOT_SKILL_SLUG_PREFIX = 'okbot-';
+
+/**
+ * Path-safe skill slug with mandatory `okbot-` prefix.
+ * Bare and already-prefixed inputs normalize to the same canonical slug so
+ * refresh / write never create bare + prefixed siblings.
+ */
+export function normalizeSkillSlug(raw: string): string {
+  let s = (raw || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fff-_]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  if (!s) return '';
+  if (!s.startsWith(OKBOT_SKILL_SLUG_PREFIX)) {
+    s = `${OKBOT_SKILL_SLUG_PREFIX}${s}`;
+  }
+  return s.slice(0, 64);
+}
+
+/** Ensure a display name starts with `okbot-` (preserves non-slug characters). */
+export function ensureOkbotSkillName(raw: string, fallback = ''): string {
+  let nm = (raw || '').trim() || fallback.trim();
+  if (!nm) return '';
+  if (!nm.startsWith(OKBOT_SKILL_SLUG_PREFIX)) nm = `${OKBOT_SKILL_SLUG_PREFIX}${nm}`;
+  return nm;
+}
+
 /** Strip surrounding YAML quotes from a scalar. */
 export function unquoteYamlScalar(v: string): string {
   const s = v.trim();
@@ -34,8 +63,8 @@ export function parseSkillMarkdown(slug: string, raw: string): BotSkill {
 
 /** Serialize a BotSkill to SKILL.md with YAML frontmatter. */
 export function formatSkillMarkdown(skill: Pick<BotSkill, 'slug' | 'name' | 'description' | 'body'>): string {
-  const slug = skill.slug.trim();
-  const nm = (skill.name.trim() || slug).replace(/"/g, "'");
+  const slug = normalizeSkillSlug(skill.slug);
+  const nm = ensureOkbotSkillName(skill.name, slug).replace(/"/g, "'");
   const desc = (skill.description.trim() || nm).replace(/"/g, "'");
   const body = skill.body.trim();
   return [

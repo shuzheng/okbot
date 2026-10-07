@@ -3,7 +3,7 @@ import {
   buildSkillCatalogEntries,
   formatSkillCatalog,
 } from './catalog.js';
-import { parseSkillMarkdown, formatSkillMarkdown } from './parse.js';
+import { parseSkillMarkdown, formatSkillMarkdown, normalizeSkillSlug } from './parse.js';
 import {
   buildAssistantPackage,
   parseAssistantPackage,
@@ -60,8 +60,9 @@ const md = formatSkillMarkdown({
   description: '导出助手包时使用',
   body: '## Steps\n1. 导出',
 });
+assert.match(md, /name: "okbot-打包演示"/);
 const parsed = parseSkillMarkdown('okbot-demo-pack', md);
-assert.equal(parsed.name, '打包演示');
+assert.equal(parsed.name, 'okbot-打包演示');
 assert.equal(parsed.description, '导出助手包时使用');
 assert.match(parsed.body, /Steps/);
 
@@ -217,3 +218,20 @@ assert.equal(execParsed.events.length, 2);
 assert.equal(foldExecStreamToFormatted(execParsed.events)?.includes('hi'), true);
 
 console.log('skills/catalog + package + runtime event tests ok');
+
+// --- normalizeSkillSlug: bare and prefixed collapse to one canonical slug ---
+assert.equal(normalizeSkillSlug('demo-pack'), 'okbot-demo-pack');
+assert.equal(normalizeSkillSlug('okbot-demo-pack'), 'okbot-demo-pack');
+assert.equal(normalizeSkillSlug('OKBOT-Demo-Pack'), 'okbot-demo-pack');
+assert.equal(normalizeSkillSlug('  demo pack!! '), 'okbot-demo-pack');
+assert.equal(normalizeSkillSlug(''), '');
+
+// formatSkillMarkdown prefixes bare input (name + implied slug canonicalization)
+const bareMd = formatSkillMarkdown({
+  slug: 'demo-pack',
+  name: '打包演示',
+  description: '导出',
+  body: 'steps',
+});
+assert.match(bareMd, /name: "okbot-打包演示"/);
+assert.equal(normalizeSkillSlug('demo-pack'), normalizeSkillSlug('okbot-demo-pack'));

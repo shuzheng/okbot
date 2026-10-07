@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   plainTextFromMarkdown,
+  stripThinkContent,
   type Bot,
   type Squad,
   type MessageSearchHit,
@@ -8,7 +9,7 @@ import {
 import { t, type UiLang } from '../../i18n';
 import type { SettingsTab } from '../settings/types';
 import { SETTINGS_SEARCH_ITEMS, SETTINGS_TAB_LABEL_KEYS, isAdvancedSettingsItem } from '../settings/settingsSearch';
-import { FlatAvatar } from '../../components/ui/avatars';
+import { FlatAvatar, SquadAvatar } from '../../components/ui/avatars';
 
 export type GlobalSearchSelect =
   | { kind: 'bot'; id: string }
@@ -40,6 +41,20 @@ function SearchIconSmall() {
 function matchText(hay: string, q: string): boolean {
   return hay.toLowerCase().includes(q);
 }
+
+function squadMemberAvatars(
+  squad: Pick<Squad, 'members'> | undefined,
+  bots: Bot[],
+): Array<{ emoji: string; color: string }> {
+  const byId = new Map(bots.map((b) => [b.id, b] as const));
+  const members = squad?.members ?? [];
+  const cells = members
+    .map((m) => byId.get(m.botId))
+    .filter((b): b is Bot => Boolean(b))
+    .map((b) => ({ emoji: b.emoji, color: b.color }));
+  return cells.length > 0 ? cells : [{ emoji: '👥', color: '#6366F1' }];
+}
+
 
 export function GlobalSearchModal({ lang, bots, squads, developerMode = false, showAdvancedSettings = false, onClose, onSelect }: Props) {
   const [query, setQuery] = useState('');
@@ -86,7 +101,7 @@ export function GlobalSearchModal({ lang, bots, squads, developerMode = false, s
         return (
           matchText(b.name, q) ||
           matchText(b.description || '', q) ||
-          matchText(b.lastReplyPreview || '', q)
+          matchText(stripThinkContent(b.lastReplyPreview || ''), q)
         );
       }
       return (
@@ -186,7 +201,8 @@ export function GlobalSearchModal({ lang, bots, squads, developerMode = false, s
                       {item.bot.description || item.bot.lastReplyPreview ? (
                         <span className="global-search-row-sub">
                           {plainTextFromMarkdown(
-                            item.bot.description || item.bot.lastReplyPreview || '',
+                            item.bot.description ||
+                              stripThinkContent(item.bot.lastReplyPreview || ''),
                           ).slice(0, 80)}
                         </span>
                       ) : null}
@@ -200,7 +216,10 @@ export function GlobalSearchModal({ lang, bots, squads, developerMode = false, s
                     className="global-search-row"
                     onClick={() => pick({ kind: 'squad', id: item.squad.id })}
                   >
-                    <FlatAvatar className="global-search-avatar" emoji="👥" color="#6366F1" />
+                    <SquadAvatar
+                      className="global-search-avatar"
+                      members={squadMemberAvatars(item.squad, bots)}
+                    />
                     <span className="global-search-row-main">
                       <span className="global-search-row-title">{item.squad.name}</span>
                       <span className="global-search-row-sub">{t(lang, 'squadDesc')}</span>
@@ -250,7 +269,10 @@ export function GlobalSearchModal({ lang, bots, squads, developerMode = false, s
                     className="global-search-row"
                     onClick={() => pick({ kind: 'squad', id: item.squad.id })}
                   >
-                    <FlatAvatar className="global-search-avatar" emoji="👥" color="#6366F1" />
+                    <SquadAvatar
+                      className="global-search-avatar"
+                      members={squadMemberAvatars(item.squad, bots)}
+                    />
                     <span className="global-search-row-main">
                       <span className="global-search-row-title">{item.squad.name}</span>
                     </span>
@@ -304,13 +326,23 @@ export function GlobalSearchModal({ lang, bots, squads, developerMode = false, s
                     })
                   }
                 >
-                  <FlatAvatar
-                    className="global-search-avatar"
-                    emoji={hit.botEmoji}
-                    color={hit.botColor}
-                    avatarKind={hit.botAvatarKind}
-                    botAvatarType={hit.botAvatarType}
-                  />
+                  {hit.ownerKind === 'squad' ? (
+                    <SquadAvatar
+                      className="global-search-avatar"
+                      members={squadMemberAvatars(
+                        squads.find((s) => s.id === hit.botId),
+                        bots,
+                      )}
+                    />
+                  ) : (
+                    <FlatAvatar
+                      className="global-search-avatar"
+                      emoji={hit.botEmoji}
+                      color={hit.botColor}
+                      avatarKind={hit.botAvatarKind}
+                      botAvatarType={hit.botAvatarType}
+                    />
+                  )}
                   <span className="global-search-row-main">
                     <span className="global-search-row-title">
                       {hit.botName}

@@ -27,10 +27,10 @@ apps/sandbox-agent/    远程电脑 HTTP（shell / fs），不是桌面网关
 | 窗口 IPC、存储、审批、更新安装 | `apps/desktop/electron/ipc/`、`electron/storage/`、`electron/updater.ts`、`electron/macUpdateInstall.ts` |
 | 网关路由、`okbot serve`、附着窗口 | `electron/localHttpApi.ts`、`electron/cli.ts`、`electron/main.ts`、`electron/attachPreload.ts`、`src/bridge/httpOkbot.ts` |
 | 模型调用、工具、电脑路由、压缩 | `packages/agent/src/`（`tools.ts`、`computerSelection.ts`、`executionBackend.ts`、`runAgentChat.ts`、`squad.ts`） |
-| 定时任务（schedules.json / ticker） | `apps/desktop/electron/storage/schedules.ts`、`FileStorage` 的 schedule 方法、`scheduleTicker.ts`、工具 `manage_schedule`（默认 ask；create/delete 强制 HITL）；设置列表 `SchedulesList.tsx` |
+| 定时任务（schedules.json / ticker） | `apps/desktop/electron/storage/schedules.ts`、`FileStorage` 的 schedule 方法、`scheduleTicker.ts`、工具 `manage_schedule`（默认 allow；create/delete 强制 HITL（含 AAR 不可旁路）；list 不审批）；编辑助手/小队里的 `SchedulesList.tsx` |
 | 网页工具 | `packages/agent/src/webFetch.ts`、`webSearch.ts`；设置 `settings.web`；工具注册在 `tools.ts` |
 | 聊天拖放附件 | Composer / 聊天区 DnD → 与附件选择器同一管线（见 GUIDE §3.4） |
-| 助手市场（内置入门助手） | `packages/agent/src/assistantGallery.ts`；UI `features/bots/AssistantGallery.tsx`；文案键 `galleryTitle` 等（界面称「助手市场」/ Assistant marketplace） |
+| 助手市场（内置画廊 + GitHub 来源） | 内置 `packages/agent/src/assistantGallery.ts`；URL 解析 `githubAssistantSource.ts`；拉取 `electron/storage/fetchGithubAssistant.ts`；整页 UI `features/bots/AssistantMarketplacePage.tsx`（卡片列表仍用 `AssistantGallery.tsx`）；侧栏底部入口；文案键 `galleryTitle` 等 |
 | 设置字段、IPC 通道名 | `packages/shared/src/index.ts`。改了字段要同时改 `FileStorage` 的读写和 normalize |
 | 远程电脑协议 | `apps/sandbox-agent/src/server.ts`。桌面侧探测在 `probeRemoteComputer` |
 | 产品行为说明 | `GUIDE.md` 对应章节。不要把开发向边界写进 README |
@@ -62,6 +62,16 @@ Node `>=22.13`，包管理器 `pnpm@11.15.1`（见根 `package.json` 的 `packag
 ## 进程
 
 同一 `~/.okbot` 只允许一个服务听端口。Electron 启动时如果端口上已经是 OkBot，窗口只做界面（`attach` preload），关掉窗口不停那个进程。端口空闲时 Electron 自己 `listen`，退出时停掉。`okbot serve` 和 Electron 主进程走同一份 `localHttpApi`，不是两套服务。
+
+## UI 约束
+
+改渲染进程界面时：
+
+- 优先复用已有共享 UI 组件（设置行、开关、列表、对话框、表头等），不要另起一套。
+- 颜色 / 间距 / 圆角只走现有 token 或 CSS 变量，禁止临时写死新色值。
+- 改一个控件时，同页同类控件一并对齐。
+- 收工前对照相邻页面做一次快速视觉一致性检查。
+- **Chrome 用边框，不用投影**：按钮、侧栏抽屉、弹层 / 对话框、菜单、卡片、toast 等避免 `box-shadow` / `drop-shadow` 软阴影；用 `--border` / `--hairline`、细描边与轻微背景填充表现层次。焦点环可用 `0 0 0 Npx` 描边式阴影，不算 elevation。目标是原生桌面（Electron / macOS / Windows）观感，而不是网页悬浮卡片。
 
 ## 文档约束
 

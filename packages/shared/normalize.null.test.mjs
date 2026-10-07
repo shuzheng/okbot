@@ -9,6 +9,9 @@ import {
   DEFAULT_MAX_TURNS,
   DEFAULT_TOOL_RUN,
   DEFAULT_DENIED_PATH_PREFIXES,
+  DEFAULT_DANGEROUS_SHELL_PATTERNS,
+  resolveShellPatterns,
+  tryCompileShellPattern,
   DEFAULT_CONTEXT_COMPRESSION,
   DEFAULT_SQUAD_CAPTAIN_PERSONA,
   DEFAULT_SQUAD_PLAYBOOK,
@@ -54,6 +57,45 @@ const sec = normalizeSecuritySettings({ deniedPathPrefixes: null });
 assert.deepEqual(sec.deniedPathPrefixes, [...DEFAULT_DENIED_PATH_PREFIXES]);
 const sec2 = normalizeSecuritySettings({ deniedPathPrefixes: [] });
 assert.deepEqual(sec2.deniedPathPrefixes, []);
+
+assert.equal(normalizeSecuritySettings({}).shellPatterns, undefined);
+assert.deepEqual(normalizeSecuritySettings({ shellPatterns: [] }).shellPatterns, []);
+const secPat = normalizeSecuritySettings({
+  shellPatterns: [{ id: 'x', pattern: 'foo', label: 'Foo' }, { id: 'y', pattern: '  ' }],
+});
+assert.deepEqual(secPat.shellPatterns, [{ id: 'x', pattern: 'foo', label: 'Foo' }]);
+assert.equal(resolveShellPatterns(normalizeSecuritySettings({})).length, DEFAULT_DANGEROUS_SHELL_PATTERNS.length);
+assert.equal(resolveShellPatterns(normalizeSecuritySettings({ shellPatterns: [] })).length, 0);
+// Non-empty malformed raw must NOT fail-open to an empty denylist.
+{
+  const badEmptyObj = normalizeSecuritySettings({ shellPatterns: [{}] });
+  assert.equal(badEmptyObj.shellPatterns, undefined);
+  assert.equal(
+    resolveShellPatterns(badEmptyObj).length,
+    DEFAULT_DANGEROUS_SHELL_PATTERNS.length,
+  );
+  const badWrongKey = normalizeSecuritySettings({ shellPatterns: [{ re: 'x' }] });
+  assert.equal(badWrongKey.shellPatterns, undefined);
+  assert.equal(
+    resolveShellPatterns(badWrongKey).length,
+    DEFAULT_DANGEROUS_SHELL_PATTERNS.length,
+  );
+  const allBlank = normalizeSecuritySettings({
+    shellPatterns: [{ id: 'a', pattern: '  ' }, { id: 'b' }],
+  });
+  assert.equal(allBlank.shellPatterns, undefined);
+  // Invalid-only (uncompilable) → treat like 0 valid → defaults.
+  const onlyBad = normalizeSecuritySettings({
+    shellPatterns: [{ id: 'bad', pattern: '(unclosed', label: 'bad' }],
+  });
+  assert.equal(onlyBad.shellPatterns, undefined);
+  assert.equal(
+    resolveShellPatterns(onlyBad).length,
+    DEFAULT_DANGEROUS_SHELL_PATTERNS.length,
+  );
+}
+assert.ok(tryCompileShellPattern(String.raw`\bsudo\b`));
+assert.equal(tryCompileShellPattern('(unclosed'), null);
 
 const cc = normalizeContextCompression(null);
 assert.equal(cc.ratio, DEFAULT_CONTEXT_COMPRESSION.ratio);

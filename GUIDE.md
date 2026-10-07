@@ -60,15 +60,16 @@ okbot/
 - **Windows**：`titleBarStyle: 'hidden'`（无系统标题栏），主顶栏操作区在「关于」右侧放自定义最小化 / 最大化(还原) / 关闭（`WindowControls`，仅 `platform === 'win32'`）。无会话时按钮浮在主区右上角。IPC：`windowMinimize` / `windowMaximizeToggle` / `windowClose` / `windowIsMaximized`（及 `windowMaximizedChanged` 推送）。
 - **Linux**：保持改动前行为（既有 `titleBarStyle` + `autoHideMenuBar` / 隐藏应用菜单）；不加 Windows 式自定义窗口控件。
 - **Windows / Linux** 均设 `autoHideMenuBar: true` 隐藏系统原生 File/Edit/View 菜单栏。 Windows 用最小 **Edit** 子菜单（undo/redo/cut/copy/paste/selectAll；**不要** `null`——会破坏 IME；空 `[]` 在部分 Electron 上仍缺 Edit role）； Linux 仍 `Menu.setApplicationMenu(null)`。
+- **关闭窗口（托盘）**：首次点击窗口关闭（Windows 自定义关闭 / macOS 红绿灯关闭 / Linux 原生关闭）弹出「退出」或「最小化到托盘」（macOS 文案为「隐藏到菜单栏」）；可勾选「记住我的选择」。偏好写入 `settings.closeAction`：`ask`（默认）/ `tray` / `quit`。设置 → 通用 →「关闭窗口时」可随时改。托盘（macOS 为菜单栏图标，优先 `trayTemplate` 模板图）提供打开 / 退出；隐藏到托盘时 macOS 会一并隐藏 Dock 图标，再次打开时恢复。**Cmd+Q** / 托盘「退出」会请求退出；若仍有任务或待审批在跑，`before-quit` 会先转入后台并在再次退出时确认。实现：`electron/appTray.ts`、`main.ts` 的 `close` 拦截。
 - **BotFormModal / SquadWizardModal**：右侧抽屉（`.drawer-backdrop` + `.form-drawer` / `.modal.form-drawer`），与左侧边栏同为**通高**：贴齐视口上/下/右缘、无浮动短面板边距与圆角；标题栏粘性固定（**无**底部分割线），关闭钮为 **»** 形双 chevron（`ChevronsRightIcon`，指向右=收起抽屉），正文滚动。autoApply：名称/描述在 IME `composition` 期间不 `onApply`，结束后/失焦再持久化，并 350ms 防抖；Windows 聚焦名称不 `select()`。backdrop / drawer / 表单控件显式 `-webkit-app-region: no-drag`。
 - **删除确认**：助手/小队/供应商/模型删除使用应用内 `ConfirmHost` + `requestConfirm`（`components/ui/ConfirmModal`），不用系统 `window.confirm`；主进程 `dialog.showMessageBox` 仅用于自动更新/退出等 OS 流程。
 
 ### 3.1 侧栏（`features/sidebar`）
 
 - **展开态**：搜索、会话列表（助手 + 小队）、底部 FAB（搜索 / 设置 / 创建菜单）。会话行名称右上角显示**上次更新时间**（`formatSessionUpdatedAt`，用 `SessionItem.updatedAt`）：当天 `HH:mm`；昨天 `昨天 HH:mm`（EN: `Yesterday HH:mm`）；一周内为星期（`星期x` / EN 本地化短星期）；一月内为 `MM/DD`；更早为 `YYYY/MM/DD`。次要 muted 文案，不挤占标题/未读。  
-- **折叠态**：窄轨头像列表；悬停约 **500ms** 后显示 dock tip；底部紧凑 FAB。Mac Dock 式头像放大动效默认**关闭**（`settings.sidebarDockMagnify`，设置 → 通用 →「缩放特效」）；仅开关打开时才缩放。  
+- **折叠态**：窄轨头像列表；悬停约 **500ms** 后显示 dock tip；底部紧凑 FAB。Mac Dock 式头像放大动效默认**关闭**（`settings.sidebarDockMagnify`，设置 → 通用 →「缩放特效」）；仅开关打开时才缩放。macOS 顶栏仍保留红绿灯占位（`--traffic-pad`）；Windows / Linux 折叠时去掉该空顶距。  
 - **宽度**：可拖拽，上限约 **400px**；点击 splitter 可折叠/展开；宽度持久化（`sidebarPersistence`）。  
-- **创建菜单**：创建助手 / 创建小队 / **助手市场** / **导入助手**（各有独立图标）。  
+- **创建菜单**：创建助手 / 创建小队 / **市场** / **导入助手**（各有独立图标）。侧栏底部也可直接打开**市场**（展开时在设置右侧；收起时在溢出菜单第 3 项）。  
 - **会话项**：头像 + 名称 + 最近回复预览。助手右键：改名 / 资料 / **导出助手** / 删除。小队右键：改名 / 资料 / 删除。  
 - **两边列表同步**：桌面窗口与局域网网关页面共用同一份 `~/.okbot`。新消息、改名、新建、删除会发 `sessions_changed`（桌面走 IPC，网关走 `GET /v1/events` 长连接，只转发花名册变更、不转发对话 delta）。收到后约 **120ms** 内重新拉助手与小队列表；当前会话若已被删掉则清空选中。  
 - **未读回复**：非当前会话、且该会话 `hasUnreadReply` 且不在「工作中」时，头像外壳加 **unread 脉冲光晕**（`session-avatar-shell.unread`，文案 `unreadReply`）。切回会话会清未读（IPC `setChatUnread`）。窗口不在前台时，当前会话的回复完成或工具等待批准也会标未读；窗口重新获得焦点时清掉当前会话的未读。  
@@ -79,7 +80,7 @@ okbot/
 
 - 当前会话名；主题循环按钮（`system` / `light` / `dark`）。 `system` 会解析成具体的 `data-theme="light|dark"`（`matchMedia` + 主进程 `nativeTheme.updated` IPC），避免仅依赖移除属性时部分样式无 `@media (prefers-color-scheme)` 双生而混色。  
 - **关于**：主题按钮右侧打开 `AboutModal`（应用信息、构建日期、复制信息）。  
-- **窗口控件（仅 Windows）**：关于按钮右侧为最小化 / 最大化(还原) / 关闭；macOS 仍用系统红绿灯，Linux 不加这组控件。  
+- **窗口控件（仅 Windows）**：关于按钮右侧为最小化 / 最大化(还原) / 关闭；macOS 仍用系统红绿灯，Linux 不加这组控件。关闭行为见上文「关闭窗口（托盘）」。  
 - **下载更新**：有可用/下载中/已下载更新时，主题按钮左侧出现更新按钮（见 §10）。
 - **沉浸式对话**：控制不在顶栏，而在消息/转录区域（`.messages-shell`）**右下角**悬停浮层按钮（Maximize2 / Minimize2 图标）。鼠标进入消息/转录区域时淡入，离开时淡出（`opacity` 过渡；不可见时 `pointer-events: none` 不挡点击）。点击隐藏侧栏与 splitter（聊天区全宽），并隐藏对话顶栏右侧图标组（`.header-actions` 里的更新、复制请求地址、本轮轨迹、主题、关于）；Windows 最小化 / 最大化 / 关闭仍留在顶栏右侧。再点同一按钮还原侧栏与这些图标（保留进入前的宽度/折叠轨态）。偏好持久化 `localStorage` 键 `okbot.immersiveChat`。文案：`开启沉浸式对话` / `关闭沉浸式对话`（EN: Enable / Exit immersive chat）。
 - **macOS 沉浸式顶栏 inset**：沉浸且侧栏隐藏时，对话顶栏在 darwin 上增加左侧安全区（`--traffic-lights-inset: 76px`），避免助手头像/名称与系统红绿灯重叠；Windows / Linux 不加该左 padding。
@@ -143,18 +144,20 @@ okbot/
 - **导出**：侧栏该助手右键 **导出助手**。默认文件名是助手名称（去掉不能做文件名的字符），扩展名 `.okbot`。`.okbot` 是**未加密** zip（系统 `zip`，无密码）。导出前剥掉密钥类字段（apiKey、token、password 等），**不含**会话、记忆、供应商配置。保存路径若没写 `.okbot` 会自动补上。  
 - **导入**：侧栏 **+** → **导入助手**，可选 `.okbot` 或含 `manifest.json` 的文件夹。始终**新建**一名助手（头像 / 名称 / 人设 / 技能），并标成已完成引导；不改本机模型密钥。成功后刷新会话列表。
 
-### 4.4 助手市场（内置入门助手）
+### 4.4 市场（内置入门助手 + 远程来源）
 
-- 侧栏 **+** → **助手市场**，或首次使用引导第 2 步。点卡片即新建一名可直接聊天的助手，随后选中它并聚焦输入框。没有模型时卡片不可点，并提示先去「模型接入」添加模型。已有同名助手的卡片显示「已添加」，不能再点。
-- 内置 5 个：写作助手、学习辅导、计划助手、翻译助手、电脑小帮手。每个含人设（`AGENTS.md`）和 1–2 个技能（slug 以 `okbot-` 开头），中英两套文案按界面语言安装。人设与技能用 ASD-STE100 风格的短句。
-- 数据在 `packages/agent/src/assistantGallery.ts`（`listAssistantGallery` / `galleryAssistantPackage`），复用助手包格式，经 `FileStorage.installAssistantPackage` 落盘（与导入同一路径）。IPC `listAssistantGallery` / `installGalleryAssistant`；网关同名 RPC 可用。
+- **入口**：侧栏底部 **市场**（展开时在设置右侧；收起时在溢出菜单第 3 项），或侧栏 **+** → **市场**，或首次使用引导第 2 步。点击后主区换成**整页市场**（占满聊天区，不是弹层）；Esc 或关闭返回。
+- **内置画廊**：点卡片即新建一名可直接聊天的助手，随后选中它并聚焦输入框。没有模型时卡片不可点，并提示先去「模型接入」添加模型。已有同名助手的卡片显示「已添加」，不能再点。
+- 内置默认（顺序）：**编程助手**、写作助手、学习伙伴、计划助手、翻译助手、电脑小帮手。每个含人设（`AGENTS.md`）和 0–2 个技能（**slug、frontmatter `name`、目录名均以 `okbot-` 开头**；落盘 `skills/<slug>/SKILL.md`），中英两套文案按界面语言安装。人设与技能用 ASD-STE100 风格的短句。编程助手面向入门、可用中文提问。
+- **远程 GitHub 来源**：在市场页粘贴公开仓库 URL、目录（`tree`）、`raw` 文件、release 资源或 `.okbot` 直链。解析后下载并走与本地导入同一套助手包管线（`manifest.json` + 可选 `AGENTS.md` + `skills/`）。仓库根会尝试常见路径（`/`、`assistant`、`assistant-package` 等）或根目录 `.okbot`。仅公开源，不读环境变量令牌；失败时有明确错误与加载态。成功导入的 URL 写入 `settings.assistantMarketplace.savedSources`（最多 20，可一键再导入或移除）。
+- 数据：内置在 `packages/agent/src/assistantGallery.ts`；URL 解析在 `packages/agent/src/githubAssistantSource.ts`；拉取在 `apps/desktop/electron/storage/fetchGithubAssistant.ts`。安装经 `FileStorage.installAssistantPackage`。IPC / 网关 RPC：`listAssistantGallery`、`installGalleryAssistant`、`importAssistantFromUrl`。UI：`features/bots/AssistantMarketplacePage.tsx`。
 
 ### 4.5 首次使用引导
 
 没有任何助手和小队、且未选中会话时，主区显示「三步开始使用 OkBot」（`features/onboarding/QuickStartPanel`）：
 
 1. **接入一个模型**：还没有带模型的供应商时，按钮打开设置 → 模型接入。完成后显示勾。
-2. **选一个助手**：内嵌助手市场卡片，一点即用；或「自己创建」走原有新建助手流程。没有模型前这一步看起来不可操作。
+2. **选一个助手**：内嵌市场卡片，一点即用；或「自己创建」走原有新建助手流程。没有模型前这一步看起来不可操作。
 3. **发出第一条消息**。
 
 高级设置默认隐藏（见 §6「显示高级设置」），新手只看到常用项。
@@ -178,7 +181,7 @@ okbot/
 
 用户可以说「每天九点提醒我…」：模型通过内置工具 `manage_schedule`（create / list / pause / resume / delete）把任务写到当前助手或小队目录下的 `schedules.json`。
 
-**审批**：默认**询问**（`manage_schedule` 在 `DEFAULT_TOOL_PREFERENCES` 中为 `ask`）。**create / delete 无论设置如何都要用户确认**；list / pause / resume 跟随设置里的审批策略。设置 → 工具有**定时任务列表**，可直接暂停 / 恢复 / 删除（不必再问模型）。
+**审批**：默认**自动允许** list / pause / resume（`manage_schedule` 在 `DEFAULT_TOOL_PREFERENCES` 中为 `allow`）。**create / delete 无论工具审批设置或 AAR 如何都要用户确认一次**；`list` 只读、永不弹审批卡；pause / resume 在工具设为「询问」时可走 HITL/AAR。各助手/小队的定时任务在**编辑助手 / 编辑小队**中查看与管理（设置 → 工具仅保留说明，不再列全部任务）。
 
 **日程**：`daily HH:MM`、`hourly`（可带分钟）、`every N m`（N 须整除 60，如 1/2/3/4/5/6/10/12/15/20/30）、以及 5 段 cron；可选 IANA `timezone`（省略则用运行 OkBot / `okbot serve` 的机器本地时区）；`once` 为真时只触发一次后自动停用。每个助手/小队最多 **50** 个任务。
 
@@ -193,23 +196,23 @@ okbot/
 
 左侧导航 Tab：
 
-**显示高级设置**（`settings.showAdvancedSettings`，默认关）关闭时，侧栏不显示 **安全防护 / 网关服务 / 电脑连接 / 扩展**，模型页不显示上下文压缩与单次运行最大回合，工具页不显示运行限制；全局搜索也不列出这些项。功能本身不变，只是收起。从别处直接跳到高级页（例如「复制请求地址」提示去开网关）只在这次打开的设置窗口里显示高级页，不改保存的开关。已有的 `settings.json` 缺这个字段时（旧配置，那时所有页都显示），读盘时按「已打开」处理；新装没有 `settings.json`，按「关」处理。
+**显示高级设置**（`settings.showAdvancedSettings`，默认关）关闭时，侧栏不显示 **安全防护 / 网关服务 / 电脑连接 / MCP扩展**，模型页不显示上下文压缩与单次运行最大回合，工具页不显示运行限制；全局搜索也不列出这些项。功能本身不变，只是收起。从别处直接跳到高级页（例如「复制请求地址」提示去开网关）只在这次打开的设置窗口里显示高级页，不改保存的开关。已有的 `settings.json` 缺这个字段时（旧配置，那时所有页都显示），读盘时按「已打开」处理；新装没有 `settings.json`，按「关」处理。
 
 | Tab（侧栏文案） | 内容 |
 |-----|------|
-| **通用设置** | 主题（系统/浅/深）、语言（系统/中/英）、缩放特效（默认关；? 说明仿 MacOS Dock 动效）、麦克风、硬件加速（改后需重启）、**系统通知**（默认开，见 §3.1）。**高级**：**显示高级设置**（`showAdvancedSettings`，默认关）、`developerMode`（开发者模式，默认关；关闭时侧栏不显示「系统指令」，若当时正停在该页，回到通用设置）。**数据**：数据目录、备份时不含密钥（默认开）、导出备份、从备份恢复（见 §12.1）。**不含**更新控件、网关服务与电脑连接 |
+| **通用设置** | 主题（系统/浅/深）、语言（系统/中/英）、缩放特效（默认关；? 说明仿 MacOS Dock 动效）、麦克风、硬件加速（改后需重启）、**系统通知**（默认开，见 §3.1）、**关闭窗口时**（`closeAction`：每次询问 / 最小化到托盘 / 退出，见 §3）。**高级**：**显示高级设置**（`showAdvancedSettings`，默认关）、`developerMode`（开发者模式，默认关；关闭时侧栏不显示「系统指令」，若当时正停在该页，回到通用设置）。**数据**：数据目录、备份时不含密钥（默认开）、导出备份、从备份恢复（见 §12.1）。**不含**更新控件、网关服务与电脑连接 |
 | **模型接入** | **自定义供应商**（可多条：名称 / BaseURL / API Format / API Key / 每供应商模型目录）；模型行**连通测试**（按该供应商 baseURL/apiKey/apiFormat 对模型 id 发最小探针，IPC `testModelConnection`）；全局**默认模型**（下方下拉，供应商→模型；列表行不再用星标设默认）；列表顺序稳定（存盘数组序，启停不重排）；助手/小队覆盖同为 `providerId`+`modelId`；上下文压缩（自动换题、比例、保留上下限、摘要字数；新装默认更早压缩、多留原文）、**单次运行最大回合**（1:1 `maxTurns`，默认 50） |
-| **工具授权** | 内置工具启用 + 审批策略（自动允许 / 询问；含 `read_skill`、`manage_schedule`、`web_fetch`、`web_search`）；**定时任务列表**（暂停 / 恢复 / 删除）；**网页**小节（`settings.web`：搜索服务商 Tavily/Brave/Serper、API Key、可选 base URL；`web_fetch` 是否允许内网）；**自动审批规则（AAR）** 列表（允许/先询问、关键词、失焦自动保存草稿；空规则丢弃；重名校验；列表限高滚动）；**运行限制**（`settings.toolRun`：单轮最大工具调用 / 最大时长秒 / 记录运行轨迹，见下） |
-| **安全防护** | 总开关、拦截模式（reject / tripwire）、限制在家目录、允许/拒绝路径前缀、危险 shell 正则；与审批关系说明 |
+| **工具授权** | 内置工具启用 + 审批策略（自动允许 / 询问；含 `read_skill`、`manage_schedule`、`web_fetch`、`web_search`）；定时任务说明（完整列表在编辑助手/小队）；**网页**小节（`settings.web`：搜索服务商 Tavily/Brave/Serper、API Key、可选 base URL；`web_fetch` 是否允许内网）；**自动审批规则（AAR）** 列表（允许/先询问、关键词、失焦自动保存草稿；空规则丢弃；重名校验；列表限高滚动）；**运行限制**（`settings.toolRun`：单轮最大工具调用 / 最大时长秒 / 记录运行轨迹，见下） |
+| **安全防护** | 总开关、拦截模式（reject / tripwire）、限制在家目录、允许/拒绝路径前缀、可编辑的危险 shell 正则列表（缺省用内置，可恢复默认）；与审批关系说明 |
 | **网关服务** | 页内小节为「网关配置」。说明在「HTTP API」一行（小节标题不再带问号）。其下为端口、访问令牌、局域网网关、提供 Web UI（默认关；见 §6.1）。Web UI 开关打开时，开关左侧有「打开 Web UI」链接（`http://127.0.0.1:<端口>/?token=`，与登录页打开方式相同）；关掉则不显示 |
-| **扩展** | MCP 服务器（默认关，见 §7.1）。只在桌面端可改；网关页只读 |
+| **MCP扩展** | MCP 服务器（默认关，见 §7.1）。只在桌面端可改；网关页只读 |
 | **电脑连接** | 列表表头「电脑名称 / 添加电脑」。本机在列表中但没有连通测试、编辑、删除、开关。远程行有这四项；关闭后不能当默认、也不参与路由。下拉只含本机和已启用的远程电脑。见 §6.2 |
 | **系统指令** | 仅开发者模式打开时出现在侧栏。子 Tab 顺序：助手 / 小队 / AGENTS.md / 记忆 / 技能。「助手」：1:1 角色句模板（`settings.instructions.assistantRoleTemplate`，`{name}` 占位，空则恢复默认）；「小队」：队长人设、Playbook、队长/队员 maxTurns（`settings.squad`，与 1:1 无关）；「AGENTS.md」：静默维护完整 system 模版（`agentsMdRefreshSystemPrompt`）+ 分析最近消息条数（`agentsMdRecentMessageLimit`，默认 12，钳制 1–100）；「记忆」：范围判定说明（`settings.memory.scopeInstruction`）+ 分析最近消息条数（`recentMessageLimit`，默认 20）；「技能」：生成/更新 skill 判定指令（`skillsCreateUpdateInstruction`，仅替换 system 中那一行）+ 分析最近消息条数（`skillsRecentMessageLimit`，默认 20）。空字符串恢复默认；缺字段读盘时由 normalize 填回，下次保存写回。侧栏图标为文档形（与小队区分）。 |
 | **全局记忆** | **全局记忆**列表（`~/.okbot/memory.md`，增删改，限高滚动）。scope 判定说明已迁至 **系统指令 → 记忆**。助手资料抽屉 **高级 → 记忆** 仍只管理本助手记忆 |
 | **用量分析** | 见 §9；按助手/小队列表有内边距 |
 | **自动更新** | `autoUpdate` 开关与手动检查/下载/安装（从通用迁出；route id 仍为 `updates`） |
 
-默认工具策略（`DEFAULT_TOOL_PREFERENCES`）：内置工具默认全开；多数默认自动允许（含 `read_file` / `read_skill` / `write_file` / `edit_file` / `run_shell` / `generate_image` / `search_history` / `web_fetch` / `web_search`）。**`manage_schedule` 默认询问**；且 **create / delete 始终需要确认**（与设置无关），list / pause / resume 跟随该工具的审批策略。写/执行仍可走 AAR，未命中再 HITL（当审批设为询问时）。`web_search` 未配置 API Key 时仍暴露工具，调用会返回明确错误提示去设置配置。
+默认工具策略（`DEFAULT_TOOL_PREFERENCES`）：内置工具默认全开；多数默认自动允许（含 `read_file` / `read_skill` / `write_file` / `edit_file` / `run_shell` / `generate_image` / `search_history` / `manage_schedule` / `web_fetch` / `web_search`）。**`manage_schedule` 的 create / delete 始终需要确认一次**（与工具审批设置、AAR 均无关；`resolveToolApproval` 对 create/delete 强制 ask）；`list` 永不审批；pause / resume 跟随该工具的审批策略并可走 AAR。写/执行仍可走 AAR，未命中再 HITL（当审批设为询问时）。`web_search` 未配置 API Key 时仍暴露工具，调用会返回明确错误提示去设置配置。
 
 设置内可深链 `focusSection` / `data-settings-id`（全局搜索跳转）。`SettingsHelpTip` 经 portal 挂到 `document.body`（高 z-index），避免被 settings shell / body / card 的 overflow 裁切。
 
@@ -219,13 +222,13 @@ okbot/
 
 **显示思考过程**（模型编辑对话框「显示思考过程」/ `showThinking`，缺省 **true**）：MiniMax 等模型回复中的 `<think>…</think>` 默认在助手气泡内以可折叠「思考过程」块展示（纯 CSS `<details>`，默认收起）；关闭后从展示路径剥离，并在落盘助手正文前剥离，历史更干净。1:1 与小队均按当前解析模型生效。
 
-**单次运行最大回合**（设置 → 模型，上下文压缩附近；**不在**模型编辑对话框、**不在**指令 → 小队）：根级 `settings.maxTurns`，默认 **50**，钳制 **1–100**。旧配置缺字段时读盘解析为 50，下次保存写回。1 回合 = 一次模型调用；同一回合内的工具执行不另计回合；不是对话句数。经 `buildRunOpts` → `runner.run({ maxTurns })` 作用于 1:1 `runAgentChat` / HITL 恢复；避免落入 SDK `DEFAULT_MAX_TURNS=10`。小队仍用 `settings.squad.captainMaxTurns`（默认 20）与 `memberMaxTurns`（默认 10），互不影响。
+**单次运行最大回合**（设置 → 模型，上下文压缩附近；**不在**模型编辑对话框、**不在**指令 → 小队）：根级 `settings.maxTurns`，默认 **50**，钳制 **1–100**。旧配置缺字段时读盘解析为 50，下次保存写回。1 回合 = 一次模型调用；同一回合内的工具执行不另计回合；不是对话句数。经 `buildRunOpts` → `runner.run({ maxTurns })` 作用于 1:1 `runAgentChat` / HITL 恢复；避免落入 SDK `DEFAULT_MAX_TURNS=10`。小队仍用 `settings.squad.captainMaxTurns`（默认 50）与 `memberMaxTurns`（默认 50），互不影响。
 
 **运行限制 / 熔断**（设置 → **工具**，自动审批下方；根级 `settings.toolRun`）：
 
 | 字段 | 默认 | 钳制 | 含义 |
 |------|------|------|------|
-| `maxToolCalls` | **40** | 0–500（**0 = 不限制**） | 单次用户触发的运行最多执行多少次工具。计数发生在工具 `execute` 开始时（审批通过并真正执行）；HITL **拒绝不计入**。 |
+| `maxToolCalls` | **50** | 0–500（**0 = 不限制**） | 单次用户触发的运行最多执行多少次工具。计数发生在工具 `execute` 开始时（审批通过并真正执行）；HITL **拒绝不计入**。 |
 | `maxDurationSec` | **600** | 0–86400（**0 = 不限制**） | 单次运行墙钟秒数上限；超时经 `AbortController.abort` 中止，并走错误路径（中文提示）。 |
 | `recordTrajectory` | **true** | bool | 是否写入本会话 `last-run-trace.json`。 |
 
@@ -332,7 +335,7 @@ Electron 启动时做同样检查：
 - 附着窗口和 Web UI 能像桌面端一样新建、编辑、删除助手和小队，走完新助手引导，发现模型、测连通、立即压缩（经 `POST /v1/rpc/:op`）。网关返回的 API Key 是空的：发现模型和连通测试只带供应商 id，服务端只在 BaseURL 和已保存的一致时才用已保存的密钥。经网关测试时 BaseURL 必须是已保存的某个地址（否则 400 `probe_url_not_saved`，界面提示先保存再测试），避免借网关去请求内网任意地址。
 - **令牌等同于完全控制**：拿到令牌的人能聊天、批准工具（含运行命令和改文件）、改助手人设、记忆和技能、立即压缩会话。登录页和设置里的令牌说明都写明了这一点。
 - 网关只能用工具卡上的「总是允许」加规则，规则内容必须正好是一个内置工具名；也可以做只会多问的改动（加「询问」规则、删「允许」规则、关自动审批）。宽泛的关键词「允许」规则和改已有规则只能在桌面端做，设置页的规则列表在网关页只读（见 DESIGN「网关可写的设置」）。网关还可以保存 `notifications`、`showAdvancedSettings`。模型密钥、工具启用与审批策略、安全防护、电脑连接、网关配置、MCP 仍只能在桌面端改；网关写这些键返回 409 `settings_not_allowed`。网关返回的 MCP 环境变量和请求头的值是空的。
-- 网关可以用助手市场新建助手。网关不能按文件路径导入、导出助手包，也不能做数据备份与恢复（这一节在网关页显示为不可操作）。语音转写在网关页不可用。
+- 网关可以用市场新建助手。网关不能按文件路径导入、导出助手包，也不能做数据备份与恢复（这一节在网关页显示为不可操作）。语音转写在网关页不可用。
 
 ---
 
@@ -344,20 +347,20 @@ Electron 启动时做同样检查：
 - `search_history(query, limit?)`：仅检索**当前**助手或小队会话（时间索引路径），结果截断；默认自动允许；不跨会话  
 - `read_skill(slug)`：加载本助手已启用技能（本地优先，其次启用的全局）的完整 SKILL.md；系统提示只含目录，属渐进披露  
 - `generate_image(prompt, aspect_ratio?, model?)`：用当前模型供应商的 `baseURL`/`apiKey` **自动推断**是否支持 OpenAI 兼容文生图——OpenAI / Azure 主机，或目录含 `dall-e*`·`gpt-image*` → `POST {baseURL}/images/generations`（`b64_json`/`url`）。prefs 开启且推断成功才暴露工具。图片落盘 `~/.okbot/<botId|squadId>/resources/`，工具结果含 `okbot-asset:<ownerId>/resources/…` markdown（须原样写入回复）；`react-markdown` 通过自定义 `urlTransform` 保留该协议，渲染侧经 IPC 读成 data URL 显示（CSP `img-src` 不含 https）  
-- `manage_schedule`：见 §5「定时任务」。默认询问；create/delete 始终确认；每 owner 上限 50  
-- `web_fetch(url)`：HTTP(S) 拉取公开网页并转成可读纯文本；超时约 20s、体积与正文截断；默认阻止 localhost / 私网 / 链路本地（SSRF），可在设置 → 工具 → 网页打开「允许拉取内网地址」。无需 API Key；默认自动允许  
-- `web_search(query, limit?)`：经用户配置的第三方搜索（Tavily / Brave / Serper，`settings.web.search`：provider、apiKey、可选 baseURL）。未填 API Key 时工具仍可用，但返回中文错误提示去设置配置。密钥只在桌面端可改；网关响应与不含密钥备份会清空；默认自动允许  
+- `manage_schedule`：见 §5「定时任务」。默认 allow；create/delete 始终各确认一次；list 不审批；每 owner 上限 50  
+- `web_fetch(url)`：HTTP(S) 拉取公开网页并转成可读纯文本；超时约 20s、体积与正文截断；默认阻止 localhost / 私网 / 链路本地 / IPv4-mapped IPv6（含 `::ffff:a00:1` 等十六进制形式）；DNS `all:true` 校验后经 undici Agent **钉死连接**（防 DNS 重绑定 / 多 A），每跳重定向重新校验与钉死。可在设置 → 工具 → 网页打开「允许拉取内网地址」。工具结果正文包在不可信围栏内。无需 API Key；默认自动允许  
+- `web_search(query, limit?)`：经用户配置的第三方搜索（Tavily / Brave / Serper，`settings.web.search`：provider、apiKey、可选 baseURL）。未填 API Key 时工具仍可用，但返回中文错误提示去设置配置。密钥只在桌面端可改；网关响应与不含密钥备份会清空；结果正文同样包在不可信围栏内；默认自动允许  
 - 输出截断、文件大小与二进制检测、shell 超时约 30s、cwd 默认家目录  
 - `run_shell` 跨平台：Windows 优先 PATH 中的 PowerShell Core `pwsh`（`-NoProfile -NonInteractive -Command`），找不到时用 `ComSpec`（默认 `cmd.exe`）`/d /s /c`；其余平台用 `SHELL`，否则 darwin `/bin/zsh`、其它 `/bin/bash`，参数 `-lc`（见 `resolveShellExec`）
 
 安全（`guardrails.ts` + `settings.security`）：
 
-- **不是** OS 沙箱：`run_shell` 走本机 shell + 用户环境；防护 = 路径前缀 + 危险命令 denylist + HITL/AAR。  
+- **不是** OS 沙箱：`run_shell` 走本机 shell + 用户环境；防护 = 路径前缀 + 危险命令 denylist（`settings.security.shellPatterns`，缺省用内置正则，可在设置里增删改/恢复默认；无效正则跳过）+ HITL/AAR。  
 - 适合可信个人本机；勿当多租户沙箱。
 
 ### 7.1 MCP 扩展（可选，默认关）
 
-- 设置 → **扩展**（需打开「显示高级设置」）。总开关 `settings.mcp.enabled` 默认关。服务器列表与添加/编辑对话框和电脑连接同一套样式。
+- 设置 → **MCP扩展**（需打开「显示高级设置」）。总开关 `settings.mcp.enabled` 默认关。服务器列表与添加/编辑对话框和电脑连接同一套样式。
 - 两种连接：**本地命令（stdio）**（命令、每行一个参数、`KEY=VALUE` 环境变量）与 **HTTP（Streamable HTTP）**（地址、`Name: Value` 请求头）。每台可单独启停，可「测试连接」看到工具数。
 - 运行时（`packages/agent/src/mcp/mcpHub.ts` + `apps/desktop/electron/mcpRuntime.ts`）：每次开跑前按设置同步连接，把每个 MCP 工具包成函数工具，名字为 `mcp_<服务器名前 20 字符>_<标签>_<工具名>`（标签是服务器 id 的 sha256 前 4 位十六进制；最长 64 字符，重名加后缀；按服务器 id 排序后命名，所以改名或增删别的服务器不会让已有工具改名），经 `extraTools` 交给 1:1 助手、HITL 恢复和小队队长。
 - **每次调用都要审批**（`needsApproval: true`），走与 `run_shell` 相同的工具卡。自动审批规则对 MCP 工具无效（`resolveToolApproval`），工具卡不显示「总是允许」。工具调用计入运行限制（`ToolRunBudget`）。
@@ -365,7 +368,7 @@ Electron 启动时做同样检查：
 - 本地命令的子进程只继承少量环境变量（如 `PATH`、`HOME`、`LANG`、临时目录；Windows 另有 `SystemRoot` 等），再加上配置里的环境变量，不继承 API Key 等其它变量。
 - HTTP 地址：远程服务器必须用 `https`；`http` 只允许主机名正好是 `localhost`、`::1`、127.0.0.0/8 内的 IPv4，或 IPv4 映射形式（`[::ffff:127.0.0.1]` / `[::ffff:7f00:1]`；`isLoopbackHostname`，`127.evil.com` 不算本机）。地址里的用户名密码和像令牌的查询参数（名字含 token、key、secret、auth 等）在网关响应和不含密钥的备份里会被清空。不含密钥的备份和网关设置投影共用 `redactSecretArgs`（词表与 URL 查询共用；URL 查询另支持复数/子串如 `tokens`、`passphrase`，参数名仍按整词，避免误伤 `--pass-through`）：清空 `--token=…`、`--pass=…`、`--session=…`、`--sig=…`、`--api-key …`、`--bearer=…`、`-p`/`-p=`/`-phunter2`（非端口）、`API_KEY=…`、`sk-…`，以及 `--header` / `-H` 里凭证头或令牌形值；URL 形参数会走 `redactSecretUrl`。不误伤 `--monkey`、`--pass-through`、`--sort-key`、`--credentials-file` 这类名字。裸 `--key=` 仍会清空（`key` 本身是密钥词）。恢复时只在命令、地址和清空后的参数都一致时才把原参数放回。最好还是把令牌放在环境变量或请求头里。
 - 工具返回 `isError: true` 时，按工具出错交给模型（`MCP 工具返回错误：…`），不当作成功结果。
-- 设置 → 扩展的服务器列表在打开时读取连接状态（`mcpStatus`），每台已启用的服务器显示「已连接 · N 个工具」或「连接失败」（悬停看原因），不用手动测试就能看到连不上。
+- 设置 → MCP扩展的服务器列表在打开时读取连接状态（`mcpStatus`），每台已启用的服务器显示「已连接 · N 个工具」或「连接失败」（悬停看原因），不用手动测试就能看到连不上。
 - 从备份恢复后 MCP 总开关一律关掉；重启后弹一条提示，让用户检查服务器后自己再打开。
 - 只支持 MCP 工具；不接 resources / prompts。应用退出时关闭全部连接。
 

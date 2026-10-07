@@ -985,6 +985,8 @@ export async function respondToToolApproval(
       };
       const controller = new AbortController();
       const resumeRunId = createId('run');
+      /** Approvals parked by this resumed run; only these are released at the end. */
+      const parkedRequestIds = new Set<string>();
       registerOwnerRun(ctx.abortControllers, bot.id, resumeRunId, controller);
       // Only this card — sibling cold-pending approvals for the same owner must survive.
       ctx.storage.clearPendingHitlRequest(bot.id, disk.requestId);
@@ -1064,6 +1066,7 @@ export async function respondToToolApproval(
             computerId: disk.computerId,
             userText: disk.userText,
             runId: resumeRunId,
+            onParked: (id) => parkedRequestIds.add(id),
           }),
           onToolResult: ({ requestId, toolName, approved, output }) => {
             if (!approved) {
@@ -1188,7 +1191,8 @@ export async function respondToToolApproval(
       } finally {
         guards.dispose();
         unregisterOwnerRun(ctx.abortControllers, bot.id, resumeRunId, controller);
-        ctx.rejectPendingApprovalsForBot(bot.id, '已结束');
+        // Align with squad resume / live turns: only this run's parked cards.
+        releaseRunApprovals(ctx, bot.id, parkedRequestIds, '已结束');
         runSlot.release();
       }
 }

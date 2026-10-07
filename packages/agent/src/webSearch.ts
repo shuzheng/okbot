@@ -7,6 +7,7 @@ import {
   type WebSearchProviderId,
   type WebSearchSettings,
 } from '@okbot/shared';
+import { wrapUntrustedWebContent } from './webFetch.js';
 
 export const WEB_SEARCH_TIMEOUT_MS = 20_000;
 export const WEB_SEARCH_DEFAULT_LIMIT = 5;
@@ -225,7 +226,7 @@ export async function webSearch(
 export function formatWebSearchToolOutput(result: WebSearchResult): string {
   const label = WEB_SEARCH_PROVIDER_DEFAULTS[result.provider].label;
   if (!result.hits.length) {
-    return `网页搜索（${label}）「${result.query}」无结果。`;
+    return wrapUntrustedWebContent(`网页搜索（${label}）「${result.query}」无结果。`);
   }
   const blocks = result.hits.map((h, i) => {
     const parts = [`${i + 1}. ${h.title || '(untitled)'}`];
@@ -233,7 +234,9 @@ export function formatWebSearchToolOutput(result: WebSearchResult): string {
     if (h.snippet) parts.push(`   ${h.snippet}`);
     return parts.join('\n');
   });
-  return [`网页搜索（${label}）「${result.query}」共 ${result.hits.length} 条：`, '', ...blocks].join(
-    '\n',
+  return wrapUntrustedWebContent(
+    [`网页搜索（${label}）「${result.query}」共 ${result.hits.length} 条：`, '', ...blocks].join(
+      '\n',
+    ),
   );
 }

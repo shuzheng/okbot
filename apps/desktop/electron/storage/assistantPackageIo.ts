@@ -83,6 +83,42 @@ function assertArchiveListing(file: string): void {
       throw new Error('助手包路径不合法');
     }
   }
+  // Zip bomb: reject when declared uncompressed total exceeds the package cap
+  // before extracting. `unzip -l` ends with a Length total and "N file(s)".
+  try {
+    const longList = execFileSync('unzip', ['-l', file], {
+      encoding: 'utf8',
+      maxBuffer: 4_000_000,
+    });
+    // Info-ZIP variants:
+    //   "       12  10-07-26 16:47   name"  or  "       12  10-07-2026 16:47   name"
+    // footer: "       12                     1 file"  (or with compressed col on some builds)
+    const totalMatch = /\n\s*-+[^\n]*\n\s*(\d+)\s+(?:\d+\s+)?\d+\s+files?\s*$/i.exec(
+      longList,
+    );
+    if (totalMatch) {
+      const uncompressed = Number(totalMatch[1]);
+      if (Number.isFinite(uncompressed) && uncompressed > MAX_PACKAGE_BYTES) {
+        throw new Error('助手包解压后过大');
+      }
+    }
+    for (const row of longList.split(/\r?\n/)) {
+      const m = /^\s*(\d+)\s+\d{2}-\d{2}-(?:\d{2}|\d{4})\s+\d{1,2}:\d{2}\s+(.+)$/.exec(
+        row,
+      );
+      if (!m) continue;
+      const len = Number(m[1]);
+      const name = m[2]!.trim();
+      if (!name || name.endsWith('/')) continue;
+      if (Number.isFinite(len) && len > MAX_PACKAGE_FILE_BYTES) {
+        throw new Error('助手包内文件过大');
+      }
+    }
+  } catch (err) {
+    if (err instanceof Error && /助手包/.test(err.message)) throw err;
+    // If unzip -l is unavailable, path/entry checks above still apply; extract
+    // path runs assertSafePackageTree afterward.
+  }
 }
 
 /** Read package from a directory. */

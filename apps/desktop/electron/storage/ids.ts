@@ -87,12 +87,17 @@ export function assertSafeOwnerSegment(raw: string): string {
   return id;
 }
 
-/** Same slug sanitizer as writeSkill — used by deleteSkill to block path escape. */
+/**
+ * Path-safe skill slug with mandatory `okbot-` prefix (same as
+ * `@okbot/agent` `normalizeSkillSlug`). Used at the storage boundary.
+ */
 export function sanitizeSkillSlug(raw: string): string {
-  return (raw || '')
+  let s = (raw || '')
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9\u4e00-\u9fff-_]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 64);
+    .replace(/^-+|-+$/g, '');
+  if (!s) return '';
+  if (!s.startsWith('okbot-')) s = `okbot-${s}`;
+  return s.slice(0, 64);
 }

@@ -1,6 +1,8 @@
 # OkBot 架构
 
-只写现在代码里的模块和连线。产品 UI 细节见 `GUIDE.md`。
+只写现在代码里的模块和连线。产品 UI 细节见 `GUIDE.md`。界面走共享组件与 token；约定见 `AGENTS.md`。
+
+**UI chrome（终态）**：浮层 / 抽屉 / 对话框 / 菜单 / 按钮等优先边框与填充分层，不用软 `box-shadow` elevation（焦点环除外）。详见 `AGENTS.md`「UI 约束」。
 
 ## 模块
 
@@ -40,14 +42,14 @@ localHttpApi          网关 HTTP。不是独立服务
 
 | 注册 | 通道 |
 | --- | --- |
-| `registerEntity.ts` | bootstrap、bots/squads CRUD、AGENTS.md、记忆、技能、助手包导入导出、助手市场、settings、`getGatewayAccessToken`、用量、模型探测与连通测试、消息分页与搜索、prompt context、run trace、错误日志、清模型绑定、`probeComputer`、`setChatUnread` |
+| `registerEntity.ts` | bootstrap、bots/squads CRUD、AGENTS.md、记忆、技能、助手包导入导出、助手市场（含 `importAssistantFromUrl`）、settings、`getGatewayAccessToken`、用量、模型探测与连通测试、消息分页与搜索、prompt context、run trace、错误日志、清模型绑定、`probeComputer`、`setChatUnread` |
 | `registerChat.ts` | `chatStart`、`chatAbort`、`toolRespond`、`compressSessionNow`。运行中的 `chatEvent` 由 main 推给渲染进程 |
 | `registerSystem.ts` | 窗口最小化/最大化/关闭、红绿灯位置、麦克风、剪贴板、选路径、生成图 data URL、`getAppInfo`、updater 四个调用 |
 | `main.ts`（仅附着） | `attachGatewayToken`：`ipcMain.on` + `sendSync`，把已保存令牌交给 attach preload。不放进命令行 |
 
 网关 HTTP 在进程内直接调 `startChatTurn`，不再绕一圈 IPC。
 
-助手、小队、记忆、技能、模型探测这些操作写在 `electron/entityOps.ts`（`createEntityOps(ctx)`），不带传输层。`registerEntity.ts` 的 IPC 和网关 `POST /v1/rpc/:op` 都调它，两边行为一致。模型探测的实现在 `electron/modelProbe.ts`。
+助手、小队、记忆、技能、助手市场（含 GitHub URL 导入）、模型探测这些操作写在 `electron/entityOps.ts`（`createEntityOps(ctx)`），不带传输层。`registerEntity.ts` 的 IPC 和网关 `POST /v1/rpc/:op` 都调它，两边行为一致。模型探测的实现在 `electron/modelProbe.ts`。
 
 ## 网关 HTTP
 
@@ -113,7 +115,7 @@ localHttpApi          网关 HTTP。不是独立服务
               pending-hitl/、pending-hitl-replies/、resources/、schedules.json
 ```
 
-定时任务：`~/.okbot/<botId|squadId>/schedules.json`（`manage_schedule`；默认审批 ask；create/delete 始终 HITL；设置 → 工具的定时任务列表可 pause/resume/delete）。每 owner 上限 50；`every N m` 要求 N 整除 60；`once` 触发后停用。拥有网关的进程（Electron 或 `okbot serve`）内 `scheduleTicker` 约每 20s 扫描到期任务，调用与 UI 相同的 `startChatTurn`（走并行上限 / Stop / 任务条；审批/预算与交互轮次相同）。进程未运行时不会触发；再次起来后若 `nextRunAt` 已过期则补跑一次并推进下次。同一 job 在途中不会叠跑。
+定时任务：`~/.okbot/<botId|squadId>/schedules.json`（`manage_schedule`；默认审批 allow；create/delete 始终 HITL（含 AAR 不可旁路）；list 不审批；编辑助手/小队可 pause/resume/delete）。每 owner 上限 50；`every N m` 要求 N 整除 60；`once` 触发后停用。拥有网关的进程（Electron 或 `okbot serve`）内 `scheduleTicker` 约每 20s 扫描到期任务，调用与 UI 相同的 `startChatTurn`（走并行上限 / Stop / 任务条；审批/预算与交互轮次相同）。进程未运行时不会触发；再次起来后若 `nextRunAt` 已过期则补跑一次并推进下次。同一 job 在途中不会叠跑。
 
 聊天附件：Composer 支持选择或**拖放**文件 / 图片 / 文件夹；与选择器同一管线。网页工具（`web_fetch` / `web_search`）在桌面主机直接 HTTP（`settings.web`），不经 sandbox-agent。
 
@@ -131,7 +133,7 @@ localHttpApi          网关 HTTP。不是独立服务
 
 ## 网关可写的设置
 
-`gatewaySettingsWrite.ts` 的 `GATEWAY_SETTINGS_PATCH_KEYS`：主题、语言、麦克风、硬件加速、自动更新、侧栏缩放、开发者模式、压缩、`maxTurns`、instructions、memory、maintenance、squad、`toolRun`、`notifications`、`showAdvancedSettings`。`autoApprovalEnabled` 和 `autoApprovalRules` 另走 `checkGatewayApprovalWrite`。
+`gatewaySettingsWrite.ts` 的 `GATEWAY_SETTINGS_PATCH_KEYS`：主题、语言、麦克风、硬件加速、自动更新、侧栏缩放、开发者模式、压缩、`maxTurns`、instructions、memory、maintenance、squad、`toolRun`、`notifications`、`showAdvancedSettings`、`assistantMarketplace`。`autoApprovalEnabled` 和 `autoApprovalRules` 另走 `checkGatewayApprovalWrite`。`closeAction` 与备份一样仅桌面 IPC，网关不可写。
 
 网关对自动审批只能做两类改动。一是只会多问的改动：加「询问」规则、删「允许」规则、关掉自动审批。二是工具卡上的「总是允许」：新增或改成「允许」的规则，内容必须正好是一个内置工具名（如 `read_file`）。内置工具名规则只和工具名比较，不和参数比较。宽泛的关键词「允许」规则（比如只写 `a`）、改桌面端规则的说明或内容，都只能在桌面端做；不合规则的写入整体返回 409 `settings_not_allowed`。设置页的规则列表在网关页只读。
 

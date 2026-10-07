@@ -16,6 +16,7 @@ import {
   listAssistantGallery,
   type GalleryLang,
 } from '@okbot/agent';
+import { fetchAssistantPackageFromUrl } from './storage/fetchGithubAssistant';
 import type { IpcContext } from './ipc/context';
 import { readRecentErrorLog } from './storage/errorLog';
 import { isSquadOwnerId } from './storage/ids';
@@ -28,6 +29,17 @@ import { abortAllOwnerRuns } from './ipc/ownerRuns';
  * Electron IPC and the gateway RPC both call these, so the two stay one behavior.
  */
 type Obj = Record<string, unknown>;
+
+/** In-flight URL import abort (desktop Cancel + gateway best-effort). */
+let urlImportAbort: AbortController | null = null;
+
+export function cancelImportAssistantFromUrl(): boolean {
+  if (!urlImportAbort) return false;
+  urlImportAbort.abort();
+  urlImportAbort = null;
+  return true;
+}
+
 
 function str(v: unknown): string {
   return typeof v === 'string' ? v : '';
@@ -179,6 +191,37 @@ export function createEntityOps(ctx: IpcContext) {
       if (!pkg) throw new Error('gallery_not_found');
       return s.installAssistantPackage(pkg);
     },
+    /** Fetch a public GitHub / raw / .okbot URL and install via the same package path. */
+    importAssistantFromUrl: async (a: Obj) => {
+      const url = str(a.url).trim();
+      if (!url) throw new Error('请输入 GitHub 地址或助手包链接');
+      const overwrite = a.overwrite === true;
+      // Replace any prior in-flight import controller.
+      if (urlImportAbort) {
+        try { urlImportAbort.abort(); } catch { /* ignore */ }
+      }
+      const ac = new AbortController();
+      urlImportAbort = ac;
+      try {
+        const pkg = await fetchAssistantPackageFromUrl(url, { signal: ac.signal });
+        const name = (pkg.manifest.name || '').trim();
+        const existing = name
+          ? s.listBots().filter((b) => b.name.trim() === name)
+          : [];
+        if (existing.length > 0 && !overwrite) {
+          throw new Error(`assistant_name_exists:${name}`);
+        }
+        if (existing.length > 0 && overwrite) {
+          for (const bot of existing) {
+            deleteOwner(ctx, bot.id, 'bot');
+          }
+        }
+        return s.installAssistantPackage(pkg);
+      } finally {
+        if (urlImportAbort === ac) urlImportAbort = null;
+      }
+    },
+    cancelImportAssistantFromUrl: () => cancelImportAssistantFromUrl(),
     setChatUnread: (a: Obj) => {
       const ownerId = str(a.ownerId).trim();
       if (!ownerId) return false;

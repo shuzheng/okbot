@@ -67,6 +67,13 @@ const api = {
     ipcRenderer.invoke(IpcChannels.listAssistantGallery, lang) as Promise<AssistantGalleryItem[]>,
   installGalleryAssistant: (id: string, lang?: 'zh' | 'en') =>
     ipcRenderer.invoke(IpcChannels.installGalleryAssistant, id, lang) as Promise<Bot>,
+  importAssistantFromUrl: (url: string, opts?: { overwrite?: boolean }) =>
+    ipcRenderer.invoke(IpcChannels.importAssistantFromUrl, {
+      url,
+      overwrite: opts?.overwrite === true,
+    }) as Promise<Bot>,
+  cancelImportAssistantFromUrl: () =>
+    ipcRenderer.invoke(IpcChannels.cancelImportAssistantFromUrl) as Promise<boolean>,
   readAgentsMd: (botId: string) =>
     ipcRenderer.invoke(IpcChannels.readAgentsMd, botId) as Promise<string>,
   writeAgentsMd: (botId: string, content: string) =>
@@ -321,6 +328,13 @@ const api = {
     ipcRenderer.on(IpcChannels.nativeThemeUpdated, listener);
     return () => {
       ipcRenderer.removeListener(IpcChannels.nativeThemeUpdated, listener);
+    };
+  },
+  onSettingsChanged: (handler: (settings: AppSettings) => void): (() => void) => {
+    const listener = (_: unknown, settings: AppSettings) => handler(settings);
+    ipcRenderer.on(IpcChannels.settingsChanged, listener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.settingsChanged, listener);
     };
   },
 };

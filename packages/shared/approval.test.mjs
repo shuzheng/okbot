@@ -18,4 +18,13 @@ assert.equal(resolveAutoApproval(true, allowShell, 'write_file', { content: 'run
 // Keyword rules keep substring behavior.
 const kw = [{ id: 'c', description: 'git status', action: 'allow', createdAt: '', updatedAt: '' }];
 assert.equal(resolveAutoApproval(true, kw, 'run_shell', { command: 'git status' }), 'allow');
+
+// manage_schedule create/delete must never be AAR-auto-allowed.
+const allowSched = [{ id: 'd', description: 'manage_schedule', action: 'allow', createdAt: '', updatedAt: '' }];
+const schedOn = { autoApprovalEnabled: true, autoApprovalRules: allowSched };
+assert.equal(resolveToolApproval(schedOn, 'manage_schedule', { action: 'create', prompt: 'x' }), 'ask');
+assert.equal(resolveToolApproval(schedOn, 'manage_schedule', { action: 'delete', job_id: 'j1' }), 'ask');
+assert.equal(resolveToolApproval(schedOn, 'manage_schedule', { action: 'list' }), 'allow');
+assert.equal(resolveToolApproval(schedOn, 'manage_schedule', { action: 'pause', job_id: 'j1' }), 'allow');
+
 console.log('approval.test.mjs: ok');

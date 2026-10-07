@@ -637,7 +637,7 @@ export function ExtensionsNavIcon() {
   );
 }
 
-/** Four tiles — 「助手市场」 (starter assistants). */
+/** Four tiles — 「市场」 (starter assistants). */
 export function AssistantGalleryIcon() {
   return (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden>

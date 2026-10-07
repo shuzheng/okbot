@@ -54,6 +54,8 @@ export const GATEWAY_BRIDGE_METHOD_NAMES = [
   'importAssistantPackage',
   'listAssistantGallery',
   'installGalleryAssistant',
+  'importAssistantFromUrl',
+  'cancelImportAssistantFromUrl',
   'mcpStatus',
   'mcpTestServer',
   'backupExport',
@@ -102,6 +104,7 @@ export const GATEWAY_BRIDGE_METHOD_NAMES = [
   'onRuntimeEvent',
   'onUpdaterEvent',
   'onNativeThemeUpdated',
+  'onSettingsChanged',
   'onChatEvent',
 ] as const;
 
@@ -110,6 +113,7 @@ const GATEWAY_EVENT_METHODS = new Set([
   'onRuntimeEvent',
   'onUpdaterEvent',
   'onNativeThemeUpdated',
+  'onSettingsChanged',
   'onWindowMaximizedChanged',
 ]);
 
@@ -282,6 +286,7 @@ export function gatewayBootJs(): string {
       shellPatternsEnabled:security.shellPatternsEnabled!==false,
       blockMode:security.blockMode==='tripwire'?'tripwire':'reject'
     };
+    if(Array.isArray(security.shellPatterns)) out.security.shellPatterns=security.shellPatterns;
     out.model=fillModel(s.model);
     out.autoApprovalEnabled=s.autoApprovalEnabled===true;
     out.autoApprovalRules=Array.isArray(s.autoApprovalRules)?s.autoApprovalRules:[];
@@ -386,7 +391,8 @@ export function gatewayBootJs(): string {
         return postChat('/v1/squads/'+encodeURIComponent(squadId)+'/messages',{
           text:text,
           computerId:opts&&opts.computerId,
-          quoteMessageId:opts&&opts.quoteMessageId
+          quoteMessageId:opts&&opts.quoteMessageId,
+          attachments:opts&&opts.attachments
         });
       },
       chatAbort:function(ownerId){
@@ -450,6 +456,7 @@ export function gatewayBootJs(): string {
       },
       onUpdaterEvent:noopUnsubscribe,
       onNativeThemeUpdated:noopUnsubscribe,
+      onSettingsChanged:noopUnsubscribe,
       windowMinimize:function(){ return Promise.resolve(false); },
       windowMaximizeToggle:function(){ return Promise.resolve(false); },
       windowClose:function(){ return Promise.resolve(false); },

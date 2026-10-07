@@ -70,6 +70,23 @@ export const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
     keywords: ['通知', 'notification', '提醒', 'alert', '未读', 'unread'],
   },
   {
+    id: 'closeAction',
+    tab: 'general',
+    labelKey: 'closeActionSetting',
+    keywords: [
+      '关闭',
+      'close',
+      '退出',
+      'quit',
+      '托盘',
+      'tray',
+      '菜单栏',
+      'menu bar',
+      'minimize',
+      '最小化',
+    ],
+  },
+  {
     id: 'showAdvancedSettings',
     tab: 'general',
     labelKey: 'showAdvancedSettings',
@@ -79,7 +96,7 @@ export const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
     id: 'mcpSection',
     tab: 'extensions',
     labelKey: 'mcpSection',
-    keywords: ['MCP', '扩展', 'extension', 'server', '服务器', 'plugin', '插件'],
+    keywords: ['MCP', '扩展', 'MCP扩展', 'extension', 'MCP extensions', 'server', '服务器', 'plugin', '插件'],
   },
   {
     id: 'developerMode',
@@ -213,7 +230,13 @@ export const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
     id: 'securityShellPatterns',
     tab: 'security',
     labelKey: 'securityShellPatterns',
-    keywords: ['shell', 'sudo', '危险命令'],
+    keywords: ['shell', 'sudo', '危险命令', 'regex', '正则', 'denylist'],
+  },
+  {
+    id: 'securityShellPatternsList',
+    tab: 'security',
+    labelKey: 'securityShellPatterns',
+    keywords: ['shell pattern', '危险模式', '恢复默认'],
   },
   {
     id: 'securityBlockMode',

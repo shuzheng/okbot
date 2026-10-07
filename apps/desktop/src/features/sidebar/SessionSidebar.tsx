@@ -488,6 +488,23 @@ export const SessionSidebar = memo(function SessionSidebar({
                 <SearchIcon />
               </button>
               </QuickTip>
+              <QuickTip text={t(lang, 'galleryTitle')}>
+              <button
+                type="button"
+                className="footer-btn"
+                role="menuitem"
+                aria-label={t(lang, 'galleryTitle')}
+                onClick={() => {
+                  setFooterMenuOpen(false);
+                  onOpenAssistantGallery();
+                }}
+              >
+                <span className="ico">
+                  <AssistantGalleryIcon />
+                </span>
+                <span className="label">{t(lang, 'galleryTitle')}</span>
+              </button>
+              </QuickTip>
               <QuickTip text={t(lang, 'settings')}>
               <button
                 type="button"
@@ -525,12 +542,24 @@ export const SessionSidebar = memo(function SessionSidebar({
             </button>
           </div>
         ) : (
-          <button className="footer-btn" onClick={onOpenSettings} title={t(lang, 'settings')}>
-            <span className="ico">
-              <SettingsIcon />
-            </span>
-            <span className="label">{t(lang, 'settings')}</span>
-          </button>
+          <div className="sidebar-footer-row">
+            <button className="footer-btn" onClick={onOpenSettings} title={t(lang, 'settings')}>
+              <span className="ico">
+                <SettingsIcon />
+              </span>
+              <span className="label">{t(lang, 'settings')}</span>
+            </button>
+            <button
+              className="footer-btn"
+              onClick={onOpenAssistantGallery}
+              title={t(lang, 'galleryTitle')}
+            >
+              <span className="ico">
+                <AssistantGalleryIcon />
+              </span>
+              <span className="label">{t(lang, 'galleryTitle')}</span>
+            </button>
+          </div>
         )}
       </div>
     </aside>

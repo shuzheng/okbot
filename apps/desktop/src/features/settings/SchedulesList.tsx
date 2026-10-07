@@ -4,8 +4,12 @@ import { t, type UiLang } from '../../i18n';
 
 type Props = {
   lang: UiLang;
-  /** When tools tab is active, parent bumps this to refresh. */
+  /** When true (or when ownerId is set and parent is open), refresh. */
   active: boolean;
+  /** When set, only jobs for this bot/squad are shown (edit assistant / squad UI). */
+  ownerId?: string | null;
+  /** Skip the long settings hint (edit panels use a shorter label above). */
+  compact?: boolean;
 };
 
 function shortIso(iso: string | null): string {
@@ -19,25 +23,27 @@ function shortIso(iso: string | null): string {
   }
 }
 
-export function SchedulesList({ lang, active }: Props) {
+export function SchedulesList({ lang, active, ownerId, compact }: Props) {
   const [jobs, setJobs] = useState<ScheduledJobInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  const filterOwner = (ownerId || '').trim();
 
   const reload = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const list = await window.okbot.listScheduledJobs();
-      setJobs(Array.isArray(list) ? list : []);
+      const all = Array.isArray(list) ? list : [];
+      setJobs(filterOwner ? all.filter((j) => j.ownerId === filterOwner) : all);
     } catch (err) {
       setJobs([]);
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [filterOwner]);
 
   useEffect(() => {
     if (!active) return;
@@ -63,10 +69,12 @@ export function SchedulesList({ lang, active }: Props) {
   };
 
   return (
-    <div className="settings-card" data-settings-id="scheduledJobsList">
-      <div className="settings-hint" style={{ marginBottom: 8 }}>
-        {t(lang, 'scheduledJobsHint')}
-      </div>
+    <div className="settings-card" data-settings-id={filterOwner ? undefined : 'scheduledJobsList'}>
+      {compact ? null : (
+        <div className="settings-hint" style={{ marginBottom: 8 }}>
+          {t(lang, 'scheduledJobsHint')}
+        </div>
+      )}
       {error ? (
         <div className="settings-hint" style={{ color: 'var(--danger, #c44)', marginBottom: 8 }}>
           {error}
@@ -97,8 +105,12 @@ export function SchedulesList({ lang, active }: Props) {
                     {!job.enabled ? ` · ${t(lang, 'scheduledJobsPaused')}` : ''}
                   </div>
                   <div className="settings-hint" style={{ marginTop: 2 }}>
-                    {ownerLabel}
-                    {' · '}
+                    {filterOwner ? null : (
+                      <>
+                        {ownerLabel}
+                        {' · '}
+                      </>
+                    )}
                     {job.scheduleLabel}
                     {job.timezone ? ` (${job.timezone})` : ''}
                     {' · '}

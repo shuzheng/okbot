@@ -7,7 +7,9 @@ import { FileStorage } from './storage';
 import { registerAllIpc, registerWindowControlIpc, type PendingToolApproval } from './ipc';
 import { initAutoUpdater, onAutoUpdatePreferenceChanged } from './updater';
 import { recoverInterruptedMacUpdate } from './macUpdateInstall';
-import { getAllowQuit, setAllowQuit } from './quitState';
+import { getAllowQuit, setAllowQuit, getIsQuitting, setIsQuitting } from './quitState';
+import { backgroundQuitCopy, closeDialogCopy, resolveMainUiLang } from './mainI18n';
+import { destroyAppTray, ensureAppTray, focusOrShowWindows, hideWindowToTray, type AppTrayCallbacks } from './appTray';
 import { createLocalHttpApi } from './localHttpApi';
 import { closeMcp } from './mcpRuntime';
 import { ensureGatewayToken, resolveGatewayUiRoot, startSkillWatch } from './gatewayRuntime';
@@ -50,6 +52,120 @@ let stopSkillWatch: (() => void) | null = null;
 let stopScheduleTicker: (() => void) | null = null;
 /** Set when another OkBot already owns the data directory. The window is UI only. */
 let gatewayClient: { base: string; token: string; serveUi: boolean } | null = null;
+
+/** Prevent re-entrant close dialogs when the user hammers the close button. */
+let closeDialogOpen = false;
+
+function trayCallbacks(): AppTrayCallbacks {
+  const copy = closeDialogCopy(resolveMainUiLang(storage.getSettings().language));
+  return {
+    showWindow: () => {
+      focusOrShowWindows(() => {
+        if (app.isReady()) createWindow();
+      });
+    },
+    quitApp: () => {
+      setIsQuitting(true);
+      app.quit();
+    },
+    labels: {
+      show: copy.trayShow,
+      quit: copy.trayQuit,
+      tooltip: copy.trayTooltip,
+    },
+  };
+}
+
+function quitFromClose(): void {
+  setIsQuitting(true);
+  app.quit();
+}
+
+function broadcastSettingsChanged(): void {
+  try {
+    const settings = storage.getSettings();
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send(IpcChannels.settingsChanged, settings);
+    }
+  } catch (err) {
+    console.error('[okbot] broadcast settingsChanged failed', err);
+  }
+}
+
+function persistCloseAction(action: 'quit' | 'tray'): void {
+  try {
+    const cur = storage.getSettings();
+    if (cur.closeAction === action) {
+      // Still notify so a stale renderer refreshes even if disk already matches.
+      broadcastSettingsChanged();
+      return;
+    }
+    storage.saveSettings({ ...cur, closeAction: action });
+    broadcastSettingsChanged();
+  } catch (err) {
+    console.error('[okbot] persist closeAction failed', err);
+  }
+}
+
+async function handleWindowCloseRequest(win: BrowserWindow): Promise<void> {
+  if (win.isDestroyed()) return;
+  if (closeDialogOpen) return;
+
+  const action = storage.getSettings().closeAction;
+
+  const toTray = (): boolean => hideWindowToTray(win, trayCallbacks());
+
+  if (action === 'tray') {
+    if (!toTray()) quitFromClose();
+    return;
+  }
+  if (action === 'quit') {
+    quitFromClose();
+    return;
+  }
+
+  // ask (default): Quit vs tray/hide, optional remember
+  closeDialogOpen = true;
+  try {
+    const copy = closeDialogCopy(resolveMainUiLang(storage.getSettings().language));
+    const { response, checkboxChecked } = await dialog.showMessageBox(win, {
+      type: 'question',
+      buttons: [copy.tray, copy.quit, copy.cancel],
+      defaultId: 0,
+      cancelId: 2,
+      checkboxLabel: copy.remember,
+      checkboxChecked: false,
+      noLink: true,
+      message: copy.message,
+      detail: copy.detail,
+    });
+    if (win.isDestroyed()) return;
+    if (response === 2) return; // cancel — keep window open
+    if (response === 0) {
+      if (checkboxChecked) persistCloseAction('tray');
+      if (!toTray()) quitFromClose();
+      return;
+    }
+    if (response === 1) {
+      if (checkboxChecked) persistCloseAction('quit');
+      quitFromClose();
+    }
+  } catch (err) {
+    console.error('[okbot] close dialog failed', err);
+    // Keep the window usable — do not force-quit or leave close dead after a dialog error.
+    try {
+      if (!win.isDestroyed()) {
+        if (!win.isVisible()) win.show();
+        win.focus();
+      }
+    } catch (showErr) {
+      console.error('[okbot] close dialog fallback show failed', showErr);
+    }
+  } finally {
+    closeDialogOpen = false;
+  }
+}
+
 
 function rememberGatewayClient(port: number): void {
   const api = storage.getSettings().localHttpApi;
@@ -206,7 +322,13 @@ function createWindow() {
   };
   win.on('resize', schedulePersist);
   win.on('move', schedulePersist);
-  win.on('close', persistBounds);
+  win.on('close', (e) => {
+    persistBounds();
+    // App is quitting (Cmd+Q, tray Quit, updater, remembered quit) — allow destroy.
+    if (getIsQuitting() || getAllowQuit()) return;
+    e.preventDefault();
+    void handleWindowCloseRequest(win);
+  });
 
   if (process.env.ELECTRON_RENDERER_URL) {
     void win.loadURL(process.env.ELECTRON_RENDERER_URL);
@@ -244,11 +366,10 @@ app.on('second-instance', () => {
     if (app.isReady()) createWindow();
     return;
   }
-  for (const w of wins) {
-    if (w.isMinimized()) w.restore();
-    w.show();
-    w.focus();
-  }
+  const w = BrowserWindow.getFocusedWindow() ?? wins[0]!;
+  if (w.isMinimized()) w.restore();
+  if (!w.isVisible()) w.show();
+  if (!w.isFocused()) w.focus();
 });
 
 app.whenReady().then(async () => {
@@ -422,15 +543,14 @@ app.whenReady().then(async () => {
   createWindow();
 
   app.on('activate', () => {
-    const wins = BrowserWindow.getAllWindows();
+    const wins = BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed());
     if (wins.length === 0) createWindow();
     else {
-      for (const w of wins) {
-        if (!w.isDestroyed()) {
-          w.show();
-          w.focus();
-        }
-      }
+      // One window only — focusing every BrowserWindow on activate caused brief
+      // mouse stutter when returning from another app / Dock.
+      const w = BrowserWindow.getFocusedWindow() ?? wins[0]!;
+      if (!w.isVisible()) w.show();
+      if (!w.isFocused()) w.focus();
     }
   });
 });
@@ -440,6 +560,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('will-quit', () => {
+  destroyAppTray();
   // Client of `okbot serve`: do not stop that process or delete its lock.
   if (!ownsServer) return;
   try {
@@ -464,6 +585,7 @@ app.on('will-quit', () => {
 });
 
 app.on('before-quit', (e) => {
+  setIsQuitting(true);
   // UI client of an existing server: quitting this window must not cancel its work.
   if (!ownsServer) return;
   if (getAllowQuit()) {
@@ -489,38 +611,47 @@ app.on('before-quit', (e) => {
 
   // Keep agent + pending HITL alive across Dock Quit / Cmd+Q while work is in flight.
   e.preventDefault();
+  setIsQuitting(false);
 
   const wins = BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed());
   const anyVisible = wins.some((w) => w.isVisible());
 
   if (anyVisible) {
     for (const w of wins) w.hide();
+    // Keep a tray affordance so the user can reopen while work continues.
+    ensureAppTray(trayCallbacks());
+    if (process.platform === 'darwin') {
+      try {
+        app.dock?.hide();
+      } catch {
+        /* ignore */
+      }
+    }
     return;
   }
 
   // Already running in background — second quit asks before cancelling work.
-  void dialog
-    .showMessageBox({
-      type: 'warning',
-      buttons: ['继续等待', '退出并取消'],
-      defaultId: 0,
-      cancelId: 0,
-      message: '还有任务在后台等待',
-      detail:
-        pendingToolApprovals.size + diskPendingCount > 0
-          ? `有 ${pendingToolApprovals.size + diskPendingCount} 个工具审批未完成。选「退出并取消」后将无法继续批准。`
-          : '还有对话正在生成。选「退出并取消」将中断这些任务。',
-    })
-    .then(({ response }) => {
+  const bgCopy = backgroundQuitCopy(resolveMainUiLang(storage.getSettings().language));
+  const pendingCount = pendingToolApprovals.size + diskPendingCount;
+  const bgOpts = {
+    type: 'warning' as const,
+    buttons: [bgCopy.wait, bgCopy.forceQuit],
+    defaultId: 0,
+    cancelId: 0,
+    message: bgCopy.message,
+    detail: pendingCount > 0 ? bgCopy.detailPending(pendingCount) : bgCopy.detailBusy,
+  };
+  // Do not parent to an invisible window (wins[0] when !anyVisible): macOS sheets
+  // on hidden BrowserWindows misbehave. Parent only when a window is visible.
+  const bgParent = wins.find((w) => !w.isDestroyed() && w.isVisible());
+  const bgDialog = bgParent
+    ? dialog.showMessageBox(bgParent, bgOpts)
+    : dialog.showMessageBox(bgOpts);
+  void bgDialog.then(({ response }) => {
       if (response !== 1) {
-        const open = BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed());
-        if (open.length === 0) createWindow();
-        else {
-          for (const w of open) {
-            w.show();
-            w.focus();
-          }
-        }
+        focusOrShowWindows(() => {
+          if (app.isReady()) createWindow();
+        });
         return;
       }
       setAllowQuit(true);

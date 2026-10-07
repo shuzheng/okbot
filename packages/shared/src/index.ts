@@ -7,6 +7,22 @@ export * from './web.js';
 export type ThemeMode = 'system' | 'light' | 'dark';
 export type LanguageCode = 'system' | 'zh' | 'en';
 
+/**
+ * Window close button behavior (Electron desktop).
+ * - `ask`: first close (or until remembered) shows Quit vs tray/hide dialog
+ * - `quit`: close quits the app
+ * - `tray`: close hides to system tray / macOS menu bar
+ *
+ * Cmd+Q / tray Quit still request quit; if work is in flight, `before-quit` may
+ * move the app to the background instead of exiting immediately.
+ */
+export type CloseAction = 'ask' | 'quit' | 'tray';
+
+export function normalizeCloseAction(raw: unknown): CloseAction {
+  if (raw === 'quit' || raw === 'tray' || raw === 'ask') return raw;
+  return 'ask';
+}
+
 /** OpenAI-compatible API wire format. Only formats the runtime can actually use. */
 export type ApiFormat = 'chat_completions' | 'responses';
 
@@ -620,6 +636,59 @@ export function redactSensitiveText(msg: string, apiKey?: string): string {
  * Preserves shape (string content or Responses-style text parts). Non-assistant items unchanged.
  * Does not mutate `item`.
  */
+
+/**
+ * Drop JSON `null` values from tool-call `arguments` (string or object).
+ * Strict gateways (e.g. MiniMax 400/2013) reject history that still carries
+ * `"timezone":null` / `"job_id":null` from models that fill every optional key.
+ * Does not mutate `item`.
+ */
+export function sanitizeNullsInToolCallArguments<T extends Record<string, unknown>>(item: T): T {
+  const typ = typeof item.type === 'string' ? item.type : '';
+  if (typ !== 'function_call' && typ !== 'hosted_tool_call' && typ !== 'tool_call') return item;
+
+  const stripNulls = (value: unknown): unknown => {
+    if (value === null) return undefined;
+    if (Array.isArray(value)) {
+      return value.map(stripNulls).filter((v) => v !== undefined);
+    }
+    if (value && typeof value === 'object') {
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+        const next = stripNulls(v);
+        if (next !== undefined) out[k] = next;
+      }
+      return out;
+    }
+    return value;
+  };
+
+  const rawArgs = item.arguments ?? item.params;
+  if (typeof rawArgs === 'string') {
+    const trimmed = rawArgs.trim();
+    if (!trimmed) return item;
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      const cleaned = stripNulls(parsed);
+      if (cleaned === undefined || typeof cleaned !== 'object' || Array.isArray(cleaned)) {
+        return item;
+      }
+      const next = JSON.stringify(cleaned);
+      if (next === trimmed) return item;
+      return { ...item, arguments: next };
+    } catch {
+      return item;
+    }
+  }
+  if (rawArgs && typeof rawArgs === 'object') {
+    const cleaned = stripNulls(rawArgs);
+    if (cleaned === rawArgs) return item;
+    if (cleaned === undefined || typeof cleaned !== 'object') return item;
+    return { ...item, arguments: cleaned };
+  }
+  return item;
+}
+
 export function stripThinkFromAgentInputItem<T extends Record<string, unknown>>(item: T): T {
   const role = typeof item.role === 'string' ? item.role : '';
   if (role !== 'assistant') return item;
@@ -741,7 +810,7 @@ export interface ToolRunSettings {
 }
 
 export const DEFAULT_TOOL_RUN: ToolRunSettings = {
-  maxToolCalls: 40,
+  maxToolCalls: 50,
   maxDurationSec: 600,
   recordTrajectory: true,
 };
@@ -897,10 +966,10 @@ export const DEFAULT_TOOL_PREFERENCES: ToolPreferences = {
   search_history: { enabled: true, approval: 'allow' },
   /**
    * Create/list/pause/resume/delete timed wakeups for this assistant/squad.
-   * Default ask: silent `allow` would let a turn create persistent self-wake jobs
-   * (and later fire with the same tool prefs) without a HITL card.
+   * Default allow for list/pause/resume. create/delete still force HITL via
+   * needsApproval + resolveToolApproval (AAR cannot bypass).
    */
-  manage_schedule: { enabled: true, approval: 'ask' },
+  manage_schedule: { enabled: true, approval: 'allow' },
   /** Fetch a public URL as readable text; default allow (SSRF guards still apply). */
   web_fetch: { enabled: true, approval: 'allow' },
   /** Third-party web search; needs settings.web.search API key. */
@@ -936,6 +1005,77 @@ export function normalizeToolPreferences(raw: unknown): ToolPreferences {
 /** How tool input guardrails short-circuit a blocked call. */
 export type SecurityBlockMode = 'reject' | 'tripwire';
 
+/** One dangerous-shell denylist entry (`settings.security.shellPatterns`). */
+export interface DangerousShellPattern {
+  id: string;
+  /** JavaScript RegExp source (no delimiters). Compiled with the `i` flag. */
+  pattern: string;
+  /** Short label for block messages / Settings UI. */
+  label?: string;
+}
+
+/**
+ * Built-in dangerous shell patterns (case-insensitive).
+ * Used when `security.shellPatterns` is absent/undefined.
+ */
+export const DEFAULT_DANGEROUS_SHELL_PATTERNS: DangerousShellPattern[] = [
+  {
+    id: 'rm_rf_root',
+    pattern: String.raw`\brm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+|-[a-zA-Z]*\s+)*\/\s*($|&&|\||;)`,
+    label: 'rm -rf /',
+  },
+  {
+    id: 'rm_rf_star',
+    pattern: String.raw`\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*|-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*)\s+(\/\*|~\/\*|\$HOME\/\*)`,
+    label: 'rm -rf /*',
+  },
+  {
+    id: 'sudo',
+    pattern: String.raw`(^|[;&|\`\n]|\$\()\s*sudo\b`,
+    label: 'sudo',
+  },
+  {
+    id: 'mkfs',
+    pattern: String.raw`\bmkfs(\.\w+)?\b`,
+    label: 'mkfs',
+  },
+  {
+    id: 'dd_if',
+    pattern: String.raw`\bdd\s+.*\bif=`,
+    label: 'dd if=',
+  },
+  {
+    id: 'curl_pipe_sh',
+    pattern: String.raw`\b(curl|wget)\b[^|\n]*\|\s*(ba)?sh\b`,
+    label: 'curl|sh / wget|sh',
+  },
+  {
+    id: 'chmod_777_root',
+    pattern: String.raw`\bchmod\s+(-R\s+)?777\s+\/(\s|$)`,
+    label: 'chmod 777 /',
+  },
+  {
+    id: 'diskutil_erase',
+    pattern: String.raw`\bdiskutil\s+erase`,
+    label: 'diskutil erase',
+  },
+  {
+    id: 'shutdown',
+    pattern: String.raw`\b(shutdown|reboot|halt|poweroff)\b`,
+    label: 'shutdown/reboot',
+  },
+  {
+    id: 'fork_bomb',
+    pattern: String.raw`:\(\)\s*\{\s*:\|:\s*&\s*\}\s*;?\s*:`,
+    label: 'fork bomb',
+  },
+  {
+    id: 'write_disk',
+    pattern: String.raw`>\s*\/dev\/(sd|disk|rdisk|nvme)`,
+    label: 'write to /dev/disk',
+  },
+];
+
 /**
  * Local-tool safety knobs (`settings.json` root key `security`).
  * Guardrails run before needsApproval / HITL. No migration shims for older shapes.
@@ -952,8 +1092,16 @@ export interface SecuritySettings {
   allowedPathPrefixes: string[];
   /** Always-denied path prefixes (checked before allowlist). */
   deniedPathPrefixes: string[];
-  /** Scan run_shell commands for obvious dangerous patterns. */
+  /** Scan run_shell commands for dangerous patterns. */
   shellPatternsEnabled: boolean;
+  /**
+   * Custom dangerous-shell regex list.
+   * Absent/undefined → {@link DEFAULT_DANGEROUS_SHELL_PATTERNS}.
+   * Explicit `[]` → clear denylist (no patterns).
+   * Non-empty raw that normalizes to zero valid rows → fall back to defaults
+   * (never silently disable the denylist due to typos / malformed rows).
+   */
+  shellPatterns?: DangerousShellPattern[];
   /**
    * reject = rejectContent (Chinese reason to the model);
    * tripwire = throwException (abort the run).
@@ -992,12 +1140,57 @@ function normalizePathPrefixList(raw: unknown): string[] {
   return out;
 }
 
+function normalizeShellPatternList(raw: unknown): DangerousShellPattern[] {
+  if (!Array.isArray(raw)) return [];
+  const out: DangerousShellPattern[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const o = item as Record<string, unknown>;
+    const pattern = typeof o.pattern === 'string' ? o.pattern.trim() : '';
+    if (!pattern) continue;
+    let id = typeof o.id === 'string' ? o.id.trim() : '';
+    if (!id) {
+      // Stable-enough fallback for malformed rows; UI always assigns ids on create.
+      id = `sp_${out.length}_${pattern.slice(0, 32).replace(/[^a-zA-Z0-9]+/g, '_')}`;
+    }
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const label = typeof o.label === 'string' ? o.label.trim() : '';
+    out.push(label ? { id, pattern, label } : { id, pattern });
+  }
+  return out;
+}
+
+/** Compile a shell denylist pattern; returns null when the source is empty or invalid. */
+export function tryCompileShellPattern(pattern: string): RegExp | null {
+  const src = pattern.trim();
+  if (!src) return null;
+  try {
+    return new RegExp(src, 'i');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Effective denylist: custom list when `shellPatterns` is set (including explicit
+ * `[]`), otherwise built-in defaults. Callers must go through
+ * {@link normalizeSecuritySettings} so malformed non-empty input does not become `[]`.
+ */
+export function resolveShellPatterns(security: SecuritySettings): DangerousShellPattern[] {
+  if (security.shellPatterns !== undefined) {
+    return security.shellPatterns.map((p) => ({ ...p }));
+  }
+  return DEFAULT_DANGEROUS_SHELL_PATTERNS.map((p) => ({ ...p }));
+}
+
 /** Clamp / fill security from disk or UI. Missing fields → DEFAULT_SECURITY. */
 export function normalizeSecuritySettings(raw: unknown): SecuritySettings {
   const src =
     raw && typeof raw === 'object' ? (raw as Partial<Record<keyof SecuritySettings, unknown>>) : {};
   const blockMode: SecurityBlockMode = src.blockMode === 'tripwire' ? 'tripwire' : 'reject';
-  return {
+  const out: SecuritySettings = {
     enabled: src.enabled !== false,
     restrictToHome: src.restrictToHome !== false,
     allowedPathPrefixes: normalizePathPrefixList(src.allowedPathPrefixes),
@@ -1008,6 +1201,22 @@ export function normalizeSecuritySettings(raw: unknown): SecuritySettings {
     shellPatternsEnabled: src.shellPatternsEnabled !== false,
     blockMode,
   };
+  if (Array.isArray(src.shellPatterns)) {
+    // Literal [] = explicit clear. Non-empty raw that yields 0 valid
+    // (structurally or compilable) patterns must NOT become [] (fail-open).
+    if (src.shellPatterns.length === 0) {
+      out.shellPatterns = [];
+    } else {
+      const normalized = normalizeShellPatternList(src.shellPatterns).filter((p) =>
+        tryCompileShellPattern(p.pattern),
+      );
+      if (normalized.length > 0) {
+        out.shellPatterns = normalized;
+      }
+      // else: omit shellPatterns → resolveShellPatterns uses defaults
+    }
+  }
+  return out;
 }
 
 /**
@@ -1050,8 +1259,8 @@ export const DEFAULT_SQUAD_PLAYBOOK = `0. 准备：读取队员名册、能力�
 export const DEFAULT_SQUAD_SETTINGS: SquadSettings = {
   captainPersona: DEFAULT_SQUAD_CAPTAIN_PERSONA,
   playbook: DEFAULT_SQUAD_PLAYBOOK,
-  captainMaxTurns: 20,
-  memberMaxTurns: 10,
+  captainMaxTurns: 50,
+  memberMaxTurns: 50,
 };
 
 /**
@@ -1122,6 +1331,10 @@ export interface InstructionsSettings {
 }
 
 export const DEFAULT_ASSISTANT_ROLE_TEMPLATE =
+  '你是「{name}」，一个可使用授权工具在已连接电脑上工作的个人助手。';
+
+/** Exact prior default; persisted copies upgrade to DEFAULT_ASSISTANT_ROLE_TEMPLATE. */
+export const LEGACY_DEFAULT_ASSISTANT_ROLE_TEMPLATE =
   '你是「{name}」，一个可使用本机工具的桌面个人助手。';
 
 /**
@@ -1190,6 +1403,10 @@ export const DEFAULT_AGENTS_MD_RECENT_MESSAGE_LIMIT = 12;
 
 /** Default create/update gate line for refreshBotSkills (one system line only). */
 export const DEFAULT_SKILLS_CREATE_UPDATE_INSTRUCTION =
+  '仅当对话中出现「固定多步流程」，或同一类事情已做/将做至少两遍时，才新增或更新 skill。技能slug（目录名）、技能name（名称）和文件name（skill文件名）必须以okbot-为前缀。';
+
+/** Exact prior default; persisted copies upgrade to DEFAULT_SKILLS_CREATE_UPDATE_INSTRUCTION. */
+export const LEGACY_DEFAULT_SKILLS_CREATE_UPDATE_INSTRUCTION =
   '仅当对话中出现「固定多步流程」，或同一类事情已做/将做至少两遍时，才新增或更新 skill。技能 slug（目录名）必须以 okbot- 为前缀。';
 
 export const DEFAULT_SKILLS_RECENT_MESSAGE_LIMIT = 20;
@@ -1208,8 +1425,10 @@ export function normalizeInstructionsSettings(raw: unknown): InstructionsSetting
     raw && typeof raw === 'object'
       ? (raw as Partial<Record<keyof InstructionsSettings, unknown>>)
       : {};
-  const template =
+  const templateRaw =
     typeof src.assistantRoleTemplate === 'string' ? src.assistantRoleTemplate.trim() : '';
+  const template =
+    !templateRaw || templateRaw === LEGACY_DEFAULT_ASSISTANT_ROLE_TEMPLATE ? '' : templateRaw;
   const agentsPromptRaw =
     typeof src.agentsMdRefreshSystemPrompt === 'string'
       ? src.agentsMdRefreshSystemPrompt.trim()
@@ -1223,10 +1442,14 @@ export function normalizeInstructionsSettings(raw: unknown): InstructionsSetting
     agentsPromptRaw === LEGACY_AGENTS_MD_REFRESH_WITH_ROBOT
       ? ''
       : agentsPromptRaw;
-  const skillsInstr =
+  const skillsInstrRaw =
     typeof src.skillsCreateUpdateInstruction === 'string'
       ? src.skillsCreateUpdateInstruction.trim()
       : '';
+  const skillsInstr =
+    !skillsInstrRaw || skillsInstrRaw === LEGACY_DEFAULT_SKILLS_CREATE_UPDATE_INSTRUCTION
+      ? ''
+      : skillsInstrRaw;
   return {
     assistantRoleTemplate: template || DEFAULT_ASSISTANT_ROLE_TEMPLATE,
     agentsMdRefreshSystemPrompt: agentsPrompt || DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT,
@@ -1534,6 +1757,36 @@ export function normalizeLocalHttpApiSettings(raw: unknown): LocalHttpApiSetting
   return { enabled, port, token, bindLan, serveUi };
 }
 
+/** Saved remote sources for the assistant marketplace (public URLs only). */
+export type AssistantMarketplaceSettings = {
+  /** Newest-first list of GitHub / raw / .okbot URLs the user saved. Max 20. */
+  savedSources: string[];
+};
+
+const MAX_MARKETPLACE_SOURCES = 20;
+
+export function normalizeAssistantMarketplaceSettings(raw: unknown): AssistantMarketplaceSettings {
+  const src =
+    raw && typeof raw === 'object' && !Array.isArray(raw)
+      ? (raw as { savedSources?: unknown }).savedSources
+      : undefined;
+  const out: string[] = [];
+  const seen = new Set<string>();
+  if (Array.isArray(src)) {
+    for (const item of src) {
+      if (typeof item !== 'string') continue;
+      const u = item.trim();
+      if (!u || u.length > 2000) continue;
+      const key = u.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(u);
+      if (out.length >= MAX_MARKETPLACE_SOURCES) break;
+    }
+  }
+  return { savedSources: out };
+}
+
 export interface AppSettings {
   theme: ThemeMode;
   /** UI language. */
@@ -1597,6 +1850,11 @@ export interface AppSettings {
    */
   notifications: boolean;
   /**
+   * What the window close button does (desktop Electron).
+   * Default `ask`: first close offers Quit vs minimize/hide to tray; optional remember.
+   */
+  closeAction: CloseAction;
+  /**
    * Shows advanced settings (security, gateway, computers, extensions, run limits,
    * compression). Default false for new users; migrated on for users who already
    * use an advanced feature.
@@ -1609,6 +1867,8 @@ export interface AppSettings {
    * and web_fetch private-network allow flag.
    */
   web: WebSettings;
+  /** Assistant marketplace: saved remote package sources. */
+  assistantMarketplace: AssistantMarketplaceSettings;
 }
 
 /** Roster row in `~/.okbot/bots.json` (name card only). */
@@ -2188,12 +2448,14 @@ export const DEFAULT_AGENTS_MD = `# 角色与目标
 
 export const DEFAULT_SETTINGS: AppSettings = {
   notifications: true,
+  closeAction: 'ask',
   showAdvancedSettings: false,
   mcp: { enabled: false, servers: [] },
   web: {
     search: { provider: 'tavily', apiKey: '', baseURL: '' },
     fetch: { allowPrivateNetwork: false },
   },
+  assistantMarketplace: { savedSources: [] },
   theme: 'system',
   language: 'system',
   microphoneId: '',
@@ -2303,6 +2565,8 @@ export const IpcChannels = {
   windowMaximizedChanged: 'okbot:window-maximized-changed',
   /** Main → renderer: OS native theme flipped (esp. Windows when matchMedia is sticky). */
   nativeThemeUpdated: 'okbot:native-theme-updated',
+  /** Main → renderer: settings changed outside the renderer (e.g. remember closeAction). */
+  settingsChanged: 'okbot:settings-changed',
   ensureMicrophoneAccess: 'okbot:ensure-microphone-access',
   openMicrophoneSettings: 'okbot:open-microphone-settings',
   getAppInfo: 'okbot:get-app-info',
@@ -2338,6 +2602,8 @@ export const IpcChannels = {
   /** Built-in starter assistants (gallery). */
   listAssistantGallery: 'okbot:list-assistant-gallery',
   installGalleryAssistant: 'okbot:install-gallery-assistant',
+  importAssistantFromUrl: 'okbot:import-assistant-from-url',
+  cancelImportAssistantFromUrl: 'okbot:cancel-import-assistant-from-url',
   /** Desktop only: MCP connection status / one-off test. */
   mcpStatus: 'okbot:mcp-status',
   mcpTestServer: 'okbot:mcp-test-server',
@@ -2568,12 +2834,20 @@ const BUILT_IN_TOOL_RULE_IDS: ReadonlySet<string> = new Set<string>(TOOL_IDS);
  * written for built-in tools (for example `run_shell`) must not match
  * `mcp_<server>_run_shell`, and MCP calls are never whitelisted.
  */
+/** manage_schedule create/delete always HITL — AAR / settings allow must not bypass. */
+export function manageScheduleActionRequiresConfirm(toolArgs: unknown): boolean {
+  if (!toolArgs || typeof toolArgs !== 'object' || Array.isArray(toolArgs)) return false;
+  const action = String((toolArgs as { action?: unknown }).action || '').trim().toLowerCase();
+  return action === 'create' || action === 'delete';
+}
+
 export function resolveToolApproval(
   settings: { autoApprovalEnabled?: boolean; autoApprovalRules?: AutoApprovalRule[] },
   toolName: string,
   toolArgs: unknown,
 ): AutoApprovalAction {
   if (isMcpToolName(toolName)) return 'ask';
+  if (toolName === 'manage_schedule' && manageScheduleActionRequiresConfirm(toolArgs)) return 'ask';
   return resolveAutoApproval(settings.autoApprovalEnabled === true, settings.autoApprovalRules, toolName, toolArgs);
 }
 

@@ -20,7 +20,7 @@ import {
   RunTraceIcon,
 } from './components/ui/icons';
 import { AboutModal } from './features/about';
-import { AssistantGalleryModal, BotFormModal } from './features/bots';
+import { AssistantMarketplacePage, BotFormModal } from './features/bots';
 import { QuickStartPanel } from './features/onboarding';
 import {
   ChatComposer,
@@ -53,6 +53,7 @@ import { WindowControls } from './features/window';
 import { QuickTip } from './components/ui/QuickTip';
 import { useScrollFade } from './hooks/useScrollFade';
 import { applyTheme, subscribeSystemTheme } from './utils/theme';
+import { mergeSettingsPatch } from './utils/settingsPatch';
 import { updateScrollFade } from './utils/scrollFade';
 import {
   blobToWhisperAudio,
@@ -639,24 +640,33 @@ export function App() {
           : t(lang, 'notifyApprovalWaiting', { tool: toolName || '' }),
       tag: idPart ? `${ownerId}:${kind}:${idPart}` : `${ownerId}:${kind}`,
       onClick: () => {
-        window.focus();
+        // windowFocus restores/shows; skip redundant window.focus() which stacked
+        // with steal-focus and contributed to mouse stutter on wake.
         void window.okbot.windowFocus?.();
         selectSession({ kind: isSquad ? 'squad' : 'bot', id: ownerId });
       },
     });
   };
 
-  // Back in the window: the open chat is read.
+  // Back in the window: the open chat is read (defer so focus itself stays light).
   useEffect(() => {
+    let timer: number | null = null;
     const onFocus = () => {
-      const sel = selectionRef.current;
-      if (sel?.kind !== 'bot' && sel?.kind !== 'squad') return;
-      const owner =
-        sel.kind === 'squad' ? squads.find((s) => s.id === sel.id) : bots.find((b) => b.id === sel.id);
-      if (owner?.hasUnreadReply) markSessionUnread(sel.id, false);
+      if (timer != null) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        timer = null;
+        const sel = selectionRef.current;
+        if (sel?.kind !== 'bot' && sel?.kind !== 'squad') return;
+        const owner =
+          sel.kind === 'squad' ? squads.find((s) => s.id === sel.id) : bots.find((b) => b.id === sel.id);
+        if (owner?.hasUnreadReply) markSessionUnread(sel.id, false);
+      }, 80);
     };
     window.addEventListener('focus', onFocus);
-    return () => window.removeEventListener('focus', onFocus);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      if (timer != null) window.clearTimeout(timer);
+    };
   }, [bots, squads]);
 
   const selectedBotId = selectedBot?.id;
@@ -919,6 +929,14 @@ export function App() {
       unsubIpc();
     };
   }, [settings?.theme]);
+
+  // Main may persist closeAction (remember checkbox) without going through saveSettings IPC.
+  useEffect(() => {
+    const unsub = window.okbot.onSettingsChanged((next) => {
+      setSettings(next);
+    });
+    return unsub;
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -2206,11 +2224,13 @@ export function App() {
             updatedAt: now,
           });
         }
-        const saved = await window.okbot.saveSettings({
-          ...settings,
-          autoApprovalEnabled: true,
-          autoApprovalRules: nextRules,
-        });
+        const disk = await window.okbot.getSettings();
+        const saved = await window.okbot.saveSettings(
+          mergeSettingsPatch(disk, {
+            autoApprovalEnabled: true,
+            autoApprovalRules: nextRules,
+          }),
+        );
         setSettings(saved);
         if (rewrittenAsk) {
           toast.success(t(lang, 'autoAllowRewroteAsk'));
@@ -2808,7 +2828,9 @@ async function handleSend(retry?: {
     const next = order[(idx >= 0 ? idx + 1 : 1) % order.length];
     applyTheme(next);
     try {
-      const saved = await window.okbot.saveSettings({ ...settings, theme: next });
+      // Re-base on disk so a main-persisted closeAction is not rolled back.
+      const disk = await window.okbot.getSettings();
+      const saved = await window.okbot.saveSettings(mergeSettingsPatch(disk, { theme: next }));
       setSettings(saved);
     } catch (err) {
       toast.error(formatSystemError(err));
@@ -3030,7 +3052,20 @@ async function handleSend(retry?: {
 
       <main className="main">
         <div className="main-topdrag" />
-        {!selection && settings && bots.length === 0 && squads.length === 0 ? (
+        {galleryOpen ? (
+          <AssistantMarketplacePage
+            lang={lang}
+            modelReady={(settings?.model?.providers ?? []).some((p) => p.models.length > 0)}
+            existingNames={bots.map((b) => b.name)}
+            settings={settings}
+            onClose={() => setGalleryOpen(false)}
+            onInstalled={(bot) => void onGalleryAssistantInstalled(bot)}
+            onSettingsPatch={async (next) => {
+              const saved = await window.okbot.saveSettings(next);
+              setSettings(saved);
+            }}
+          />
+        ) : !selection && settings && bots.length === 0 && squads.length === 0 ? (
           <QuickStartPanel
             lang={lang}
             modelReady={(settings.model?.providers ?? []).some((p) => p.models.length > 0)}
@@ -3051,7 +3086,7 @@ async function handleSend(retry?: {
           </div>
         ) : null}
 
-        {(selectedBot || selectedSquad) && (
+        {!galleryOpen && (selectedBot || selectedSquad) && (
           <div
             className={`chat-pane${fileDragOver ? ' is-file-drag' : ''}`}
             onDragEnter={onChatDragEnter}
@@ -3651,15 +3686,6 @@ async function handleSend(retry?: {
         />
       )}
 
-      {galleryOpen ? (
-        <AssistantGalleryModal
-          lang={lang}
-          modelReady={(settings?.model?.providers ?? []).some((p) => p.models.length > 0)}
-          existingNames={bots.map((b) => b.name)}
-          onClose={() => setGalleryOpen(false)}
-          onInstalled={(bot) => void onGalleryAssistantInstalled(bot)}
-        />
-      ) : null}
       {searchOpen ? (
         <GlobalSearchModal
           lang={lang}

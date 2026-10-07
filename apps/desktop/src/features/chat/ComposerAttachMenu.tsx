@@ -93,7 +93,7 @@ export function ComposerAttachMenu({ lang, disabled, onPick }: ComposerAttachMen
         blur={7}
         contrast={18}
         filterPadding={48}
-        shadow="var(--composer-attach-shadow)"
+        shadow="none"
         // Library root inline-style is position:relative (caller style wins).
         // Without absolute, the stack stage stays in flow, bottom:0 does
         // not pin it, and the anchor button drops below the 30px slot — clipped

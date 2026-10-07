@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
+import { createPortal } from 'react-dom';
 import {
   addTokenUsage,
   emptyTokenUsage,
@@ -122,15 +123,18 @@ function UsageLineChart({ series, lang }: { series: DayPoint[]; lang: UiLang }) 
   }
 
   const tipPoint = hover ? series[hover.index] : null;
+  // Viewport coords + portal: avoid clipping by .settings-card / .settings-body overflow
+  // (far-right day points were half-cut with absolute positioning inside the card).
   const tipStyle =
     hover && wrapRef.current
       ? (() => {
-          const wrap = wrapRef.current!.getBoundingClientRect();
           const svg = wrapRef.current!.querySelector('svg');
-          const svgRect = svg?.getBoundingClientRect() ?? wrap;
+          const svgRect = svg?.getBoundingClientRect() ?? wrapRef.current!.getBoundingClientRect();
           const scaleX = svgRect.width / w;
-          const left = svgRect.left - wrap.left + xAt(hover.index) * scaleX;
-          const top = svgRect.top - wrap.top + pad.t * (svgRect.height / h);
+          let left = svgRect.left + xAt(hover.index) * scaleX;
+          const top = svgRect.top + pad.t * (svgRect.height / h);
+          const tipHalf = 72;
+          left = Math.min(Math.max(tipHalf + 8, left), window.innerWidth - tipHalf - 8);
           return { left, top };
         })()
       : null;
@@ -224,27 +228,33 @@ function UsageLineChart({ series, lang }: { series: DayPoint[]; lang: UiLang }) 
             </>
           ) : null}
         </svg>
-        {hover && tipPoint && tipStyle ? (
-          <div className="usage-chart-tip" style={{ left: tipStyle.left, top: tipStyle.top }}>
-            <div className="usage-chart-tip-day">{tipPoint.day}</div>
-            <div className="usage-chart-tip-row input">
-              <span className="k">{t(lang, 'usageInput')}</span>
-              <span className="v">{formatTokens(tipPoint.input)}</span>
-            </div>
-            <div className="usage-chart-tip-row output">
-              <span className="k">{t(lang, 'usageOutput')}</span>
-              <span className="v">{formatTokens(tipPoint.output)}</span>
-            </div>
-            <div className="usage-chart-tip-row cache">
-              <span className="k">{t(lang, 'usageCache')}</span>
-              <span className="v">{formatTokens(tipPoint.cache)}</span>
-            </div>
-            <div className="usage-chart-tip-row">
-              <span className="k">{t(lang, 'usageSum')}</span>
-              <span className="v">{formatTokens(sumUsage(tipPoint))}</span>
-            </div>
-          </div>
-        ) : null}
+        {hover && tipPoint && tipStyle
+          ? createPortal(
+              <div
+                className="usage-chart-tip usage-chart-tip-portal"
+                style={{ left: tipStyle.left, top: tipStyle.top }}
+              >
+                <div className="usage-chart-tip-day">{tipPoint.day}</div>
+                <div className="usage-chart-tip-row input">
+                  <span className="k">{t(lang, 'usageInput')}</span>
+                  <span className="v">{formatTokens(tipPoint.input)}</span>
+                </div>
+                <div className="usage-chart-tip-row output">
+                  <span className="k">{t(lang, 'usageOutput')}</span>
+                  <span className="v">{formatTokens(tipPoint.output)}</span>
+                </div>
+                <div className="usage-chart-tip-row cache">
+                  <span className="k">{t(lang, 'usageCache')}</span>
+                  <span className="v">{formatTokens(tipPoint.cache)}</span>
+                </div>
+                <div className="usage-chart-tip-row">
+                  <span className="k">{t(lang, 'usageSum')}</span>
+                  <span className="v">{formatTokens(sumUsage(tipPoint))}</span>
+                </div>
+              </div>,
+              document.body,
+            )
+          : null}
       </div>
       <div className="usage-legend">
         <span className="usage-legend-item input">{t(lang, 'usageInput')}</span>
@@ -393,6 +403,14 @@ export function UsagePanel({
           <div className="settings-hint">{t(lang, 'usageEmpty')}</div>
         ) : (
           <ul className="usage-member-list">
+            <li className="usage-member-row usage-member-head" aria-hidden="false">
+              <span className="usage-member-name">{t(lang, 'usageMemberName')}</span>
+              <span className="usage-member-nums">
+                <span>{t(lang, 'usageInput')}</span>
+                <span>{t(lang, 'usageOutput')}</span>
+                <span>{t(lang, 'usageCache')}</span>
+              </span>
+            </li>
             {members.map((m) => (
               <li key={m.id} className="usage-member-row">
                 <span className="usage-member-name">
