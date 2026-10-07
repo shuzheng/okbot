@@ -21,7 +21,13 @@ export const REPLY_STYLE_INSTRUCTION = [
 export function formatSessionSummarySection(sessionSummary?: string | null): string {
   const t = sessionSummary?.trim();
   if (!t) return '';
-  return `## 更早对话摘要（Summary+Buffer；细节以最近消息为准）\n\n${t}`;
+  return [
+    '## 更早对话摘要（Summary+Buffer；细节以最近消息为准）',
+    '',
+    t,
+    '',
+    '需要更早原文细节时，可调用 search_history（仅本会话）。',
+  ].join('\n');
 }
 
 /** Enabled local-tool ids (order follows TOOL_IDS). */
@@ -61,10 +67,10 @@ export function buildAgentInstructions(
   const enabled = listEnabledToolIds(prefs);
   const toolLine = formatEnabledLocalToolsLine(prefs);
   const agentsBlock = agentsMd?.trim()
-    ? `以下是本机器人的 AGENTS.md（系统提示，须遵守）：\n\n${agentsMd.trim()}`
+    ? `以下是本助手的 AGENTS.md（系统提示，须遵守）：\n\n${agentsMd.trim()}`
     : '';
   const profileBlock = [
-    '## 机器人资料（花名册，以这里为准）',
+    '## 助手资料（花名册，以这里为准）',
     '',
     `名称：${botName || 'OkBot'}`,
     botDescription?.trim() ? `描述：${botDescription.trim()}` : '描述：（无）',
@@ -72,7 +78,7 @@ export function buildAgentInstructions(
   ].join('\n');
 
   const skillsBlock = skillsText?.trim()
-    ? `## 本机器人 Skills（目录；须先加载再遵循）\n\n下方为技能目录（名称 / slug / 何时使用）。当用户请求与某技能的名称或描述匹配时，你必须先调用 read_skill（传入该技能的 slug）加载完整 SKILL.md 正文，再严格按该技能执行；存在匹配技能时不要凭空发明步骤。\n\n${skillsText.trim()}`
+    ? `## 本助手 Skills（目录；须先加载再遵循）\n\n下方为技能目录（名称 / slug / 何时使用）。当用户请求与某技能的名称或描述匹配时，你必须先调用 read_skill（传入该技能的 slug）加载完整 SKILL.md 正文，再严格按该技能执行；存在匹配技能时不要凭空发明步骤。\n\n${skillsText.trim()}`
     : '';
   const memoriesBlock = memoriesText?.trim()
     ? `## 记忆（须遵守；过期项已过滤）\n\n${memoriesText.trim()}`
@@ -80,14 +86,13 @@ export function buildAgentInstructions(
   const summaryBlock = formatSessionSummarySection(sessionSummary);
   const roleLine = resolveAssistantRoleLine(assistantRoleTemplate, botName);
 
+  // Stable blocks first (role / roster / AGENTS / tools / style) so provider
+  // prefix cache survives when memories / summary / skill catalog change.
   return normalizeMarkdownHeadings(
     [
       roleLine,
       profileBlock,
       agentsBlock,
-      memoriesBlock,
-      summaryBlock,
-      skillsBlock,
       hasVisionInput ? VISION_TURN_INSTRUCTION : '',
       REPLY_STYLE_INSTRUCTION,
       toolLine,
@@ -96,6 +101,9 @@ export function buildAgentInstructions(
         ? '修改代码时优先 edit_file 做小范围外科手术式改动；新建文件或需要大幅重写时用 write_file。能读则先 read_file 再改。'
         : '',
       '不要编造你没有的工具能力。不需要工具时直接回答。',
+      memoriesBlock,
+      summaryBlock,
+      skillsBlock,
       formatHistoryBlock(history),
     ]
       .filter(Boolean)

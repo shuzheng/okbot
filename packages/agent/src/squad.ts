@@ -7,6 +7,7 @@ import type {
   SecuritySettings,
   SquadSettings,
   ToolPreferences,
+  WebSettings,
 } from '@okbot/shared';
 import {
   DEFAULT_SECURITY,
@@ -26,6 +27,7 @@ import {
   buildRunOpts,
   consumeAgentTextStream,
   runHitlStreamLoop,
+  runModelSegment,
   type AgentRunStreamResult,
 } from './hitl.js';
 import { buildTools, type SkillLookup } from './tools.js';
@@ -56,6 +58,12 @@ export interface RunSquadChatInput extends HitlLoopHooks {
   /** All member seats; built-in captain is not among them. */
   members: SquadMemberAgentSpec[];
   sessionSummary?: string;
+  /** Search this squad session only for `search_history`. */
+  historySearch?: import('./tools.js').HistorySearch;
+  /** Manage timed wakeups for this squad (`manage_schedule`). */
+  scheduleManage?: import('./tools.js').ScheduleManage;
+  /** Built-in web_fetch / web_search (`settings.web`). */
+  web?: WebSettings;
   model: ResolvedModelConfig;
   tools?: ToolPreferences;
   security?: SecuritySettings;
@@ -133,7 +141,7 @@ function buildMemberSquadInstructions(
       roleLine,
       member.description?.trim() ? `对外简介：${member.description.trim()}` : '',
       member.agentsMd?.trim()
-        ? `以下是本机器人的 AGENTS.md（系统提示，须遵守）：\n\n${member.agentsMd.trim()}`
+        ? `以下是本助手的 AGENTS.md（系统提示，须遵守）：\n\n${member.agentsMd.trim()}`
         : '',
       member.memoriesText?.trim()
         ? `## 记忆（须遵守；过期项已过滤）\n\n${member.memoriesText.trim()}`
@@ -186,7 +194,7 @@ export function buildCaptainSquadInstructions(input: {
     : '';
   return normalizeMarkdownHeadings(
     [
-      `你是《${input.squadName}》小队的内置虚拟队长（编排者），不是普通助手列表中的机器人。`,
+      `你是《${input.squadName}》小队的内置虚拟队长（编排者），不是普通助手列表中的助手。`,
       input.squadDescription?.trim() ? `小队简介：${input.squadDescription.trim()}` : '',
       input.persona?.trim() ? `## 队长人设\n\n${input.persona.trim()}` : '',
       `## 小队花名册与角色\n\n${roster || '（无）'}`,
@@ -277,6 +285,8 @@ function createSquadRuntime(input: RunSquadChatInput & { resumeNote?: string }) 
         : {}),
       tools: buildTools(toolPrefs, security, input.toolRunBudget, {
         skillLookup: member.skillLookup,
+        historySearch: input.historySearch,
+        scheduleManage: input.scheduleManage,
         imageApi: {
           baseURL: input.model.baseURL,
           apiKey: input.model.apiKey,
@@ -286,6 +296,7 @@ function createSquadRuntime(input: RunSquadChatInput & { resumeNote?: string }) 
         imageAssets: { ownerId: input.ownerId, resourcesDir: input.resourcesDir },
         backend: memberRoute ? undefined : input.executionBackend,
         computerRoute: memberRoute,
+        web: input.web,
       }),
     });
     const runner = new Runner({ modelProvider: provider, model: input.model.model });
@@ -304,13 +315,22 @@ function createSquadRuntime(input: RunSquadChatInput & { resumeNote?: string }) 
     taskText: string,
     built: ReturnType<typeof buildMember>,
     result: AgentRunStreamResult,
+    streamedIn?: string,
   ): Promise<string> => {
     // Do not stream member tokens into the captain bubble.
-    const streamed = await consumeAgentTextStream(result, undefined, input.signal);
+    // Caller should wrap the initial runner.run + stream with runModelSegment.
+    const streamed =
+      typeof streamedIn === 'string'
+        ? streamedIn
+        : await consumeAgentTextStream(result, undefined, input.signal);
     const out = await runHitlStreamLoop(built.agent, built.runner, built.runOpts, result, streamed, {
       signal: input.signal,
       onDelta: undefined,
       toolRunBudget: input.toolRunBudget,
+      onModelTurnStart: input.onModelTurnStart,
+      onModelTurnEnd: input.onModelTurnEnd,
+      onApprovalWaitStart: input.onApprovalWaitStart,
+      onApprovalWaitEnd: input.onApprovalWaitEnd,
       onToolApprovalRequest: (req) =>
         input.onToolApprovalRequest({
           ...req,
@@ -321,7 +341,7 @@ function createSquadRuntime(input: RunSquadChatInput & { resumeNote?: string }) 
     const reply = out.content?.trim() || '（成员未返回内容）';
     const usage = out.usage ?? emptyTokenUsage();
     recordMemberTokenUsage(memberUsageState, member.botId, usage);
-    input.onSquadExchange?.({
+    await input.onSquadExchange?.({
       kind: 'reply',
       memberBotId: member.botId,
       memberName: member.name,
@@ -345,7 +365,7 @@ function createSquadRuntime(input: RunSquadChatInput & { resumeNote?: string }) 
         try {
           const taskText = String(task ?? '').trim();
           if (!taskText) return '（空任务，已跳过）';
-          input.onSquadExchange?.({
+          await input.onSquadExchange?.({
             kind: 'ask',
             memberBotId: member.botId,
             memberName: member.name,
@@ -353,14 +373,29 @@ function createSquadRuntime(input: RunSquadChatInput & { resumeNote?: string }) 
             content: taskText,
           });
           const built = buildMember(member, taskText);
-          const result = (await built.runner.run(built.agent, taskText, built.runOpts)) as AgentRunStreamResult;
-          return await finishMember(member, toolName, taskText, built, result);
+          const first = await runModelSegment(input, async () => {
+            const result = (await built.runner.run(
+              built.agent,
+              taskText,
+              built.runOpts,
+            )) as AgentRunStreamResult;
+            const streamed = await consumeAgentTextStream(result, undefined, input.signal);
+            return { result, streamed };
+          });
+          return await finishMember(
+            member,
+            toolName,
+            taskText,
+            built,
+            first.result,
+            first.streamed,
+          );
         } catch (err) {
           // One member's failure must not cancel sibling ask_* calls (SDK sibling cancellation).
           if (input.signal?.aborted) throw err;
           const msg = err instanceof Error ? err.message : String(err);
           const failed = `（成员「${member.name}」执行失败：${msg}）`;
-          input.onSquadExchange?.({
+          await input.onSquadExchange?.({
             kind: 'reply',
             memberBotId: member.botId,
             memberName: member.name,
@@ -403,6 +438,8 @@ function createSquadRuntime(input: RunSquadChatInput & { resumeNote?: string }) 
     },
     tools: [
       ...buildTools(toolPrefs, security, input.toolRunBudget, {
+        historySearch: input.historySearch,
+        scheduleManage: input.scheduleManage,
         imageApi: {
           baseURL: input.model.baseURL,
           apiKey: input.model.apiKey,
@@ -412,6 +449,7 @@ function createSquadRuntime(input: RunSquadChatInput & { resumeNote?: string }) 
         imageAssets: { ownerId: input.ownerId, resourcesDir: input.resourcesDir },
         backend: input.computerRoute ? undefined : input.executionBackend,
         computerRoute: input.computerRoute,
+        web: input.web,
       }),
       ...memberTools,
       ...(input.extraTools ?? []),
@@ -437,9 +475,19 @@ export async function runSquadChat(input: RunSquadChatInput & { resumeNote?: str
   assertModel(input.model);
   if (input.signal?.aborted) return { content: '' };
   const rt = createSquadRuntime(input);
-  const result = (await rt.runner.run(rt.captain, input.userText, rt.runOpts)) as AgentRunStreamResult;
-  const streamed = await consumeAgentTextStream(result, input.onDelta, input.signal);
-  const captainOut = await runHitlStreamLoop(rt.captain, rt.runner, rt.runOpts, result, streamed, input);
+  const first = await runModelSegment(input, async () => {
+    const result = (await rt.runner.run(rt.captain, input.userText, rt.runOpts)) as AgentRunStreamResult;
+    const streamed = await consumeAgentTextStream(result, input.onDelta, input.signal);
+    return { result, streamed };
+  });
+  const captainOut = await runHitlStreamLoop(
+    rt.captain,
+    rt.runner,
+    rt.runOpts,
+    first.result,
+    first.streamed,
+    input,
+  );
   return {
     content: captainOut.content,
     usage: addTokenUsage(captainOut.usage ?? emptyTokenUsage(), rt.memberUsageState.acc),
@@ -480,8 +528,19 @@ export async function resumeSquadChatAfterHitl(
     const built = rt.buildMember(member, tag.task);
     const state = await RunState.fromString(built.agent, input.serializedRunState);
     applyResumeDecision(state, input);
-    const result = (await built.runner.run(built.agent, state, built.runOpts)) as AgentRunStreamResult;
-    const reply = await rt.finishMember(member, tag.toolName, tag.task, built, result);
+    const first = await runModelSegment(input, async () => {
+      const result = (await built.runner.run(built.agent, state, built.runOpts)) as AgentRunStreamResult;
+      const streamed = await consumeAgentTextStream(result, undefined, input.signal);
+      return { result, streamed };
+    });
+    const reply = await rt.finishMember(
+      member,
+      tag.toolName,
+      tag.task,
+      built,
+      first.result,
+      first.streamed,
+    );
     return {
       kind: 'member',
       reply: { memberBotId: member.botId, memberName: member.name, task: tag.task, reply },
@@ -491,9 +550,12 @@ export async function resumeSquadChatAfterHitl(
 
   const state = await RunState.fromString(rt.captain, input.serializedRunState);
   applyResumeDecision(state, input);
-  const result = (await rt.runner.run(rt.captain, state, rt.runOpts)) as AgentRunStreamResult;
-  const streamed = await consumeAgentTextStream(result, input.onDelta, input.signal);
-  const out = await runHitlStreamLoop(rt.captain, rt.runner, rt.runOpts, result, streamed, input);
+  const first = await runModelSegment(input, async () => {
+    const result = (await rt.runner.run(rt.captain, state, rt.runOpts)) as AgentRunStreamResult;
+    const streamed = await consumeAgentTextStream(result, input.onDelta, input.signal);
+    return { result, streamed };
+  });
+  const out = await runHitlStreamLoop(rt.captain, rt.runner, rt.runOpts, first.result, first.streamed, input);
   return {
     kind: 'captain',
     content: out.content,

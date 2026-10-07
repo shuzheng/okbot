@@ -436,6 +436,18 @@ export function CopyRequestUrlIcon() {
   );
 }
 
+/** Waterfall / Gantt bars — per-message turn timeline. */
+export function TurnTraceIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
+      <path d="M4 6h8" />
+      <path d="M4 12h14" />
+      <path d="M4 18h10" />
+      <path d="M4 4v16" />
+    </svg>
+  );
+}
+
 /** Route / waypoints — open this run's tool trajectory.
  *  Slight inset so optical size matches About inside the shared header glyph. */
 export function RunTraceIcon() {
@@ -625,7 +637,7 @@ export function ExtensionsNavIcon() {
   );
 }
 
-/** Four tiles — 「助手库」 (starter assistants). */
+/** Four tiles — 「助手市场」 (starter assistants). */
 export function AssistantGalleryIcon() {
   return (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden>

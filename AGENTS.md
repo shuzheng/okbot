@@ -27,6 +27,10 @@ apps/sandbox-agent/    远程电脑 HTTP（shell / fs），不是桌面网关
 | 窗口 IPC、存储、审批、更新安装 | `apps/desktop/electron/ipc/`、`electron/storage/`、`electron/updater.ts`、`electron/macUpdateInstall.ts` |
 | 网关路由、`okbot serve`、附着窗口 | `electron/localHttpApi.ts`、`electron/cli.ts`、`electron/main.ts`、`electron/attachPreload.ts`、`src/bridge/httpOkbot.ts` |
 | 模型调用、工具、电脑路由、压缩 | `packages/agent/src/`（`tools.ts`、`computerSelection.ts`、`executionBackend.ts`、`runAgentChat.ts`、`squad.ts`） |
+| 定时任务（schedules.json / ticker） | `apps/desktop/electron/storage/schedules.ts`、`FileStorage` 的 schedule 方法、`scheduleTicker.ts`、工具 `manage_schedule`（默认 ask；create/delete 强制 HITL）；设置列表 `SchedulesList.tsx` |
+| 网页工具 | `packages/agent/src/webFetch.ts`、`webSearch.ts`；设置 `settings.web`；工具注册在 `tools.ts` |
+| 聊天拖放附件 | Composer / 聊天区 DnD → 与附件选择器同一管线（见 GUIDE §3.4） |
+| 助手市场（内置入门助手） | `packages/agent/src/assistantGallery.ts`；UI `features/bots/AssistantGallery.tsx`；文案键 `galleryTitle` 等（界面称「助手市场」/ Assistant marketplace） |
 | 设置字段、IPC 通道名 | `packages/shared/src/index.ts`。改了字段要同时改 `FileStorage` 的读写和 normalize |
 | 远程电脑协议 | `apps/sandbox-agent/src/server.ts`。桌面侧探测在 `probeRemoteComputer` |
 | 产品行为说明 | `GUIDE.md` 对应章节。不要把开发向边界写进 README |

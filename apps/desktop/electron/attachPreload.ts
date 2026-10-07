@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IpcChannels } from '@okbot/shared';
 
 function readArg(flag: string): string {
@@ -36,5 +36,12 @@ if (base) {
     windowIsMaximized: () => ipcRenderer.invoke(IpcChannels.windowIsMaximized),
     windowFocus: () => ipcRenderer.invoke(IpcChannels.windowFocus),
     onWindowMaximizedChanged,
+    getPathForFile: (file: File): string => {
+      try {
+        return webUtils.getPathForFile(file) || '';
+      } catch {
+        return '';
+      }
+    },
   });
 }

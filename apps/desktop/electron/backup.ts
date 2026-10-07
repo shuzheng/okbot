@@ -66,6 +66,14 @@ export function stripSettingsSecrets(raw: unknown): unknown {
       }),
     };
   }
+  const web = asObj(s.web);
+  if (web) {
+    const search = asObj(web.search);
+    out.web = {
+      ...web,
+      ...(search ? { search: { ...search, apiKey: '' } } : {}),
+    };
+  }
   return out;
 }
 
@@ -152,6 +160,21 @@ export function carryOverSecrets(restored: unknown, current: unknown): unknown {
         return o;
       }),
     };
+  }
+  const rWeb = asObj(r.web);
+  const cWeb = asObj(c.web);
+  if (rWeb) {
+    const rSearch = asObj(rWeb.search);
+    const cSearch = asObj(cWeb?.search);
+    if (rSearch && !rSearch.apiKey && cSearch && typeof cSearch.apiKey === 'string') {
+      // Same provider (+ optional baseURL) before restoring the key.
+      if (sameFields(cSearch, rSearch, ['provider', 'baseURL'])) {
+        out.web = {
+          ...rWeb,
+          search: { ...rSearch, apiKey: cSearch.apiKey },
+        };
+      }
+    }
   }
   return out;
 }

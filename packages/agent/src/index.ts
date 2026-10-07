@@ -50,6 +50,7 @@ export {
 export {
   compressSessionHistory,
   selectDeltaForSummary,
+  formatToolRowDigest,
   SUMMARY_DELTA_MAX_CHARS,
   SUMMARY_DELTA_PER_ITEM_CHARS,
   type SessionHistoryCompressResult,
@@ -99,9 +100,11 @@ export {
 export {
   buildTools,
   TOOL_BLURBS,
+  type HistorySearch,
   type SkillLookup,
   type SkillLookupResult,
   type BuildToolsOptions,
+  type ScheduleManage,
 } from './tools.js';
 export {
   createLocalExecutionBackend,
@@ -180,6 +183,7 @@ export {
   parseRuntimeEventSseBlocks,
   isRuntimeEventTurnTerminal,
   acceptRuntimeEventForSseTurn,
+  type SseTurnGate,
 } from './runtime/events.js';
 
 export {

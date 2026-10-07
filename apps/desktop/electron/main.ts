@@ -11,6 +11,8 @@ import { getAllowQuit, setAllowQuit } from './quitState';
 import { createLocalHttpApi } from './localHttpApi';
 import { closeMcp } from './mcpRuntime';
 import { ensureGatewayToken, resolveGatewayUiRoot, startSkillWatch } from './gatewayRuntime';
+import { startScheduleTicker } from './scheduleTicker';
+import { abortAllOwnerRuns } from './ipc/ownerRuns';
 import {
   acquireServerLock,
   inspectRunningServer,
@@ -37,7 +39,7 @@ if (!gotSingleInstanceLock) {
   app.quit();
 }
 
-const abortControllers = new Map<string, AbortController>();
+const abortControllers = new Map<string, Map<string, AbortController>>();
 /** Pending HITL tool approvals: requestId -> resolve */
 const pendingToolApprovals = new Map<string, PendingToolApproval>();
 
@@ -45,6 +47,7 @@ let localHttpApiController: ReturnType<typeof createLocalHttpApi> | null = null;
 /** True only when this Electron process bound the gateway. A client must not stop `okbot serve`. */
 let ownsServer = false;
 let stopSkillWatch: (() => void) | null = null;
+let stopScheduleTicker: (() => void) | null = null;
 /** Set when another OkBot already owns the data directory. The window is UI only. */
 let gatewayClient: { base: string; token: string; serveUi: boolean } | null = null;
 
@@ -402,6 +405,7 @@ app.whenReady().then(async () => {
 
   if (ownsServer) {
     stopSkillWatch = startSkillWatch(storage, sendRuntimeEvent);
+    stopScheduleTicker = startScheduleTicker({ storage, ctx: ipcCtx });
     initAutoUpdater(() => storage.getSettings());
     try {
       const n = storage.abandonRunningTracesOnStartup();
@@ -440,6 +444,12 @@ app.on('will-quit', () => {
   if (!ownsServer) return;
   try {
     stopSkillWatch?.();
+    try {
+      stopScheduleTicker?.();
+    } catch (err) {
+      console.error('[okbot] schedule ticker stop failed', err);
+    }
+    stopScheduleTicker = null;
   } catch (err) {
     console.error('[okbot] skill watch stop on quit failed', err);
   }
@@ -463,8 +473,7 @@ app.on('before-quit', (e) => {
       console.error('[okbot] localHttpApi stop on quit failed', err);
     }
     for (const botId of [...abortControllers.keys()]) {
-      abortControllers.get(botId)?.abort();
-      abortControllers.delete(botId);
+      abortAllOwnerRuns(abortControllers, botId);
       rejectPendingApprovalsForBot(botId, '应用退出');
     }
     for (const p of storage.listAllPendingHitl()) {
@@ -521,8 +530,7 @@ app.on('before-quit', (e) => {
         console.error('[okbot] localHttpApi stop on quit failed', err);
       }
       for (const botId of [...abortControllers.keys()]) {
-        abortControllers.get(botId)?.abort();
-        abortControllers.delete(botId);
+        abortAllOwnerRuns(abortControllers, botId);
         rejectPendingApprovalsForBot(botId, '应用退出');
       }
       // Disk-only pending (cold-start cards with no live Promise) must also go.

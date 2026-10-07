@@ -7,8 +7,8 @@ import { redactSecretArgs, redactSecretUrl, TOOL_IDS, type AppSettings, type Aut
  * 「总是允许」 does, scoped to one exact built-in tool name.
  *
  * Still desktop-only: model keys, `tools` (enable / per-tool approval), `security`
- * (path and shell guards), `computers`, `localHttpApi`, and `mcp` (starts
- * processes on this host).
+ * (path and shell guards), `computers`, `localHttpApi`, `mcp` (starts
+ * processes on this host), and `web` (search API key / fetch private-network flag).
  */
 export const GATEWAY_SETTINGS_PATCH_KEYS = [
   'theme',
@@ -22,6 +22,7 @@ export const GATEWAY_SETTINGS_PATCH_KEYS = [
   'maxTurns',
   'instructions',
   'memory',
+  'maintenance',
   'squad',
   'toolRun',
   'notifications',

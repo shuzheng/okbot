@@ -1,7 +1,9 @@
 import { isMcpToolName } from './mcp.js';
 import type { McpSettings } from './mcp.js';
+import type { WebSettings } from './web.js';
 
 export * from './mcp.js';
+export * from './web.js';
 export type ThemeMode = 'system' | 'light' | 'dark';
 export type LanguageCode = 'system' | 'zh' | 'en';
 
@@ -122,12 +124,12 @@ export interface SessionSummary {
 }
 
 /** Context compression knobs (Summary + Buffer, SlimContext-style) — defaults when settings omit fields. */
-export const CONTEXT_COMPRESS_RATIO = 0.8;
-export const CONTEXT_KEEP_RECENT_MESSAGES = 5;
+export const CONTEXT_COMPRESS_RATIO = 0.6;
+export const CONTEXT_KEEP_RECENT_MESSAGES = 12;
 /** Floor for the recent buffer when fitting a smaller model window. */
-export const CONTEXT_KEEP_RECENT_MIN = 5;
+export const CONTEXT_KEEP_RECENT_MIN = 8;
 /** Soft cap for the rolling summary (Chinese chars / punctuation). */
-export const CONTEXT_SUMMARY_MAX_CHARS = 800;
+export const CONTEXT_SUMMARY_MAX_CHARS = 2000;
 /** Rough chars→tokens for CJK-heavy chat (conservative). */
 export const CHARS_PER_TOKEN_ESTIMATE = 2;
 
@@ -854,7 +856,25 @@ export function isAbortLikeError(err: unknown): boolean {
   return false;
 }
 
-export const TOOL_IDS = ['read_file', 'read_skill', 'write_file', 'edit_file', 'run_shell', 'generate_image'] as const;
+/** UI / IPC snapshot of one timed wakeup (desktop settings + gateway RPC). */
+export type ScheduledJobInfo = {
+  id: string;
+  ownerId: string;
+  ownerName: string;
+  ownerKind: 'bot' | 'squad';
+  title: string;
+  prompt: string;
+  enabled: boolean;
+  timezone: string;
+  /** Human schedule label, e.g. daily 09:00 */
+  scheduleLabel: string;
+  nextRunAt: string | null;
+  lastRunAt: string | null;
+  lastError: string | null;
+  once: boolean;
+};
+
+export const TOOL_IDS = ['read_file', 'read_skill', 'write_file', 'edit_file', 'run_shell', 'generate_image', 'search_history', 'manage_schedule', 'web_fetch', 'web_search'] as const;
 export type ToolId = (typeof TOOL_IDS)[number];
 
 export interface ToolPreference {
@@ -873,6 +893,18 @@ export const DEFAULT_TOOL_PREFERENCES: ToolPreferences = {
   edit_file: { enabled: true, approval: 'allow' },
   run_shell: { enabled: true, approval: 'allow' },
   generate_image: { enabled: true, approval: 'allow' },
+  /** Search this chat only; default allow so gateway/CLI (no HITL card) can use it. */
+  search_history: { enabled: true, approval: 'allow' },
+  /**
+   * Create/list/pause/resume/delete timed wakeups for this assistant/squad.
+   * Default ask: silent `allow` would let a turn create persistent self-wake jobs
+   * (and later fire with the same tool prefs) without a HITL card.
+   */
+  manage_schedule: { enabled: true, approval: 'ask' },
+  /** Fetch a public URL as readable text; default allow (SSRF guards still apply). */
+  web_fetch: { enabled: true, approval: 'allow' },
+  /** Third-party web search; needs settings.web.search API key. */
+  web_search: { enabled: true, approval: 'allow' },
 };
 
 export function normalizeToolPreferences(raw: unknown): ToolPreferences {
@@ -883,6 +915,10 @@ export function normalizeToolPreferences(raw: unknown): ToolPreferences {
     write_file: { ...DEFAULT_TOOL_PREFERENCES.write_file },
     edit_file: { ...DEFAULT_TOOL_PREFERENCES.edit_file },
     generate_image: { ...DEFAULT_TOOL_PREFERENCES.generate_image },
+    search_history: { ...DEFAULT_TOOL_PREFERENCES.search_history },
+    manage_schedule: { ...DEFAULT_TOOL_PREFERENCES.manage_schedule },
+    web_fetch: { ...DEFAULT_TOOL_PREFERENCES.web_fetch },
+    web_search: { ...DEFAULT_TOOL_PREFERENCES.web_search },
   };
   if (!raw || typeof raw !== 'object') return out;
   const obj = raw as Partial<Record<ToolId, Partial<ToolPreference>>>;
@@ -1124,9 +1160,22 @@ export const LEGACY_AGENTS_MD_REFRESH_FULL_FILE = [
   '若需更新，只输出完整的新 AGENTS.md 正文（不要代码围栏，不要解释）。否则不要输出任何正文。',
 ].join('\n');
 
+/** Prior section-patch default that still said「桌面助手机器人」; upgrade to assistant wording. */
+export const LEGACY_AGENTS_MD_REFRESH_WITH_ROBOT = [
+  '你负责维护桌面助手机器人的 AGENTS.md（系统提示词）。',
+  '只写入值得跨会话记住的内容：用户偏好、长期目标、项目路径/技术栈、反复出现的约束。',
+  '不要写入一次性任务细节、密钥、冗长日志或与助手无关的闲聊。',
+  '不要重写整份文件，不要删除未提到的章节。',
+  '只输出有改动的章节。新约定可以追加为新章节。',
+  '只输出 JSON，不要代码围栏，不要解释。',
+  '无需更新：{"action":"none"}',
+  '需要更新：{"action":"patch","sections":[{"heading":"用户偏好","body":"该章节的新正文（Markdown，不含标题行）"}]}',
+  'heading 用现有章节名（不要带 #）。只列有变化的章节。',
+].join('\n');
+
 /** Full default system prompt for silent AGENTS.md maintenance (section patches only). */
 export const DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT = [
-  '你负责维护桌面助手机器人的 AGENTS.md（系统提示词）。',
+  '你负责维护桌面助手的 AGENTS.md（系统提示词）。',
   '只写入值得跨会话记住的内容：用户偏好、长期目标、项目路径/技术栈、反复出现的约束。',
   '不要写入一次性任务细节、密钥、冗长日志或与助手无关的闲聊。',
   '不要重写整份文件，不要删除未提到的章节。',
@@ -1170,7 +1219,8 @@ export function normalizeInstructionsSettings(raw: unknown): InstructionsSetting
     !agentsPromptRaw ||
     agentsPromptRaw === LEGACY_DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT ||
     agentsPromptRaw === LEGACY_AGENTS_MD_REFRESH_WITH_VISION_GUARD ||
-    agentsPromptRaw === LEGACY_AGENTS_MD_REFRESH_FULL_FILE
+    agentsPromptRaw === LEGACY_AGENTS_MD_REFRESH_FULL_FILE ||
+    agentsPromptRaw === LEGACY_AGENTS_MD_REFRESH_WITH_ROBOT
       ? ''
       : agentsPromptRaw;
   const skillsInstr =
@@ -1209,6 +1259,10 @@ export interface MemorySettings {
   scopeInstruction: string;
   /** How many recent messages refreshMemories analyzes. Default 20; clamp 1–100. */
   recentMessageLimit: number;
+  /** Max memory bullets injected into the system prompt. Default 40; clamp 5–200. */
+  promptMaxEntries: number;
+  /** Max chars for memory bullets in the system prompt. Default 4000; clamp 500–20000. */
+  promptMaxChars: number;
 }
 
 export const DEFAULT_MEMORY_SCOPE_INSTRUCTION =
@@ -1216,9 +1270,14 @@ export const DEFAULT_MEMORY_SCOPE_INSTRUCTION =
 
 export const DEFAULT_MEMORY_RECENT_MESSAGE_LIMIT = 20;
 
+export const DEFAULT_MEMORY_PROMPT_MAX_ENTRIES = 40;
+export const DEFAULT_MEMORY_PROMPT_MAX_CHARS = 4_000;
+
 export const DEFAULT_MEMORY_SETTINGS: MemorySettings = {
   scopeInstruction: DEFAULT_MEMORY_SCOPE_INSTRUCTION,
   recentMessageLimit: DEFAULT_MEMORY_RECENT_MESSAGE_LIMIT,
+  promptMaxEntries: DEFAULT_MEMORY_PROMPT_MAX_ENTRIES,
+  promptMaxChars: DEFAULT_MEMORY_PROMPT_MAX_CHARS,
 };
 
 /** Clamp / fill memory settings. Empty scope instruction → default; limit → 1–100. */
@@ -1229,11 +1288,108 @@ export function normalizeMemorySettings(raw: unknown): MemorySettings {
       : {};
   const scopeInstruction =
     typeof src.scopeInstruction === 'string' ? src.scopeInstruction.trim() : '';
+  // null/'' → defaults (Number(null)===0 would clamp to the floor extremes).
+  let promptMaxEntries: number;
+  if (src.promptMaxEntries == null || src.promptMaxEntries === '') {
+    promptMaxEntries = DEFAULT_MEMORY_PROMPT_MAX_ENTRIES;
+  } else if (typeof src.promptMaxEntries === 'string' && !src.promptMaxEntries.trim()) {
+    promptMaxEntries = DEFAULT_MEMORY_PROMPT_MAX_ENTRIES;
+  } else {
+    promptMaxEntries =
+      typeof src.promptMaxEntries === 'number' ? src.promptMaxEntries : Number(src.promptMaxEntries);
+    if (!Number.isFinite(promptMaxEntries)) promptMaxEntries = DEFAULT_MEMORY_PROMPT_MAX_ENTRIES;
+  }
+  promptMaxEntries = Math.min(200, Math.max(5, Math.floor(promptMaxEntries)));
+
+  let promptMaxChars: number;
+  if (src.promptMaxChars == null || src.promptMaxChars === '') {
+    promptMaxChars = DEFAULT_MEMORY_PROMPT_MAX_CHARS;
+  } else if (typeof src.promptMaxChars === 'string' && !src.promptMaxChars.trim()) {
+    promptMaxChars = DEFAULT_MEMORY_PROMPT_MAX_CHARS;
+  } else {
+    promptMaxChars =
+      typeof src.promptMaxChars === 'number' ? src.promptMaxChars : Number(src.promptMaxChars);
+    if (!Number.isFinite(promptMaxChars)) promptMaxChars = DEFAULT_MEMORY_PROMPT_MAX_CHARS;
+  }
+  promptMaxChars = Math.min(20_000, Math.max(500, Math.floor(promptMaxChars)));
+
   return {
     scopeInstruction: scopeInstruction || DEFAULT_MEMORY_SCOPE_INSTRUCTION,
     recentMessageLimit: normalizeMaxTurns(
       src.recentMessageLimit,
       DEFAULT_MEMORY_RECENT_MESSAGE_LIMIT,
+    ),
+    promptMaxEntries,
+    promptMaxChars,
+  };
+}
+
+/**
+ * Post-turn silent maintenance throttle (`settings.json` → `maintenance`).
+ * Memory refreshes more often than AGENTS.md / skills. User phrases like
+ * 「记住」/ remember / 「别忘了」 force an immediate memory refresh.
+ */
+export interface MaintenanceSettings {
+  /** Run memory refresh every N successful turns (default 2). Clamp 1–50. */
+  memoryEveryTurns: number;
+  /** Or when user chars since last memory refresh ≥ this (default 400). Clamp 50–20000. */
+  memoryEveryUserChars: number;
+  /** AGENTS.md refresh every N turns (default 5). Clamp 1–50. */
+  agentsEveryTurns: number;
+  /** Or when user chars since last AGENTS refresh ≥ this (default 1200). */
+  agentsEveryUserChars: number;
+  /** Skills refresh every N turns (default 5). Clamp 1–50. */
+  skillsEveryTurns: number;
+  /** Or when user chars since last skills refresh ≥ this (default 1200). */
+  skillsEveryUserChars: number;
+}
+
+export const DEFAULT_MAINTENANCE_SETTINGS: MaintenanceSettings = {
+  memoryEveryTurns: 2,
+  memoryEveryUserChars: 400,
+  agentsEveryTurns: 5,
+  agentsEveryUserChars: 1200,
+  skillsEveryTurns: 5,
+  skillsEveryUserChars: 1200,
+};
+
+function clampMaintTurns(raw: unknown, fallback: number): number {
+  // null/'' → fallback (Number(null)===0 would wrongly clamp to 1 = every turn).
+  if (raw == null || raw === '') return fallback;
+  if (typeof raw === 'string' && !raw.trim()) return fallback;
+  const n = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(50, Math.max(1, Math.floor(n)));
+}
+
+function clampMaintChars(raw: unknown, fallback: number): number {
+  if (raw == null || raw === '') return fallback;
+  if (typeof raw === 'string' && !raw.trim()) return fallback;
+  const n = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(20_000, Math.max(50, Math.floor(n)));
+}
+
+export function normalizeMaintenanceSettings(raw: unknown): MaintenanceSettings {
+  const src =
+    raw && typeof raw === 'object'
+      ? (raw as Partial<Record<keyof MaintenanceSettings, unknown>>)
+      : {};
+  return {
+    memoryEveryTurns: clampMaintTurns(src.memoryEveryTurns, DEFAULT_MAINTENANCE_SETTINGS.memoryEveryTurns),
+    memoryEveryUserChars: clampMaintChars(
+      src.memoryEveryUserChars,
+      DEFAULT_MAINTENANCE_SETTINGS.memoryEveryUserChars,
+    ),
+    agentsEveryTurns: clampMaintTurns(src.agentsEveryTurns, DEFAULT_MAINTENANCE_SETTINGS.agentsEveryTurns),
+    agentsEveryUserChars: clampMaintChars(
+      src.agentsEveryUserChars,
+      DEFAULT_MAINTENANCE_SETTINGS.agentsEveryUserChars,
+    ),
+    skillsEveryTurns: clampMaintTurns(src.skillsEveryTurns, DEFAULT_MAINTENANCE_SETTINGS.skillsEveryTurns),
+    skillsEveryUserChars: clampMaintChars(
+      src.skillsEveryUserChars,
+      DEFAULT_MAINTENANCE_SETTINGS.skillsEveryUserChars,
     ),
   };
 }
@@ -1417,6 +1573,8 @@ export interface AppSettings {
   instructions: InstructionsSettings;
   /** Memory refresh scope rule + global memory manager settings. */
   memory: MemorySettings;
+  /** Post-turn AGENTS / skills / memory refresh throttle. */
+  maintenance: MaintenanceSettings;
   /** Built-in squad captain defaults (persona / playbook / maxTurns). */
   squad: SquadSettings;
   /** Per-run tool call / duration circuit breakers + trajectory recording. */
@@ -1446,6 +1604,11 @@ export interface AppSettings {
   showAdvancedSettings: boolean;
   /** Optional MCP servers ("advanced extensions"). Default off. */
   mcp: McpSettings;
+  /**
+   * Built-in web tools: third-party search provider + API key,
+   * and web_fetch private-network allow flag.
+   */
+  web: WebSettings;
 }
 
 /** Roster row in `~/.okbot/bots.json` (name card only). */
@@ -1550,6 +1713,8 @@ export interface MemoryEntry {
   memory: string;
   /** ISO timestamp, or null for no expiry. */
   expires: string | null;
+  /** When true, prefer keeping this row in the prompt over unpinned locals. */
+  pinned?: boolean;
 }
 
 export interface BotSkill {
@@ -1700,6 +1865,184 @@ export function normalizeTokenUsage(raw: unknown): TokenUsage | undefined {
   return { input, output, cache };
 }
 
+/** One timed step inside a chat turn (model / tool / approval / system). */
+export type TurnSpanKind = 'model' | 'tool' | 'wait_approval' | 'system';
+
+/** Outcome of a turn span. */
+export type TurnSpanStatus = 'ok' | 'error' | 'denied' | 'aborted' | 'running';
+
+/** Overall turn status (mirrors run-trace file status). */
+export type MessageTraceStatus =
+  | 'running'
+  | 'done'
+  | 'error'
+  | 'aborted'
+  | 'circuit_break';
+
+/** One waterfall row for a chat turn. */
+export interface TurnSpan {
+  id: string;
+  /** Optional parent for nested spans (e.g. tool inside a model resume). */
+  parentId?: string;
+  kind: TurnSpanKind;
+  /** Display name: `model`, `tool:run_shell`, `wait_approval:run_shell`, `compress`, … */
+  name: string;
+  startedAt: string;
+  endedAt?: string;
+  status: TurnSpanStatus;
+  inputSummary?: string;
+  outputSummary?: string;
+  error?: string;
+}
+
+/** Per-assistant-message turn timeline (persisted on the message). */
+export interface MessageTrace {
+  turnId: string;
+  startedAt: string;
+  endedAt?: string;
+  status: MessageTraceStatus;
+  spans: TurnSpan[];
+}
+
+const TURN_SPAN_KINDS = new Set<TurnSpanKind>(['model', 'tool', 'wait_approval', 'system']);
+const TURN_SPAN_STATUSES = new Set<TurnSpanStatus>([
+  'ok',
+  'error',
+  'denied',
+  'aborted',
+  'running',
+]);
+const MESSAGE_TRACE_STATUSES = new Set<MessageTraceStatus>([
+  'running',
+  'done',
+  'error',
+  'aborted',
+  'circuit_break',
+]);
+
+function coerceIsoTime(raw: unknown): string | undefined {
+  if (typeof raw !== 'string' || !raw.trim()) return undefined;
+  const t = Date.parse(raw);
+  if (!Number.isFinite(t)) return undefined;
+  return new Date(t).toISOString();
+}
+
+/** Wall-clock duration in ms; undefined while still running / missing end. */
+export function spanDurationMs(span: Pick<TurnSpan, 'startedAt' | 'endedAt'>): number | undefined {
+  const start = Date.parse(span.startedAt);
+  if (!Number.isFinite(start)) return undefined;
+  if (!span.endedAt) return undefined;
+  const end = Date.parse(span.endedAt);
+  if (!Number.isFinite(end)) return undefined;
+  return Math.max(0, end - start);
+}
+
+/** Human-friendly duration for UI (zh/en-agnostic digits + unit suffix from caller). */
+export function formatDurationMs(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return '—';
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  if (ms < 60_000) {
+    const s = ms / 1000;
+    return `${s >= 10 ? s.toFixed(0) : s.toFixed(1)} s`;
+  }
+  const m = Math.floor(ms / 60_000);
+  const s = Math.round((ms % 60_000) / 1000);
+  return s > 0 ? `${m} m ${s} s` : `${m} m`;
+}
+
+export type WaterfallBar = {
+  span: TurnSpan;
+  offsetMs: number;
+  durationMs: number;
+  /** 0–100 left offset within the turn window. */
+  leftPct: number;
+  /** 0–100 width within the turn window (min ~0.5 so short spans stay visible). */
+  widthPct: number;
+};
+
+/**
+ * Layout spans as Gantt bars relative to turn start.
+ * Ordering: startedAt ascending, then original index (stable).
+ */
+export function computeWaterfallBars(trace: MessageTrace): WaterfallBar[] {
+  const turnStart = Date.parse(trace.startedAt);
+  if (!Number.isFinite(turnStart)) return [];
+  let turnEnd = turnStart;
+  const ended = trace.endedAt ? Date.parse(trace.endedAt) : NaN;
+  if (Number.isFinite(ended)) turnEnd = Math.max(turnEnd, ended);
+  const indexed = trace.spans.map((span, index) => ({ span, index }));
+  indexed.sort((a, b) => {
+    const as = Date.parse(a.span.startedAt);
+    const bs = Date.parse(b.span.startedAt);
+    const aOk = Number.isFinite(as);
+    const bOk = Number.isFinite(bs);
+    if (aOk && bOk && as !== bs) return as - bs;
+    if (aOk !== bOk) return aOk ? -1 : 1;
+    return a.index - b.index;
+  });
+  for (const { span } of indexed) {
+    const s = Date.parse(span.startedAt);
+    if (Number.isFinite(s)) turnEnd = Math.max(turnEnd, s);
+    const e = span.endedAt ? Date.parse(span.endedAt) : NaN;
+    if (Number.isFinite(e)) turnEnd = Math.max(turnEnd, e);
+  }
+  const windowMs = Math.max(1, turnEnd - turnStart);
+  return indexed.map(({ span }) => {
+    const s = Date.parse(span.startedAt);
+    const startMs = Number.isFinite(s) ? s : turnStart;
+    const dur = spanDurationMs(span);
+    const durationMs = dur != null ? dur : Math.max(0, turnEnd - startMs);
+    const offsetMs = Math.max(0, startMs - turnStart);
+    const leftPct = Math.min(100, Math.max(0, (offsetMs / windowMs) * 100));
+    const rawWidth = (durationMs / windowMs) * 100;
+    const widthPct = Math.min(100 - leftPct, Math.max(0.5, rawWidth));
+    return { span, offsetMs, durationMs, leftPct, widthPct };
+  });
+}
+
+export function normalizeTurnSpan(raw: unknown): TurnSpan | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const src = raw as Record<string, unknown>;
+  const id = typeof src.id === 'string' && src.id.trim() ? src.id.trim() : '';
+  const name = typeof src.name === 'string' && src.name.trim() ? src.name.trim() : '';
+  const kind = TURN_SPAN_KINDS.has(src.kind as TurnSpanKind) ? (src.kind as TurnSpanKind) : null;
+  const status = TURN_SPAN_STATUSES.has(src.status as TurnSpanStatus)
+    ? (src.status as TurnSpanStatus)
+    : null;
+  const startedAt = coerceIsoTime(src.startedAt);
+  if (!id || !name || !kind || !status || !startedAt) return undefined;
+  const out: TurnSpan = { id, kind, name, startedAt, status };
+  if (typeof src.parentId === 'string' && src.parentId.trim()) out.parentId = src.parentId.trim();
+  const endedAt = coerceIsoTime(src.endedAt);
+  if (endedAt) out.endedAt = endedAt;
+  if (typeof src.inputSummary === 'string') out.inputSummary = src.inputSummary;
+  if (typeof src.outputSummary === 'string') out.outputSummary = src.outputSummary;
+  if (typeof src.error === 'string') out.error = src.error;
+  return out;
+}
+
+export function normalizeMessageTrace(raw: unknown): MessageTrace | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const src = raw as Record<string, unknown>;
+  const turnId = typeof src.turnId === 'string' && src.turnId.trim() ? src.turnId.trim() : '';
+  const startedAt = coerceIsoTime(src.startedAt);
+  if (!turnId || !startedAt) return undefined;
+  const status = MESSAGE_TRACE_STATUSES.has(src.status as MessageTraceStatus)
+    ? (src.status as MessageTraceStatus)
+    : 'done';
+  const spans: TurnSpan[] = [];
+  if (Array.isArray(src.spans)) {
+    for (const item of src.spans) {
+      const span = normalizeTurnSpan(item);
+      if (span) spans.push(span);
+    }
+  }
+  const out: MessageTrace = { turnId, startedAt, status, spans };
+  const endedAt = coerceIsoTime(src.endedAt);
+  if (endedAt) out.endedAt = endedAt;
+  return out;
+}
+
 /** Lifetime + daily + per-owner aggregates (`~/.okbot/usage.json`). */
 export interface UsageStats {
   lifetime: TokenUsage;
@@ -1786,6 +2129,8 @@ export interface ChatMessage {
   attachments?: MessageAttachment[];
   /** Token usage for this assistant turn (omitted for user / legacy rows). */
   usage?: TokenUsage;
+  /** Waterfall timeline for this assistant turn (model / tools / approval). */
+  trace?: MessageTrace;
   /**
    * Renderer-only: optimistic user bubble send state.
    * `pending` while chatStart awaits; `failed` shows retry; cleared/`sent` after IPC succeeds.
@@ -1845,6 +2190,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   notifications: true,
   showAdvancedSettings: false,
   mcp: { enabled: false, servers: [] },
+  web: {
+    search: { provider: 'tavily', apiKey: '', baseURL: '' },
+    fetch: { allowPrivateNetwork: false },
+  },
   theme: 'system',
   language: 'system',
   microphoneId: '',
@@ -1861,6 +2210,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
     write_file: { ...DEFAULT_TOOL_PREFERENCES.write_file },
     edit_file: { ...DEFAULT_TOOL_PREFERENCES.edit_file },
     generate_image: { ...DEFAULT_TOOL_PREFERENCES.generate_image },
+    search_history: { ...DEFAULT_TOOL_PREFERENCES.search_history },
+    manage_schedule: { ...DEFAULT_TOOL_PREFERENCES.manage_schedule },
+    web_fetch: { ...DEFAULT_TOOL_PREFERENCES.web_fetch },
+    web_search: { ...DEFAULT_TOOL_PREFERENCES.web_search },
   },
   security: { ...DEFAULT_SECURITY, deniedPathPrefixes: [...DEFAULT_DENIED_PATH_PREFIXES], allowedPathPrefixes: [] },
   model: {
@@ -1872,6 +2225,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   maxTurns: DEFAULT_MAX_TURNS,
   instructions: { ...DEFAULT_INSTRUCTIONS_SETTINGS },
   memory: { ...DEFAULT_MEMORY_SETTINGS },
+  maintenance: { ...DEFAULT_MAINTENANCE_SETTINGS },
   squad: { ...DEFAULT_SQUAD_SETTINGS },
   toolRun: { ...DEFAULT_TOOL_RUN },
   localHttpApi: { ...DEFAULT_LOCAL_HTTP_API, token: '' },
@@ -1993,6 +2347,10 @@ export const IpcChannels = {
   /** Bring this window to the front (notification click). */
   windowFocus: 'okbot:window-focus',
   claimNotification: 'okbot:claim-notification',
+  /** List timed wakeups across all assistants/squads (settings UI). */
+  listScheduledJobs: 'okbot:list-scheduled-jobs',
+  /** pause | resume | delete one job: { ownerId, jobId, action }. */
+  manageScheduledJob: 'okbot:manage-scheduled-job',
 } as const;
 
 export type PendingToolRequest = {
@@ -2010,11 +2368,20 @@ export type PendingToolRequest = {
 export type SessionsChangedReason = 'message' | 'created' | 'updated' | 'deleted';
 
 export type RuntimeEvent =
-  | { type: 'delta'; botId: string; messageId: string; delta: string }
-  | { type: 'done'; botId: string; messageId: string; content: string; usage?: TokenUsage; aborted?: boolean }
-  | { type: 'error'; botId: string; messageId: string; error: string }
-  | { type: 'user_message'; botId: string; message: ChatMessage }
-  | { type: 'assistant_message'; botId: string; message: ChatMessage }
+  | { type: 'delta'; botId: string; messageId: string; delta: string; runId?: string }
+  | {
+      type: 'done';
+      botId: string;
+      messageId: string;
+      content: string;
+      usage?: TokenUsage;
+      trace?: MessageTrace;
+      aborted?: boolean;
+      runId?: string;
+    }
+  | { type: 'error'; botId: string; messageId: string; error: string; runId?: string }
+  | { type: 'user_message'; botId: string; message: ChatMessage; runId?: string }
+  | { type: 'assistant_message'; botId: string; message: ChatMessage; runId?: string }
   | {
       type: 'tool_request';
       botId: string;
@@ -2022,6 +2389,7 @@ export type RuntimeEvent =
       requestId: string;
       toolName: string;
       arguments: unknown;
+      runId?: string;
     }
   | {
       type: 'tool_result';
@@ -2031,6 +2399,16 @@ export type RuntimeEvent =
       toolName: string;
       approved: boolean;
       output?: string;
+      runId?: string;
+    }
+  | {
+      /** Parallel turn binder: links user bubble ↔ assistant bubble ↔ runId. */
+      type: 'turn_started';
+      botId: string;
+      runId: string;
+      userMessageId: string;
+      assistantMessageId: string;
+      clientTurnId?: string;
     }
   | {
       /** Skills catalog changed on disk (hot reload); UI may refresh lists. */

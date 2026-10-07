@@ -26,6 +26,7 @@ import {
   ChatComposer,
   ChatTranscript,
   ChatWatermark,
+  TurnTraceModal,
   type AttachKind,
   type ComposerAttachment,
 } from './features/chat';
@@ -66,6 +67,11 @@ import {
   formatMessageWithAttachments,
   resolveMessageAttachments,
 } from './utils/messageAttachments';
+import {
+  collectDroppedAttachments,
+  dataTransferHasFiles,
+  type DroppedAttachment,
+} from './utils/dropAttachments';
 import { isAbortLikeError, isMcpToolName } from '@okbot/shared';
 import { toast, ToastHost, requestConfirm, ConfirmHost } from './components/ui';
 import type {
@@ -79,6 +85,11 @@ import type {
   TurnPhase,
 } from './types';
 import type { DockTipTarget } from './features/sidebar';
+import {
+  removeParallelTask,
+  upsertParallelTask,
+  type ParallelTask,
+} from './features/chat/ParallelTasksStrip';
 import {
   EMOJI_PRESETS,
   MESSAGE_PAGE_SIZE,
@@ -104,6 +115,7 @@ import {
   type LanguageCode,
   type Bot,
   type ChatMessage,
+  type MessageTrace,
   type Squad,
   type SquadMember,
   type ThemeMode,
@@ -126,6 +138,10 @@ export function App() {
   const [tokenUsageView, setTokenUsageView] = useState<null | {
     messageId: string;
     usage?: import('@okbot/shared').TokenUsage;
+  }>(null);
+  const [turnTraceView, setTurnTraceView] = useState<null | {
+    messageId: string;
+    trace?: MessageTrace;
   }>(null);
   const [updaterStatus, setUpdaterStatus] = useState<UpdaterStatus | null>(null);
   /** Boot notices fired after `lang` is known (not on the first empty-deps frame). */
@@ -160,8 +176,10 @@ export function App() {
   const attachmentsRef = useRef<ComposerAttachment[]>([]);
   /** Per-bot in-flight flag (streaming OR awaiting tool approval). */
   const [busyByBot, setBusyByBot] = useState<Record<string, boolean>>({});
-  /** Count of renderer chatStart awaits per owner — keeps BorderBeam up across abort+restart steer. */
+  /** Count of renderer chatStart awaits per owner — keeps BorderBeam up while any parallel turn wraps up. */
   const sendsInFlightRef = useRef<Record<string, number>>({});
+  /** Unfinished parallel turns per owner (task strip when length > 1). */
+  const [parallelTasksByOwner, setParallelTasksByOwner] = useState<Record<string, ParallelTask[]>>({});
   /** local_* ids already replaced by a persisted user_message. Failure must not re-append them. */
   const reconciledLocalIdsRef = useRef<Set<string>>(new Set());
   /** In-flight optimistic sends, including ones whose chat is not on screen. */
@@ -309,24 +327,37 @@ export function App() {
     return i >= 0 ? norm.slice(i + 1) || norm : norm;
   };
 
+  const addAttachmentsFromDrops = (items: DroppedAttachment[]) => {
+    if (!items.length) return;
+    const prev = attachmentsRef.current;
+    const existing = new Set(prev.map((a) => a.path));
+    const added: ComposerAttachment[] = [];
+    for (const item of items) {
+      if (!item.path || existing.has(item.path)) continue;
+      existing.add(item.path);
+      added.push({
+        id: `att_${Date.now()}_${added.length}_${Math.random().toString(36).slice(2, 8)}`,
+        kind: item.kind,
+        path: item.path,
+        name: item.name || basenameOf(item.path),
+      });
+    }
+    if (added.length) updateAttachments([...prev, ...added]);
+  };
+
   const onPickAttach = async (kind: AttachKind) => {
     try {
       const result = await window.okbot.pickPaths(kind);
       if (result.canceled || !result.paths?.length) return;
-      const prev = attachmentsRef.current;
-      const existing = new Set(prev.map((a) => a.path));
-      const added: ComposerAttachment[] = [];
-      for (const filePath of result.paths) {
-        if (!filePath || existing.has(filePath)) continue;
-        existing.add(filePath);
-        added.push({
-          id: `att_${Date.now()}_${added.length}_${Math.random().toString(36).slice(2, 8)}`,
-          kind,
-          path: filePath,
-          name: basenameOf(filePath),
-        });
-      }
-      if (added.length) updateAttachments([...prev, ...added]);
+      addAttachmentsFromDrops(
+        result.paths
+          .filter((filePath): filePath is string => Boolean(filePath))
+          .map((filePath) => ({
+            kind,
+            path: filePath,
+            name: basenameOf(filePath),
+          })),
+      );
     } catch (err) {
       toast.error(formatSystemError(err));
     }
@@ -334,6 +365,62 @@ export function App() {
 
   const onRemoveAttachment = (id: string) => {
     updateAttachments(attachmentsRef.current.filter((a) => a.id !== id));
+  };
+
+  const fileDragDepthRef = useRef(0);
+  const [fileDragOver, setFileDragOver] = useState(false);
+
+  const clearFileDragOver = () => {
+    fileDragDepthRef.current = 0;
+    setFileDragOver(false);
+  };
+
+  const onChatDragEnter = (e: React.DragEvent) => {
+    if (listening || !dataTransferHasFiles(e.dataTransfer)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    fileDragDepthRef.current += 1;
+    setFileDragOver(true);
+  };
+
+  const onChatDragLeave = (e: React.DragEvent) => {
+    if (!fileDragOver && fileDragDepthRef.current === 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    fileDragDepthRef.current = Math.max(0, fileDragDepthRef.current - 1);
+    if (fileDragDepthRef.current === 0) setFileDragOver(false);
+  };
+
+  const onChatDragOver = (e: React.DragEvent) => {
+    if (listening || !dataTransferHasFiles(e.dataTransfer)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'copy';
+  };
+
+  const onChatDrop = (e: React.DragEvent) => {
+    const hadFiles = dataTransferHasFiles(e.dataTransfer);
+    if (hadFiles) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    clearFileDragOver();
+    if (!hadFiles || listening) return;
+    const dt = e.dataTransfer;
+    const fileCount = dt.files?.length ?? 0;
+    const dropped = collectDroppedAttachments(dt, {
+      getPathForFile:
+        typeof window.okbot?.getPathForFile === 'function'
+          ? (file) => window.okbot.getPathForFile(file)
+          : undefined,
+    });
+    if (dropped.length) {
+      addAttachmentsFromDrops(dropped);
+      return;
+    }
+    if (fileCount > 0) {
+      toast.info(t(lang, 'attachDropNoPath'));
+    }
   };
 
   const markSessionUnread = (ownerId: string, hasUnread: boolean) => {
@@ -1008,6 +1095,35 @@ export function App() {
         return;
       }
 
+      if (event.type === 'turn_started') {
+        const clientTurnId = (event.clientTurnId || '').trim();
+        const runId = (event.runId || '').trim();
+        setParallelTasksByOwner((prev) => {
+          const list = prev[event.botId] ?? [];
+          const existing =
+            (clientTurnId
+              ? list.find((x) => x.clientTurnId === clientTurnId || x.id === clientTurnId)
+              : undefined) ||
+            (runId ? list.find((x) => x.runId === runId) : undefined);
+          const id = existing?.id || clientTurnId || runId;
+          if (!id) return prev;
+          return {
+            ...prev,
+            [event.botId]: upsertParallelTask(list, {
+              id,
+              clientTurnId: clientTurnId || existing?.clientTurnId,
+              runId: runId || existing?.runId,
+              userMessageId: event.userMessageId || existing?.userMessageId,
+              assistantMessageId: event.assistantMessageId || existing?.assistantMessageId,
+              label: existing?.label || '…',
+              status: existing?.status || 'running',
+              startedAt: existing?.startedAt || Date.now(),
+            }),
+          };
+        });
+        return;
+      }
+
       if (event.type === 'user_message') {
         const pendingIdx = pendingOptimisticRef.current.findIndex((p) => p.ownerId === event.botId);
         if (pendingIdx >= 0) {
@@ -1039,6 +1155,36 @@ export function App() {
             return [...prev, event.message];
           });
         }
+        // Keep parallel task labels/ids in sync when local_ bubbles become real ids.
+        setParallelTasksByOwner((prev) => {
+          const list = prev[event.botId] ?? [];
+          if (!list.length) return prev;
+          const runId = typeof (event as { runId?: string }).runId === 'string' ? (event as { runId?: string }).runId : '';
+          let changed = false;
+          const next = list.map((task) => {
+            if (runId && task.runId === runId) {
+              changed = true;
+              return {
+                ...task,
+                userMessageId: event.message.id,
+                label: (event.message.content || task.label).trim() || task.label,
+              };
+            }
+            if (task.userMessageId && String(task.userMessageId).startsWith('local_')) {
+              // FIFO: first local_ task without real id
+              if (!changed) {
+                changed = true;
+                return {
+                  ...task,
+                  userMessageId: event.message.id,
+                  label: (event.message.content || task.label).trim() || task.label,
+                };
+              }
+            }
+            return task;
+          });
+          return changed ? { ...prev, [event.botId]: next } : prev;
+        });
         return;
       }
 
@@ -1092,6 +1238,17 @@ export function App() {
         });
         setBusyByBot((prev) => ({ ...prev, [event.botId]: true }));
         setTurnPhaseByBot((prev) => ({ ...prev, [event.botId]: 'awaiting_approval' }));
+        if (event.runId) {
+          setParallelTasksByOwner((prev) => ({
+            ...prev,
+            [event.botId]: upsertParallelTask(prev[event.botId] ?? [], {
+              id: event.runId!,
+              runId: event.runId,
+              assistantMessageId: event.messageId,
+              status: 'awaiting_approval',
+            }),
+          }));
+        }
         if (!isActive || !windowIsFocused()) markSessionUnread(event.botId, true);
         notifyUnfocusedRef.current(event.botId, 'approval', event.toolName, event.requestId || event.messageId);
         return;
@@ -1116,12 +1273,28 @@ export function App() {
         } else {
           setTurnPhaseByBot((prev) => ({ ...prev, [event.botId]: 'thinking' }));
         }
+        if (event.runId) {
+          setParallelTasksByOwner((prev) => ({
+            ...prev,
+            [event.botId]: upsertParallelTask(prev[event.botId] ?? [], {
+              id: event.runId!,
+              runId: event.runId,
+              status: 'running',
+            }),
+          }));
+        }
         return;
       }
       if (event.type === 'done' || event.type === 'error') {
         flushPendingStream();
+        if (event.runId) {
+          setParallelTasksByOwner((prev) => ({
+            ...prev,
+            [event.botId]: removeParallelTask(prev[event.botId] ?? [], { runId: event.runId }),
+          }));
+        }
         const inFlight = sendsInFlightRef.current[event.botId] || 0;
-        // Steer: an older aborted run's done must not clear busy while a newer send awaits.
+        // Parallel: one turn's done must not clear busy while other sends still await.
         if (inFlight === 0) {
           setBusyByBot((prev) => ({ ...prev, [event.botId]: false }));
           setTurnPhaseByBot((prev) => {
@@ -1134,8 +1307,8 @@ export function App() {
           // Final content is on screen but chatStart IPC is still wrapping up
           // (persist, AGENTS/skills/memory refresh). Keep busy via sendsInFlight;
           // show wrapping_up instead of lingering on replying.
-          // Skip aborted done / inFlight>1 so a steer leftover does not clobber
-          // the newer send's thinking/replying phase.
+          // Skip aborted done / inFlight>1 so a finished sibling does not clobber
+          // another in-flight turn's thinking/replying phase.
           const isAbortedDone = event.type === 'done' && !!event.aborted;
           if (!isAbortedDone && inFlight === 1) {
             setTurnPhaseByBot((prev) => ({ ...prev, [event.botId]: 'wrapping_up' }));
@@ -1214,6 +1387,7 @@ export function App() {
             ...next[idx],
             content: nextContent,
             ...(event.type === 'done' && event.usage ? { usage: event.usage } : {}),
+            ...(event.type === 'done' && event.trace ? { trace: event.trace } : {}),
           };
           return next;
         }
@@ -2146,7 +2320,19 @@ async function handleSend(retry?: {
       const sendOpts = {
         ...(quoteMessageId ? { quoteMessageId } : {}),
         ...(structuredAtts?.length ? { attachments: structuredAtts } : {}),
+        clientTurnId: localId,
       };
+      setParallelTasksByOwner((prev) => ({
+        ...prev,
+        [ownerId]: upsertParallelTask(prev[ownerId] ?? [], {
+          id: localId,
+          clientTurnId: localId,
+          userMessageId: localId,
+          label: text,
+          status: 'running',
+          startedAt: Date.now(),
+        }),
+      }));
       if (kind === 'squad') await window.okbot.chatStartSquad(ownerId, text, sendOpts);
       else await window.okbot.chatStart(ownerId, text, sendOpts);
       // Mark optimistic bubble sent (user_message event may replace local_ id shortly).
@@ -2163,7 +2349,7 @@ async function handleSend(retry?: {
       setBots(await window.okbot.listBots());
       setSquads(await window.okbot.listSquads());
     } catch (err) {
-      // Steer/Stop abort of an older in-flight chatStart must not toast or mark failed.
+      // Stop abort of an in-flight chatStart must not toast or mark failed.
       if (isAbortLikeError(err)) {
         if (selectionRef.current?.kind === kind && selectionRef.current.id === ownerId) {
           setMessages((prev) =>
@@ -2234,6 +2420,12 @@ async function handleSend(retry?: {
     const ownerId = chatOwnerId;
     // Drop in-flight send counts so an aborted steer restart cannot keep the beam on.
     sendsInFlightRef.current[ownerId] = 0;
+    setParallelTasksByOwner((prev) => {
+      if (!(ownerId in prev)) return prev;
+      const next = { ...prev };
+      delete next[ownerId];
+      return next;
+    });
     void (async () => {
       let result: unknown;
       try {
@@ -2319,6 +2511,12 @@ async function handleSend(retry?: {
       if (selectionRef.current?.id !== owner) return;
       toast.error(formatSystemError(err));
     }
+  }
+
+  function jumpToParallelTask(task: ParallelTask) {
+    const target = (task.userMessageId || task.assistantMessageId || '').trim();
+    if (!target) return;
+    void jumpToQuotedMessage(target);
   }
 
   function releaseMicStream() {
@@ -2673,6 +2871,9 @@ async function handleSend(retry?: {
   const onViewTokenUsage = useCallback((message: ChatMessage) => {
     setTokenUsageView({ messageId: message.id, usage: message.usage });
   }, []);
+  const onViewTurnTrace = useCallback((message: ChatMessage) => {
+    setTurnTraceView({ messageId: message.id, trace: message.trace });
+  }, []);
   const onJumpToQuotedMessage = useCallback((id: string) => {
     void jumpToQuotedMessage(id);
   }, [chatOwnerId, messages]);
@@ -2851,7 +3052,18 @@ async function handleSend(retry?: {
         ) : null}
 
         {(selectedBot || selectedSquad) && (
-          <div className="chat-pane">
+          <div
+            className={`chat-pane${fileDragOver ? ' is-file-drag' : ''}`}
+            onDragEnter={onChatDragEnter}
+            onDragLeave={onChatDragLeave}
+            onDragOver={onChatDragOver}
+            onDrop={onChatDrop}
+          >
+            {fileDragOver ? (
+              <div className="chat-drop-overlay" aria-hidden>
+                <div className="chat-drop-overlay-card">{t(lang, 'attachDropHint')}</div>
+              </div>
+            ) : null}
             <div className="main-header">
               {selectedBot ? (
                 <button
@@ -3024,6 +3236,7 @@ async function handleSend(retry?: {
               onQuoteMessage={onQuoteMessage}
               onCopyMessage={onCopyMessage}
               onViewTokenUsage={onViewTokenUsage}
+              onViewTurnTrace={onViewTurnTrace}
               onJumpToQuotedMessage={onJumpToQuotedMessage}
               onJumpToBottom={onJumpToBottom}
               onRetrySend={onRetrySend}
@@ -3032,6 +3245,8 @@ async function handleSend(retry?: {
               onDenyTool={onDenyTool}
               onApproveToolForever={onApproveToolForever}
               composerSlot={composerSlot}
+              parallelTasks={chatOwnerId ? parallelTasksByOwner[chatOwnerId] ?? [] : []}
+              onJumpParallelTask={jumpToParallelTask}
               immersiveChat={immersiveChat}
               onToggleImmersiveChat={onToggleImmersiveChat}
               showThinking={showThinking}
@@ -3544,6 +3759,13 @@ async function handleSend(retry?: {
             )}
           </div>
         </div>
+      ) : null}
+      {turnTraceView ? (
+        <TurnTraceModal
+          lang={lang}
+          trace={turnTraceView.trace}
+          onClose={() => setTurnTraceView(null)}
+        />
       ) : null}
       <ToastHost closeLabel={t(lang, 'close')} />
       <ConfirmHost />

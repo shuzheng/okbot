@@ -7,7 +7,7 @@ import {
   type SessionInputCallback,
   type Tool,
 } from '@openai/agents';
-import type { ChatMessage, ResolvedModelConfig, SecuritySettings, ToolPreferences } from '@okbot/shared';
+import type { ChatMessage, ResolvedModelConfig, SecuritySettings, ToolPreferences, WebSettings } from '@okbot/shared';
 import { createId, DEFAULT_SECURITY, DEFAULT_TOOL_PREFERENCES } from '@okbot/shared';
 import { buildAgentInstructions } from './instructions.js';
 import { shellFsRoutingSection, type ComputerRoute } from './computerSelection.js';
@@ -75,6 +75,8 @@ export function createAgentAndRunner(input: {
   agentsMd?: string;
   skillsText?: string;
   skillLookup?: SkillLookup;
+  historySearch?: import('./tools.js').HistorySearch;
+  scheduleManage?: import('./tools.js').ScheduleManage;
   memoriesText?: string;
   sessionSummary?: string;
   /** settings.instructions.assistantRoleTemplate */
@@ -97,6 +99,8 @@ export function createAgentAndRunner(input: {
   computerRoute?: ComputerRoute;
   /** Extra tools appended after the built-ins (for example MCP tools; see mcp/). */
   extraTools?: readonly Tool[];
+  /** Built-in web_fetch / web_search settings (`settings.web`). */
+  web?: WebSettings;
 }) {
   const toolPrefs = input.tools ?? DEFAULT_TOOL_PREFERENCES;
   const security = input.security ?? DEFAULT_SECURITY;
@@ -128,6 +132,8 @@ export function createAgentAndRunner(input: {
     tools: [
       ...buildTools(toolPrefs, security, input.toolRunBudget, {
       skillLookup: input.skillLookup,
+      historySearch: input.historySearch,
+      scheduleManage: input.scheduleManage,
       imageApi: {
         baseURL: input.model.baseURL,
         apiKey: input.model.apiKey,
@@ -140,6 +146,7 @@ export function createAgentAndRunner(input: {
           : undefined,
       backend: input.computerRoute ? undefined : input.executionBackend,
       computerRoute: input.computerRoute,
+      web: input.web,
       }),
       ...(input.extraTools ?? []),
     ],
@@ -214,6 +221,23 @@ export function resolveFinalContent(
  * Shared HITL loop: for each interruption, ask UI (with serialized RunState),
  * approve/reject on state, then resume streaming until no interruptions remain.
  */
+export async function runModelSegment(
+  hooks: HitlLoopHooks,
+  run: () => Promise<{ result: AgentRunStreamResult; streamed: string }>,
+): Promise<{ result: AgentRunStreamResult; streamed: string }> {
+  const started = hooks.onModelTurnStart?.();
+  const spanId = typeof started === 'string' ? started : undefined;
+  try {
+    const out = await run();
+    hooks.onModelTurnEnd?.({ ok: true, ...(spanId ? { spanId } : {}) });
+    return out;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    hooks.onModelTurnEnd?.({ ok: false, error: message, ...(spanId ? { spanId } : {}) });
+    throw err;
+  }
+}
+
 export async function runHitlStreamLoop(
   agent: Agent<any, any>,
   runner: Runner,
@@ -253,6 +277,8 @@ export async function runHitlStreamLoop(
       }
 
       hooks.toolRunBudget?.pauseDuration();
+      const approvalStarted = hooks.onApprovalWaitStart?.(toolName);
+      const approvalSpanId = typeof approvalStarted === 'string' ? approvalStarted : undefined;
       let decision: Awaited<ReturnType<typeof hooks.onToolApprovalRequest>>;
       try {
         decision = await hooks.onToolApprovalRequest({
@@ -261,6 +287,18 @@ export async function runHitlStreamLoop(
           arguments: args,
           serializedRunState,
         });
+        hooks.onApprovalWaitEnd?.({
+          toolName,
+          approved: decision.approved,
+          ...(approvalSpanId ? { spanId: approvalSpanId } : {}),
+        });
+      } catch (err) {
+        hooks.onApprovalWaitEnd?.({
+          toolName,
+          approved: false,
+          ...(approvalSpanId ? { spanId: approvalSpanId } : {}),
+        });
+        throw err;
       } finally {
         hooks.toolRunBudget?.resumeDuration();
       }
@@ -288,8 +326,13 @@ export async function runHitlStreamLoop(
       }
     }
 
-    current = (await runner.run(agent, current.state, runOpts)) as AgentRunStreamResult;
-    streamed += await consumeAgentTextStream(current, hooks.onDelta, hooks.signal);
+    const resumed = await runModelSegment(hooks, async () => {
+      const next = (await runner.run(agent, current.state, runOpts)) as AgentRunStreamResult;
+      const piece = await consumeAgentTextStream(next, hooks.onDelta, hooks.signal);
+      return { result: next, streamed: piece };
+    });
+    current = resumed.result;
+    streamed += resumed.streamed;
   }
 
   if (hooks.signal?.aborted) {

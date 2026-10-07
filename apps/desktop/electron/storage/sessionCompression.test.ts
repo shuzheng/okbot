@@ -119,7 +119,7 @@ function store() {
 }
 
 {
-  const prior = Array.from({ length: 6 }, (_, i) => msg(`m${i}`, 'same topic'));
+  const prior = Array.from({ length: 10 }, (_, i) => msg(`m${i}`, 'same topic'));
   const base = {
     model,
     contextCompression: DEFAULT_CONTEXT_COMPRESSION,

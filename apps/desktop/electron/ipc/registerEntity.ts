@@ -193,6 +193,12 @@ export function registerEntityIpc(ctx: IpcContext): void {
     return typeof token === 'string' ? token : '';
   });
   ipcMain.handle(IpcChannels.getUsageStats, () => ctx.storage.getUsageStats());
+  ipcMain.handle(IpcChannels.listScheduledJobs, () => ops.listScheduledJobs());
+  ipcMain.handle(
+    IpcChannels.manageScheduledJob,
+    (_e, payload: { ownerId: string; jobId: string; action: 'pause' | 'resume' | 'delete' }) =>
+      ops.manageScheduledJob(payload ?? {}),
+  );
   ipcMain.handle(IpcChannels.saveSettings, (_e, settings: AppSettings) =>
     persistAppSettings(ctx, settings),
   );

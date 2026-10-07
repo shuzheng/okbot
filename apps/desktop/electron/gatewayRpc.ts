@@ -46,6 +46,8 @@ export const GATEWAY_RPC_OPS = [
   'discoverModels',
   'testModelConnection',
   'compressSessionNow',
+  'listScheduledJobs',
+  'manageScheduledJob',
 ] as const satisfies readonly EntityOpName[];
 
 export type GatewayRpcOp = (typeof GATEWAY_RPC_OPS)[number];

@@ -119,25 +119,83 @@ assert.equal(rest, 'partial');
 assert.equal(isRuntimeEventTurnTerminal({ type: 'done', botId: 'b', messageId: 'm', content: '' }), true);
 assert.equal(isRuntimeEventTurnTerminal(ev), false);
 
-const sseGate = { seenUserMessage: false };
+const sseGate = { runId: null as string | null };
 const steeredDone: RuntimeEvent = {
   type: 'done',
   botId: 'bot_1',
   messageId: 'old',
   content: '',
   aborted: true,
+  runId: 'run_other',
 };
-assert.equal(acceptRuntimeEventForSseTurn(sseGate, steeredDone), false, 'ignore previous steer done');
-assert.equal(sseGate.seenUserMessage, false);
-const userEv: RuntimeEvent = {
-  type: 'user_message',
+assert.equal(acceptRuntimeEventForSseTurn(sseGate, steeredDone), false, 'ignore events before this turn binds');
+assert.equal(sseGate.runId, null);
+const started: RuntimeEvent = {
+  type: 'turn_started',
   botId: 'bot_1',
-  message: { id: 'u2', role: 'user', content: 'next', createdAt: '2026-01-01T00:00:00.000Z' },
+  runId: 'run_2',
+  userMessageId: 'u2',
+  assistantMessageId: 'm2',
 };
-assert.equal(acceptRuntimeEventForSseTurn(sseGate, userEv), true);
-assert.equal(sseGate.seenUserMessage, true);
-const thisDone: RuntimeEvent = { type: 'done', botId: 'bot_1', messageId: 'm2', content: 'ok' };
+assert.equal(acceptRuntimeEventForSseTurn(sseGate, started), true);
+assert.equal(sseGate.runId, 'run_2');
+const siblingDelta: RuntimeEvent = {
+  type: 'delta',
+  botId: 'bot_1',
+  messageId: 'm_other',
+  delta: 'x',
+  runId: 'run_other',
+};
+assert.equal(acceptRuntimeEventForSseTurn(sseGate, siblingDelta), false, 'ignore sibling run deltas');
+const thisDone: RuntimeEvent = { type: 'done', botId: 'bot_1', messageId: 'm2', content: 'ok', runId: 'run_2' };
 assert.equal(acceptRuntimeEventForSseTurn(sseGate, thisDone), true);
+
+const gated = { runId: null as string | null, clientTurnId: 'local_1' };
+assert.equal(
+  acceptRuntimeEventForSseTurn(gated, {
+    type: 'turn_started',
+    botId: 'bot_1',
+    runId: 'run_a',
+    userMessageId: 'u_a',
+    assistantMessageId: 'm_a',
+    clientTurnId: 'local_other',
+  }),
+  false,
+  'clientTurnId mismatch',
+);
+assert.equal(
+  acceptRuntimeEventForSseTurn(gated, {
+    type: 'turn_started',
+    botId: 'bot_1',
+    runId: 'run_b',
+    userMessageId: 'u_b',
+    assistantMessageId: 'm_b',
+    clientTurnId: 'local_1',
+  }),
+  true,
+);
+assert.equal(gated.runId, 'run_b');
+
+{
+  const toolReqNoRun: RuntimeEvent = {
+    type: 'tool_request',
+    botId: 'bot_1',
+    messageId: 'm_b',
+    requestId: 'req_1',
+    toolName: 'run_shell',
+    arguments: { command: 'echo' },
+  };
+  assert.equal(
+    acceptRuntimeEventForSseTurn(gated, toolReqNoRun),
+    false,
+    'tool_request without runId must not reach gateway/attach SSE',
+  );
+  const toolReq: RuntimeEvent = {
+    ...toolReqNoRun,
+    runId: 'run_b',
+  };
+  assert.equal(acceptRuntimeEventForSseTurn(gated, toolReq), true);
+}
 
 const skillsChanged: RuntimeEvent = {
   type: 'skills_changed',

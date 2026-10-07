@@ -20,7 +20,7 @@ localHttpApi          网关 HTTP。不是独立服务
             +-- 本机 ExecutionBackend（shell / fs）
             +-- 远程 ExecutionBackend → sandbox-agent
             +-- 模型供应商 HTTP（设置里的 baseURL / apiKey）
-            +-- read_skill、generate_image 留在桌面这台机器
+            +-- read_skill、generate_image、web_fetch / web_search 留在桌面这台机器
 ```
 
 六个角色：
@@ -40,7 +40,7 @@ localHttpApi          网关 HTTP。不是独立服务
 
 | 注册 | 通道 |
 | --- | --- |
-| `registerEntity.ts` | bootstrap、bots/squads CRUD、AGENTS.md、记忆、技能、助手包导入导出、settings、`getGatewayAccessToken`、用量、模型探测与连通测试、消息分页与搜索、prompt context、run trace、错误日志、清模型绑定、`probeComputer`、`setChatUnread` |
+| `registerEntity.ts` | bootstrap、bots/squads CRUD、AGENTS.md、记忆、技能、助手包导入导出、助手市场、settings、`getGatewayAccessToken`、用量、模型探测与连通测试、消息分页与搜索、prompt context、run trace、错误日志、清模型绑定、`probeComputer`、`setChatUnread` |
 | `registerChat.ts` | `chatStart`、`chatAbort`、`toolRespond`、`compressSessionNow`。运行中的 `chatEvent` 由 main 推给渲染进程 |
 | `registerSystem.ts` | 窗口最小化/最大化/关闭、红绿灯位置、麦克风、剪贴板、选路径、生成图 data URL、`getAppInfo`、updater 四个调用 |
 | `main.ts`（仅附着） | `attachGatewayToken`：`ipcMain.on` + `sendSync`，把已保存令牌交给 attach preload。不放进命令行 |
@@ -72,7 +72,7 @@ localHttpApi          网关 HTTP。不是独立服务
 | `POST /v1/tool-respond` | `{ requestId, approved, message? }`。成功 200，失败 409 |
 | `POST /v1/bots/:id/abort`、`POST /v1/squads/:id/abort` | 与桌面停止同一条 `abortChatOwner` |
 | `POST /v1/settings` | 只接受 `GATEWAY_SETTINGS_PATCH_KEYS` 里的键。其它键有真实改动则整次 409 `settings_not_allowed` |
-| `POST /v1/rpc/:op` | 助手/小队增删改、引导、AGENTS.md、记忆、技能、全局搜索、prompt context、run trace、错误日志、模型发现与连通测试、立即压缩。`op` 只认 `gatewayRpc.ts` 的 `GATEWAY_RPC_OPS`，其它 404 `unknown_op`；存储报错 400。成功 `{ ok: true, result }` |
+| `POST /v1/rpc/:op` | 助手/小队增删改、引导、AGENTS.md、记忆、技能、助手市场、全局搜索、prompt context、run trace、错误日志、模型发现与连通测试、立即压缩。`op` 只认 `gatewayRpc.ts` 的 `GATEWAY_RPC_OPS`，其它 404 `unknown_op`；存储报错 400。成功 `{ ok: true, result }` |
 | `GET /`、静态资源 | 仅 `serveUi`。未登录是令牌页，不是 JSON |
 
 `okbot serve` 启动横幅会打印当前访问令牌一次。请求处理路径不打印令牌。
@@ -107,10 +107,15 @@ localHttpApi          网关 HTTP。不是独立服务
   memory.md              全局记忆
   logs/errors-YYYY-MM-DD.jsonl
   <botId>/  bot.json、AGENTS.md、memory.md、skills/、session.jsonl、
-            session-summary.json、last-run-trace.json、pending-hitl/、resources/
+            session-summary.json、last-run-trace.json、pending-hitl/、resources/、
+            schedules.json
   <squadId>/  session.jsonl、session-summary.json、last-run-trace.json、
-              pending-hitl/、pending-hitl-replies/、resources/
+              pending-hitl/、pending-hitl-replies/、resources/、schedules.json
 ```
+
+定时任务：`~/.okbot/<botId|squadId>/schedules.json`（`manage_schedule`；默认审批 ask；create/delete 始终 HITL；设置 → 工具的定时任务列表可 pause/resume/delete）。每 owner 上限 50；`every N m` 要求 N 整除 60；`once` 触发后停用。拥有网关的进程（Electron 或 `okbot serve`）内 `scheduleTicker` 约每 20s 扫描到期任务，调用与 UI 相同的 `startChatTurn`（走并行上限 / Stop / 任务条；审批/预算与交互轮次相同）。进程未运行时不会触发；再次起来后若 `nextRunAt` 已过期则补跑一次并推进下次。同一 job 在途中不会叠跑。
+
+聊天附件：Composer 支持选择或**拖放**文件 / 图片 / 文件夹；与选择器同一管线。网页工具（`web_fetch` / `web_search`）在桌面主机直接 HTTP（`settings.web`），不经 sandbox-agent。
 
 每条待审批一份 `pending-hitl/<requestId>.json`，并行的小队成员审批不会互相覆盖。旧版单文件 `pending-hitl.json` 仍会读取。审批等待默认 10 分钟（`TOOL_APPROVAL_TIMEOUT_MS`），超时按拒绝处理。所有运行类型共用 `ipc/approvalWaiter.ts` 里的审批等待（自动审批规则、落盘、超时、中止）。
 
@@ -118,19 +123,21 @@ localHttpApi          网关 HTTP。不是独立服务
 - 队长的审批：用队长的 RunState 恢复，跑到最终回复。
 - 成员的审批（记录带 `squadMember` 和 `turnId`）：用该成员的 RunState 恢复，跑到它的回复。调用 `ask_*` 的队长运行没有活过重启。同一轮还有别的成员审批在等时，回复先存进 `pending-hitl-replies/<turnId>.json`。最后一条处理完后，队长用 `formatSquadResumeNote` 汇总的结果续跑这一轮，并用 `dropUnansweredToolCalls` 去掉没有结果的工具调用。
 - 一轮只收尾一次（`planSquadResumeAfter`）：同一轮还有队长的审批在等时，成员恢复后不续跑队长，由队长那条审批收尾；队长恢复跑完后，同一轮还在等的成员审批作废（发 `tool_result` 拒绝并删记录），收集的回复清空。
-- 每次运行（实时的小队回合和冷恢复）结束时只放掉自己挂起的审批（`releaseRunApprovals`），不清别的回合留在磁盘上的审批。新消息改向时仍按设计清掉该小队全部待审批。
+- 每次运行（实时的小队回合和冷恢复）结束时只放掉自己挂起的审批（`releaseRunApprovals`），不清别的回合留在磁盘上的审批。新消息并行时不清掉其他回合的待审批；停止 / 删除会话才清。
+
+助手消息可带 `trace`（`MessageTrace`：本轮 spans 瀑布，随 session.jsonl 持久化；与每会话 `last-run-trace.json` 互补）。
 
 删除助手或小队后，进程内留下墓碑（`storage/fs.ts` 的 `markDirDeleted`）。`ensureDir`、`writeJson`、`writeText`、`appendText` 都先查墓碑，所以还在收尾的运行（会话、轨迹、记忆、技能、待审批）写不回已删的目录，`RunTraceRecorder` 直接停写。`recordUsage` 仍计入总量，但不再给已删的 owner 写分项。删助手时因成员不足而一起删掉的小队也留墓碑。本进程删过的 id 不再分配给新助手或小队。
 
 ## 网关可写的设置
 
-`gatewaySettingsWrite.ts` 的 `GATEWAY_SETTINGS_PATCH_KEYS`：主题、语言、麦克风、硬件加速、自动更新、侧栏缩放、开发者模式、压缩、`maxTurns`、instructions、memory、squad、`toolRun`、`notifications`、`showAdvancedSettings`。`autoApprovalEnabled` 和 `autoApprovalRules` 另走 `checkGatewayApprovalWrite`。
+`gatewaySettingsWrite.ts` 的 `GATEWAY_SETTINGS_PATCH_KEYS`：主题、语言、麦克风、硬件加速、自动更新、侧栏缩放、开发者模式、压缩、`maxTurns`、instructions、memory、maintenance、squad、`toolRun`、`notifications`、`showAdvancedSettings`。`autoApprovalEnabled` 和 `autoApprovalRules` 另走 `checkGatewayApprovalWrite`。
 
 网关对自动审批只能做两类改动。一是只会多问的改动：加「询问」规则、删「允许」规则、关掉自动审批。二是工具卡上的「总是允许」：新增或改成「允许」的规则，内容必须正好是一个内置工具名（如 `read_file`）。内置工具名规则只和工具名比较，不和参数比较。宽泛的关键词「允许」规则（比如只写 `a`）、改桌面端规则的说明或内容，都只能在桌面端做；不合规则的写入整体返回 409 `settings_not_allowed`。设置页的规则列表在网关页只读。
 
 MCP 工具（名字以 `mcp_` 开头）不经过自动审批：`resolveToolApproval` 对它们总是返回「询问」，工具卡也不显示「总是允许」。
 
-仍只在桌面端改：模型密钥、`tools`（启用与每个工具的审批）、`security`、`computers`、`localHttpApi`、`mcp`。`mcp` 能起本机子进程，所以不开放给网关。网关响应里 MCP 的 `env` 和 `headers` 的值留空；客户端原样回传这些空值不算改动。`notifications` 和 `showAdvancedSettings` 只影响界面，不给权限。没有令牌的请求在鉴权处就是 401，到不了这里。
+仍只在桌面端改：模型密钥、`tools`（启用与每个工具的审批）、`security`、`computers`、`localHttpApi`、`mcp`、`web`（搜索 API Key / 拉取内网开关）。`mcp` 能起本机子进程，所以不开放给网关。网关响应里 MCP 的 `env` 和 `headers` 的值留空，网页搜索 API Key 同样留空；客户端原样回传这些空值不算改动。`notifications` 和 `showAdvancedSettings` 只影响界面，不给权限。没有令牌的请求在鉴权处就是 401，到不了这里。
 
 模型发现与连通测试经网关调用时，客户端看到的 API Key 是空的。可以只传 `providerId`；服务端只在 `baseURL` 与已保存的一致时才用已保存的密钥（`modelProbe.resolveProbeApiKey`），不会把密钥发到调用方指定的别的地址。网关调用（`gatewayRpc` 的 `PROBE_OPS`）还要求 `baseURL` 是已保存的某个供应商地址，否则 400 `probe_url_not_saved`；这样令牌持有者不能让网关去请求内网任意地址。桌面端 IPC 不受这个限制。
 

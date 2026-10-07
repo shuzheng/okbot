@@ -20,6 +20,13 @@ export function createApprovalWaiter(
     userText?: string;
     /** Squad only: groups parallel member approvals of one turn for cold resume. */
     turnId?: string;
+    /** Parallel-turn id; required so gateway/attach SSE filters keep approval cards. */
+    runId?: string;
+    /**
+     * Prefer the turn's `emitTurn` so `runId` is stamped like delta/tool_result.
+     * Falls back to `sendRuntimeEvent` (still includes `runId` when provided).
+     */
+    emit?: (event: Parameters<IpcContext['sendRuntimeEvent']>[0]) => void;
     /** Called when a request waits for the user (not auto-approved). */
     onParked?: (requestId: string) => void;
   },
@@ -65,13 +72,16 @@ export function createApprovalWaiter(
           console.error('[okbot] save pending hitl failed', err);
         }
       }
-      ctx.sendRuntimeEvent({
+      const runId = (opts.runId || '').trim() || undefined;
+      const emit = opts.emit ?? ((event) => ctx.sendRuntimeEvent(event));
+      emit({
         type: 'tool_request',
         botId: opts.ownerId,
         messageId,
         requestId,
         toolName,
         arguments: toolArgs,
+        ...(runId ? { runId } : {}),
       });
       const pending = ctx.pendingToolApprovals.get(requestId);
       const cancelTimeout = armPendingToolTimeout(ctx, requestId, opts.ownerId, resolve);

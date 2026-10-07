@@ -1,6 +1,6 @@
 {
   "name": "@okbot/shared",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
@@ -17,7 +17,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
-    "test": "pnpm build && node normalize.null.test.mjs && node parseThink.test.mjs && node approval.test.mjs && node mcp.test.mjs"
+    "test": "pnpm build && node normalize.null.test.mjs && node parseThink.test.mjs && node approval.test.mjs && node mcp.test.mjs && node messageTrace.test.mjs"
   },
   "devDependencies": {
     "typescript": "^5.9.2"

@@ -26,6 +26,9 @@ Each assistant is a **person** with a name, avatar, and personality, so conversa
 - **Skills and memory** — Skills open only when needed; important things are remembered across chats
 - **Models** — Connect the providers you already have and pick a model
 - **Voice input** — On-device Whisper transcription (no cloud speech API)
+- **Scheduled tasks** — Ask an assistant to wake on a schedule; review, pause, or delete jobs in Settings → Tools
+- **Web tools** — Fetch public pages and search the web (search needs an API key in Settings)
+- **Drag-and-drop attachments** — Drop files, images, or folders into the chat to attach them
 - **Observability** — Light token stats and run logs
 
 ## Install

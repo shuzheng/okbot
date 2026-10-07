@@ -17,6 +17,10 @@ export type SessionRecordV2 = {
     attachments?: Array<{ kind: 'image' | 'file' | 'folder'; path: string; name: string }>;
     /** Assistant turn token usage. */
     usage?: { input: number; output: number; cache: number };
+    /** Assistant turn waterfall timeline (model / tools / approval). */
+    trace?: import('@okbot/shared').MessageTrace;
+    /** Parallel chat turn id — hides in-flight sibling rows from other runs. */
+    runId?: string;
   };
 };
 

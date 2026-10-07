@@ -6,6 +6,119 @@ import { assertModel } from './model.js';
 export const SUMMARY_DELTA_MAX_CHARS = 24_000;
 export const SUMMARY_DELTA_PER_ITEM_CHARS = 2_000;
 
+/** Soft cap for one tool digest line in the summarizer input. */
+export const TOOL_DIGEST_MAX_CHARS = 280;
+
+const TOOL_CALL_TYPES = new Set([
+  'function_call',
+  'hosted_tool_call',
+  'computer_call',
+  'tool_call',
+]);
+const TOOL_RESULT_TYPES = new Set([
+  'function_call_result',
+  'function_call_output',
+  'tool_result',
+  'computer_call_output',
+  'hosted_tool_result',
+]);
+
+function digestSnippet(value: unknown, max: number): string {
+  let raw: string;
+  if (typeof value === 'string') raw = value;
+  else {
+    try {
+      raw = JSON.stringify(value);
+    } catch {
+      raw = String(value ?? '');
+    }
+  }
+  const one = raw.replace(/\s+/g, ' ').trim();
+  if (one.length <= max) return one;
+  return `${one.slice(0, max)}…`;
+}
+
+/**
+ * Short tool call/result line for the rolling summary (not full transcripts).
+ * Returns null when the row is not a tool item.
+ */
+export function formatToolRowDigest(
+  item: Record<string, unknown>,
+  maxChars = TOOL_DIGEST_MAX_CHARS,
+): string | null {
+  const t = typeof item.type === 'string' ? item.type : '';
+  if (TOOL_CALL_TYPES.has(t)) {
+    const name =
+      (typeof item.name === 'string' && item.name) ||
+      (typeof item.tool_name === 'string' && item.tool_name) ||
+      'tool';
+    const args = item.arguments ?? item.params ?? item.input;
+    const argPart = args === undefined ? '' : ` args=${digestSnippet(args, 120)}`;
+    return digestSnippet(`[工具调用] ${name}${argPart}`, maxChars);
+  }
+  if (TOOL_RESULT_TYPES.has(t)) {
+    const name =
+      (typeof item.name === 'string' && item.name) ||
+      (typeof item.tool_name === 'string' && item.tool_name) ||
+      'tool';
+    const out = item.output ?? item.result ?? item.content;
+    const outPart = out === undefined ? '' : ` → ${digestSnippet(out, 160)}`;
+    return digestSnippet(`[工具结果] ${name}${outPart}`, maxChars);
+  }
+  return null;
+}
+
+export type SummaryDeltaRow =
+  | { kind: 'message'; message: import('@okbot/shared').ChatMessage }
+  | { kind: 'tool'; id: string; item: Record<string, unknown> };
+
+/**
+ * Interleave UI messages with session tool rows that fall in the same span,
+ * so the summarizer sees tool digests instead of skipping them.
+ */
+export function interleaveDeltaWithToolRows(
+  deltaMessages: import('@okbot/shared').ChatMessage[],
+  sessionRows?: Array<{ id: string; item: Record<string, unknown> }>,
+): SummaryDeltaRow[] {
+  if (!sessionRows?.length) {
+    return deltaMessages.map((message) => ({ kind: 'message' as const, message }));
+  }
+  const msgIds = new Set(deltaMessages.map((m) => m.id));
+  if (!msgIds.size) return [];
+  // Span: from first delta message in session order through last.
+  let start = -1;
+  let end = -1;
+  for (let i = 0; i < sessionRows.length; i++) {
+    if (msgIds.has(sessionRows[i]!.id)) {
+      if (start < 0) start = i;
+      end = i;
+    }
+  }
+  if (start < 0) {
+    return deltaMessages.map((message) => ({ kind: 'message' as const, message }));
+  }
+  const byId = new Map(deltaMessages.map((m) => [m.id, m] as const));
+  const out: SummaryDeltaRow[] = [];
+  const seenMsg = new Set<string>();
+  for (let i = start; i <= end; i++) {
+    const row = sessionRows[i]!;
+    const msg = byId.get(row.id);
+    if (msg) {
+      out.push({ kind: 'message', message: msg });
+      seenMsg.add(msg.id);
+      continue;
+    }
+    if (formatToolRowDigest(row.item)) {
+      out.push({ kind: 'tool', id: row.id, item: row.item });
+    }
+  }
+  // Any delta messages missing from session rows (legacy) append at end.
+  for (const m of deltaMessages) {
+    if (!seenMsg.has(m.id)) out.push({ kind: 'message', message: m });
+  }
+  return out;
+}
+
 /** perItem <= 0 makes the chunk loops spin: offset never moves. */
 function summaryPerItem(perItem: number | undefined): number {
   const n = perItem ?? SUMMARY_DELTA_PER_ITEM_CHARS;
@@ -16,9 +129,10 @@ function summaryPerItem(perItem: number | undefined): number {
 export type SummaryDeltaSelection = {
   dialogue: string;
   /**
-   * Message ids the summarizer input actually read in full, in order.
-   * Empty bodies are included (nothing unread). An item is not included when its
-   * body was truncated or did not fit in the remaining char cap.
+   * ChatMessage ids the summarizer input actually read in full, in order.
+   * Tool row digests may appear in `dialogue` but their ids are never listed here
+   * (coverage / rest slicing are message-only). Empty bodies are included.
+   * An item is not included when its body was truncated or did not fit.
    */
   consumedIds: string[];
 };
@@ -29,14 +143,37 @@ export type SummaryDeltaSelection = {
  */
 export function selectDeltaForSummary(
   deltaMessages: ChatMessage[],
-  limits?: { maxIn?: number; perItem?: number },
+  limits?: {
+    maxIn?: number;
+    perItem?: number;
+    /** Session rows (message + tool) for tool digests in the same span. */
+    sessionRows?: Array<{ id: string; item: Record<string, unknown> }>;
+  },
 ): SummaryDeltaSelection {
   const maxIn = limits?.maxIn ?? SUMMARY_DELTA_MAX_CHARS;
   const perItem = summaryPerItem(limits?.perItem);
   const dialogueParts: string[] = [];
   const consumedIds: string[] = [];
   let chars = 0;
-  for (const m of deltaMessages) {
+  const rows = interleaveDeltaWithToolRows(deltaMessages, limits?.sessionRows);
+  for (const row of rows) {
+    if (row.kind === 'tool') {
+      // Tool digests may enter summary text, but tool row ids must NOT enter
+      // consumedIds: downstream treats those as ChatMessage ids (rest/coveredThroughId).
+      const digest = formatToolRowDigest(row.item);
+      if (!digest) {
+        continue;
+      }
+      const sep = dialogueParts.length ? 2 : 0;
+      if (chars + sep + digest.length > maxIn) {
+        if (dialogueParts.length) dialogueParts.push('…(更早增量过长，已截断)');
+        break;
+      }
+      dialogueParts.push(digest);
+      chars += sep + digest.length;
+      continue;
+    }
+    const m = row.message;
     if (m.role !== 'user' && m.role !== 'assistant') {
       consumedIds.push(m.id);
       continue;
@@ -85,17 +222,23 @@ function messageBody(m: ChatMessage): string {
  */
 export function nextSummarySlice(
   deltaMessages: ChatMessage[],
-  limits?: { maxIn?: number; perItem?: number },
+  limits?: {
+    maxIn?: number;
+    perItem?: number;
+    sessionRows?: Array<{ id: string; item: Record<string, unknown> }>;
+  },
 ): SummarySlice {
   const selected = selectDeltaForSummary(deltaMessages, limits);
   if (selected.consumedIds.length) {
+    // consumedIds are message ids only (see selectDeltaForSummary). Slice rest
+    // from the last fully consumed message; never treat a missing id as "all done".
     const last = selected.consumedIds[selected.consumedIds.length - 1]!;
     const idx = deltaMessages.findIndex((m) => m.id === last);
     return {
       kind: 'batch',
       dialogue: selected.dialogue,
       consumedIds: selected.consumedIds,
-      rest: idx >= 0 ? deltaMessages.slice(idx + 1) : [],
+      rest: idx >= 0 ? deltaMessages.slice(idx + 1) : deltaMessages,
     };
   }
   const maxIn = limits?.maxIn ?? SUMMARY_DELTA_MAX_CHARS;
@@ -171,6 +314,8 @@ export async function compressSessionHistory(input: {
   signal?: AbortSignal;
   /** Soft char budget for the rolling summary; defaults to CONTEXT_SUMMARY_MAX_CHARS. */
   summaryMaxChars?: number;
+  /** Optional session rows so tool calls/results become short digests in the summary. */
+  sessionRows?: Array<{ id: string; item: Record<string, unknown> }>;
 }): Promise<SessionHistoryCompressResult> {
   assertModel(input.model);
   const maxChars =
@@ -202,9 +347,11 @@ export async function compressSessionHistory(input: {
       '路径/命令：',
       '未完成：',
       '其他：',
-      '规则：保留稳定事实、决定、文件路径、命令、未完成事项；丢掉寒暄、重复确认、大段代码/日志/工具逐条输出。',
+      '规则：保留稳定事实、决定、文件路径、命令、未完成事项；丢掉寒暄、重复确认、大段代码/日志。',
+      '工具行若出现为「[工具调用]/或「[工具结果]」短摘要，保留工具名与关键参数/结果要点即可。',
       '合并时更新过时信息，不要简单把旧摘要和新内容首尾拼接。',
       '稳定约定和决定写在「约定：」下，每条一行，供长期记忆。',
+      '细节若被压缩掉，可提示稍后用 search_history 按关键词检索本会话。',
     ].join('\n');
     const user = [
       previous ? `旧摘要：\n${previous}` : '旧摘要：（无，这是首次压缩）',
@@ -240,7 +387,7 @@ export async function compressSessionHistory(input: {
   let consumedThroughId: string | null = null;
   for (let step = 0; step < 64 && pending.length; step++) {
     if (input.signal?.aborted) break;
-    const slice = nextSummarySlice(pending);
+    const slice = nextSummarySlice(pending, { sessionRows: input.sessionRows });
     if (slice.kind === 'stuck') break;
     let nextSummary = summary;
     if (slice.dialogue.trim()) {

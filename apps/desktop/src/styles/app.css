@@ -1017,6 +1017,38 @@ input, textarea { user-select: text; }
   overflow: hidden;
 }
 
+/* File / folder drag-and-drop affordance over the chat column. */
+.chat-drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--chat-bg, var(--panel, #1c1c1e)) 55%, transparent);
+  border: 2px dashed color-mix(in srgb, var(--accent, #6366f1) 55%, transparent);
+  border-radius: 12px;
+  box-sizing: border-box;
+}
+.chat-drop-overlay-card {
+  max-width: min(420px, 90%);
+  padding: 14px 20px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent, #6366f1) 28%, transparent);
+  background: color-mix(in srgb, var(--panel, #1c1c1e) 92%, var(--accent, #6366f1) 8%);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 550;
+  letter-spacing: 0.01em;
+  text-align: center;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
+}
+.chat-pane.is-file-drag .composer-inner {
+  border-color: color-mix(in srgb, var(--accent, #6366f1) 45%, transparent);
+}
+
 /* Bottom-right immersive toggle: fade in on message-area hover; no hit-target when hidden. */
 .immersive-chat-fab {
   position: absolute;
@@ -6184,3 +6216,225 @@ input, textarea { user-select: text; }
 .quick-start-step-title { flex: 1; font-size: 14px; font-weight: 600; }
 .quick-start-step-hint { margin: 6px 0 0 30px; font-size: 12px; color: var(--muted); }
 .quick-start-step .assistant-gallery-grid { margin-top: 10px; }
+
+
+/* Per-message turn waterfall (链路追踪) */
+.turn-trace-modal {
+  width: min(640px, calc(100vw - 32px));
+  max-height: min(80vh, 720px);
+  display: flex;
+  flex-direction: column;
+}
+.turn-trace-summary {
+  margin-top: 4px;
+  margin-bottom: 10px;
+}
+.turn-trace-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow: auto;
+  padding-right: 2px;
+  flex: 1;
+  min-height: 0;
+}
+.turn-trace-row {
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+}
+.turn-trace-row-main {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(120px, 1.1fr) minmax(80px, 1.4fr) 64px;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 10px;
+}
+.turn-trace-row-main:hover,
+.turn-trace-row-main:focus-visible {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  outline: none;
+}
+.turn-trace-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.turn-trace-kind {
+  font-size: 11px;
+  opacity: 0.65;
+}
+.turn-trace-name {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.turn-trace-status {
+  font-size: 11px;
+  opacity: 0.8;
+}
+.turn-trace-status.st-error,
+.turn-trace-status.st-denied { color: var(--danger, #ef4444); }
+.turn-trace-status.st-ok { color: var(--usage-output, #22c55e); }
+.turn-trace-status.st-aborted,
+.turn-trace-status.st-running { opacity: 0.7; }
+.turn-trace-bar-track {
+  position: relative;
+  height: 14px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 18%, transparent);
+  overflow: hidden;
+}
+.turn-trace-bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 999px;
+  min-width: 3px;
+}
+.turn-trace-bar.kind-model { background: color-mix(in srgb, #6366f1 85%, white); }
+.turn-trace-bar.kind-tool { background: color-mix(in srgb, #22c55e 80%, white); }
+.turn-trace-bar.kind-wait_approval { background: color-mix(in srgb, #f59e0b 80%, white); }
+.turn-trace-bar.kind-system { background: color-mix(in srgb, #94a3b8 80%, white); }
+.turn-trace-dur {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  opacity: 0.85;
+}
+.turn-trace-detail {
+  padding: 0 10px 10px;
+  border-top: 1px dashed color-mix(in srgb, var(--border) 70%, transparent);
+}
+.turn-trace-detail-block { margin-top: 8px; }
+.turn-trace-detail-label {
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.7;
+  margin-bottom: 4px;
+}
+.turn-trace-detail pre,
+.turn-trace-json {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 88%, black);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 160px;
+  overflow: auto;
+}
+.turn-trace-detail-empty {
+  margin-top: 8px;
+  font-size: 12px;
+  opacity: 0.65;
+}
+.turn-trace-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+.turn-trace-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.turn-trace-json {
+  margin-top: 10px;
+  max-height: 220px;
+}
+
+
+/* Parallel in-flight tasks (shown only when >1 unfinished turn) */
+.parallel-tasks-strip {
+  margin: 0 18px 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel-2, var(--bg-elevated, #1e1e24)) 88%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border, #333) 80%, transparent);
+}
+.parallel-tasks-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.parallel-tasks-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted, #9ca3af);
+}
+.parallel-tasks-count {
+  font-size: 11px;
+  color: var(--muted, #9ca3af);
+  opacity: 0.85;
+}
+.parallel-tasks-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.parallel-task-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 8px 4px 7px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--border, #444) 70%, transparent);
+  background: color-mix(in srgb, var(--bg, #121216) 70%, transparent);
+  color: var(--fg, #e5e7eb);
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+.parallel-task-chip:hover {
+  border-color: color-mix(in srgb, var(--accent, #6366f1) 55%, var(--border, #444));
+}
+.parallel-task-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent, #6366f1);
+  flex: 0 0 auto;
+}
+.parallel-task-chip.status-awaiting_approval .parallel-task-dot {
+  background: #f59e0b;
+}
+.parallel-task-chip.status-wrapping_up .parallel-task-dot {
+  background: #94a3b8;
+}
+.parallel-task-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 12rem;
+}
+.parallel-task-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted, #9ca3af);
+  font-size: 11px;
+  flex: 0 0 auto;
+}
+.parallel-task-elapsed {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.9;
+}

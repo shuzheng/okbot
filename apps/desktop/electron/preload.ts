@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import {
   IpcChannels,
   type AppInfo,
@@ -9,6 +9,7 @@ import {
   type RuntimeEvent,
   type UpdaterStatus,
   type UsageStats,
+  type ScheduledJobInfo,
 } from '@okbot/shared';
 import type { AssistantGalleryItem, McpServerStatus } from '@okbot/agent';
 
@@ -165,6 +166,7 @@ const api = {
       quoteMessageId?: string;
       attachments?: Array<{ kind: 'image' | 'file' | 'folder'; path: string; name: string }>;
       computerId?: string;
+      clientTurnId?: string;
     },
   ) =>
     ipcRenderer.invoke(IpcChannels.chatStart, {
@@ -173,6 +175,7 @@ const api = {
       quoteMessageId: opts?.quoteMessageId,
       attachments: opts?.attachments,
       computerId: opts?.computerId,
+      clientTurnId: opts?.clientTurnId,
     }),
   chatStartSquad: (
     squadId: string,
@@ -181,6 +184,7 @@ const api = {
       quoteMessageId?: string;
       attachments?: Array<{ kind: 'image' | 'file' | 'folder'; path: string; name: string }>;
       computerId?: string;
+      clientTurnId?: string;
     },
   ) =>
     ipcRenderer.invoke(IpcChannels.chatStart, {
@@ -189,6 +193,7 @@ const api = {
       quoteMessageId: opts?.quoteMessageId,
       attachments: opts?.attachments,
       computerId: opts?.computerId,
+      clientTurnId: opts?.clientTurnId,
     }),
   chatAbort: (botId: string) => ipcRenderer.invoke(IpcChannels.chatAbort, botId),
   compressSessionNow: (payload: {
@@ -213,6 +218,14 @@ const api = {
       canceled: boolean;
       paths: string[];
     }>,
+  /** Absolute path for a File from drag-drop / <input> (Electron 32+; replaces File.path). */
+  getPathForFile: (file: File): string => {
+    try {
+      return webUtils.getPathForFile(file) || '';
+    } catch {
+      return '';
+    }
+  },
   readGeneratedAssetDataUrl: (assetRel: string) =>
     ipcRenderer.invoke(IpcChannels.readGeneratedAssetDataUrl, { assetRel }) as Promise<
       { ok: true; dataUrl: string } | { ok: false; error: string }
@@ -258,6 +271,17 @@ const api = {
       cleared: number;
     }>,
   getUsageStats: () => ipcRenderer.invoke(IpcChannels.getUsageStats) as Promise<UsageStats>,
+  listScheduledJobs: () =>
+    ipcRenderer.invoke(IpcChannels.listScheduledJobs) as Promise<ScheduledJobInfo[]>,
+  manageScheduledJob: (payload: {
+    ownerId: string;
+    jobId: string;
+    action: 'pause' | 'resume' | 'delete';
+  }) =>
+    ipcRenderer.invoke(IpcChannels.manageScheduledJob, payload) as Promise<{
+      ok: true;
+      summary: string;
+    }>,
   mcpStatus: () => ipcRenderer.invoke(IpcChannels.mcpStatus) as Promise<McpServerStatus[]>,
   mcpTestServer: (entry: McpServerEntry) =>
     ipcRenderer.invoke(IpcChannels.mcpTestServer, entry) as Promise<McpServerStatus>,

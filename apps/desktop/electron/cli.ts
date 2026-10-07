@@ -13,9 +13,10 @@ import {
   releaseServerLock,
 } from './serverPresence';
 import { ensureGatewayToken, resolveGatewayUiRoot, startSkillWatch } from './gatewayRuntime';
+import { startScheduleTicker } from './scheduleTicker';
 import { readDesktopAppVersion } from './appVersion';
 
-const abortControllers = new Map<string, AbortController>();
+const abortControllers = new Map<string, Map<string, AbortController>>();
 const pendingToolApprovals = new Map<string, PendingToolApproval>();
 
 function rejectPendingApprovalsForBot(storage: FileStorage, botId: string, message = '已取消') {
@@ -114,6 +115,7 @@ async function serve(): Promise<number> {
   const http = createLocalHttpApi({ ctx, uiRoot: resolveGatewayUiRoot(path.dirname(fileURLToPath(import.meta.url))), appVersion: readDesktopAppVersion() });
   bridge = (event) => http.bridgeRuntimeEvent(event);
   let stopSkills = () => {};
+  let stopScheduleTicker = () => {};
 
   const shutdown = () => {
     process.off('SIGINT', shutdown);
@@ -122,6 +124,11 @@ async function serve(): Promise<number> {
       stopSkills();
     } catch (err) {
       console.error('[okbot] skill watch stop failed', err);
+    }
+    try {
+      stopScheduleTicker();
+    } catch (err) {
+      console.error('[okbot] schedule ticker stop failed', err);
     }
     try {
       http.stop();
@@ -158,6 +165,7 @@ async function serve(): Promise<number> {
     console.error('[okbot] abandonRunningTracesOnStartup failed', err);
   }
   stopSkills = startSkillWatch(storage, sendRuntimeEvent);
+  stopScheduleTicker = startScheduleTicker({ storage, ctx });
 
   const base = publicBase(api.port);
   const bind = api.bindLan ? '0.0.0.0' : '127.0.0.1';

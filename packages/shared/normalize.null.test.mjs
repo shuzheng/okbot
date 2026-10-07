@@ -24,6 +24,14 @@ import {
   DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT,
   LEGACY_DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT,
   LEGACY_AGENTS_MD_REFRESH_WITH_VISION_GUARD,
+  LEGACY_AGENTS_MD_REFRESH_WITH_ROBOT,
+  normalizeMaintenanceSettings,
+  normalizeMemorySettings,
+  DEFAULT_MAINTENANCE_SETTINGS,
+  DEFAULT_MEMORY_SETTINGS,
+  normalizeWebSettings,
+  isWebSearchConfigured,
+  DEFAULT_WEB_SETTINGS,
 } from './dist/index.js';
 
 assert.equal(normalizeMaxTokens(null), null);
@@ -76,10 +84,32 @@ assert.doesNotMatch(DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT, /NO_CHANGE/);
   const b = normalizeInstructionsSettings({
     agentsMdRefreshSystemPrompt: LEGACY_AGENTS_MD_REFRESH_WITH_VISION_GUARD,
   });
+  const c = normalizeInstructionsSettings({
+    agentsMdRefreshSystemPrompt: LEGACY_AGENTS_MD_REFRESH_WITH_ROBOT,
+  });
   assert.equal(a.agentsMdRefreshSystemPrompt, DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT);
   assert.equal(b.agentsMdRefreshSystemPrompt, DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT);
+  assert.equal(c.agentsMdRefreshSystemPrompt, DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT);
+  assert.doesNotMatch(DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT, /机器人/);
 }
 
+
+// null must not collapse to clamp floors (every-turn maintenance / tiny memory prompt).
+{
+  const m = normalizeMaintenanceSettings({
+    memoryEveryTurns: null,
+    agentsEveryTurns: null,
+    skillsEveryUserChars: null,
+  });
+  assert.equal(m.memoryEveryTurns, DEFAULT_MAINTENANCE_SETTINGS.memoryEveryTurns);
+  assert.equal(m.agentsEveryTurns, DEFAULT_MAINTENANCE_SETTINGS.agentsEveryTurns);
+  assert.equal(m.skillsEveryUserChars, DEFAULT_MAINTENANCE_SETTINGS.skillsEveryUserChars);
+}
+{
+  const mem = normalizeMemorySettings({ promptMaxEntries: null, promptMaxChars: null });
+  assert.equal(mem.promptMaxEntries, DEFAULT_MEMORY_SETTINGS.promptMaxEntries);
+  assert.equal(mem.promptMaxChars, DEFAULT_MEMORY_SETTINGS.promptMaxChars);
+}
 
 console.log('normalize.null.test.mjs: ok');
 
@@ -114,3 +144,23 @@ assert.equal(
   normalizeDefaultComputerId('computer_b', [offComputer]),
   LOCAL_COMPUTER_ID,
 );
+
+const webEmpty = normalizeWebSettings(undefined);
+assert.equal(webEmpty.search.provider, 'tavily');
+assert.equal(webEmpty.search.apiKey, '');
+assert.equal(webEmpty.fetch.allowPrivateNetwork, false);
+assert.equal(isWebSearchConfigured(webEmpty.search), false);
+
+const webOk = normalizeWebSettings({
+  search: { provider: 'brave', apiKey: ' k ', baseURL: ' https://x.example/ ' },
+  fetch: { allowPrivateNetwork: true },
+});
+assert.equal(webOk.search.provider, 'brave');
+assert.equal(webOk.search.apiKey, ' k ');
+assert.equal(webOk.search.baseURL, 'https://x.example/');
+assert.equal(webOk.fetch.allowPrivateNetwork, true);
+assert.equal(isWebSearchConfigured(webOk.search), true);
+
+assert.equal(normalizeWebSettings({ search: { provider: 'nope' } }).search.provider, 'tavily');
+assert.ok(DEFAULT_WEB_SETTINGS.search.provider);
+console.log('normalizeWebSettings: ok');

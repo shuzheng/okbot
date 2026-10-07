@@ -23,6 +23,7 @@ export {
   AboutIcon,
   CopyRequestUrlIcon,
   RunTraceIcon,
+  TurnTraceIcon,
   ImmersiveChatIcon,
   ChevronsRightIcon,
   ChevronsDownIcon,

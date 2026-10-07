@@ -32,6 +32,7 @@ type CompressImpl = (input: {
   deltaMessages: ChatMessage[];
   signal?: AbortSignal;
   summaryMaxChars?: number;
+  sessionRows?: Array<{ id: string; item: Record<string, unknown> }>;
 }) => Promise<SessionHistoryCompressResult>;
 
 type TopicDetectImpl = (input: {
@@ -117,6 +118,14 @@ export async function ensureSessionCompressed(input: {
   enforceBudget?: boolean;
   /** Stable 约定/决定 from the new summary. Caller dedupes and writes this assistant's memory. */
   rememberFacts?: (facts: string[]) => void;
+  /**
+   * After a successful compress that advanced coverage: run memory extraction on the
+   * delta that left the live window (before it exists only as summary prose).
+   */
+  onHistoryFolded?: (info: {
+    deltaMessages: ChatMessage[];
+    summary: string;
+  }) => void | Promise<void>;
   /** Test seam. Defaults to compressSessionHistory. */
   compress?: CompressImpl;
 }): Promise<{
@@ -151,6 +160,9 @@ export async function ensureSessionCompressed(input: {
       : input.force === 'compress'
         ? liveBuffer.length > cc.keepRecentMin
         : false;
+
+  /** Deltas folded this pass (for memory extraction at compress time). */
+  const foldedDeltas: ChatMessage[] = [];
 
   if (autoTrigger || forceTrigger) {
     let keep: number;
@@ -199,15 +211,20 @@ export async function ensureSessionCompressed(input: {
           if (!delta.length && summaryState?.summary?.trim()) {
             sessionSummary = summaryState.summary.trim();
           } else {
+            const deltaMessages = delta.length ? delta : older;
             const compressed = await compressFn({
               model: input.model,
               previousSummary: summaryState?.summary,
-              deltaMessages: delta.length ? delta : older,
+              deltaMessages,
               signal: input.signal,
               summaryMaxChars: cc.summaryMaxChars,
+              sessionRows: input.sessionRows,
             });
             sessionSummary = compressed.summary;
-            if (compressed.consumedThroughId) didCompress = true;
+            if (compressed.consumedThroughId) {
+              didCompress = true;
+              foldedDeltas.push(...deltaMessages);
+            }
             advanceCovered(compressed.consumedThroughId, sessionSummary);
           }
         } catch (err) {
@@ -223,7 +240,7 @@ export async function ensureSessionCompressed(input: {
       estimated = packedEstimate();
       if (estimated < threshold || keep <= 0) break;
 
-      // Still over budget: do not stop at keepRecentMin (default 5). Halve, then 0.
+      // Still over budget: do not stop at keepRecentMin. Halve, then 0.
       const nextKeep = Math.floor(keep / 2);
       if (nextKeep >= keep) break;
       keep = nextKeep;
@@ -249,6 +266,17 @@ export async function ensureSessionCompressed(input: {
   if (didCompress && input.rememberFacts && sessionSummary.trim()) {
     const facts = extractDurableFacts(sessionSummary);
     if (facts.length) input.rememberFacts(facts);
+  }
+
+  if (didCompress && input.onHistoryFolded && sessionSummary.trim()) {
+    try {
+      await input.onHistoryFolded({
+        deltaMessages: foldedDeltas,
+        summary: sessionSummary,
+      });
+    } catch (err) {
+      console.error('[okbot] compress-time memory extract failed', err);
+    }
   }
 
   return { sessionSummary, summaryState, didCompress, omitRecordIds };

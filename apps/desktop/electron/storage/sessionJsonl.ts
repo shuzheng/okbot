@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { createId, normalizeTokenUsage, type ChatMessage, type MessagesPage } from '@okbot/shared';
+import { createId, normalizeMessageTrace, normalizeTokenUsage, type ChatMessage, type MessagesPage } from '@okbot/shared';
 import { ensureDir } from './fs';
 import type { SessionRecordV2 } from './types';
 
@@ -70,6 +70,7 @@ export function legacyMessageToRecord(msg: ChatMessage): SessionRecordV2 {
       : undefined;
   const attachments = normalizeMessageAttachments(msg.attachments);
   const usage = normalizeTokenUsage(msg.usage);
+  const trace = normalizeMessageTrace(msg.trace);
   return {
     v: 2,
     id: msg.id,
@@ -86,6 +87,7 @@ export function legacyMessageToRecord(msg: ChatMessage): SessionRecordV2 {
       ...(quotePreview ? { quotePreview } : {}),
       ...(attachments ? { attachments } : {}),
       ...(usage ? { usage } : {}),
+      ...(trace ? { trace } : {}),
     },
   };
 }
@@ -184,6 +186,7 @@ export function recordToUiMessage(rec: SessionRecordV2): ChatMessage | null {
       : undefined;
   const attachments = normalizeMessageAttachments(rec.meta?.attachments);
   const usage = normalizeTokenUsage(rec.meta?.usage);
+  const trace = normalizeMessageTrace(rec.meta?.trace);
   return {
     id: rec.id,
     role: roleRaw,
@@ -194,6 +197,7 @@ export function recordToUiMessage(rec: SessionRecordV2): ChatMessage | null {
     ...(quotePreview ? { quotePreview } : {}),
     ...(attachments ? { attachments } : {}),
     ...(usage ? { usage } : {}),
+    ...(trace ? { trace } : {}),
   };
 }
 

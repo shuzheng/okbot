@@ -60,7 +60,7 @@ export async function refreshAgentsMd(input: {
     (input.systemPrompt ?? '').trim() || DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT;
 
   const user = [
-    `机器人名称：${input.botName}`,
+    `助手名称：${input.botName}`,
     '',
     '当前 AGENTS.md：',
     input.currentAgentsMd.trim() || '（空）',
@@ -156,7 +156,7 @@ export async function refreshBotSkills(input: {
   ].join('\n');
 
   const user = [
-    `机器人：${input.botName}`,
+    `助手：${input.botName}`,
     '',
     '已有 skills：',
     existing,
@@ -278,8 +278,8 @@ export async function refreshMemories(input: {
   ].join('\n');
 
   const user = [
-    `当前机器人 id：${input.botId}`,
-    `当前机器人名：${input.botName}`,
+    `当前助手 id：${input.botId}`,
+    `当前助手名：${input.botName}`,
     '',
     '已有记忆：',
     existing,

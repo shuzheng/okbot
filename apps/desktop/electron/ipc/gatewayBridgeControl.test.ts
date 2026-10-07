@@ -6,7 +6,7 @@ function makeCtx(overrides: Partial<IpcContext> = {}): Pick<
   IpcContext,
   'abortControllers' | 'pendingToolApprovals' | 'storage' | 'rejectPendingApprovalsForBot'
 > {
-  const abortControllers = new Map<string, AbortController>();
+  const abortControllers = new Map<string, Map<string, AbortController>>();
   const pendingToolApprovals = new Map<
     string,
     {
@@ -73,7 +73,7 @@ function makeCtx(overrides: Partial<IpcContext> = {}): Pick<
 {
   const ctx = makeCtx();
   const controller = new AbortController();
-  ctx.abortControllers.set('bot-2', controller);
+  ctx.abortControllers.set('bot-2', new Map([['run-1', controller]]));
   let decided: { approved: boolean; message?: string } | undefined;
   ctx.pendingToolApprovals.set('req-2', {
     computerId: 'local',

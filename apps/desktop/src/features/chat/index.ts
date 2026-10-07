@@ -10,3 +10,4 @@ export type { AssistantContentProps } from './AssistantContent';
 export { MarkdownContent } from './MarkdownContent';
 export { ToolCardView } from './ToolCardView';
 export type { ToolCardViewProps } from './ToolCardView';
+export { TurnTraceModal } from './TurnTraceModal';

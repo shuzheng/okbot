@@ -16,7 +16,10 @@ function cacheFromDetails(details: unknown): number {
         d.cachedTokens ??
         d.cache_read_input_tokens ??
         d.cacheReadInputTokens ??
-        d.cache_tokens,
+        d.cache_tokens ??
+        d.prompt_cache_hit_tokens ??
+        d.promptCacheHitTokens ??
+        d.prompt_cache_hit_token_count,
     );
   };
   if (Array.isArray(details)) {

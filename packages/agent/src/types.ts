@@ -4,10 +4,11 @@ import type {
   SecuritySettings,
   TokenUsage,
   ToolPreferences,
+  WebSettings,
 } from '@okbot/shared';
 import type { Session, SessionInputCallback, Tool } from '@openai/agents';
 import type { ToolRunBudget } from './toolRunBudget.js';
-import type { SkillLookup } from './tools.js';
+import type { HistorySearch, ScheduleManage, SkillLookup } from './tools.js';
 import type { ExecutionBackend } from './executionBackend.js';
 import type { ComputerRoute } from './computerSelection.js';
 
@@ -20,6 +21,12 @@ export interface RunChatInput {
   skillsText?: string;
   /** Resolve full skill body by slug for the `read_skill` tool. */
   skillLookup?: SkillLookup;
+  /** Search this chat only for `search_history`. */
+  historySearch?: HistorySearch;
+  /** Manage timed wakeups for this chat (`manage_schedule`). */
+  scheduleManage?: ScheduleManage;
+  /** Built-in web_fetch / web_search (`settings.web`). */
+  web?: WebSettings;
   /** Formatted global + bot memories for the system prompt. */
   memoriesText?: string;
   /** Rolling summary of older turns (when context was compressed). */
@@ -99,6 +106,10 @@ export interface RunAgentChatInput extends RunChatInput {
   }) => void;
   /** Clear pre-tool narration from the live assistant bubble when tools interrupt. */
   onClearLiveText?: () => void;
+  onModelTurnStart?: () => void | string;
+  onModelTurnEnd?: (info: { ok: boolean; error?: string; spanId?: string }) => void;
+  onApprovalWaitStart?: (toolName: string) => void | string;
+  onApprovalWaitEnd?: (info: { toolName: string; approved: boolean; spanId?: string }) => void;
 }
 
 export interface ResumeAgentChatAfterHitlInput {
@@ -107,6 +118,10 @@ export interface ResumeAgentChatAfterHitlInput {
   agentsMd?: string;
   skillsText?: string;
   skillLookup?: SkillLookup;
+  historySearch?: HistorySearch;
+  scheduleManage?: ScheduleManage;
+  /** Built-in web_fetch / web_search (`settings.web`). */
+  web?: WebSettings;
   memoriesText?: string;
   sessionSummary?: string;
   assistantRoleTemplate?: string;
@@ -140,6 +155,10 @@ export interface ResumeAgentChatAfterHitlInput {
     output?: string;
   }) => void;
   onClearLiveText?: () => void;
+  onModelTurnStart?: () => void | string;
+  onModelTurnEnd?: (info: { ok: boolean; error?: string; spanId?: string }) => void;
+  onApprovalWaitStart?: (toolName: string) => void | string;
+  onApprovalWaitEnd?: (info: { toolName: string; approved: boolean; spanId?: string }) => void;
   /** Persisted `RunState.toString()` from the interrupted run. */
   serializedRunState: string;
   /** requestId of the pending approval being decided now. */
@@ -159,6 +178,11 @@ export type HitlLoopHooks = {
   onClearLiveText?: () => void;
   /** When set, duration budget pauses while waiting for tool approval (HITL). */
   toolRunBudget?: ToolRunBudget;
+  /** Optional turn-span hooks (desktop RunTraceRecorder → message.trace waterfall). */
+  onModelTurnStart?: () => void | string;
+  onModelTurnEnd?: (info: { ok: boolean; error?: string; spanId?: string }) => void;
+  onApprovalWaitStart?: (toolName: string) => void | string;
+  onApprovalWaitEnd?: (info: { toolName: string; approved: boolean; spanId?: string }) => void;
   onToolApprovalRequest: (req: ToolApprovalRequest) => Promise<ToolApprovalDecision>;
   onToolResult?: (info: {
     requestId: string;
@@ -174,5 +198,5 @@ export type HitlLoopHooks = {
     toolName: string;
     content: string;
     usage?: TokenUsage;
-  }) => void;
+  }) => void | Promise<void>;
 };

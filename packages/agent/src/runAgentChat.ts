@@ -6,6 +6,7 @@ import {
   consumeAgentTextStream,
   createAgentAndRunner,
   runHitlStreamLoop,
+  runModelSegment,
   type AgentRunStreamResult,
 } from './hitl.js';
 import type {
@@ -21,10 +22,13 @@ export async function runAgentChat(input: RunAgentChatInput): Promise<RunChatRes
   const { agent, runner } = createAgentAndRunner(input);
   const runOpts = buildRunOpts(input);
 
-  let result = (await runner.run(agent, input.userText, runOpts)) as AgentRunStreamResult;
-  const streamed = await consumeAgentTextStream(result, input.onDelta, input.signal);
+  const first = await runModelSegment(input, async () => {
+    const result = (await runner.run(agent, input.userText, runOpts)) as AgentRunStreamResult;
+    const streamed = await consumeAgentTextStream(result, input.onDelta, input.signal);
+    return { result, streamed };
+  });
 
-  return runHitlStreamLoop(agent, runner, runOpts, result, streamed, input);
+  return runHitlStreamLoop(agent, runner, runOpts, first.result, first.streamed, input);
 }
 
 /**
@@ -43,8 +47,11 @@ export async function resumeAgentChatAfterHitl(
   const state = await RunState.fromString(agent, input.serializedRunState);
   applyResumeDecision(state, input);
 
-  let result = (await runner.run(agent, state, runOpts)) as AgentRunStreamResult;
-  const streamed = await consumeAgentTextStream(result, input.onDelta, input.signal);
+  const first = await runModelSegment(input, async () => {
+    const result = (await runner.run(agent, state, runOpts)) as AgentRunStreamResult;
+    const streamed = await consumeAgentTextStream(result, input.onDelta, input.signal);
+    return { result, streamed };
+  });
 
-  return runHitlStreamLoop(agent, runner, runOpts, result, streamed, input);
+  return runHitlStreamLoop(agent, runner, runOpts, first.result, first.streamed, input);
 }

@@ -45,17 +45,48 @@ export function isRuntimeEventTurnTerminal(event: RuntimeEvent): boolean {
 
 /**
  * SSE subscription for a newly started turn.
- * A steer aborts the previous run first; that run's done/error is delivered
- * before this turn's user_message. Ignore those (and any other pre-turn events)
- * until user_message, then treat the next done/error as this turn's end.
+ * Bind on `turn_started` (optionally matching `clientTurnId`) or a `user_message`
+ * that already carries `runId`, then only forward events with that runId.
+ * Callers should end the stream when their own startChatTurn settles — not on
+ * the first done/error (sibling terminals must not close this SSE).
  */
+export type SseTurnGate = {
+  runId: string | null;
+  /** When set, only bind to turn_started with this clientTurnId. */
+  clientTurnId?: string;
+};
+
 export function acceptRuntimeEventForSseTurn(
-  gate: { seenUserMessage: boolean },
+  gate: SseTurnGate,
   event: RuntimeEvent,
 ): boolean {
-  if (!gate.seenUserMessage) {
-    if (event.type !== "user_message") return false;
-    gate.seenUserMessage = true;
+  if (event.type === 'skills_changed' || event.type === 'sessions_changed') {
+    return false;
   }
-  return true;
+
+  if (!gate.runId) {
+    if (event.type === 'turn_started') {
+      const want = (gate.clientTurnId || '').trim();
+      const got = (event.clientTurnId || '').trim();
+      if (want && want !== got) return false;
+      gate.runId = event.runId;
+      return true;
+    }
+    if (event.type === 'user_message') {
+      const rid = typeof event.runId === 'string' ? event.runId.trim() : '';
+      if (!rid) return false;
+      // user_message has no clientTurnId; require turn_started when disambiguating.
+      if ((gate.clientTurnId || '').trim()) return false;
+      gate.runId = rid;
+      return true;
+    }
+    return false;
+  }
+
+  const evRun =
+    'runId' in event && typeof (event as { runId?: unknown }).runId === 'string'
+      ? String((event as { runId: string }).runId).trim()
+      : '';
+  if (!evRun) return false;
+  return evRun === gate.runId;
 }

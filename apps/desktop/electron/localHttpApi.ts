@@ -4,7 +4,7 @@ import type { Socket } from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
 import { isLoopbackHostname, normalizeUsageStats, type AppSettings, type RuntimeEvent, type LocalHttpApiSettings } from '@okbot/shared';
-import { acceptRuntimeEventForSseTurn, encodeRuntimeEventSse, isRuntimeEventTurnTerminal } from '@okbot/agent';
+import { acceptRuntimeEventForSseTurn, encodeRuntimeEventSse } from '@okbot/agent';
 import type { IpcContext } from './ipc/context';
 import { abortChatOwner } from './ipc/chatControl';
 import { gatewayBootJs, gatewayLoginHtml, injectGatewayBoot, shouldServeGatewayLogin } from './gatewayLoginPage';
@@ -57,6 +57,16 @@ function projectSettingsForGateway(settings: AppSettings): AppSettings {
       ? settings.computers.map((computer) => ({ ...computer, token: '' }))
       : [],
     mcp: blankMcpSecrets(settings.mcp),
+    web: {
+      ...settings.web,
+      search: {
+        ...(settings.web?.search ?? { provider: 'tavily', apiKey: '', baseURL: '' }),
+        apiKey: '',
+      },
+      fetch: {
+        allowPrivateNetwork: settings.web?.fetch?.allowPrivateNetwork === true,
+      },
+    },
   };
 }
 
@@ -777,6 +787,10 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
           typeof parsed.computerId === 'string' && parsed.computerId.trim()
             ? parsed.computerId.trim()
             : undefined;
+        const clientTurnId =
+          typeof parsed.clientTurnId === 'string' && parsed.clientTurnId.trim()
+            ? parsed.clientTurnId.trim()
+            : undefined;
 
         if (isBotMsg) {
           const bot = deps.ctx.storage.listBots().find((b) => b.id === id);
@@ -794,8 +808,8 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
 
         const sessionId = id;
         const payload = isBotMsg
-          ? { botId: id, text, computerId }
-          : { squadId: id, text, computerId };
+          ? { botId: id, text, computerId, ...(clientTurnId ? { clientTurnId } : {}) }
+          : { squadId: id, text, computerId, ...(clientTurnId ? { clientTurnId } : {}) };
 
         // SSE: Accept: text/event-stream → stream RuntimeEvent for this session until done/error.
         if (wantsSse(req)) {
@@ -814,18 +828,17 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
             }
           };
 
-          const sseGate = { seenUserMessage: false };
+          const sseGate = { runId: null as string | null, ...(clientTurnId ? { clientTurnId } : {}) };
           const onChat = (event: RuntimeEvent) => {
             if (closed || event.botId !== sessionId) return;
-            // Previous steer's aborted done arrives before this turn's user_message.
+            // Bind on turn_started / runId; ignore sibling parallel turns.
             if (!acceptRuntimeEventForSseTurn(sseGate, event)) return;
             if (!writeSseEvent(res, event)) {
               finish();
               return;
             }
-            if (isRuntimeEventTurnTerminal(event)) {
-              finish();
-            }
+            // Do not finish() on done/error here: a parallel sibling terminal
+            // must not close this SSE. startChatTurn finally ends the stream.
           };
 
           const unsubscribe = subscribeRuntimeEvent(onChat);
@@ -851,7 +864,7 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
               });
             }
           } finally {
-            // Superseded steers may omit done/error — still end the stream.
+            // Always end the stream when this turn startChatTurn settles.
             finish();
           }
           return;

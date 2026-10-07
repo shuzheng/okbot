@@ -1,4 +1,10 @@
-import { createId, isAbortLikeError, redactSensitiveText, type ToolRunSettings } from '@okbot/shared';
+import {
+  createId,
+  isAbortLikeError,
+  redactSensitiveText,
+  type MessageTrace,
+  type ToolRunSettings,
+} from '@okbot/shared';
 export { isAbortLikeError };
 import {
   CircuitBreakError,
@@ -31,16 +37,10 @@ export function createRunGuards(input: {
   const trace = new RunTraceRecorder(input.ownerDir, record, runId);
   const budget = new ToolRunBudget(input.toolRun, input.controller, {
     onToolRequest: (info) => {
-      trace.append({
-        type: 'tool_request',
-        name: info.name,
-        argsSummary: info.argsSummary,
-      });
+      trace.beginTool(info.name, info.argsSummary);
     },
     onToolResult: (info) => {
-      trace.append({
-        type: 'tool_result',
-        name: info.name,
+      trace.endTool(info.name, {
         approved: info.approved,
         ok: info.ok,
         ...(info.outputSummary != null ? { outputSummary: info.outputSummary } : {}),
@@ -71,6 +71,37 @@ export function createRunGuards(input: {
       trace.append({ type: 'run_error', message });
     },
   };
+}
+
+
+/** Span hooks for runAgentChat / runSquadChat (feeds message.trace waterfall). */
+export function attachTraceHooks(guards: RunGuards) {
+  return {
+    onModelTurnStart: () => guards.trace.beginModel(),
+    onModelTurnEnd: (info: { ok: boolean; error?: string; spanId?: string }) => {
+      guards.trace.endModel({
+        status: info.ok ? ('ok' as const) : ('error' as const),
+        ...(info.error ? { error: redactSensitiveText(info.error) } : {}),
+        ...(info.spanId ? { spanId: info.spanId } : {}),
+      });
+    },
+    onApprovalWaitStart: (toolName: string) => guards.trace.beginApproval(toolName),
+    onApprovalWaitEnd: (info: { toolName: string; approved: boolean; spanId?: string }) => {
+      guards.trace.endApproval({
+        approved: info.approved,
+        ...(info.spanId ? { spanId: info.spanId } : {}),
+      });
+    },
+  };
+}
+
+/** Finish the run trace and return a copy for ChatMessage.trace / done events. */
+export function sealMessageTrace(
+  guards: RunGuards,
+  status: Exclude<RunTraceStatus, 'running'>,
+): MessageTrace | undefined {
+  guards.finish(status);
+  return guards.trace.getMessageTrace() ?? undefined;
 }
 
 export function resolveRunFinishStatus(input: {
@@ -112,5 +143,3 @@ export function handleRunFailure(input: {
   input.guards.finish(resolveRunFinishStatus({ err: input.err, aborted: false, breakReason }));
   return message;
 }
-
-

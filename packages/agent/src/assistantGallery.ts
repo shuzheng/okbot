@@ -1,5 +1,5 @@
 /**
- * Built-in starter assistants ("assistant gallery").
+ * Built-in starter assistants ("assistant marketplace").
  * Each entry builds a normal assistant package (same format as `.okbot` import),
  * so install goes through the one package install path.
  * Persona text follows ASD-STE100 style: short sentences, active voice, one instruction per sentence.
@@ -24,7 +24,7 @@ type GalleryEntry = {
   en: LocalizedPack;
 };
 
-/** Card data for the gallery UI. */
+/** Card data for the marketplace UI. */
 export type AssistantGalleryItem = {
   id: string;
   emoji: string;

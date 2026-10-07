@@ -68,7 +68,7 @@ okbot/
 - **展开态**：搜索、会话列表（助手 + 小队）、底部 FAB（搜索 / 设置 / 创建菜单）。会话行名称右上角显示**上次更新时间**（`formatSessionUpdatedAt`，用 `SessionItem.updatedAt`）：当天 `HH:mm`；昨天 `昨天 HH:mm`（EN: `Yesterday HH:mm`）；一周内为星期（`星期x` / EN 本地化短星期）；一月内为 `MM/DD`；更早为 `YYYY/MM/DD`。次要 muted 文案，不挤占标题/未读。  
 - **折叠态**：窄轨头像列表；悬停约 **500ms** 后显示 dock tip；底部紧凑 FAB。Mac Dock 式头像放大动效默认**关闭**（`settings.sidebarDockMagnify`，设置 → 通用 →「缩放特效」）；仅开关打开时才缩放。  
 - **宽度**：可拖拽，上限约 **400px**；点击 splitter 可折叠/展开；宽度持久化（`sidebarPersistence`）。  
-- **创建菜单**：创建助手 / 创建小队 / **助手库** / **导入助手**（各有独立图标）。  
+- **创建菜单**：创建助手 / 创建小队 / **助手市场** / **导入助手**（各有独立图标）。  
 - **会话项**：头像 + 名称 + 最近回复预览。助手右键：改名 / 资料 / **导出助手** / 删除。小队右键：改名 / 资料 / 删除。  
 - **两边列表同步**：桌面窗口与局域网网关页面共用同一份 `~/.okbot`。新消息、改名、新建、删除会发 `sessions_changed`（桌面走 IPC，网关走 `GET /v1/events` 长连接，只转发花名册变更、不转发对话 delta）。收到后约 **120ms** 内重新拉助手与小队列表；当前会话若已被删掉则清空选中。  
 - **未读回复**：非当前会话、且该会话 `hasUnreadReply` 且不在「工作中」时，头像外壳加 **unread 脉冲光晕**（`session-avatar-shell.unread`，文案 `unreadReply`）。切回会话会清未读（IPC `setChatUnread`）。窗口不在前台时，当前会话的回复完成或工具等待批准也会标未读；窗口重新获得焦点时清掉当前会话的未读。  
@@ -95,20 +95,21 @@ okbot/
 - **助手气泡**（左对齐）：布局是用户侧的 **镜像**——`bubble-body-row-assistant` 内先气泡、后操作（token 用量 / 引用 / **复制**），同一套 `margin-top: 6px`，**不要**再用 absolute 叠在气泡角上。  
 - 小队助手气泡：成员用对应 bot 的 `FlatAvatar`（`.bubble-speaker-avatar` 在 `.messages` 内 `position: sticky; top: 0`，长消息滚动时头像贴住视口顶，直到该条 `bubble-row` 滚出）；**队长气泡不渲染头像**（无 `has-speaker` 间距，气泡左对齐）。侧栏/列表 `SquadAvatar` 不变。  
 - Markdown 渲染、代码块复制；工具调用以 `ToolCardView` 插入在对应消息附近。  
-- 会话顶栏「本轮轨迹」：查看该助手/小队最近一轮 `last-run-trace.json`（只读弹层）。  
+- 会话顶栏「本轮轨迹」：查看该助手/小队最近一轮 `last-run-trace.json`（只读弹层）。
+- 助手回复气泡「链路追踪」：查看**本条消息**的瀑布时间轴（模型 / 工具 / 等待批准 / 压缩等步骤的耗时与摘要；数据写在消息 `trace` 字段，随会话持久化）。  
 - 发送时可**自动换题压缩**（见 §8.4；设置可关）。  
 - **流式性能**：`delta` 经 `requestAnimationFrame` 合并后再 `setState`（侧栏预览 + 气泡）；`MarkdownContent` / `CodeBlock` / `ChatTranscript` / `SessionSidebar` 用 `memo`，已完成气泡不因后续 token 重解析。  
 - 忙碌时底部 ThinkingOrb + 阶段文案（思考中 / 正在回复 / 工具与命令 / **正在进化**——`done` 后、`chatStart` IPC 返回前的 persist 与 AGENTS/skills/memory 刷新）；可「跳到底部」。
-- **贴底滚动**：用户未主动上滑时，流式 delta / 工具卡片 / Markdown 布局增高会通过 `ResizeObserver` + `MutationObserver` + 双 `rAF` 继续钉在底部；程序化滚动用 `pinningScrollRef` 忽略，避免误判「已离开底部」。距底 ≤48px 视为贴底，距底 >80px 才显示「回到底部」（滞回，消化亚像素抖动）。发送（含中途改向）会强制重新贴底；用户上滑后不抢滚动。
+- **贴底滚动**：用户未主动上滑时，流式 delta / 工具卡片 / Markdown 布局增高会通过 `ResizeObserver` + `MutationObserver` + 双 `rAF` 继续钉在底部；程序化滚动用 `pinningScrollRef` 忽略，避免误判「已离开底部」。距底 ≤48px 视为贴底，距底 >80px 才显示「回到底部」（滞回，消化亚像素抖动）。发送（含并行加任务）会强制重新贴底；用户上滑后不抢滚动。
 
 ### 3.4 输入区（`ChatComposer`）
 
 - 多行输入；空闲时描边强调。  
 - **引用草稿**：上方 quote 条（可关闭）；发送时写入 `quoteMessageId` + `quotePreview`（**不**把 `>` 拼进正文）。  
 - **麦克风**：点击开始录音，再点停止；`MediaRecorder` 采集音频 → 渲染进程 **本地 Whisper**（`@xenova/transformers` + 内置 `whisper-tiny`）转写写入 Composer；`VoiceBeam` 可视化。**不**走 Google Web Speech，也**不**走 provider `/audio/transcriptions`。需系统麦克风权限；识别可离线。失败时有模型加载 / 识别错误的中英提示。  
-- **附件**：图片 / 文件 / 文件夹。正文前可带 `[Attached]` 块（路径给工具）；图片另走视觉通道（`input_image` data URL），且必须通过与 `read_file` 相同的路径防护、魔数校验，并有张数与总量上限。引用前缀下的 `[Attached]` 同样会去掉图片路径，避免泄漏进模型文本和 `quotePreview`。气泡里已发送附件的无障碍名称与输入区「待发送」区分。
-- **发送 / 停止（中途改向）**：忙碌时输入框仍可编辑；有草稿时可继续发送（中途改向），Enter 同样可发送（尊重 IME）。**停止**保持独立：忙碌且草稿为空只显示停止；忙碌且有草稿时 **停止 + 发送** 同时显示。发送不会仅因忙碌而灰掉。BorderBeam / busy 一直保持到**最外层**运行真正结束（改向中途不会提前熄灭）。本机 HTTP API 发起的回合同样会点亮忙碌 / 停止（收到 `user_message`）。
-- **发送失败重试**：乐观用户气泡带渲染期 `sendStatus`（`pending` | `sent` | `failed`，不落盘）。`chatStart` / `chatStartSquad`（含中途改向）拒绝或抛错时，气泡保留并在**右下角**显示红色重试按钮（i18n `retrySend`）；点击以原文 + 引用（若有）重发。失败时不再用 `getMessagesPage` 整页替换把本地气泡冲掉。
+- **附件**：图片 / 文件 / 文件夹。除附件菜单外，可把文件 / 图片 / 文件夹**拖进聊天区**（含输入区）；松手后走与选择器相同的附件管线（同类型规则：图片扩展名与选择器一致；文件夹仍作为单个 `folder` 附件，不展开内容）。拖入时聊天区有放下提示。正文前可带 `[Attached]` 块（路径给工具）；图片另走视觉通道（`input_image` data URL），且必须通过与 `read_file` 相同的路径防护、魔数校验，并有张数与总量上限。引用前缀下的 `[Attached]` 同样会去掉图片路径，避免泄漏进模型文本和 `quotePreview`。气泡里已发送附件的无障碍名称与输入区「待发送」区分。纯浏览器网关若读不到本地绝对路径，拖放会提示改用附件按钮（桌面端 / 附着窗口可解析路径）。
+- **发送 / 停止（并行任务）**：忙碌时输入框仍可编辑；有草稿时可继续发送（新任务并行或排队），Enter 同样可发送（尊重 IME）。**停止**保持独立：忙碌且草稿为空只显示停止；忙碌且有草稿时 **停止 + 发送** 同时显示。发送不会仅因忙碌而灰掉。BorderBeam / busy 在该助手/小队**任一**回合仍在跑时保持点亮，全部结束后熄灭。本机 HTTP API 发起的回合同样会点亮忙碌 / 停止（收到 `user_message`）。
+- **发送失败重试**：乐观用户气泡带渲染期 `sendStatus`（`pending` | `sent` | `failed`，不落盘）。`chatStart` / `chatStartSquad` 拒绝或抛错时，气泡保留并在**右下角**显示红色重试按钮（i18n `retrySend`）；点击以原文 + 引用（若有）重发。失败时不再用 `getMessagesPage` 整页替换把本地气泡冲掉。
 
 ---
 
@@ -142,9 +143,9 @@ okbot/
 - **导出**：侧栏该助手右键 **导出助手**。默认文件名是助手名称（去掉不能做文件名的字符），扩展名 `.okbot`。`.okbot` 是**未加密** zip（系统 `zip`，无密码）。导出前剥掉密钥类字段（apiKey、token、password 等），**不含**会话、记忆、供应商配置。保存路径若没写 `.okbot` 会自动补上。  
 - **导入**：侧栏 **+** → **导入助手**，可选 `.okbot` 或含 `manifest.json` 的文件夹。始终**新建**一名助手（头像 / 名称 / 人设 / 技能），并标成已完成引导；不改本机模型密钥。成功后刷新会话列表。
 
-### 4.4 助手库（内置入门助手）
+### 4.4 助手市场（内置入门助手）
 
-- 侧栏 **+** → **助手库**，或首次使用引导第 2 步。点卡片即新建一名可直接聊天的助手，随后选中它并聚焦输入框。没有模型时卡片不可点，并提示先去「模型接入」添加模型。已有同名助手的卡片显示「已添加」，不能再点。
+- 侧栏 **+** → **助手市场**，或首次使用引导第 2 步。点卡片即新建一名可直接聊天的助手，随后选中它并聚焦输入框。没有模型时卡片不可点，并提示先去「模型接入」添加模型。已有同名助手的卡片显示「已添加」，不能再点。
 - 内置 5 个：写作助手、学习辅导、计划助手、翻译助手、电脑小帮手。每个含人设（`AGENTS.md`）和 1–2 个技能（slug 以 `okbot-` 开头），中英两套文案按界面语言安装。人设与技能用 ASD-STE100 风格的短句。
 - 数据在 `packages/agent/src/assistantGallery.ts`（`listAssistantGallery` / `galleryAssistantPackage`），复用助手包格式，经 `FileStorage.installAssistantPackage` 落盘（与导入同一路径）。IPC `listAssistantGallery` / `installGalleryAssistant`；网关同名 RPC 可用。
 
@@ -153,7 +154,7 @@ okbot/
 没有任何助手和小队、且未选中会话时，主区显示「三步开始使用 OkBot」（`features/onboarding/QuickStartPanel`）：
 
 1. **接入一个模型**：还没有带模型的供应商时，按钮打开设置 → 模型接入。完成后显示勾。
-2. **选一个助手**：内嵌助手库卡片，一点即用；或「自己创建」走原有新建助手流程。没有模型前这一步看起来不可操作。
+2. **选一个助手**：内嵌助手市场卡片，一点即用；或「自己创建」走原有新建助手流程。没有模型前这一步看起来不可操作。
 3. **发出第一条消息**。
 
 高级设置默认隐藏（见 §6「显示高级设置」），新手只看到常用项。
@@ -171,7 +172,18 @@ okbot/
   - 默认 Playbook 覆盖准备→澄清→拆解→路由→校验→冲突→汇总→异常→边界→跨队员传递；空字符串回落 `DEFAULT_SQUAD_PLAYBOOK`，已存自定义同样不覆盖。  
 - 会话 UI：成员呼叫/回复气泡带 speaker 头像；队长终泡无头像。列表仍用 `SquadAvatar`。队长分段封印后若终泡为空，聚合 usage 挂到最后一段已封印队长气泡；用量统计只记在小队 owner（不向成员 byOwner 分摊）。  
 - 全局搜索包括小队聊天消息，与私聊一致。  
-- **中途改向（steer）**：`chatStart`（1:1 与小队）对同一 owner 不再硬拒绝并发。策略为 **abort + restart**（`@openai/agents` 无可靠 mid-query inject）：先 `appendMessage` 落盘新用户消息 → 中止当前运行（含进行中的 HITL 审批等待，reject 为已取消并清 disk pending）→ 等上一 handler 链结束 → 若仍是最新一次发送则立即以完整历史开新跑；被更新发送/停止 supersede 的请求只保留用户消息、不开跑。显式 **停止**（`chatAbort`）会 bump 代次以取消排队中的改向重启。每 owner 同时仅一条 in-flight agent run。被中止的旧跑以 `done.aborted` 正常结束（**不**再把 AbortError 抛回 `ipcRenderer.invoke`），避免连发时出现 `Request was aborted` 红字失败。
+- **并行任务（不再改向中止）**：`chatStart`（1:1 与小队）在同一 owner 已有回合在跑时，**不会**中止旧任务。先 `appendMessage` 落盘新用户消息并立刻出现在对话里，再为新消息开一轮（自有 assistant 气泡、AbortController、审批 waiter、链路 trace）。每 owner 默认最多 **3** 路并行；超出部分 FIFO 排队，**不会**取消已在跑的。各回合完成时各自发 `done` / 自己的助手回复。显式 **停止**（`chatAbort`）中止该 owner **全部**进行中的回合，并取消仍在排队、尚未开跑的等待。被停止的回合以 `done.aborted` 结束（**不**把 AbortError 抛回 `ipcRenderer.invoke`）。会话 jsonl 写入按 owner 串行；并行回合的模型上下文用 `runId` 隔离，避免看见兄弟回合尚未完成的工具行。 当同一会话**未完成回合 > 1** 时，输入框上方出现紧凑「进行中的任务」条（截断标题 / 状态 / 耗时；点击跳转到对应用户气泡）；0–1 个任务时不显示。
+
+### 定时任务
+
+用户可以说「每天九点提醒我…」：模型通过内置工具 `manage_schedule`（create / list / pause / resume / delete）把任务写到当前助手或小队目录下的 `schedules.json`。
+
+**审批**：默认**询问**（`manage_schedule` 在 `DEFAULT_TOOL_PREFERENCES` 中为 `ask`）。**create / delete 无论设置如何都要用户确认**；list / pause / resume 跟随设置里的审批策略。设置 → 工具有**定时任务列表**，可直接暂停 / 恢复 / 删除（不必再问模型）。
+
+**日程**：`daily HH:MM`、`hourly`（可带分钟）、`every N m`（N 须整除 60，如 1/2/3/4/5/6/10/12/15/20/30）、以及 5 段 cron；可选 IANA `timezone`（省略则用运行 OkBot / `okbot serve` 的机器本地时区）；`once` 为真时只触发一次后自动停用。每个助手/小队最多 **50** 个任务。
+
+**触发**：到点后，拥有网关的进程内 `scheduleTicker`（约每 20s）发起一轮普通对话（用户气泡带「【定时】」前缀；走与手动发送相同的并行上限、停止与任务条；工具审批与预算与交互轮次相同）。**应用或 `okbot serve` 没在跑时不会触发**；再次启动后若某任务的下次时间已过，会补跑一次并推进下次。同一任务若上一轮还在跑，不会叠跑。不是工作流引擎，也不做任务看板。
+
 
 实现：`packages/agent/src/squad.ts`（`runSquadChat` + 导出 `buildCaptainSquadInstructions` / `allocateAskToolNames` + `onSquadExchange`）；压缩共用 `apps/desktop/electron/storage/sessionCompression.ts`。
 
@@ -186,8 +198,8 @@ okbot/
 | Tab（侧栏文案） | 内容 |
 |-----|------|
 | **通用设置** | 主题（系统/浅/深）、语言（系统/中/英）、缩放特效（默认关；? 说明仿 MacOS Dock 动效）、麦克风、硬件加速（改后需重启）、**系统通知**（默认开，见 §3.1）。**高级**：**显示高级设置**（`showAdvancedSettings`，默认关）、`developerMode`（开发者模式，默认关；关闭时侧栏不显示「系统指令」，若当时正停在该页，回到通用设置）。**数据**：数据目录、备份时不含密钥（默认开）、导出备份、从备份恢复（见 §12.1）。**不含**更新控件、网关服务与电脑连接 |
-| **模型接入** | **自定义供应商**（可多条：名称 / BaseURL / API Format / API Key / 每供应商模型目录）；模型行**连通测试**（按该供应商 baseURL/apiKey/apiFormat 对模型 id 发最小探针，IPC `testModelConnection`）；全局**默认模型**（下方下拉，供应商→模型；列表行不再用星标设默认）；列表顺序稳定（存盘数组序，启停不重排）；助手/小队覆盖同为 `providerId`+`modelId`；上下文压缩（自动换题、比例、保留上下限默认 5、摘要字数）、**单次运行最大回合**（1:1 `maxTurns`，默认 50） |
-| **工具授权** | 六工具启用 + 审批策略（自动允许 / 询问；含 `read_skill`）；**自动审批规则（AAR）** 列表（允许/先询问、关键词、失焦自动保存草稿；空规则丢弃；重名校验；列表限高滚动）；**运行限制**（`settings.toolRun`：单轮最大工具调用 / 最大时长秒 / 记录运行轨迹，见下） |
+| **模型接入** | **自定义供应商**（可多条：名称 / BaseURL / API Format / API Key / 每供应商模型目录）；模型行**连通测试**（按该供应商 baseURL/apiKey/apiFormat 对模型 id 发最小探针，IPC `testModelConnection`）；全局**默认模型**（下方下拉，供应商→模型；列表行不再用星标设默认）；列表顺序稳定（存盘数组序，启停不重排）；助手/小队覆盖同为 `providerId`+`modelId`；上下文压缩（自动换题、比例、保留上下限、摘要字数；新装默认更早压缩、多留原文）、**单次运行最大回合**（1:1 `maxTurns`，默认 50） |
+| **工具授权** | 内置工具启用 + 审批策略（自动允许 / 询问；含 `read_skill`、`manage_schedule`、`web_fetch`、`web_search`）；**定时任务列表**（暂停 / 恢复 / 删除）；**网页**小节（`settings.web`：搜索服务商 Tavily/Brave/Serper、API Key、可选 base URL；`web_fetch` 是否允许内网）；**自动审批规则（AAR）** 列表（允许/先询问、关键词、失焦自动保存草稿；空规则丢弃；重名校验；列表限高滚动）；**运行限制**（`settings.toolRun`：单轮最大工具调用 / 最大时长秒 / 记录运行轨迹，见下） |
 | **安全防护** | 总开关、拦截模式（reject / tripwire）、限制在家目录、允许/拒绝路径前缀、危险 shell 正则；与审批关系说明 |
 | **网关服务** | 页内小节为「网关配置」。说明在「HTTP API」一行（小节标题不再带问号）。其下为端口、访问令牌、局域网网关、提供 Web UI（默认关；见 §6.1）。Web UI 开关打开时，开关左侧有「打开 Web UI」链接（`http://127.0.0.1:<端口>/?token=`，与登录页打开方式相同）；关掉则不显示 |
 | **扩展** | MCP 服务器（默认关，见 §7.1）。只在桌面端可改；网关页只读 |
@@ -197,7 +209,7 @@ okbot/
 | **用量分析** | 见 §9；按助手/小队列表有内边距 |
 | **自动更新** | `autoUpdate` 开关与手动检查/下载/安装（从通用迁出；route id 仍为 `updates`） |
 
-默认工具策略（`DEFAULT_TOOL_PREFERENCES`）：六工具默认全开且默认自动允许（含只读的 `read_file` / `read_skill`，以及 `generate_image`）。写/执行仍可走 AAR，未命中再 HITL（当审批设为询问时）。
+默认工具策略（`DEFAULT_TOOL_PREFERENCES`）：内置工具默认全开；多数默认自动允许（含 `read_file` / `read_skill` / `write_file` / `edit_file` / `run_shell` / `generate_image` / `search_history` / `web_fetch` / `web_search`）。**`manage_schedule` 默认询问**；且 **create / delete 始终需要确认**（与设置无关），list / pause / resume 跟随该工具的审批策略。写/执行仍可走 AAR，未命中再 HITL（当审批设为询问时）。`web_search` 未配置 API Key 时仍暴露工具，调用会返回明确错误提示去设置配置。
 
 设置内可深链 `focusSection` / `data-settings-id`（全局搜索跳转）。`SettingsHelpTip` 经 portal 挂到 `document.body`（高 z-index），避免被 settings shell / body / card 的 overflow 裁切。
 
@@ -221,6 +233,8 @@ okbot/
 
 **运行轨迹**（`recordTrajectory`）：`~/.okbot/<botId|squadId>/last-run-trace.json`，形如 `{ runId, startedAt, endedAt?, status, events[] }`。事件：`run_start` / `tool_request` / `tool_result` / `circuit_break` / `run_error` / `run_done`（参数与输出摘要截断约 2k，无密钥）。对话顶栏按钮「本轮轨迹」→ IPC `getLastRunTrace(ownerId)` → 只读弹层（同 prompt-context 样式）。
 
+**消息链路**（瀑布时间轴）：同一轮录音在内存里建成 `MessageTrace`（`turnId` / `spans[]`：`model` / `tool:*` / `wait_approval:*` / `system` 如 `compress`），回合结束时写入该助手气泡的 `trace`（session.jsonl `meta.trace`）。气泡「链路追踪」→ 瀑布图（可展开看输入/输出摘要；可选 JSON）。与顶栏「本轮轨迹」互补：前者按消息保留历史，后者只留每会话最近一轮事件 JSON。
+
 
 ### 6.1 本地 HTTP API（loopback）
 
@@ -240,8 +254,8 @@ okbot/
   - `POST /v1/rpc/:op`，JSON 为该操作的参数：新建 / 编辑 / 删除助手与小队、完成引导、AGENTS.md、记忆、技能、全局搜索、prompt context、本轮轨迹、错误日志、模型发现与连通测试、立即压缩。与桌面 IPC 调同一份 `entityOps`。`op` 不在允许列表里是 404 `unknown_op`；存储报错是 400 并带原因。数据备份与恢复、按文件路径导入导出助手包不在列表里，只能在桌面端做
   - `GET /v1/events`：需令牌的 SSE 长连接，只推 `sessions_changed`（新消息、改名、新建、删除），供另一边刷新会话列表；不推本轮 `delta`。约 25s 一次注释心跳。  
   - `POST /v1/bots/:id/messages` / `POST /v1/squads/:id/messages`，JSON `{ "text": "..." }`（文本过长 413；过频 429）：
-    - **默认（非 SSE）** → **202** `{ ok: true, sessionId }`（`sessionId` 即 bot/squad id）。这不是后台队列：与 UI 一样走 `startChatTurn`，若该会话已有一轮在跑，会 **steer**（中止旧轮再开新轮），HTTP 响应本身不等最终回复。
-    - **SSE**：请求头带 `Accept: text/event-stream` → `Content-Type: text/event-stream`。先订阅再开回合。上一轮被 steer 掉时的 `done{aborted:true}` **早于**本轮 `user_message`，连接会忽略它，直到见到本轮 `user_message`，再流到本轮自己的 `done` / `error`。`tool_request` **不是**结束；审批等待期间连接保持，直到 `done` / `error`，或客户端断开。客户端断开只停止写入，不中止本轮；窗口关掉时用上面的审批 / 中止接口收口，避免运行永久挂起。`res.write` 背压不会当成断流。禁用 API 时会拆掉已有 SSE 连接。
+    - **默认（非 SSE）** → **202** `{ ok: true, sessionId }`（`sessionId` 即 bot/squad id）。与 UI 一样走 `startChatTurn`：若该会话已有回合在跑，新 POST **并行**（或排队）开新回合，**不**中止旧回合；HTTP 响应本身不等最终回复。
+    - **SSE**：请求头带 `Accept: text/event-stream` → `Content-Type: text/event-stream`。先订阅再开回合。连接以本请求的 `user_message` 为起点，流到**本回合**结束（`startChatTurn` promise 结算）为止；并行兄弟回合的 `done` 不会单独拆掉这条 SSE。`tool_request` **不是**结束；审批等待期间连接保持。客户端断开只停止写入，不中止本轮；窗口关掉时用上面的审批 / 中止接口收口。`res.write` 背压不会当成断流。禁用 API 时会拆掉已有 SSE 连接。
 - SSE 帧：`event: <RuntimeEvent.type>`，`data:` 为完整 `RuntimeEvent` JSON（与 UI IPC 同源）。常见 `type`：`user_message` / `assistant_message` / `delta` / `tool_request` / `tool_result` / `done` / `error`。
 - 示例（SSE）：
 
@@ -318,17 +332,21 @@ Electron 启动时做同样检查：
 - 附着窗口和 Web UI 能像桌面端一样新建、编辑、删除助手和小队，走完新助手引导，发现模型、测连通、立即压缩（经 `POST /v1/rpc/:op`）。网关返回的 API Key 是空的：发现模型和连通测试只带供应商 id，服务端只在 BaseURL 和已保存的一致时才用已保存的密钥。经网关测试时 BaseURL 必须是已保存的某个地址（否则 400 `probe_url_not_saved`，界面提示先保存再测试），避免借网关去请求内网任意地址。
 - **令牌等同于完全控制**：拿到令牌的人能聊天、批准工具（含运行命令和改文件）、改助手人设、记忆和技能、立即压缩会话。登录页和设置里的令牌说明都写明了这一点。
 - 网关只能用工具卡上的「总是允许」加规则，规则内容必须正好是一个内置工具名；也可以做只会多问的改动（加「询问」规则、删「允许」规则、关自动审批）。宽泛的关键词「允许」规则和改已有规则只能在桌面端做，设置页的规则列表在网关页只读（见 DESIGN「网关可写的设置」）。网关还可以保存 `notifications`、`showAdvancedSettings`。模型密钥、工具启用与审批策略、安全防护、电脑连接、网关配置、MCP 仍只能在桌面端改；网关写这些键返回 409 `settings_not_allowed`。网关返回的 MCP 环境变量和请求头的值是空的。
-- 网关可以用助手库新建助手。网关不能按文件路径导入、导出助手包，也不能做数据备份与恢复（这一节在网关页显示为不可操作）。语音转写在网关页不可用。
+- 网关可以用助手市场新建助手。网关不能按文件路径导入、导出助手包，也不能做数据备份与恢复（这一节在网关页显示为不可操作）。语音转写在网关页不可用。
 
 ---
 
 ## 7. 本机工具与安全
 
-工具（`packages/agent/src/tools.ts`，经 `ExecutionBackend` 执行 shell/fs）：
+工具（`packages/agent/src/tools.ts`；shell/fs 经 `ExecutionBackend`，网页工具在桌面主机直接 HTTP）：
 
-- `read_file` / `read_skill` / `write_file` / `edit_file` / `run_shell` / `generate_image`  
+- `read_file` / `read_skill` / `write_file` / `edit_file` / `run_shell` / `generate_image` / `search_history` / `manage_schedule` / `web_fetch` / `web_search`  
+- `search_history(query, limit?)`：仅检索**当前**助手或小队会话（时间索引路径），结果截断；默认自动允许；不跨会话  
 - `read_skill(slug)`：加载本助手已启用技能（本地优先，其次启用的全局）的完整 SKILL.md；系统提示只含目录，属渐进披露  
 - `generate_image(prompt, aspect_ratio?, model?)`：用当前模型供应商的 `baseURL`/`apiKey` **自动推断**是否支持 OpenAI 兼容文生图——OpenAI / Azure 主机，或目录含 `dall-e*`·`gpt-image*` → `POST {baseURL}/images/generations`（`b64_json`/`url`）。prefs 开启且推断成功才暴露工具。图片落盘 `~/.okbot/<botId|squadId>/resources/`，工具结果含 `okbot-asset:<ownerId>/resources/…` markdown（须原样写入回复）；`react-markdown` 通过自定义 `urlTransform` 保留该协议，渲染侧经 IPC 读成 data URL 显示（CSP `img-src` 不含 https）  
+- `manage_schedule`：见 §5「定时任务」。默认询问；create/delete 始终确认；每 owner 上限 50  
+- `web_fetch(url)`：HTTP(S) 拉取公开网页并转成可读纯文本；超时约 20s、体积与正文截断；默认阻止 localhost / 私网 / 链路本地（SSRF），可在设置 → 工具 → 网页打开「允许拉取内网地址」。无需 API Key；默认自动允许  
+- `web_search(query, limit?)`：经用户配置的第三方搜索（Tavily / Brave / Serper，`settings.web.search`：provider、apiKey、可选 baseURL）。未填 API Key 时工具仍可用，但返回中文错误提示去设置配置。密钥只在桌面端可改；网关响应与不含密钥备份会清空；默认自动允许  
 - 输出截断、文件大小与二进制检测、shell 超时约 30s、cwd 默认家目录  
 - `run_shell` 跨平台：Windows 优先 PATH 中的 PowerShell Core `pwsh`（`-NoProfile -NonInteractive -Command`），找不到时用 `ComSpec`（默认 `cmd.exe`）`/d /s /c`；其余平台用 `SHELL`，否则 darwin `/bin/zsh`、其它 `/bin/bash`，参数 `-lc`（见 `resolveShellExec`）
 
@@ -353,7 +371,7 @@ Electron 启动时做同样检查：
 
 HITL UI：工具卡上「允许 / 永久允许 / 拒绝」。
 - **停止 × 审批等待**：HITL 循环会清空工具前念叨后返回空 content；此时 **跳过** `upsertAssistantMessage`，且 storage 拒绝「无 id 匹配的空助手 upsert」，避免把上一轮助手回复 rebind 成空消息。
-- **改向 × 审批等待**：用户在待审批时发送新消息 → 中止当前审批（等同取消）并按 abort+restart 开新跑；冷启动 disk pending 也会在改向时清除。明确停止仍只中止、不重启。
+- **并行 × 审批等待**：用户在待审批时发送新消息 → **不**取消旧审批；新旧回合各有各的审批卡。明确 **停止** 才会中止该会话全部进行中的审批等待。
 
 ---
 
@@ -380,7 +398,7 @@ HITL UI：工具卡上「允许 / 永久允许 / 拒绝」。
 2. 从磁盘读系统材料，按当前模型 `contextWindow` 估 token；超阈值则更新 `session-summary.json`。  
 3. 构造 Session 视图（只暴露「未压缩尾部」）+ 本轮 `userText` 调模型。  
 4. 流式写入助手 / 工具项到 Session；UI 由文本项投影气泡。  
-5. 本轮结束后静默刷新 AGENTS.md / skills / 记忆（**下一轮**才进 prompt）。一次拉取 `Math.max` 三个配置窗口条数的消息页，再分别 `slice(-limit)`。
+5. 本轮结束后按节流策略静默刷新 AGENTS.md / skills / 记忆（**不是每轮都跑**；**下一轮**才进 prompt）。默认：记忆约每 2 轮或累计用户字数达阈值；AGENTS/技能约每 5 轮或更大字数阈值。用户文案含「记住」/ remember /「别忘了」时立刻抽记忆。一次拉取 `Math.max` 三个配置窗口条数的消息页，再分别 `slice(-limit)`。节流参数见 `settings.maintenance`。
 
 关键代码：`apps/desktop/electron/ipc/registerChat.ts`、`packages/agent/src/instructions.ts`、`promptContext.ts`、`quoteContext.ts`、`compression.ts`、`refresh.ts`。
 
@@ -393,12 +411,14 @@ HITL UI：工具卡上「允许 / 永久允许 / 拒绝」。
 | 块 | 来源 | 更新时机 |
 |---|---|---|
 | 角色句（你是「某助手」…） | `settings.instructions.assistantRoleTemplate` + 当前 bot 名（`{name}`） | 设置 → 指令 → 助手；每轮现拼 |
-| **机器人资料（花名册）** | `bots.json` 的 name / description；与 AGENTS 冲突时以花名册为准 | 用户改资料立刻写盘；下一轮读到新值 |
-| **AGENTS.md** | `~/.okbot/<botId>/AGENTS.md` | 新建/引导写入；资料弹层「高级」可编；改名/描述时 `syncAgentsMdProfile`；用户高级写入在同次保存中优先生效；**每轮成功后** `refreshAgentsMd`（system=`settings.instructions.agentsMdRefreshSystemPrompt`，窗口=`agentsMdRecentMessageLimit`）可能只修补有变化的章节（不整篇覆盖，下一轮生效） |
-| **记忆** | 全局 `memory.md` + 本助手 `memory.md`（JSONL）；过期过滤后 `formatMemoriesForPrompt`；设置 → 指令 → 记忆可编 scope 判定句与分析条数；设置 → 记忆可编全局列表；高级列表可编辑本助手记忆 | **开跑前**读盘；本轮结束后 `refreshMemories`（`scopeInstruction` + `recentMessageLimit`）可能 upsert；下一轮生效 |
-| **更早对话摘要** | `session-summary.json` 的 `summary` | **开跑前**估 token ≥ `contextWindow × ratio` 且历史够长时增量压缩并写回，推进 `coveredThroughId`；**不删** `session.jsonl` |
-| **Skills（渐进披露）** | 本助手 `skills/<slug>/SKILL.md` +（可选）`~/.agents/skills` 已启用全局 → `formatSkillsForPrompt` **仅目录**（名称 / slug / 何时使用）；完整正文不进静态系统提示，匹配后由模型调用 `read_skill(slug)`（`resolveEnabledSkill`，本地优先）加载 | **开跑前**读盘目录（含热更新后的磁盘内容，见 §4.1）；`useGlobalSkills` / `enabledGlobalSkills` 在 `bot.json`；高级列表可改本地 skill / 开关全局；本轮结束后 `refreshBotSkills`（判定行=`skillsCreateUpdateInstruction`，窗口=`skillsRecentMessageLimit`）可能 upsert；下一轮生效；「查看完整上下文」同样只见目录（正文仅出现在本轮 tool 结果中） |
-| 工具说明 / 编码偏好句 | 设置里的工具开关与审批模式 | 改设置后下一轮生效 |
+| **助手资料（花名册）** | `bots.json` 的 name / description；与 AGENTS 冲突时以花名册为准 | 用户改资料立刻写盘；下一轮读到新值 |
+| **AGENTS.md** | `~/.okbot/<botId>/AGENTS.md` | 新建/引导写入；资料弹层「高级」可编；改名/描述时 `syncAgentsMdProfile`；用户高级写入在同次保存中优先生效；**节流后的成功回合** `refreshAgentsMd`（system=`settings.instructions.agentsMdRefreshSystemPrompt`，窗口=`agentsMdRecentMessageLimit`）可能只修补有变化的章节（不整篇覆盖，下一轮生效） |
+| **记忆** | 全局 `memory.md` + 本助手 `memory.md`（JSONL）；过期过滤后 `formatMemoriesForPrompt`（**全局/钉住优先**，本机按新→旧；超限先折叠再丢）；设置 → 指令 → 记忆可编 scope 判定句与分析条数；`memory.promptMaxEntries` / `promptMaxChars` 控制注入上限；设置 → 记忆可编全局列表；高级列表可编辑本助手记忆 | **开跑前**读盘；节流后的回合 `refreshMemories`；**压缩推进 coverage 时**也会对掉出窗口的增量抽记忆；下一轮生效 |
+| **更早对话摘要** | `session-summary.json` 的 `summary` | **开跑前**估 token ≥ `contextWindow × ratio` 且历史够长时增量压缩并写回，推进 `coveredThroughId`；摘要可含工具短摘要；**不删** `session.jsonl`；需要原文细节时可调用 `search_history`（仅本会话，需批准） |
+| **Skills（渐进披露）** | 本助手 `skills/<slug>/SKILL.md` +（可选）`~/.agents/skills` 已启用全局 → `formatSkillsForPrompt` **仅目录**（名称 / slug / 何时使用，有条数/字数上限）；完整正文不进静态系统提示，匹配后由模型调用 `read_skill(slug)`（`resolveEnabledSkill`，本地优先）加载 | **开跑前**读盘目录（含热更新后的磁盘内容，见 §4.1）；`useGlobalSkills` / `enabledGlobalSkills` 在 `bot.json`；高级列表可改本地 skill / 开关全局；节流后的回合 `refreshBotSkills` 可能 upsert；下一轮生效；「查看完整上下文」同样只见目录（正文仅出现在本轮 tool 结果中） |
+| 工具说明 / 编码偏好句 | 设置里的工具开关与审批模式（含 `search_history`） | 改设置后下一轮生效 |
+
+instructions **拼装顺序**：稳定块在前（角色 / 花名册 / AGENTS / 回复写法 / 工具说明），易变块在后（记忆 / 会话摘要 / 技能目录），以利于服务商前缀缓存。
 
 估 token 用的静态文本大致含：AGENTS + skills + memories + 花名册 + 本轮用户正文，再加上摘要，以及未压缩尾部里的正文、工具参数和工具结果。阈值始终用**当前**解析出的模型 `contextWindow`（换小窗口模型也会立刻按新窗口压）。
 
@@ -416,7 +436,7 @@ HITL UI：工具卡上「允许 / 永久允许 / 拒绝」。
 
 - **开跑前读盘、可能压摘要** → 本轮真正喂给模型。  
 - **跑中写 Session（含工具）** → 多轮正文变长。  
-- **跑后静默维护 AGENTS / skills / 记忆** → 只影响之后轮次。
+- **跑后静默维护 AGENTS / skills / 记忆**（节流，见 `settings.maintenance`）→ 只影响之后轮次。
 
 #### 8.2.5 小队
 
@@ -436,8 +456,8 @@ HITL UI：工具卡上「允许 / 永久允许 / 拒绝」。
 
 ### 8.4 上下文压缩（Summary + Buffer）
 
-- **比例触发**：估 token ≥ `contextWindow × ratio`（默认 ratio `0.8`），且 live buffer 长于 `keepRecentMin`。  
-- **默认保留最近 5 条**原文（`keepRecentMin`/`keepRecentMax` 默认均为 `5`；仍超出窗口时保留条数会降到 0，不停在 5）；更早内容相对上一版摘要做**增量**压缩，结构化字段含目标 / 约定 / 路径 / 未完成 / 其他，字数受 `summaryMaxChars` 约束。  
+- **比例触发**：估 token ≥ `contextWindow × ratio`（新装默认 ratio `0.6`；已有 `settings.json` 里写过的值保持不变），且 live buffer 长于 `keepRecentMin`。  
+- **默认保留最近原文**：新装 `keepRecentMin=8`、`keepRecentMax=12`（仍超出窗口时保留条数会降到 0）；更早内容相对上一版摘要做**增量**压缩，工具调用/结果以短摘要进入摘要器；结构化字段含目标 / 约定 / 路径 / 未完成 / 其他，字数受 `summaryMaxChars`（新装默认约 2000）约束。可在设置 → 模型 → 上下文压缩调整。  
 - 写入 `session-summary.json`：`summary`、`coveredThroughId`、`updatedAt`。推进标记 **不** trim `session.jsonl`（界面气泡不删）。  
 - **助手与小队共用** `ensureSessionCompressed`（`sessionCompression.ts`）；小队同样会推进自己的 `coveredThroughId`。  
 - 设置：`contextCompression.*`（设置 → 模型相关区），含 **自动换题压缩** 开关（`autoTopicCompress`，默认开）。  
@@ -447,7 +467,7 @@ HITL UI：工具卡上「允许 / 永久允许 / 拒绝」。
   - 若否 / 判定失败 / live buffer 不足以压缩（≤ `keepRecentMin`）→ 不强制压缩；比例触发仍按原逻辑。  
   - 静默进行，不弹 toast。  
 - 估 token / 自动压缩一律按「摘要 + `coveredThroughId` 之后的尾部」计算；`coveredThroughId` 只前进到摘要器真正读过的最后一条，不回退。「查看完整上下文」与发送路径共用同一套投影。
-- 发送前若仍超出窗口，会丢掉较早的工具结果，还放不下就中止本轮；压缩得到的约定写入该助手记忆。
+- 发送前若仍超出窗口，会丢掉较早的工具结果，还放不下就中止本轮；压缩得到的约定写入该助手记忆，并对掉出窗口的对话增量再跑一轮记忆抽取。
 
 ### 8.5 会话存储
 

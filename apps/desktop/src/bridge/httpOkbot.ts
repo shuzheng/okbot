@@ -3,7 +3,7 @@
  * over the desktop LAN HTTP API (REST + SSE). Same UI codebase.
  */
 
-import { normalizeUsageStats } from '@okbot/shared';
+import { normalizeUsageStats, TOOL_IDS } from '@okbot/shared';
 
 
 type Json = Record<string, unknown>;
@@ -17,6 +17,8 @@ type AttachWindowFns = {
   windowIsMaximized?: () => Promise<boolean>;
   windowFocus?: () => Promise<boolean>;
   onWindowMaximizedChanged?: (cb: (maximized: boolean) => void) => () => void;
+  /** Electron attach preload: resolve absolute path for a dropped File. */
+  getPathForFile?: (file: File) => string;
 };
 
 type AttachRaw = AttachConfig & AttachWindowFns;
@@ -167,7 +169,7 @@ function startGatewaySessionEvents(): void {
   });
 }
 
-const GATEWAY_TOOL_IDS = ['read_file', 'read_skill', 'write_file', 'edit_file', 'run_shell', 'generate_image'] as const;
+const GATEWAY_TOOL_IDS = TOOL_IDS;
 
 /** SettingsModal maps `tools[id].enabled`. An empty tools object is truthy and crashes. */
 export function fillGatewayTools(tools: unknown): Record<string, { enabled: boolean; approval: 'allow' | 'ask' }> {
@@ -352,7 +354,12 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
     chatStart: async (
       botId: string,
       text: string,
-      opts?: { quoteMessageId?: string; computerId?: string; attachments?: unknown },
+      opts?: {
+        quoteMessageId?: string;
+        computerId?: string;
+        attachments?: unknown;
+        clientTurnId?: string;
+      },
     ) => {
       const token = gatewayToken();
       const res = await fetch(endpoint(`/v1/bots/${encodeURIComponent(botId)}/messages`), {
@@ -367,6 +374,7 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
           text,
           computerId: opts?.computerId,
           quoteMessageId: opts?.quoteMessageId,
+          clientTurnId: opts?.clientTurnId,
         }),
       });
       if (!res.ok || !res.body) {
@@ -402,7 +410,7 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
     chatStartSquad: async (
       squadId: string,
       text: string,
-      opts?: { quoteMessageId?: string; computerId?: string },
+      opts?: { quoteMessageId?: string; computerId?: string; clientTurnId?: string },
     ) => {
       const token = gatewayToken();
       const res = await fetch(endpoint(`/v1/squads/${encodeURIComponent(squadId)}/messages`), {
@@ -413,7 +421,12 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
           'Content-Type': 'application/json',
           Accept: 'text/event-stream',
         },
-        body: JSON.stringify({ text, computerId: opts?.computerId }),
+        body: JSON.stringify({
+          text,
+          computerId: opts?.computerId,
+          quoteMessageId: opts?.quoteMessageId,
+          clientTurnId: opts?.clientTurnId,
+        }),
       });
       if (!res.ok || !res.body) throw new Error(await res.text());
       const reader = res.body.getReader();
@@ -552,6 +565,16 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
       return normalizeUsageStats(body);
     },
     pickPaths: async () => ({ canceled: true, paths: [] }),
+    getPathForFile: (file: File): string => {
+      const fn = attachRaw()?.getPathForFile;
+      if (typeof fn !== 'function') return '';
+      try {
+        const path = fn(file);
+        return typeof path === 'string' ? path : '';
+      } catch {
+        return '';
+      }
+    },
     readGeneratedAssetDataUrl: async () => null,
     getPromptContext: (botId: string, messageId: string) =>
       rpc('getPromptContext', { botId, messageId }),
@@ -560,6 +583,12 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
       rpc('searchMessages', { query, limit: opts?.limit }),
     listBotMemories: (botId: string) => rpc('listBotMemories', { botId }),
     listGlobalMemories: () => rpc('listGlobalMemories'),
+    listScheduledJobs: () => rpc('listScheduledJobs'),
+    manageScheduledJob: (payload: {
+      ownerId: string;
+      jobId: string;
+      action: 'pause' | 'resume' | 'delete';
+    }) => rpc('manageScheduledJob', payload ?? {}),
     listBotSkills: (botId: string) => rpc('listBotSkills', { botId }),
     listGlobalAgentsSkills: () => rpc('listGlobalAgentsSkills'),
     readAgentsMd: (botId: string) => rpc<string>('readAgentsMd', { botId }),

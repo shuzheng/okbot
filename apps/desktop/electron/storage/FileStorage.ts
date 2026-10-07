@@ -28,9 +28,11 @@ import {
   LEGACY_DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT,
   LEGACY_AGENTS_MD_REFRESH_WITH_VISION_GUARD,
   LEGACY_AGENTS_MD_REFRESH_FULL_FILE,
+  LEGACY_AGENTS_MD_REFRESH_WITH_ROBOT,
   LEGACY_DEFAULT_SQUAD_CAPTAIN_PERSONA,
   LEGACY_DEFAULT_SQUAD_PLAYBOOK,
   normalizeMemorySettings,
+  normalizeMaintenanceSettings,
   normalizeToolRunSettings,
   normalizeSquad,
   clampSessionSummary,
@@ -52,7 +54,9 @@ import {
   normalizeLocalHttpApiSettings,
   normalizeComputers,
   normalizeMcpSettings,
+  normalizeWebSettings,
   normalizeDefaultComputerId,
+  type ScheduledJobInfo,
 } from '@okbot/shared';
 import {
   parseSkillMarkdown,
@@ -76,6 +80,18 @@ import {
   writeText,
 } from './fs';
 import { formatCappedMemoriesForPrompt } from './memoryPrompt';
+import {
+  type ScheduledJob,
+  type SchedulesFile,
+  createScheduledJob,
+  emptySchedulesFile,
+  formatJobSummary,
+  formatScheduleSpec,
+  parseScheduleString,
+  readSchedulesFile,
+  refreshJobNextRun,
+  writeSchedulesFile,
+} from './schedules';
 import { loadUsageStats, recordTokenUsage, removeOwnerUsage } from './usageStore';
 import {
   isSessionRecordV2,
@@ -115,6 +131,31 @@ const SQUAD_SEARCH_EMOJI = '👥';
 const SQUAD_SEARCH_COLOR = '#6366F1';
 
 export class FileStorage {
+  /** Serialize session.jsonl RMW across parallel turns (promise chain per owner). */
+  private sessionWriteChains = new Map<string, Promise<void>>();
+
+  private async withSessionWriteLock<T>(ownerId: string, fn: () => T | Promise<T>): Promise<T> {
+    const id = (ownerId || '').trim() || '_';
+    const prev = this.sessionWriteChains.get(id) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.sessionWriteChains.set(
+      id,
+      prev.then(
+        () => gate,
+        () => gate,
+      ),
+    );
+    await prev.catch(() => undefined);
+    try {
+      return await fn();
+    } finally {
+      release();
+    }
+  }
+
   readonly root: string;
   private botsPath: string;
   private squadsPath: string;
@@ -357,6 +398,7 @@ export class FileStorage {
           bot_id: String(row.bot_id),
           memory: row.memory.trim(),
           expires,
+          ...(row.pinned === true ? { pinned: true } : {}),
         });
       } catch {
         /* skip */
@@ -378,6 +420,7 @@ export class FileStorage {
         bot_id: e.bot_id,
         memory: e.memory,
         expires: e.expires,
+        ...(e.pinned === true ? { pinned: true } : {}),
       }),
     );
     writeText(file, `${header.join('\n')}${body.join('\n')}${body.length ? '\n' : ''}`);
@@ -405,6 +448,7 @@ export class FileStorage {
       bot_id: entry.bot_id,
       memory: stripThinkContent(entry.memory).trim(),
       expires: entry.expires,
+      ...(entry.pinned === true ? { pinned: true } : {}),
     };
     if (idx >= 0) list[idx] = next;
     else list.push(next);
@@ -457,9 +501,11 @@ export class FileStorage {
   }
 
   formatMemoriesForPrompt(botId: string): string {
+    const mem = this.getSettings().memory;
     return formatCappedMemoriesForPrompt(
       this.listGlobalMemories(),
       this.listBotMemories(botId),
+      { maxEntries: mem.promptMaxEntries, maxChars: mem.promptMaxChars },
     );
   }
 
@@ -562,6 +608,7 @@ export class FileStorage {
         useGlobalSkills,
         enabledGlobalSkills,
       }),
+      { maxEntries: 40, maxChars: 4_000 },
     );
   }
 
@@ -662,6 +709,245 @@ export class FileStorage {
     return readLastRunTrace(this.ownerDir(id));
   }
 
+  /** `~/.okbot/<ownerId>/schedules.json` */
+  private schedulesFile(ownerId: string): string {
+    return path.join(this.ownerDir(ownerId), 'schedules.json');
+  }
+
+  listScheduledJobs(ownerId: string): ScheduledJob[] {
+    const id = assertSafeOwnerSegment(ownerId);
+    this.assertKnownOwnerId(id);
+    this.ensureChatLayout(id);
+    return readSchedulesFile(this.schedulesFile(id), id).jobs;
+  }
+
+  private writeScheduledJobs(ownerId: string, jobs: ScheduledJob[]): ScheduledJob[] {
+    const id = assertSafeOwnerSegment(ownerId);
+    this.assertKnownOwnerId(id);
+    this.ensureChatLayout(id);
+    const now = new Date().toISOString();
+    const next: SchedulesFile = {
+      version: 1,
+      jobs: jobs.map((j) => ({ ...j, ownerId: id, updatedAt: j.updatedAt || now })),
+    };
+    writeSchedulesFile(this.schedulesFile(id), next);
+    return next.jobs;
+  }
+
+  /**
+   * Create / list / pause / resume / delete scheduled jobs for one owner.
+   * Returns a Chinese summary string for the model tool.
+   */
+  manageScheduledJobs(
+    ownerId: string,
+    input: {
+      action: 'create' | 'list' | 'pause' | 'resume' | 'delete';
+      prompt?: string;
+      title?: string;
+      schedule?: string;
+      timezone?: string;
+      jobId?: string;
+      once?: boolean;
+    },
+  ): string {
+    const id = assertSafeOwnerSegment(ownerId);
+    this.assertKnownOwnerId(id);
+    this.ensureChatLayout(id);
+    const action = input.action;
+    let jobs = readSchedulesFile(this.schedulesFile(id), id).jobs;
+
+    const findJob = (jobId?: string, title?: string): ScheduledJob | null => {
+      const jid = (jobId || '').trim();
+      if (jid) {
+        const hit = jobs.find((j) => j.id === jid);
+        if (hit) return hit;
+      }
+      const t = (title || '').trim();
+      if (t) {
+        const hits = jobs.filter((j) => j.title === t);
+        if (hits.length === 1) return hits[0]!;
+        if (hits.length > 1) return null;
+      }
+      return null;
+    };
+
+    if (action === 'list') {
+      if (!jobs.length) return '（当前会话没有定时任务）';
+      return ['定时任务列表：', ...jobs.map((j) => formatJobSummary(j))].join('\n');
+    }
+
+    if (action === 'create') {
+      const prompt = (input.prompt || '').trim();
+      if (!prompt) return '错误：create 需要 prompt';
+      if (jobs.length >= 50) return '错误：每个助手/小队最多 50 个定时任务';
+      const parsed = parseScheduleString(input.schedule || '');
+      if ('error' in parsed) return `错误：${parsed.error}`;
+      const job = createScheduledJob({
+        ownerId: id,
+        prompt,
+        title: input.title,
+        schedule: parsed,
+        timezone: input.timezone,
+        once: input.once === true,
+      });
+      if (!job.nextRunAt) {
+        return '错误：无法计算下次运行时间（日程可能无法满足，请检查 cron / 时区）';
+      }
+      jobs = [...jobs, job];
+      this.writeScheduledJobs(id, jobs);
+      return ['已创建定时任务：', formatJobSummary(job)].join('\n');
+    }
+
+    if (action === 'pause' || action === 'resume' || action === 'delete') {
+      const job = findJob(input.jobId, input.title);
+      if (!job) {
+        if ((input.title || '').trim() && jobs.filter((j) => j.title === (input.title || '').trim()).length > 1) {
+          return '错误：同名任务不唯一，请传 job_id';
+        }
+        return '错误：未找到任务（请传 job_id，或 list 后重试）';
+      }
+      if (action === 'delete') {
+        jobs = jobs.filter((j) => j.id !== job.id);
+        this.writeScheduledJobs(id, jobs);
+        return `已删除定时任务 ${job.id}${job.title ? `（${job.title}）` : ''}`;
+      }
+      const enabled = action === 'resume';
+      const now = new Date();
+      jobs = jobs.map((j) => {
+        if (j.id !== job.id) return j;
+        const next = refreshJobNextRun(
+          { ...j, enabled, updatedAt: now.toISOString(), lastError: enabled ? j.lastError : j.lastError },
+          now,
+        );
+        return next;
+      });
+      this.writeScheduledJobs(id, jobs);
+      const updated = jobs.find((j) => j.id === job.id)!;
+      return [`已${enabled ? '恢复' : '暂停'}定时任务：`, formatJobSummary(updated)].join('\n');
+    }
+
+    return '错误：未知 action';
+  }
+
+  /** Settings / gateway: every job with owner display name. */
+  listAllScheduledJobInfos(): ScheduledJobInfo[] {
+    const out: ScheduledJobInfo[] = [];
+    const push = (
+      ownerId: string,
+      ownerName: string,
+      ownerKind: 'bot' | 'squad',
+      jobs: ScheduledJob[],
+    ) => {
+      for (const j of jobs) {
+        out.push({
+          id: j.id,
+          ownerId,
+          ownerName,
+          ownerKind,
+          title: j.title,
+          prompt: j.prompt,
+          enabled: j.enabled,
+          timezone: j.timezone,
+          scheduleLabel: formatScheduleSpec(j.schedule),
+          nextRunAt: j.nextRunAt,
+          lastRunAt: j.lastRunAt,
+          lastError: j.lastError,
+          once: j.once,
+        });
+      }
+    };
+    for (const b of this.listBots()) {
+      try {
+        push(b.id, b.name || b.id, 'bot', this.listScheduledJobs(b.id));
+      } catch {
+        /* skip */
+      }
+    }
+    for (const s of this.listSquads()) {
+      try {
+        push(s.id, s.name || s.id, 'squad', this.listScheduledJobs(s.id));
+      } catch {
+        /* skip */
+      }
+    }
+    out.sort((a, b) => {
+      const ae = a.enabled === b.enabled ? 0 : a.enabled ? -1 : 1;
+      if (ae !== 0) return ae;
+      return (a.nextRunAt || '').localeCompare(b.nextRunAt || '');
+    });
+    return out;
+  }
+
+  /** All enabled jobs across bots/squads (for the process ticker). */
+  listAllEnabledScheduledJobs(): ScheduledJob[] {
+    const out: ScheduledJob[] = [];
+    for (const b of this.listBots()) {
+      try {
+        for (const j of this.listScheduledJobs(b.id)) {
+          if (j.enabled) out.push(j);
+        }
+      } catch {
+        /* skip missing */
+      }
+    }
+    for (const s of this.listSquads()) {
+      try {
+        for (const j of this.listScheduledJobs(s.id)) {
+          if (j.enabled) out.push(j);
+        }
+      } catch {
+        /* skip missing */
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Claim a due job: advance nextRunAt (or disable when once) so the ticker
+   * will not double-fire while the turn runs. Does not set lastRunAt.
+   */
+  claimScheduledJobDue(ownerId: string, jobId: string, now: Date = new Date()): ScheduledJob | null {
+    const id = assertSafeOwnerSegment(ownerId);
+    this.assertKnownOwnerId(id);
+    const jobs = readSchedulesFile(this.schedulesFile(id), id).jobs;
+    const idx = jobs.findIndex((j) => j.id === jobId);
+    if (idx < 0) return null;
+    let job = { ...jobs[idx]! };
+    if (!job.enabled) return null;
+    if (!job.nextRunAt || Date.parse(job.nextRunAt) > now.getTime()) return null;
+    job.updatedAt = now.toISOString();
+    if (job.once) {
+      job.enabled = false;
+      job.nextRunAt = null;
+    } else {
+      job = refreshJobNextRun(job, now);
+    }
+    jobs[idx] = job;
+    this.writeScheduledJobs(id, jobs);
+    return job;
+  }
+
+  /** After a claimed fire: record lastRunAt / lastError (does not re-advance nextRun). */
+  markScheduledJobFired(
+    ownerId: string,
+    jobId: string,
+    result: { ok: boolean; error?: string; firedAt?: Date },
+  ): ScheduledJob | null {
+    const id = assertSafeOwnerSegment(ownerId);
+    this.assertKnownOwnerId(id);
+    const jobs = readSchedulesFile(this.schedulesFile(id), id).jobs;
+    const idx = jobs.findIndex((j) => j.id === jobId);
+    if (idx < 0) return null;
+    const firedAt = result.firedAt ?? new Date();
+    const job = { ...jobs[idx]! };
+    job.lastRunAt = firedAt.toISOString();
+    job.lastError = result.ok ? null : (result.error || 'failed').slice(0, 500);
+    job.updatedAt = firedAt.toISOString();
+    jobs[idx] = job;
+    this.writeScheduledJobs(id, jobs);
+    return job;
+  }
+
   /** Consume a settings-load warning once (for bootstrap toast). */
   takeSettingsLoadWarning(): string | null {
     const w = this.settingsLoadWarning;
@@ -699,6 +985,10 @@ export class FileStorage {
           write_file: { ...DEFAULT_SETTINGS.tools.write_file },
           edit_file: { ...DEFAULT_SETTINGS.tools.edit_file },
           generate_image: { ...DEFAULT_SETTINGS.tools.generate_image },
+          search_history: { ...DEFAULT_SETTINGS.tools.search_history },
+          manage_schedule: { ...DEFAULT_SETTINGS.tools.manage_schedule },
+          web_fetch: { ...DEFAULT_SETTINGS.tools.web_fetch },
+          web_search: { ...DEFAULT_SETTINGS.tools.web_search },
         },
         security: {
           ...DEFAULT_SETTINGS.security,
@@ -709,6 +999,7 @@ export class FileStorage {
         maxTurns: DEFAULT_SETTINGS.maxTurns,
         instructions: { ...DEFAULT_SETTINGS.instructions },
         memory: { ...DEFAULT_SETTINGS.memory },
+        maintenance: { ...DEFAULT_SETTINGS.maintenance },
         squad: { ...DEFAULT_SETTINGS.squad },
         toolRun: { ...DEFAULT_SETTINGS.toolRun },
         localHttpApi: normalizeLocalHttpApiSettings(DEFAULT_SETTINGS.localHttpApi),
@@ -716,6 +1007,7 @@ export class FileStorage {
         defaultComputerId: 'local',
         autoApprovalRules: [...DEFAULT_SETTINGS.autoApprovalRules],
         mcp: normalizeMcpSettings(DEFAULT_SETTINGS.mcp),
+        web: normalizeWebSettings(DEFAULT_SETTINGS.web),
       };
     }
 
@@ -743,6 +1035,7 @@ export class FileStorage {
       maxTurns: normalizeMaxTurns((raw as { maxTurns?: unknown }).maxTurns),
       instructions: normalizeInstructionsSettings((raw as { instructions?: unknown }).instructions),
       memory: normalizeMemorySettings((raw as { memory?: unknown }).memory),
+      maintenance: normalizeMaintenanceSettings((raw as { maintenance?: unknown }).maintenance),
       squad: normalizeSquadSettings((raw as { squad?: unknown }).squad),
       toolRun: normalizeToolRunSettings((raw as { toolRun?: unknown }).toolRun),
       localHttpApi: normalizeLocalHttpApiSettings((raw as { localHttpApi?: unknown }).localHttpApi),
@@ -754,6 +1047,7 @@ export class FileStorage {
       notifications: (raw as { notifications?: unknown }).notifications !== false,
       showAdvancedSettings: false,
       mcp: normalizeMcpSettings((raw as { mcp?: unknown }).mcp),
+      web: normalizeWebSettings((raw as { web?: unknown }).web),
     };
     const rawShowAdvanced = (raw as { showAdvancedSettings?: unknown }).showAdvancedSettings;
     // Missing in an existing settings.json: written by an older build, where every
@@ -797,7 +1091,8 @@ export class FileStorage {
       const legacyAgentsRefreshPrompt =
         rawAgentsPrompt === LEGACY_DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT ||
         rawAgentsPrompt === LEGACY_AGENTS_MD_REFRESH_WITH_VISION_GUARD ||
-        rawAgentsPrompt === LEGACY_AGENTS_MD_REFRESH_FULL_FILE;
+        rawAgentsPrompt === LEGACY_AGENTS_MD_REFRESH_FULL_FILE ||
+        rawAgentsPrompt === LEGACY_AGENTS_MD_REFRESH_WITH_ROBOT;
       if (
         legacyModel ||
         legacySquadMissing ||
@@ -873,6 +1168,7 @@ export class FileStorage {
       maxTurns: normalizeMaxTurns(settings.maxTurns),
       instructions: normalizeInstructionsSettings(settings.instructions),
       memory: normalizeMemorySettings(settings.memory),
+      maintenance: normalizeMaintenanceSettings(settings.maintenance),
       squad: normalizeSquadSettings(settings.squad),
       toolRun: normalizeToolRunSettings(settings.toolRun),
       localHttpApi: normalizeLocalHttpApiSettings(settings.localHttpApi),
@@ -884,6 +1180,7 @@ export class FileStorage {
       notifications: settings.notifications !== false,
       showAdvancedSettings: settings.showAdvancedSettings === true,
       mcp: normalizeMcpSettings(settings.mcp),
+      web: normalizeWebSettings(settings.web),
     };
     this.writeSettingsFile(next);
     return next;
@@ -1613,6 +1910,8 @@ export class FileStorage {
         item,
         meta: {
           ...(uiRole ? { uiRole } : {}),
+          ...(meta?.runId ? { runId: meta.runId } : {}),
+          ...(meta?.speakerBotId ? { speakerBotId: meta.speakerBotId } : {}),
         },
       };
       chunks.push(`${JSON.stringify(rec)}\n`);
@@ -1684,6 +1983,10 @@ export class FileStorage {
     afterMessageId?: string | null,
     limit?: number,
     omitRecordIds?: ReadonlySet<string> | null,
+    parallel?: {
+      runId?: string | null;
+      baselineIds?: ReadonlySet<string> | null;
+    } | null,
   ): Record<string, unknown>[] {
     const records = this.readSessionRecords(botId);
     let start = 0;
@@ -1694,6 +1997,21 @@ export class FileStorage {
     let slice = records.slice(start);
     if (omitRecordIds && omitRecordIds.size) {
       slice = slice.filter((r) => !omitRecordIds.has(r.id));
+    }
+    const runId = (parallel?.runId || '').trim();
+    const baselineIds = parallel?.baselineIds;
+    if (runId && baselineIds) {
+      slice = slice.filter((r) => {
+        const rowRun = typeof r.meta?.runId === 'string' ? r.meta.runId.trim() : '';
+        if (rowRun === runId) return true;
+        if (rowRun && rowRun !== runId) {
+          // Sibling tagged row: only if it already existed when this turn started.
+          return baselineIds.has(r.id);
+        }
+        // Untagged (e.g. user rows from appendMessage): baseline only — otherwise
+        // a sibling parallel user message leaks into this turn's model window.
+        return baselineIds.has(r.id);
+      });
     }
     const items = slice.map((r) => r.item);
     if (limit == null || limit <= 0 || limit >= items.length) return items;
@@ -1707,27 +2025,44 @@ export class FileStorage {
    */
   createSessionStore(
     botId: string,
-    opts?: { afterMessageId?: string | null; omitRecordIds?: string[] | null },
+    opts?: {
+      afterMessageId?: string | null;
+      omitRecordIds?: string[] | null;
+      /** Parallel-turn isolation: hide sibling in-flight rows from the model. */
+      runId?: string | null;
+    },
   ): {
     getSessionId: () => string;
     readItems: (limit?: number) => Record<string, unknown>[];
-    appendItems: (items: Record<string, unknown>[]) => void;
-    popItem: () => Record<string, unknown> | undefined;
-    clearItems: () => void;
-    replaceItems: (items: Record<string, unknown>[]) => void;
+    appendItems: (items: Record<string, unknown>[]) => void | Promise<void>;
+    popItem: () => Record<string, unknown> | undefined | Promise<Record<string, unknown> | undefined>;
+    clearItems: () => void | Promise<void>;
+    replaceItems: (items: Record<string, unknown>[]) => void | Promise<void>;
   } {
     this.ensureSessionV2(botId);
     const afterMessageId = opts?.afterMessageId ?? null;
     const omitRecordIds =
       opts?.omitRecordIds && opts.omitRecordIds.length ? new Set(opts.omitRecordIds) : null;
+    const runId = (opts?.runId || '').trim() || null;
+    // Snapshot ids present when this turn starts so later sibling appends stay invisible.
+    const baselineIds = runId
+      ? new Set(this.readSessionRecords(botId).map((r) => r.id))
+      : null;
     return {
       getSessionId: () => botId,
       readItems: (limit?: number) =>
-        this.readSessionItemsAfter(botId, afterMessageId, limit, omitRecordIds),
-      appendItems: (items: Record<string, unknown>[]) => this.appendSessionItems(botId, items),
-      popItem: () => this.popSessionItem(botId),
-      clearItems: () => this.clearSessionItems(botId),
-      replaceItems: (items: Record<string, unknown>[]) => this.replaceSessionItems(botId, items),
+        this.readSessionItemsAfter(botId, afterMessageId, limit, omitRecordIds, {
+          runId,
+          baselineIds,
+        }),
+      appendItems: (items: Record<string, unknown>[]) =>
+        this.withSessionWriteLock(botId, () =>
+          this.appendSessionItems(botId, items, runId ? { runId } : undefined),
+        ),
+      popItem: () => this.withSessionWriteLock(botId, () => this.popSessionItem(botId)),
+      clearItems: () => this.withSessionWriteLock(botId, () => this.clearSessionItems(botId)),
+      replaceItems: (items: Record<string, unknown>[]) =>
+        this.withSessionWriteLock(botId, () => this.replaceSessionItems(botId, items)),
     };
   }
 
@@ -1775,6 +2110,54 @@ export class FileStorage {
       hasMore: page.hasMore,
       nextBeforeMessageId: page.nextBeforeMessageId,
     };
+  }
+
+  /**
+   * Search one chat owner only (bot or squad). Used by the `search_history` tool.
+   * Does not cross owners. Empty query → [].
+   */
+  async searchMessagesForOwner(
+    ownerId: string,
+    query: string,
+    opts?: { limit?: number },
+  ): Promise<MessageSearchHit[]> {
+    const q = query.trim();
+    if (!q || !ownerId.trim()) return [];
+    const limit = Math.min(40, Math.max(1, opts?.limit ?? 12));
+    const owners: SearchOwner[] = [];
+    if (isSquadOwnerId(ownerId)) {
+      const squad = this.listSquads().find((s) => s.id === ownerId);
+      if (!squad) return [];
+      const botNames = new Map(this.listBots().map((b) => [b.id, b.name] as const));
+      owners.push({
+        file: this.sessionFile(squad.id),
+        squad: true,
+        speakerNames: botNames,
+        botId: squad.id,
+        ownerKind: 'squad',
+        botName: squad.name,
+        botEmoji: SQUAD_SEARCH_EMOJI,
+        botColor: SQUAD_SEARCH_COLOR,
+        botAvatarKind: 'emoji',
+      });
+    } else {
+      const bot = this.listBots().find((b) => b.id === ownerId);
+      if (!bot || isSquadOwnerId(bot.id)) return [];
+      const avatarKind = normalizeBotAvatarKind(bot.avatarKind);
+      owners.push({
+        file: this.sessionFile(bot.id),
+        botId: bot.id,
+        ownerKind: 'bot',
+        botName: bot.name,
+        botEmoji: bot.emoji,
+        botColor: bot.color,
+        botAvatarKind: avatarKind,
+        ...(avatarKind === 'bot-avatar'
+          ? { botAvatarType: normalizeBotAvatarType(bot.botAvatarType) }
+          : {}),
+      });
+    }
+    return searchSessionFiles(owners, q, limit);
   }
 
   /**
@@ -1977,16 +2360,20 @@ export class FileStorage {
    * Error paths must pass `{ allowRebind: false }` so a fresh "错误：…" row never
    * rebind-scans onto the previous assistant turn.
    */
-  upsertAssistantMessage(
+  async upsertAssistantMessage(
     botId: string,
     message: ChatMessage,
-    opts?: { allowRebind?: boolean },
-  ): void {
+    opts?: { allowRebind?: boolean; runId?: string | null },
+  ): Promise<void> {
+    await this.withSessionWriteLock(botId, () => {
     const allowRebind = opts?.allowRebind !== false;
+    const runId = (opts?.runId || '').trim();
+    const stampRun = (rec: SessionRecordV2): SessionRecordV2 =>
+      runId ? { ...rec, meta: { ...(rec.meta || {}), runId } } : rec;
     const records = this.readSessionRecords(botId);
     const byId = records.findIndex((r) => r.id === message.id);
     if (byId >= 0) {
-      records[byId] = mergeUiMessageOntoRecord(records[byId]!, message);
+      records[byId] = stampRun(mergeUiMessageOntoRecord(records[byId]!, message));
       this.writeSessionRecords(botId, records);
       this.noteSessionsChanged(botId, 'message');
       return;
@@ -2005,7 +2392,7 @@ export class FileStorage {
       !allowRebind ||
       (typeof message.speakerBotId === 'string' && message.speakerBotId.trim())
     ) {
-      records.push(legacyMessageToRecord(message));
+      records.push(stampRun(legacyMessageToRecord(message)));
       this.writeSessionRecords(botId, records);
       this.noteSessionsChanged(botId, 'message');
       return;
@@ -2016,19 +2403,25 @@ export class FileStorage {
       if (typeof rec.meta?.speakerBotId === 'string' && rec.meta.speakerBotId.trim()) {
         continue;
       }
+      // Parallel turns: only rebind rows from this run (or untagged legacy rows).
+      if (runId) {
+        const rowRun = typeof rec.meta?.runId === 'string' ? rec.meta.runId.trim() : '';
+        if (rowRun && rowRun !== runId) continue;
+      }
       const ui = recordToUiMessage(rec);
       if (ui?.role === 'assistant') {
         // Rebind Runner-persisted row to the streaming UI id and final text,
         // keeping Responses array-shaped content (do not flatten via legacyMessageToRecord).
-        records[i] = mergeUiMessageOntoRecord(rec, message);
+        records[i] = stampRun(mergeUiMessageOntoRecord(rec, message));
         this.writeSessionRecords(botId, records);
         this.noteSessionsChanged(botId, 'message');
         return;
       }
     }
-    records.push(legacyMessageToRecord(message));
+    records.push(stampRun(legacyMessageToRecord(message)));
     this.writeSessionRecords(botId, records);
     this.noteSessionsChanged(botId, 'message');
+    });
   }
 
   private isPendingHitlRecord(raw: unknown): raw is PendingHitlRecord {

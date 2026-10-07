@@ -32,7 +32,7 @@ curl -s -X POST http://127.0.0.1:18790/v1/shell \
   -d '{"command":"uname -a && hostname && pwd"}'
 ```
 
-Token file: `/tmp/okbot-sandbox-agent.token` (and acceptance notes below after overnight build).
+Token file: `/tmp/okbot-sandbox-agent.token` (local only; do not commit).
 
 ### Register in OkBot
 
@@ -79,17 +79,6 @@ Loopback-only mode (bindLan off) remains 127.0.0.1 for scripts.
 - Skills + image gen always run on desktop host (by design)  
 - Security guardrails on remote sandbox are lighter (container boundary is the sandbox)
 
-## E. Overnight build record
+## E. Local notes (do not commit)
 
-| Item | Value |
-|------|-------|
-| Package | apps/sandbox-agent (@okbot/sandbox-agent) |
-| Docker image | okbot-sandbox-agent:local (running) |
-| Container | okbot-sandbox-agent — 0.0.0.0:18790->18790 |
-| Endpoint | http://127.0.0.1:18790 |
-| Token file | /tmp/okbot-sandbox-agent.token |
-| Registered computerId | computer_sandbox_agent_local in ~/.okbot/settings.json |
-| LAN IP | `<your-lan-ip>` |
-| Gateway URL | `http://<your-lan-ip>:18765/gateway-login` |
-| Secrets note | /tmp/okbot-acceptance-secrets.txt (not in git) |
-| E2E | container shell returns Linux/Debian; ExecutionBackend remote ok |
+Keep overnight or machine-specific records out of git: generated tokens, registered `computerId` values, LAN IPs, and any secrets file under `/tmp`. Use the checklist above with placeholders only.

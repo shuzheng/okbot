@@ -5,6 +5,7 @@ export { SettingsToggle } from './SettingsToggle';
 export { CompressRatioSlider } from './CompressRatioSlider';
 export { AutoApprovalRulesList } from './AutoApprovalRulesList';
 export { MemoryEntriesList } from './MemoryEntriesList';
+export { SchedulesList } from './SchedulesList';
 export type { InstructionsSubTab, SettingsTab } from './types';
 export { SETTINGS_SEARCH_ITEMS, type SettingsSearchItem } from './settingsSearch';
 export { UsagePanel } from './UsagePanel';

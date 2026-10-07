@@ -89,7 +89,7 @@ export function AssistantGalleryList({
   );
 }
 
-/** 「助手库」 modal opened from the create menu. */
+/** 「助手市场」 modal opened from the create menu. */
 export function AssistantGalleryModal({
   lang,
   modelReady,

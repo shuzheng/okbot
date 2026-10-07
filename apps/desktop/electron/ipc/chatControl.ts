@@ -1,10 +1,10 @@
 import type { IpcContext } from './context';
-import { bumpSteerGeneration } from './steerGate';
+import { abortAllOwnerRuns } from './ownerRuns';
 
 /**
- * Stop one bot or squad run the same way the desktop Stop button does:
- * bump steer generation (so a queued restart does not proceed), abort, and
- * reject live HITL waiters.
+ * Stop one bot or squad the same way the desktop Stop button does:
+ * cancel queued parallel waits, abort every in-flight run for that owner,
+ * and reject live HITL waiters.
  */
 export function abortChatOwner(
   ctx: Pick<IpcContext, 'abortControllers' | 'rejectPendingApprovalsForBot'>,
@@ -12,12 +12,9 @@ export function abortChatOwner(
 ): boolean {
   const id = (ownerId || '').trim();
   if (!id) return false;
-  bumpSteerGeneration(id);
-  const ctrl = ctx.abortControllers.get(id);
-  ctrl?.abort();
-  ctx.abortControllers.delete(id);
+  const had = abortAllOwnerRuns(ctx.abortControllers, id);
   ctx.rejectPendingApprovalsForBot(id, '已取消');
-  return true;
+  return had;
 }
 
 /**
@@ -34,7 +31,7 @@ export function resolveLiveToolApproval(
   if (!live) return null;
   live.cancelTimeout?.();
   ctx.pendingToolApprovals.delete(requestId);
-  // Only this approval: a parallel squad member may still wait on its own card.
+  // Only this approval: a parallel turn may still wait on its own card.
   ctx.storage.clearPendingHitlRequest(live.botId, requestId);
   live.resolve({
     approved: Boolean(payload.approved),

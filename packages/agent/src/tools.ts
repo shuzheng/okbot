@@ -13,6 +13,16 @@ import {
   type ImageCapability,
 } from './generateImage.js';
 import {
+  formatWebFetchToolOutput,
+  webFetch,
+} from './webFetch.js';
+import {
+  formatWebSearchToolOutput,
+  webSearch,
+  webSearchNotConfiguredMessage,
+} from './webSearch.js';
+import type { WebSettings } from '@okbot/shared';
+import {
   createLocalExecutionBackend,
   type ExecutionBackend,
   resolveExecutionBackend,
@@ -48,9 +58,35 @@ export type SkillLookupResult = {
 /** Resolve an enabled skill body by slug for the current bot (or squad member). */
 export type SkillLookup = (slug: string) => SkillLookupResult | null;
 
+/** Search this chat's history (scoped by the desktop host). */
+export type HistorySearch = (
+  query: string,
+  limit: number,
+) => Promise<string> | string;
+
+/** Manage timed wakeups for the current bot/squad (scoped by the desktop host). */
+export type ScheduleManage = (input: {
+  action: 'create' | 'list' | 'pause' | 'resume' | 'delete';
+  prompt?: string;
+  title?: string;
+  schedule?: string;
+  timezone?: string;
+  job_id?: string;
+  once?: boolean;
+}) => Promise<string> | string;
+
 export type BuildToolsOptions = {
   /** Required for `read_skill` to return bodies; omit when no skill catalog is bound. */
   skillLookup?: SkillLookup;
+  /**
+   * Required for `search_history`. Host must scope to the current bot/squad only
+   * and redact/truncate results. Omit to disable the tool body.
+   */
+  historySearch?: HistorySearch;
+  /**
+   * Required for `manage_schedule`. Host must scope to the current bot/squad only.
+   */
+  scheduleManage?: ScheduleManage;
   /**
    * Credentials for `generate_image` (same provider baseURL/apiKey as chat).
    * When omitted, the tool reports a config error if invoked.
@@ -73,6 +109,11 @@ export type BuildToolsOptions = {
    * `computer` argument and otherwise follow this route.
    */
   computerRoute?: ComputerRoute;
+  /**
+   * Built-in web tools config (`settings.web`).
+   * Search needs provider + API key; fetch uses SSRF defaults unless allowPrivateNetwork.
+   */
+  web?: WebSettings;
 };
 
 export function buildTools(
@@ -193,6 +234,103 @@ export function buildTools(
                 skill.body.trim() || '（正文为空）',
               ].join('\n'),
             );
+          },
+        ),
+      }),
+    );
+  }
+
+  if (prefs.search_history.enabled) {
+    list.push(
+      tool({
+        name: 'search_history',
+        description:
+          '按关键词检索当前会话更早的聊天原文（仅本助手或本小队；不含其他会话）。摘要不够时用来找回细节。默认需要用户批准。',
+        parameters: z.object({
+          query: z.string().describe('要搜索的关键词或短句'),
+          limit: z
+            .number()
+            .int()
+            .min(1)
+            .max(20)
+            .optional()
+            .describe('最多返回几条（默认 8，上限 20）'),
+        }),
+        needsApproval: prefs.search_history.approval === 'ask',
+        ...guardrailOpts,
+        execute: wrapToolExecute(
+          'search_history',
+          budget,
+          async ({ query, limit }: { query: string; limit?: number }) => {
+            const q = (query || '').trim();
+            if (!q) return '错误：query 不能为空';
+            const search = options?.historySearch;
+            if (!search) {
+              return '错误：当前会话未绑定历史检索。';
+            }
+            const cap = typeof limit === 'number' && Number.isFinite(limit) ? Math.floor(limit) : 8;
+            try {
+              return truncate(await search(q, Math.min(20, Math.max(1, cap))));
+            } catch (err) {
+              return `错误：检索失败 — ${err instanceof Error ? err.message : String(err)}`;
+            }
+          },
+        ),
+      }),
+    );
+  }
+
+  if (prefs.manage_schedule.enabled) {
+    list.push(
+      tool({
+        name: 'manage_schedule',
+        description:
+          '管理当前助手/小队的定时任务（到点后会像用户发消息一样唤醒一轮对话；定时轮次沿用当前工具审批/预算，无单独收紧）。action=create|list|pause|resume|delete。create 时传 schedule（如 daily 09:00、每天 09:00、hourly、every 15m、cron 0 9 * * 1-5）与 prompt；可选 title、timezone（IANA，省略则用运行 OkBot 的机器本地时区）、once。pause/resume/delete 传 job_id（或唯一 title）。create/delete 始终需要用户确认。',
+        parameters: z.object({
+          action: z
+            .enum(['create', 'list', 'pause', 'resume', 'delete'])
+            .describe('create / list / pause / resume / delete'),
+          prompt: z.string().optional().describe('create：到点后发给本会话的提示词'),
+          title: z.string().optional().describe('可选标题；pause/resume/delete 也可用来匹配唯一任务'),
+          schedule: z
+            .string()
+            .optional()
+            .describe('create：daily 09:00 / 每天 09:00 / hourly / every 15m / cron 0 9 * * 1-5'),
+          timezone: z.string().optional().describe('可选 IANA 时区，如 Asia/Shanghai'),
+          job_id: z.string().optional().describe('pause/resume/delete：任务 id'),
+          once: z.boolean().optional().describe('create：只触发一次后自动停用'),
+        }),
+        // create/delete always HITL (persistent self-wake / injection). Other actions follow pref.
+        needsApproval: async (_ctx, input) => {
+          const action =
+            input && typeof input === 'object' && input !== null && 'action' in input
+              ? String((input as { action?: unknown }).action || '')
+              : '';
+          if (action === 'create' || action === 'delete') return true;
+          return prefs.manage_schedule.approval === 'ask';
+        },
+        ...guardrailOpts,
+        execute: wrapToolExecute(
+          'manage_schedule',
+          budget,
+          async (args: {
+            action: 'create' | 'list' | 'pause' | 'resume' | 'delete';
+            prompt?: string;
+            title?: string;
+            schedule?: string;
+            timezone?: string;
+            job_id?: string;
+            once?: boolean;
+          }) => {
+            const manage = options?.scheduleManage;
+            if (!manage) {
+              return '错误：当前会话未绑定定时任务管理。';
+            }
+            try {
+              return truncate(await manage(args));
+            } catch (err) {
+              return `错误：定时任务操作失败 — ${err instanceof Error ? err.message : String(err)}`;
+            }
           },
         ),
       }),
@@ -342,6 +480,78 @@ export function buildTools(
     );
   }
 
+  if (prefs.web_fetch.enabled) {
+    list.push(
+      tool({
+        name: 'web_fetch',
+        description:
+          '拉取一个公开网页的可读正文（HTML 会转成纯文本）。适合打开用户给出的 URL 或搜索结果链接。默认阻止本机/内网地址（SSRF）；超时与体积有上限。',
+        parameters: z.object({
+          url: z.string().describe('要拉取的 http(s) URL'),
+        }),
+        needsApproval: prefs.web_fetch.approval === 'ask',
+        ...guardrailOpts,
+        execute: wrapToolExecute(
+          'web_fetch',
+          budget,
+          async ({ url }: { url: string }) => {
+            try {
+              const result = await webFetch(url, options?.web?.fetch, {
+                signal: budget?.signal,
+              });
+              return truncate(formatWebFetchToolOutput(result));
+            } catch (err) {
+              return `错误：网页拉取失败 — ${err instanceof Error ? err.message : String(err)}`;
+            }
+          },
+        ),
+      }),
+    );
+  }
+
+  if (prefs.web_search.enabled) {
+    list.push(
+      tool({
+        name: 'web_search',
+        description:
+          '用用户在设置里配置的第三方搜索服务（Tavily / Brave / Serper）检索公开网页。未配置 API Key 时会返回明确错误，提示去设置 → 工具 → 网页填写。',
+        parameters: z.object({
+          query: z.string().describe('搜索关键词或短句'),
+          limit: z
+            .number()
+            .int()
+            .min(1)
+            .max(10)
+            .optional()
+            .describe('最多返回几条（默认 5，上限 10）'),
+        }),
+        needsApproval: prefs.web_search.approval === 'ask',
+        ...guardrailOpts,
+        execute: wrapToolExecute(
+          'web_search',
+          budget,
+          async ({ query, limit }: { query: string; limit?: number }) => {
+            const q = (query || '').trim();
+            if (!q) return '错误：query 不能为空';
+            const searchCfg = options?.web?.search;
+            if (!searchCfg?.apiKey?.trim()) {
+              return webSearchNotConfiguredMessage();
+            }
+            try {
+              const result = await webSearch(searchCfg, q, {
+                limit,
+                signal: budget?.signal,
+              });
+              return truncate(formatWebSearchToolOutput(result));
+            } catch (err) {
+              return `错误：网页搜索失败 — ${err instanceof Error ? err.message : String(err)}`;
+            }
+          },
+        ),
+      }),
+    );
+  }
+
   return list;
 }
 
@@ -352,4 +562,8 @@ export const TOOL_BLURBS: Record<string, string> = {
   write_file: '新建/整文件覆盖写入',
   edit_file: '精确单处替换',
   generate_image: '文生图（OpenAI 兼容 /images/generations）',
+  search_history: '检索本会话历史',
+  manage_schedule: '管理定时任务',
+  web_fetch: '拉取网页正文',
+  web_search: '第三方网页搜索',
 };

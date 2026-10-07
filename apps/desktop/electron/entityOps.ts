@@ -21,6 +21,7 @@ import { readRecentErrorLog } from './storage/errorLog';
 import { isSquadOwnerId } from './storage/ids';
 import { discoverModels, testModelConnection } from './modelProbe';
 import { compressSessionNow } from './ipc/registerChat';
+import { abortAllOwnerRuns } from './ipc/ownerRuns';
 
 /**
  * Bot / squad / memory / skill / model-probe operations without a transport.
@@ -38,9 +39,8 @@ function obj(v: unknown): Obj {
 
 export function deleteOwner(ctx: IpcContext, ownerId: string, kind: 'bot' | 'squad'): true {
   const id = ownerId.trim();
-  // Abort any in-flight run so a late finally cannot resurrect the deleted dir.
-  ctx.abortControllers.get(id)?.abort();
-  ctx.abortControllers.delete(id);
+  // Abort any in-flight runs so a late finally cannot resurrect the deleted dir.
+  abortAllOwnerRuns(ctx.abortControllers, id);
   ctx.rejectPendingApprovalsForBot(id, kind === 'bot' ? '助手已删除' : '小队已删除');
   try {
     ctx.storage.clearPendingHitl(id);
@@ -251,6 +251,19 @@ export function createEntityOps(ctx: IpcContext) {
         squadId: str(a.squadId) || undefined,
         mode: a.mode === 'newTopic' ? 'newTopic' : 'compress',
       }),
+    listScheduledJobs: () => s.listAllScheduledJobInfos(),
+    manageScheduledJob: (a: Obj) => {
+      const ownerId = str(a.ownerId).trim();
+      const jobId = str(a.jobId).trim();
+      const action = str(a.action).trim();
+      if (!ownerId || !jobId) throw new Error('missing_owner_or_job');
+      if (action !== 'pause' && action !== 'resume' && action !== 'delete') {
+        throw new Error('invalid_action');
+      }
+      const summary = s.manageScheduledJobs(ownerId, { action, jobId });
+      if (summary.startsWith('错误：')) throw new Error(summary.replace(/^错误：/, ''));
+      return { ok: true as const, summary };
+    },
   };
 }
 

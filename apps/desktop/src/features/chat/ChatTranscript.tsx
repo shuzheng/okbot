@@ -24,6 +24,7 @@ import { resolveMessageAttachments } from '../../utils/messageAttachments';
 import { BotOnboarding } from '../bots/BotOnboarding';
 import { AssistantContent } from './AssistantContent';
 import { ToolCardView } from './ToolCardView';
+import { ParallelTasksStrip, type ParallelTask } from './ParallelTasksStrip';
 
 export type ChatTranscriptProps = {
   lang: UiLang;
@@ -49,6 +50,7 @@ export type ChatTranscriptProps = {
   onQuoteMessage: (message: ChatMessage) => void;
   onCopyMessage: (message: ChatMessage) => boolean | Promise<boolean>;
   onViewTokenUsage: (message: ChatMessage) => void;
+  onViewTurnTrace: (message: ChatMessage) => void;
   onJumpToQuotedMessage: (messageId: string) => void;
   onJumpToBottom: () => void;
   onRetrySend: (message: ChatMessage) => void;
@@ -57,6 +59,9 @@ export type ChatTranscriptProps = {
   onDenyTool: (requestId: string) => void;
   onApproveToolForever: (card: ToolCard) => void;
   composerSlot: ReactNode;
+  /** Unfinished parallel turns for this chat (strip only when length > 1). */
+  parallelTasks: ParallelTask[];
+  onJumpParallelTask: (task: ParallelTask) => void;
   immersiveChat: boolean;
   onToggleImmersiveChat: () => void;
   /** Per resolved model: show `<think>` as collapsible (default true). */
@@ -158,6 +163,7 @@ export const ChatTranscript = memo(function ChatTranscript({
   onQuoteMessage,
   onCopyMessage,
   onViewTokenUsage,
+  onViewTurnTrace,
   onJumpToQuotedMessage,
   onJumpToBottom,
   onRetrySend,
@@ -166,6 +172,8 @@ export const ChatTranscript = memo(function ChatTranscript({
   onDenyTool,
   onApproveToolForever,
   composerSlot,
+  parallelTasks,
+  onJumpParallelTask,
   immersiveChat,
   onToggleImmersiveChat,
   showThinking = true,
@@ -378,6 +386,20 @@ export const ChatTranscript = memo(function ChatTranscript({
                           <button
                             type="button"
                             className="bubble-action-btn"
+                            title={t(lang, 'viewTurnTrace')}
+                            aria-label={t(lang, 'viewTurnTrace')}
+                            onClick={() => onViewTurnTrace(m)}
+                          >
+                            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
+                              <path d="M4 6h8" />
+                              <path d="M4 12h14" />
+                              <path d="M4 18h10" />
+                              <path d="M4 4v16" />
+                            </svg>
+                          </button>
+                          <button
+                            type="button"
+                            className="bubble-action-btn"
                             title={t(lang, 'quoteMessage')}
                             aria-label={t(lang, 'quoteMessage')}
                             onClick={() => onQuoteMessage(m)}
@@ -421,6 +443,7 @@ export const ChatTranscript = memo(function ChatTranscript({
         </button>
         </QuickTip>
       </div>
+      <ParallelTasksStrip lang={lang} tasks={parallelTasks} onJump={onJumpParallelTask} />
       {busy ? (
         <div className="chat-turn-status" aria-live="polite" aria-label={turnStatusText}>
           <ThinkingOrb

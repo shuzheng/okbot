@@ -20,9 +20,6 @@ import {
   runAgentChat,
   runSquadChat,
   resumeAgentChatAfterHitl,
-  refreshAgentsMd,
-  refreshBotSkills,
-  refreshMemories,
   createOkbotFileSession,
   quoteSessionInputCallback,
   resolveSessionInputCallbackForTurn,
@@ -35,21 +32,33 @@ import {
   ensureSessionCompressed,
   resolveTopicCompressForce,
 } from '../storage/sessionCompression';
-import { dedupeMemoryFacts, extractDurableFacts } from '../storage/durableFacts';
 import {
+  extractMemoriesFromFoldedHistory,
+  rememberSummaryFacts,
+  runThrottledPostTurnMaintenance,
+} from './chatMaintenance';
+import {
+  attachTraceHooks,
   createRunGuards,
   handleRunFailure,
   isAbortLikeError,
   resolveRunFinishStatus,
+  sealMessageTrace,
 } from './runGuards';
 import {
+  acquireParallelGate,
   acquireRunSlot,
-  acquireSteerGate,
-} from './steerGate';
+  ownerHasRuns,
+  registerOwnerRun,
+  unregisterOwnerRun,
+  withOwnerMaintenanceLock,
+} from './ownerRuns';
 import { abortChatOwner, resolveLiveToolApproval } from './chatControl';
 import { createApprovalWaiter, releaseRunApprovals } from './approvalWaiter';
 import { mcpToolsForRun } from '../mcpRuntime';
 import { buildSquadMemberSpecs, computerRouteFor, skillLookupFor } from './chatTurnHelpers';
+import { historySearchForOwner } from './historySearchTool';
+import { scheduleManageForOwner } from './scheduleTool';
 import { resumeSquadAfterRestart } from './squadResume';
 
 
@@ -101,6 +110,8 @@ export async function startChatTurn(
      * A computer named in `text` still wins; several names are routed per tool call.
      */
     computerId?: string;
+    /** Renderer-correlated id for parallel task strip (optional). */
+    clientTurnId?: string;
   },
 ): Promise<{
   userMessage: ChatMessage;
@@ -129,14 +140,14 @@ export async function startChatTurn(
           ...quote.userMsgExtra,
           ...(attachments ? { attachments } : {}),
         };
-        // Persist steer text before abort+restart so rapid sends keep full history.
+        // Persist immediately so parallel turns and the UI see the new task.
         ctx.storage.appendMessage(squad.id, userMsg);
         ctx.storage.touchSquad(squad.id);
-        ctx.sendRuntimeEvent({ type: 'user_message', botId: squad.id, message: userMsg });
 
-        const steerGate = await acquireSteerGate(ctx, squad.id);
+        const parallelGate = await acquireParallelGate(squad.id);
         try {
-          if (!steerGate.proceed) {
+          if (!parallelGate.proceed) {
+            ctx.sendRuntimeEvent({ type: 'user_message', botId: squad.id, message: userMsg });
             return { userMessage: userMsg, superseded: true };
           }
 
@@ -154,7 +165,29 @@ export async function startChatTurn(
         const parkedRequestIds = new Set<string>();
 
         const controller = new AbortController();
-        ctx.abortControllers.set(squad.id, controller);
+        registerOwnerRun(ctx.abortControllers, squad.id, parallelGate.runId, controller);
+        const turnRunId = parallelGate.runId;
+        const clientTurnId = (payload.clientTurnId || '').trim() || undefined;
+        const emitTurn = (event: Parameters<IpcContext['sendRuntimeEvent']>[0]) => {
+          if (
+            event.type === 'skills_changed' ||
+            event.type === 'sessions_changed' ||
+            event.type === 'turn_started'
+          ) {
+            ctx.sendRuntimeEvent(event);
+            return;
+          }
+          ctx.sendRuntimeEvent({ ...event, runId: turnRunId } as typeof event);
+        };
+        emitTurn({
+          type: 'turn_started',
+          botId: squad.id,
+          runId: turnRunId,
+          userMessageId: userMsg.id,
+          assistantMessageId: assistantId,
+          ...(clientTurnId ? { clientTurnId } : {}),
+        });
+        emitTurn({ type: 'user_message', botId: squad.id, message: userMsg });
         const settings = ctx.storage.getSettings();
         const modelConfig = resolveModelConfig(settings.model, { providerId: squad.providerId, modelId: squad.modelId });
         const guards = createRunGuards({
@@ -164,7 +197,7 @@ export async function startChatTurn(
         });
 
         /** Persist captain text streamed so far, then rotate to a new bubble id. */
-        const sealCaptainSegment = () => {
+        const sealCaptainSegment = async () => {
           if (!assistantMsg.content.trim()) return;
           assistantMsg.content = persistAssistantContent(
             assistantMsg.content,
@@ -221,23 +254,42 @@ export async function startChatTurn(
             newUserText: text,
             signal: controller.signal,
           });
-          const { sessionSummary, summaryState, omitRecordIds } = await ensureSessionCompressed({
-            storage: ctx.storage,
-            ownerId: squad.id,
-            model: modelConfig,
-            contextCompression: settings.contextCompression,
-            staticText,
-            prior,
-            sessionRows: ctx.storage.listSessionBudgetRows(squad.id),
-            signal: controller.signal,
-            force: topicForce,
-            enforceBudget: true,
-          });
+          guards.trace.beginSystem('compress');
+          let sessionSummary: string;
+          let summaryState: Awaited<ReturnType<typeof ensureSessionCompressed>>['summaryState'];
+          let omitRecordIds: Awaited<ReturnType<typeof ensureSessionCompressed>>['omitRecordIds'];
+          try {
+            const compressed = await withOwnerMaintenanceLock(squad.id, () =>
+              ensureSessionCompressed({
+                storage: ctx.storage,
+                ownerId: squad.id,
+                model: modelConfig,
+                contextCompression: settings.contextCompression,
+                staticText,
+                prior,
+                sessionRows: ctx.storage.listSessionBudgetRows(squad.id),
+                signal: controller.signal,
+                force: topicForce,
+                enforceBudget: true,
+              }),
+            );
+            sessionSummary = compressed.sessionSummary;
+            summaryState = compressed.summaryState;
+            omitRecordIds = compressed.omitRecordIds;
+            guards.trace.endSystem('compress', { status: 'ok' });
+          } catch (compressErr) {
+            guards.trace.endSystem('compress', {
+              status: 'error',
+              error: compressErr instanceof Error ? compressErr.message : String(compressErr),
+            });
+            throw compressErr;
+          }
 
           const fileSession = createOkbotFileSession(
             ctx.storage.createSessionStore(squad.id, {
               afterMessageId: summaryState?.coveredThroughId ?? null,
               omitRecordIds,
+              runId: parallelGate.runId,
             }),
           );
 
@@ -255,6 +307,9 @@ export async function startChatTurn(
             squadSettings: settings.squad,
             members: memberSpecs,
             sessionSummary: sessionSummary || undefined,
+            historySearch: historySearchForOwner(ctx.storage, squad.id),
+            scheduleManage: scheduleManageForOwner(ctx.storage, squad.id),
+            web: settings.web,
             model: modelConfig,
             tools: settings.tools,
             security: settings.security,
@@ -272,7 +327,7 @@ export async function startChatTurn(
             onClearLiveText: () => {
               if (!assistantMsg.content) return;
               assistantMsg.content = '';
-              ctx.sendRuntimeEvent({
+              emitTurn({
                 type: 'assistant_message',
                 botId: squad.id,
                 message: { ...assistantMsg },
@@ -280,13 +335,14 @@ export async function startChatTurn(
             },
             onDelta: (delta) => {
               assistantMsg.content += delta;
-              ctx.sendRuntimeEvent({
+              emitTurn({
                 type: 'delta',
                 botId: squad.id,
                 messageId: assistantId,
                 delta,
               });
             },
+            ...attachTraceHooks(guards),
             onToolApprovalRequest: createApprovalWaiter(ctx, {
               ownerId: squad.id,
               messageId: () => assistantId,
@@ -295,13 +351,15 @@ export async function startChatTurn(
               computerId: payload.computerId,
               userText: text,
               turnId: userMsg.id,
+              runId: turnRunId,
+              emit: emitTurn,
               onParked: (id) => parkedRequestIds.add(id),
             }),
             onToolResult: ({ requestId, toolName, approved, output }) => {
               if (!approved) {
                 guards.budget.recordRejection(toolName, {}, output);
               }
-              ctx.sendRuntimeEvent({
+              emitTurn({
                 type: 'tool_result',
                 botId: squad.id,
                 messageId: assistantId,
@@ -311,10 +369,10 @@ export async function startChatTurn(
                 output,
               });
             },
-            onSquadExchange: ({ kind, memberBotId, memberName, content, usage }) => {
+            onSquadExchange: async ({ kind, memberBotId, memberName, content, usage }) => {
               // Keep pre-tool / between-tool captain narration where it first appeared;
               // later captain deltas create a new bubble after the exchanges.
-              sealCaptainSegment();
+              await sealCaptainSegment();
               const body = persistAssistantContent(content, modelConfig.showThinking);
               const exchangeMsg: ChatMessage = {
                 id: createId('msg'),
@@ -333,7 +391,7 @@ export async function startChatTurn(
                 console.error('[okbot] append squad exchange failed', err);
               }
               // Member usage stays on the exchange bubble only; aggregate under squad.id below.
-              ctx.sendRuntimeEvent({
+              emitTurn({
                 type: 'assistant_message',
                 botId: squad.id,
                 message: exchangeMsg,
@@ -352,7 +410,7 @@ export async function startChatTurn(
             assistantMsg.createdAt = new Date().toISOString();
             if (result.usage) assistantMsg.usage = result.usage;
             if (assistantMsg.content.trim()) {
-              ctx.storage.upsertAssistantMessage(squad.id, assistantMsg);
+              await ctx.storage.upsertAssistantMessage(squad.id, assistantMsg, { runId: parallelGate.runId });
             }
           } else if (sealedCaptainSegments === 0 && (result.content || '').trim()) {
             assistantMsg.content = persistAssistantContent(
@@ -362,7 +420,7 @@ export async function startChatTurn(
             assistantMsg.createdAt = new Date().toISOString();
             if (result.usage) assistantMsg.usage = result.usage;
             if (assistantMsg.content.trim()) {
-              ctx.storage.upsertAssistantMessage(squad.id, assistantMsg);
+              await ctx.storage.upsertAssistantMessage(squad.id, assistantMsg, { runId: parallelGate.runId });
             }
           } else if (
             !assistantMsg.content.trim() &&
@@ -376,7 +434,7 @@ export async function startChatTurn(
               usage: result.usage,
             });
             if (patched) {
-              ctx.sendRuntimeEvent({
+              emitTurn({
                 type: 'assistant_message',
                 botId: squad.id,
                 message: patched,
@@ -392,37 +450,82 @@ export async function startChatTurn(
             }
           }
           guards.throwIfBroken();
-          ctx.sendRuntimeEvent({
-            type: 'done',
-            botId: squad.id,
-            messageId: assistantId,
-            content: assistantMsg.content,
-            usage: result.usage,
-            ...(controller.signal.aborted ? { aborted: true } : {}),
-          });
-          guards.finish(
+          const squadTrace = sealMessageTrace(
+            guards,
             resolveRunFinishStatus({
               aborted: controller.signal.aborted,
               breakReason: guards.budget.getBreakReason(),
             }),
           );
+          if (squadTrace) {
+            if (assistantMsg.content.trim()) {
+              assistantMsg.trace = squadTrace;
+              try {
+                ctx.storage.patchMessage(squad.id, assistantId, { trace: squadTrace });
+              } catch (err) {
+                console.error('[okbot] patch squad captain trace failed', err);
+              }
+            } else if (lastSealedCaptainId) {
+              try {
+                const patched = ctx.storage.patchMessage(squad.id, lastSealedCaptainId, {
+                  trace: squadTrace,
+                });
+                if (patched) {
+                  emitTurn({
+                    type: 'assistant_message',
+                    botId: squad.id,
+                    message: patched,
+                  });
+                }
+              } catch (err) {
+                console.error('[okbot] patch squad sealed captain trace failed', err);
+              }
+            }
+          }
+          emitTurn({
+            type: 'done',
+            botId: squad.id,
+            messageId: assistantId,
+            content: assistantMsg.content,
+            usage: result.usage,
+            ...(squadTrace ? { trace: squadTrace } : {}),
+            ...(controller.signal.aborted ? { aborted: true } : {}),
+          });
           return { userMessage: userMsg, assistantMessage: assistantMsg };
         } catch (err) {
           if (
             !guards.budget.getBreakReason() &&
             (controller.signal.aborted || isAbortLikeError(err))
           ) {
-            guards.finish(
+            const abortTrace = sealMessageTrace(
+              guards,
               resolveRunFinishStatus({
                 aborted: true,
                 breakReason: null,
               }),
             );
-            ctx.sendRuntimeEvent({
+            if (abortTrace) {
+              if (assistantMsg.content.trim()) {
+                assistantMsg.trace = abortTrace;
+                try {
+                  ctx.storage.patchMessage(squad.id, assistantId, { trace: abortTrace });
+                } catch (err) {
+                  console.error('[okbot] patch aborted squad trace failed', err);
+                }
+              } else if (lastSealedCaptainId) {
+                try {
+                  ctx.storage.patchMessage(squad.id, lastSealedCaptainId, { trace: abortTrace });
+                } catch (err) {
+                  console.error('[okbot] patch aborted sealed captain trace failed', err);
+                }
+              }
+            }
+            emitTurn({
               type: 'done',
               botId: squad.id,
               messageId: assistantId,
               content: assistantMsg.content,
+              ...(abortTrace ? { trace: abortTrace } : {}),
               aborted: true,
             });
             return { userMessage: userMsg, assistantMessage: assistantMsg, aborted: true };
@@ -438,9 +541,11 @@ export async function startChatTurn(
           console.error('[okbot] squadChat failed', err);
           if (!assistantMsg.content) {
             assistantMsg.content = `错误：${message}`;
-            ctx.storage.upsertAssistantMessage(squad.id, assistantMsg, { allowRebind: false });
+            const errTrace = guards.trace.getMessageTrace();
+            if (errTrace) assistantMsg.trace = errTrace;
+            await ctx.storage.upsertAssistantMessage(squad.id, assistantMsg, { allowRebind: false, runId: parallelGate.runId });
           }
-          ctx.sendRuntimeEvent({
+          emitTurn({
             type: 'error',
             botId: squad.id,
             messageId: assistantId,
@@ -449,12 +554,12 @@ export async function startChatTurn(
           throw err;
         } finally {
           guards.dispose();
-          ctx.abortControllers.delete(squad.id);
-          // Only this run's approvals: cold approvals of other turns are not this run's to drop.
+          unregisterOwnerRun(ctx.abortControllers, squad.id, parallelGate.runId, controller);
+          // Only this run's approvals: peer parallel turns keep their own waiters.
           releaseRunApprovals(ctx, squad.id, parkedRequestIds, '已结束');
         }
         } finally {
-          steerGate.release();
+          parallelGate.release();
         }
       }
 
@@ -472,14 +577,15 @@ export async function startChatTurn(
         ...quote.userMsgExtra,
         ...(attachments ? { attachments } : {}),
       };
-      // Persist steer text before abort+restart so rapid sends keep full history.
+      // Persist immediately so parallel turns and the UI see the new task.
       ctx.storage.appendMessage(bot.id, userMsg);
       ctx.storage.touchBot(bot.id);
-      ctx.sendRuntimeEvent({ type: 'user_message', botId: bot.id, message: userMsg });
 
-      const steerGate = await acquireSteerGate(ctx, bot.id);
+      const parallelGate = await acquireParallelGate(bot.id);
       try {
-        if (!steerGate.proceed) {
+        if (!parallelGate.proceed) {
+          // Still notify UI of the persisted user bubble (no run to bind).
+          ctx.sendRuntimeEvent({ type: 'user_message', botId: bot.id, message: userMsg });
           return { userMessage: userMsg, superseded: true };
         }
 
@@ -493,8 +599,33 @@ export async function startChatTurn(
       // Do not persist empty assistant placeholder — Runner/Session writes the
       // real assistant (+ tool) items; UI streams against this ephemeral id.
 
+      /** Approvals parked by this run; only these are released at the end. */
+      const parkedRequestIds = new Set<string>();
       const controller = new AbortController();
-      ctx.abortControllers.set(bot.id, controller);
+      registerOwnerRun(ctx.abortControllers, bot.id, parallelGate.runId, controller);
+      const turnRunId = parallelGate.runId;
+      const clientTurnId = (payload.clientTurnId || '').trim() || undefined;
+      const emitTurn = (event: Parameters<IpcContext['sendRuntimeEvent']>[0]) => {
+        if (event.type === 'skills_changed' || event.type === 'sessions_changed') {
+          ctx.sendRuntimeEvent(event);
+          return;
+        }
+        if (event.type === 'turn_started') {
+          ctx.sendRuntimeEvent(event);
+          return;
+        }
+        ctx.sendRuntimeEvent({ ...event, runId: turnRunId } as typeof event);
+      };
+      // turn_started first so SSE/gateway can bind runId (+ clientTurnId) before deltas.
+      emitTurn({
+        type: 'turn_started',
+        botId: bot.id,
+        runId: turnRunId,
+        userMessageId: userMsg.id,
+        assistantMessageId: assistantId,
+        ...(clientTurnId ? { clientTurnId } : {}),
+      });
+      emitTurn({ type: 'user_message', botId: bot.id, message: userMsg });
 
       const settings = ctx.storage.getSettings();
       const modelConfig = resolveModelConfig(settings.model, { providerId: bot.providerId, modelId: bot.modelId });
@@ -530,24 +661,52 @@ export async function startChatTurn(
           newUserText: text,
           signal: controller.signal,
         });
-        const { sessionSummary, summaryState, omitRecordIds } = await ensureSessionCompressed({
-          storage: ctx.storage,
-          ownerId: bot.id,
-          model: modelConfig,
-          contextCompression: settings.contextCompression,
-          staticText,
-          prior,
-          sessionRows: ctx.storage.listSessionBudgetRows(bot.id),
-          signal: controller.signal,
-          force: topicForce,
-          enforceBudget: true,
-        });
+        guards.trace.beginSystem('compress');
+        let sessionSummary: string;
+        let summaryState: Awaited<ReturnType<typeof ensureSessionCompressed>>['summaryState'];
+        let omitRecordIds: Awaited<ReturnType<typeof ensureSessionCompressed>>['omitRecordIds'];
+        try {
+          const compressed = await withOwnerMaintenanceLock(bot.id, () => ensureSessionCompressed({
+            storage: ctx.storage,
+            ownerId: bot.id,
+            model: modelConfig,
+            contextCompression: settings.contextCompression,
+            staticText,
+            prior,
+            sessionRows: ctx.storage.listSessionBudgetRows(bot.id),
+            signal: controller.signal,
+            force: topicForce,
+            enforceBudget: true,
+            rememberFacts: (facts) => rememberSummaryFacts(ctx.storage, bot.id, facts),
+            onHistoryFolded: async ({ deltaMessages }) => {
+              await extractMemoriesFromFoldedHistory({
+                storage: ctx.storage,
+                botId: bot.id,
+                botName: bot.name,
+                model: modelConfig,
+                deltaMessages,
+                signal: controller.signal,
+              });
+            },
+          }));
+          sessionSummary = compressed.sessionSummary;
+          summaryState = compressed.summaryState;
+          omitRecordIds = compressed.omitRecordIds;
+          guards.trace.endSystem('compress', { status: 'ok' });
+        } catch (compressErr) {
+          guards.trace.endSystem('compress', {
+            status: 'error',
+            error: compressErr instanceof Error ? compressErr.message : String(compressErr),
+          });
+          throw compressErr;
+        }
 
         // Model session view = yet-uncompressed tail after coveredThroughId (full jsonl unchanged).
         const fileSession = createOkbotFileSession(
           ctx.storage.createSessionStore(bot.id, {
             afterMessageId: summaryState?.coveredThroughId ?? null,
             omitRecordIds,
+            runId: parallelGate.runId,
           }),
         );
 
@@ -566,6 +725,9 @@ export async function startChatTurn(
           agentsMd,
           skillsText,
           skillLookup,
+          historySearch: historySearchForOwner(ctx.storage, bot.id),
+          scheduleManage: scheduleManageForOwner(ctx.storage, bot.id),
+          web: settings.web,
           memoriesText,
           sessionSummary: sessionSummary || undefined,
           assistantRoleTemplate: settings.instructions?.assistantRoleTemplate,
@@ -587,7 +749,7 @@ export async function startChatTurn(
           onClearLiveText: () => {
             if (!assistantMsg.content) return;
             assistantMsg.content = '';
-            ctx.sendRuntimeEvent({
+            emitTurn({
               type: 'assistant_message',
               botId: bot.id,
               message: { ...assistantMsg },
@@ -595,13 +757,14 @@ export async function startChatTurn(
           },
           onDelta: (delta) => {
             assistantMsg.content += delta;
-            ctx.sendRuntimeEvent({
+            emitTurn({
               type: 'delta',
               botId: bot.id,
               messageId: assistantId,
               delta,
             });
           },
+          ...attachTraceHooks(guards),
           onToolApprovalRequest: createApprovalWaiter(ctx, {
             ownerId: bot.id,
             messageId: () => assistantId,
@@ -609,12 +772,15 @@ export async function startChatTurn(
             signal: controller.signal,
             computerId: payload.computerId,
             userText: text,
+            runId: turnRunId,
+            emit: emitTurn,
+            onParked: (id) => parkedRequestIds.add(id),
           }),
           onToolResult: ({ requestId, toolName, approved, output }) => {
             if (!approved) {
               guards.budget.recordRejection(toolName, {}, output);
             }
-            ctx.sendRuntimeEvent({
+            emitTurn({
               type: 'tool_result',
               botId: bot.id,
               messageId: assistantId,
@@ -642,11 +808,19 @@ export async function startChatTurn(
           modelConfig.showThinking,
         );
         if (result.usage) assistantMsg.usage = result.usage;
+        const botTrace = sealMessageTrace(
+          guards,
+          resolveRunFinishStatus({
+            aborted: controller.signal.aborted,
+            breakReason: guards.budget.getBreakReason(),
+          }),
+        );
+        if (botTrace) assistantMsg.trace = botTrace;
         // Empty + no session row for this streaming id: skip upsert. Abort during
         // HITL clears streamed text; unconditional upsert used to rebind/wipe the
         // previous assistant turn (see FileStorage.upsertAssistantMessage).
         if ((assistantMsg.content || '').trim()) {
-          ctx.storage.upsertAssistantMessage(bot.id, assistantMsg);
+          await ctx.storage.upsertAssistantMessage(bot.id, assistantMsg, { runId: parallelGate.runId });
         }
         if (result.usage && (result.usage.input || result.usage.output || result.usage.cache)) {
           try {
@@ -655,20 +829,15 @@ export async function startChatTurn(
             console.error('[okbot] record bot usage failed', err);
           }
         }
-        ctx.sendRuntimeEvent({
+        emitTurn({
           type: 'done',
           botId: bot.id,
           messageId: assistantId,
           content: assistantMsg.content,
           usage: result.usage,
+          ...(botTrace ? { trace: botTrace } : {}),
           ...(controller.signal.aborted ? { aborted: true } : {}),
         });
-        guards.finish(
-          resolveRunFinishStatus({
-            aborted: controller.signal.aborted,
-            breakReason: guards.budget.getBreakReason(),
-          }),
-        );
         // First real chat closes optional onboarding without forcing answers.
         // Abort before a completed turn must not mark onboarding done.
         if (bot.onboardingComplete === false && !controller.signal.aborted) {
@@ -678,93 +847,53 @@ export async function startChatTurn(
             console.error('[okbot] soft onboarding close failed', err);
           }
         }
-        // Silent AGENTS.md + skills maintenance — next turn reloads from disk.
+        // Silent AGENTS.md / skills / memory maintenance (throttled) — next turn reloads from disk.
         try {
           if (!controller.signal.aborted) {
-            const agentsLimit = settings.instructions.agentsMdRecentMessageLimit;
-            const skillsLimit = settings.instructions.skillsRecentMessageLimit;
-            const memoryLimit = settings.memory.recentMessageLimit;
-            const recent = ctx.storage.getMessagesPage(bot.id, {
-              limit: Math.max(agentsLimit, skillsLimit, memoryLimit),
-            }).messages;
-            const nextMd = await refreshAgentsMd({
-              model: modelConfig,
-              botName: bot.name,
-              currentAgentsMd: agentsMd,
-              recentMessages: recent,
-              systemPrompt: settings.instructions.agentsMdRefreshSystemPrompt,
-              recentMessageLimit: agentsLimit,
-              signal: controller.signal,
-            });
-            if (nextMd) ctx.storage.writeAgentsMd(bot.id, nextMd);
-
-            const skillResult = await refreshBotSkills({
-              model: modelConfig,
-              botName: bot.name,
-              existingSkills: ctx.storage.listSkills(bot.id),
-              recentMessages: recent,
-              createUpdateInstruction: settings.instructions.skillsCreateUpdateInstruction,
-              recentMessageLimit: skillsLimit,
-              signal: controller.signal,
-            });
-            if (skillResult.action === 'upsert') {
-              ctx.storage.writeSkill(bot.id, skillResult.skill);
-            }
-
-            const memResult = await refreshMemories({
-              model: modelConfig,
-              botId: bot.id,
-              botName: bot.name,
-              existingGlobal: ctx.storage.listGlobalMemories(),
-              existingBot: ctx.storage.listBotMemories(bot.id),
-              recentMessages: recent,
-              scopeInstruction: settings.memory.scopeInstruction,
-              recentMessageLimit: memoryLimit,
-              signal: controller.signal,
-            });
-            if (memResult.action === 'upsert') {
-              const summaryFacts = extractDurableFacts(
-                ctx.storage.readSessionSummary(bot.id)?.summary || '',
-              );
-              const existing = [
-                ...ctx.storage.listGlobalMemories().map((e) => e.memory),
-                ...ctx.storage.listBotMemories(bot.id).map((e) => e.memory),
-                ...summaryFacts,
-              ];
-              const fresh = new Set(dedupeMemoryFacts(memResult.entries.map((e) => e.memory), existing));
-              for (const e of memResult.entries) {
-                if (!fresh.has(e.memory.trim())) continue;
-                ctx.storage.upsertMemory(e.scope, {
-                  id: createId('mem'),
-                  bot_id: bot.id,
-                  memory: e.memory,
-                  expires: e.expires,
-                });
-              }
-            }
+            await withOwnerMaintenanceLock(bot.id, () =>
+              runThrottledPostTurnMaintenance({
+                storage: ctx.storage,
+                botId: bot.id,
+                botName: bot.name,
+                model: modelConfig,
+                agentsMd,
+                userText: text,
+                signal: controller.signal,
+              }),
+            );
           }
         } catch (err) {
           console.error('[okbot] AGENTS.md/skills/memory refresh failed', err);
         }
         return { userMessage: userMsg, assistantMessage: assistantMsg };
       } catch (err) {
-        // Mid-run steer / Stop: settle quietly. Circuit-breaker sets getBreakReason()
+        // Stop (or peer-unrelated abort): settle quietly. Circuit-breaker sets getBreakReason()
         // before aborting — surface that to the user instead of a silent done.
         if (
           !guards.budget.getBreakReason() &&
           (controller.signal.aborted || isAbortLikeError(err))
         ) {
-          guards.finish(
+          const abortTrace = sealMessageTrace(
+            guards,
             resolveRunFinishStatus({
               aborted: true,
               breakReason: null,
             }),
           );
-          ctx.sendRuntimeEvent({
+          if (abortTrace && (assistantMsg.content || '').trim()) {
+            assistantMsg.trace = abortTrace;
+            try {
+              await ctx.storage.upsertAssistantMessage(bot.id, assistantMsg, { runId: parallelGate.runId });
+            } catch (err) {
+              console.error('[okbot] upsert aborted bot trace failed', err);
+            }
+          }
+          emitTurn({
             type: 'done',
             botId: bot.id,
             messageId: assistantId,
             content: assistantMsg.content,
+            ...(abortTrace ? { trace: abortTrace } : {}),
             aborted: true,
           });
           return { userMessage: userMsg, assistantMessage: assistantMsg, aborted: true };
@@ -780,9 +909,11 @@ export async function startChatTurn(
         console.error('[okbot] chatStart failed', err);
         if (!assistantMsg.content) {
           assistantMsg.content = `错误：${message}`;
-          ctx.storage.upsertAssistantMessage(bot.id, assistantMsg, { allowRebind: false });
+          const errTrace = guards.trace.getMessageTrace();
+          if (errTrace) assistantMsg.trace = errTrace;
+          await ctx.storage.upsertAssistantMessage(bot.id, assistantMsg, { allowRebind: false, runId: parallelGate.runId });
         }
-        ctx.sendRuntimeEvent({
+        emitTurn({
           type: 'error',
           botId: bot.id,
           messageId: assistantId,
@@ -791,11 +922,11 @@ export async function startChatTurn(
         throw err;
       } finally {
         guards.dispose();
-        ctx.abortControllers.delete(bot.id);
-        ctx.rejectPendingApprovalsForBot(bot.id, '已结束');
+        unregisterOwnerRun(ctx.abortControllers, bot.id, parallelGate.runId, controller);
+        releaseRunApprovals(ctx, bot.id, parkedRequestIds, '已结束');
       }
       } finally {
-        steerGate.release();
+        parallelGate.release();
       }
 }
 
@@ -834,13 +965,13 @@ export async function respondToToolApproval(
         return { ok: false, error: '助手不存在' };
       }
 
-      if (ctx.abortControllers.has(bot.id)) {
+      if (ownerHasRuns(ctx.abortControllers, bot.id)) {
         return { ok: false, error: '该助手已有进行中的任务' };
       }
 
       const runSlot = await acquireRunSlot(bot.id);
-      // Re-check after waiting on the per-owner chain (steer may have started).
-      if (ctx.abortControllers.has(bot.id)) {
+      // Re-check after waiting on the exclusive chain (a chat turn may have started).
+      if (ownerHasRuns(ctx.abortControllers, bot.id)) {
         runSlot.release();
         return { ok: false, error: '该助手已有进行中的任务' };
       }
@@ -853,8 +984,10 @@ export async function respondToToolApproval(
         createdAt: new Date().toISOString(),
       };
       const controller = new AbortController();
-      ctx.abortControllers.set(bot.id, controller);
-      ctx.storage.clearPendingHitl(bot.id);
+      const resumeRunId = createId('run');
+      registerOwnerRun(ctx.abortControllers, bot.id, resumeRunId, controller);
+      // Only this card — sibling cold-pending approvals for the same owner must survive.
+      ctx.storage.clearPendingHitlRequest(bot.id, disk.requestId);
 
       const settings = ctx.storage.getSettings();
       const modelConfig = resolveModelConfig(settings.model, { providerId: bot.providerId, modelId: bot.modelId });
@@ -873,6 +1006,7 @@ export async function respondToToolApproval(
         const fileSession = createOkbotFileSession(
           ctx.storage.createSessionStore(bot.id, {
             afterMessageId: summaryState?.coveredThroughId ?? null,
+            runId: resumeRunId,
           }),
         );
 
@@ -882,6 +1016,9 @@ export async function respondToToolApproval(
           agentsMd,
           skillsText,
           skillLookup,
+          historySearch: historySearchForOwner(ctx.storage, bot.id),
+          scheduleManage: scheduleManageForOwner(ctx.storage, bot.id),
+          web: settings.web,
           memoriesText,
           sessionSummary: sessionSummary || undefined,
           assistantRoleTemplate: settings.instructions?.assistantRoleTemplate,
@@ -918,6 +1055,7 @@ export async function respondToToolApproval(
               delta,
             });
           },
+          ...attachTraceHooks(guards),
           onToolApprovalRequest: createApprovalWaiter(ctx, {
             ownerId: bot.id,
             messageId: () => assistantId,
@@ -925,6 +1063,7 @@ export async function respondToToolApproval(
             signal: controller.signal,
             computerId: disk.computerId,
             userText: disk.userText,
+            runId: resumeRunId,
           }),
           onToolResult: ({ requestId, toolName, approved, output }) => {
             if (!approved) {
@@ -938,6 +1077,7 @@ export async function respondToToolApproval(
               toolName,
               approved,
               output,
+              runId: resumeRunId,
             });
           },
         });
@@ -960,11 +1100,19 @@ export async function respondToToolApproval(
           modelConfig.showThinking,
         );
         if (result.usage) assistantMsg.usage = result.usage;
+        const botTrace = sealMessageTrace(
+          guards,
+          resolveRunFinishStatus({
+            aborted: controller.signal.aborted,
+            breakReason: guards.budget.getBreakReason(),
+          }),
+        );
+        if (botTrace) assistantMsg.trace = botTrace;
         // Empty + no session row for this streaming id: skip upsert. Abort during
         // HITL clears streamed text; unconditional upsert used to rebind/wipe the
         // previous assistant turn (see FileStorage.upsertAssistantMessage).
         if ((assistantMsg.content || '').trim()) {
-          ctx.storage.upsertAssistantMessage(bot.id, assistantMsg);
+          await ctx.storage.upsertAssistantMessage(bot.id, assistantMsg, { runId: resumeRunId });
         }
         if (result.usage && (result.usage.input || result.usage.output || result.usage.cache)) {
           try {
@@ -979,14 +1127,9 @@ export async function respondToToolApproval(
           messageId: assistantId,
           content: assistantMsg.content,
           usage: result.usage,
+          ...(botTrace ? { trace: botTrace } : {}),
           ...(controller.signal.aborted ? { aborted: true } : {}),
         });
-        guards.finish(
-          resolveRunFinishStatus({
-            aborted: controller.signal.aborted,
-            breakReason: guards.budget.getBreakReason(),
-          }),
-        );
         return { ok: true, resumed: true };
       } catch (err) {
         // Circuit-breaker aborts the same controller; surface getBreakReason() first
@@ -995,17 +1138,27 @@ export async function respondToToolApproval(
           !guards.budget.getBreakReason() &&
           (controller.signal.aborted || isAbortLikeError(err))
         ) {
-          guards.finish(
+          const abortTrace = sealMessageTrace(
+            guards,
             resolveRunFinishStatus({
               aborted: true,
               breakReason: null,
             }),
           );
+          if (abortTrace && (assistantMsg.content || '').trim()) {
+            assistantMsg.trace = abortTrace;
+            try {
+              await ctx.storage.upsertAssistantMessage(bot.id, assistantMsg, { runId: resumeRunId });
+            } catch (err) {
+              console.error('[okbot] upsert aborted bot trace failed', err);
+            }
+          }
           ctx.sendRuntimeEvent({
             type: 'done',
             botId: bot.id,
             messageId: assistantId,
             content: assistantMsg.content,
+            ...(abortTrace ? { trace: abortTrace } : {}),
             aborted: true,
           });
           return { ok: true, resumed: true, aborted: true };
@@ -1021,7 +1174,9 @@ export async function respondToToolApproval(
         console.error('[okbot] resumeHitl failed', err);
         if (!assistantMsg.content) {
           assistantMsg.content = `错误：${message}`;
-          ctx.storage.upsertAssistantMessage(bot.id, assistantMsg, { allowRebind: false });
+          const errTrace = guards.trace.getMessageTrace();
+          if (errTrace) assistantMsg.trace = errTrace;
+          await ctx.storage.upsertAssistantMessage(bot.id, assistantMsg, { allowRebind: false, runId: resumeRunId });
         }
         ctx.sendRuntimeEvent({
           type: 'error',
@@ -1032,7 +1187,7 @@ export async function respondToToolApproval(
         return { ok: false, error: message };
       } finally {
         guards.dispose();
-        ctx.abortControllers.delete(bot.id);
+        unregisterOwnerRun(ctx.abortControllers, bot.id, resumeRunId, controller);
         ctx.rejectPendingApprovalsForBot(bot.id, '已结束');
         runSlot.release();
       }
@@ -1060,7 +1215,7 @@ export async function compressSessionNow(
   }
 
   const ownerId = botId || squadId;
-  if (ctx.abortControllers.has(ownerId)) {
+  if (ownerHasRuns(ctx.abortControllers, ownerId)) {
     return { ok: false, error: 'busy' };
   }
 
@@ -1117,20 +1272,23 @@ export async function compressSessionNow(
   }
 
   const controller = new AbortController();
-  // Reuse abortControllers so chatStart/chatAbort treat compress as busy.
-  ctx.abortControllers.set(ownerId, controller);
+  const compressRunId = createId('run');
+  // Register so chatStart/chatAbort treat compress as busy.
+  registerOwnerRun(ctx.abortControllers, ownerId, compressRunId, controller);
   try {
-    const { summaryState, didCompress } = await ensureSessionCompressed({
-      storage: ctx.storage,
-      ownerId,
-      model: modelConfig,
-      contextCompression: settings.contextCompression,
-      staticText,
-      prior,
-      sessionRows: ctx.storage.listSessionBudgetRows(ownerId),
-      signal: controller.signal,
-      force: mode,
-    });
+    const { summaryState, didCompress } = await withOwnerMaintenanceLock(ownerId, () =>
+      ensureSessionCompressed({
+        storage: ctx.storage,
+        ownerId,
+        model: modelConfig,
+        contextCompression: settings.contextCompression,
+        staticText,
+        prior,
+        sessionRows: ctx.storage.listSessionBudgetRows(ownerId),
+        signal: controller.signal,
+        force: mode,
+      }),
+    );
     return {
       ok: true,
       didCompress,
@@ -1141,10 +1299,7 @@ export async function compressSessionNow(
     console.error('[okbot] compressSessionNow failed', err);
     return { ok: false, error: msg || 'compress_failed' };
   } finally {
-    // Only clear if we still own the slot — a raced chatStart must keep Stop working.
-    if (ctx.abortControllers.get(ownerId) === controller) {
-      ctx.abortControllers.delete(ownerId);
-    }
+    unregisterOwnerRun(ctx.abortControllers, ownerId, compressRunId, controller);
   }
 }
 

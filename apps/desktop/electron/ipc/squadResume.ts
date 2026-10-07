@@ -24,10 +24,17 @@ import {
   isAbortLikeError,
   resolveRunFinishStatus,
 } from './runGuards';
-import { acquireRunSlot } from './steerGate';
+import {
+  acquireRunSlot,
+  ownerHasRuns,
+  registerOwnerRun,
+  unregisterOwnerRun,
+} from './ownerRuns';
 import { createApprovalWaiter, releaseRunApprovals } from './approvalWaiter';
 import { mcpToolsForRun } from '../mcpRuntime';
 import { buildSquadMemberSpecs, computerRouteFor } from './chatTurnHelpers';
+import { historySearchForOwner } from './historySearchTool';
+import { scheduleManageForOwner } from './scheduleTool';
 
 type ResumeResult = { ok: boolean; error?: string; resumed?: boolean; aborted?: boolean };
 
@@ -71,9 +78,9 @@ export async function resumeSquadAfterRestart(
   decision: ToolApprovalDecision,
 ): Promise<ResumeResult> {
   const busy: ResumeResult = { ok: false, error: '该小队已有进行中的任务' };
-  if (ctx.abortControllers.has(squad.id)) return busy;
+  if (ownerHasRuns(ctx.abortControllers, squad.id)) return busy;
   const runSlot = await acquireRunSlot(squad.id);
-  if (ctx.abortControllers.has(squad.id)) {
+  if (ownerHasRuns(ctx.abortControllers, squad.id)) {
     runSlot.release();
     return busy;
   }
@@ -82,7 +89,8 @@ export async function resumeSquadAfterRestart(
   /** Approvals parked by this resumed run; only these are released at the end. */
   const parkedRequestIds = new Set<string>();
   const controller = new AbortController();
-  ctx.abortControllers.set(squad.id, controller);
+  const runId = createId('run');
+  registerOwnerRun(ctx.abortControllers, squad.id, runId, controller);
   ctx.storage.clearPendingHitlRequest(squad.id, disk.requestId);
 
   const settings = ctx.storage.getSettings();
@@ -105,10 +113,10 @@ export async function resumeSquadAfterRestart(
     speakerBotId: SQUAD_CAPTAIN_SPEAKER_ID,
   };
   /** Persist captain text streamed so far, then rotate to a new bubble id. */
-  const sealCaptainSegment = () => {
+  const sealCaptainSegment = async () => {
     if (!assistantMsg.content.trim()) return;
     try {
-      ctx.storage.upsertAssistantMessage(squad.id, { ...assistantMsg });
+      await ctx.storage.upsertAssistantMessage(squad.id, { ...assistantMsg });
     } catch (err) {
       console.error('[okbot] append squad captain segment failed', err);
     }
@@ -138,6 +146,9 @@ export async function resumeSquadAfterRestart(
       squadSettings: settings.squad,
       members,
       sessionSummary: sessionSummary || undefined,
+      historySearch: historySearchForOwner(ctx.storage, squad.id),
+      scheduleManage: scheduleManageForOwner(ctx.storage, squad.id),
+      web: settings.web,
       model: modelConfig,
       tools: settings.tools,
       security: settings.security,
@@ -167,6 +178,7 @@ export async function resumeSquadAfterRestart(
         computerId: disk.computerId,
         userText,
         turnId,
+        runId,
         onParked: (id) => parkedRequestIds.add(id),
       }),
       onToolResult: ({ requestId, toolName, approved, output }) => {
@@ -179,10 +191,11 @@ export async function resumeSquadAfterRestart(
           toolName,
           approved,
           output,
+          runId,
         });
       },
-      onSquadExchange: ({ kind, memberBotId, memberName, content, usage }) => {
-        sealCaptainSegment();
+      onSquadExchange: async ({ kind, memberBotId, memberName, content, usage }) => {
+        await sealCaptainSegment();
         const exchangeMsg: ChatMessage = {
           id: createId('msg'),
           role: 'assistant',
@@ -232,6 +245,7 @@ export async function resumeSquadAfterRestart(
           toolName: p.toolName,
           approved: false,
           output: '已结束',
+          runId,
         });
       }
       if (stale.length) ctx.storage.writeSquadResumeReplies(squad.id, turnId, []);
@@ -264,7 +278,7 @@ export async function resumeSquadAfterRestart(
     if (usage) assistantMsg.usage = usage;
     if (assistantMsg.content.trim()) {
       assistantMsg.createdAt = new Date().toISOString();
-      ctx.storage.upsertAssistantMessage(squad.id, assistantMsg);
+      await ctx.storage.upsertAssistantMessage(squad.id, assistantMsg);
     }
     if (hasUsage(usage)) {
       try {
@@ -311,13 +325,13 @@ export async function resumeSquadAfterRestart(
     console.error('[okbot] resumeSquadHitl failed', err);
     if (!assistantMsg.content) {
       assistantMsg.content = `错误：${message}`;
-      ctx.storage.upsertAssistantMessage(squad.id, assistantMsg, { allowRebind: false });
+      await ctx.storage.upsertAssistantMessage(squad.id, assistantMsg, { allowRebind: false });
     }
     ctx.sendRuntimeEvent({ type: 'error', botId: squad.id, messageId: assistantId, error: message });
     return { ok: false, error: message };
   } finally {
     guards.dispose();
-    ctx.abortControllers.delete(squad.id);
+    unregisterOwnerRun(ctx.abortControllers, squad.id, runId, controller);
     // Not rejectPendingApprovalsForBot: that clears every pending file of the squad,
     // including other members' cold approvals and the collected replies of this turn.
     releaseRunApprovals(ctx, squad.id, parkedRequestIds, '已结束');

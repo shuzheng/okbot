@@ -5,7 +5,7 @@ const cleared: string[] = [];
 const resolved: Array<{ approved: boolean; message?: string }> = [];
 const controller = new AbortController();
 const ctx = {
-  abortControllers: new Map<string, AbortController>([['bot_1', controller]]),
+  abortControllers: new Map([['bot_1', new Map([['run_1', controller]])]]),
   rejectPendingApprovalsForBot: (id: string) => {
     cleared.push(id);
   },

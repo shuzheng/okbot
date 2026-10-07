@@ -13,7 +13,7 @@ function assert(cond: unknown, msg: string): asserts cond {
 const bad = [
   '## instructions',
   '你是「001」，一个可使用本机工具的桌面个人助手。',
-  '## 机器人资料（花名册，以这里为准）',
+  '## 助手资料（花名册，以这里为准）',
   '名称：001',
   '## 记忆（须遵守；过期项已过滤）',
   '### 全局记忆',
@@ -26,8 +26,8 @@ assert(
   'expected blank line after ## instructions',
 );
 assert(
-  fixed.includes('桌面个人助手。\n\n## 机器人资料'),
-  'expected blank line before ## 机器人资料',
+  fixed.includes('桌面个人助手。\n\n## 助手资料'),
+  'expected blank line before ## 助手资料',
 );
 assert(
   fixed.includes('名称：001\n\n## 记忆'),
@@ -46,6 +46,11 @@ const prefs = {
   read_skill: { enabled: false, approval: 'ask' as const },
   write_file: { enabled: false, approval: 'ask' as const },
   edit_file: { enabled: false, approval: 'ask' as const },
+  generate_image: { enabled: false, approval: 'ask' as const },
+  search_history: { enabled: false, approval: 'ask' as const },
+  manage_schedule: { enabled: false, approval: 'ask' as const },
+  web_fetch: { enabled: false, approval: 'ask' as const },
+  web_search: { enabled: false, approval: 'ask' as const },
 };
 
 const instr = buildAgentInstructions(
@@ -58,12 +63,20 @@ const instr = buildAgentInstructions(
   '### 全局记忆\n\n- [1] test',
 );
 assert(
-  instr.includes('桌面个人助手。\n\n## 机器人资料'),
+  instr.includes('桌面个人助手。\n\n## 助手资料'),
   'buildAgentInstructions: blank before profile heading',
 );
 assert(
-  instr.includes('为准。\n\n## 记忆（须遵守；过期项已过滤）\n\n### 全局记忆'),
+  instr.includes('## 记忆（须遵守；过期项已过滤）\n\n### 全局记忆\n\n- [1] test'),
   'buildAgentInstructions: blank around memory headings',
+);
+assert(
+  instr.indexOf('## 助手资料') < instr.indexOf('## 记忆'),
+  'buildAgentInstructions: stable profile before volatile memory',
+);
+assert(
+  instr.indexOf('不要编造') < instr.indexOf('## 记忆'),
+  'buildAgentInstructions: tools/style before memory (prefix-cache friendly)',
 );
 
 const full = formatSessionPromptContext({
@@ -77,7 +90,7 @@ assert(
   'formatSessionPromptContext: blank after ## instructions',
 );
 assert(
-  full.includes('桌面个人助手。\n\n## 机器人资料'),
+  full.includes('桌面个人助手。\n\n## 助手资料'),
   'formatSessionPromptContext: blank before profile heading',
 );
 

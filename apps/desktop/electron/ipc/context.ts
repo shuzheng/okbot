@@ -31,7 +31,8 @@ export type ActiveRunsSnapshot = {
  */
 export type IpcContext = {
   storage: FileStorage;
-  abortControllers: Map<string, AbortController>;
+  /** ownerId → runId → AbortController (parallel turns). */
+  abortControllers: Map<string, Map<string, AbortController>>;
   pendingToolApprovals: Map<string, PendingToolApproval>;
   hardwareAccelerationActive: boolean;
   sendRuntimeEvent: (event: RuntimeEvent) => void;

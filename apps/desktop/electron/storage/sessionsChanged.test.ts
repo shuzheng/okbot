@@ -25,7 +25,7 @@ storage.appendMessage(bot.id, { id: 'u1', role: 'user', content: 'hi', createdAt
 assert.deepEqual(events.at(-1), { id: bot.id, reason: 'message' });
 
 const beforeEmpty = events.length;
-storage.upsertAssistantMessage(bot.id, {
+await storage.upsertAssistantMessage(bot.id, {
   id: 'empty',
   role: 'assistant',
   content: '   ',
@@ -33,7 +33,7 @@ storage.upsertAssistantMessage(bot.id, {
 });
 assert.equal(events.length, beforeEmpty, 'empty orphan upsert must not notify');
 
-storage.upsertAssistantMessage(bot.id, {
+await storage.upsertAssistantMessage(bot.id, {
   id: 'a1',
   role: 'assistant',
   content: 'hello',
