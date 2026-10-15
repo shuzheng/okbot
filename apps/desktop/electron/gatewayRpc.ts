@@ -41,7 +41,6 @@ export const GATEWAY_RPC_OPS = [
   'deleteBotSkill',
   'listGlobalAgentsSkills',
   'searchMessages',
-  'getLastRunTrace',
   'getPromptContext',
   'getRecentErrorLog',
   'clearModelBindingsForProvider',

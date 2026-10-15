@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FocusEvent } from 'react';
 import { createId, type MemoryEntry } from '@okbot/shared';
 import { t, type UiLang } from '../../i18n';
-import { updateScrollFade } from '../../utils/scrollFade';
+import { resolveWheelPassOuter, updateScrollFade } from '../../utils/scrollFade';
 
 function EditIcon() {
   return (
@@ -94,8 +94,8 @@ export function MemoryEntriesList({
       const atTop = scrollTop <= 0;
       const atBottom = scrollTop + clientHeight >= scrollHeight - 1;
       if (!(atTop && e.deltaY < 0) && !(atBottom && e.deltaY > 0)) return;
-      const outer = el.closest(scrollOuterSelector);
-      if (!(outer instanceof HTMLElement)) return;
+      const outer = resolveWheelPassOuter(el, scrollOuterSelector);
+      if (!outer || outer === el) return;
       outer.scrollTop += e.deltaY;
       updateScrollFade(outer);
       e.preventDefault();

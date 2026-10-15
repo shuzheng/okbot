@@ -17,3 +17,7 @@ export {
   type SkillHotReloadChange,
   type SkillHotReloadOptions,
 } from './hotReload.js';
+export {
+  upgradeSkillFormat,
+  type SkillFormatUpgrade,
+} from './upgrade.js';

@@ -15,3 +15,7 @@ coverage
 # electron-builder output
 apps/desktop/release/
 release/
+
+# Synced from packages/agent/gallery at desktop build/dev
+apps/desktop/resources/assistant-gallery/
+tmp/

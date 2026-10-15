@@ -1,5 +1,6 @@
 import type { IpcContext } from './context';
 import { abortAllOwnerRuns } from './ownerRuns';
+import { cancelSoftSteers } from './softSteerGate';
 
 /**
  * Stop one bot or squad the same way the desktop Stop button does:
@@ -12,6 +13,7 @@ export function abortChatOwner(
 ): boolean {
   const id = (ownerId || '').trim();
   if (!id) return false;
+  cancelSoftSteers(id);
   const had = abortAllOwnerRuns(ctx.abortControllers, id);
   ctx.rejectPendingApprovalsForBot(id, '已取消');
   return had;

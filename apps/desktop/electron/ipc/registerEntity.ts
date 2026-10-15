@@ -239,9 +239,6 @@ export function registerEntityIpc(ctx: IpcContext): void {
   ipcMain.handle(IpcChannels.searchMessages, (_e, payload: { query: string; limit?: number }) =>
     ops.searchMessages(payload ?? {}),
   );
-  ipcMain.handle(IpcChannels.getLastRunTrace, (_e, payload: { ownerId: string }) =>
-    ops.getLastRunTrace(payload ?? {}),
-  );
   ipcMain.handle(IpcChannels.getPromptContext, (_e, payload: { botId: string; messageId: string }) =>
     ops.getPromptContext(payload ?? {}),
   );

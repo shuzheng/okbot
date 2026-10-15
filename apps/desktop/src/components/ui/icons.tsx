@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import type { ThemeMode } from '@okbot/shared';
 
 export function SearchIcon() {
@@ -119,6 +120,26 @@ export function CopyIcon() {
   );
 }
 
+/** Show secret (closed eye = currently hidden). Matches Model providers API Key control. */
+export function EyeIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+/** Hide secret (slashed eye = currently visible). */
+export function EyeOffIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+      <path d="M3 3l18 18M10.7 10.7a2 2 0 002.6 2.6M9.9 5.1A10.5 10.5 0 0121 12c-.5 1-1.2 2-2.1 2.9M6.1 6.1C4.7 7.3 3.6 8.8 3 12c1.5 4.5 5.5 7 9 7 1.4 0 2.8-.3 4.1-.9" />
+    </svg>
+  );
+}
+
+
 export function CloseIcon() {
   return (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden>
@@ -233,6 +254,75 @@ export function TrashIcon() {
   );
 }
 
+export function FolderIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden>
+      <path
+        d="M3.5 8.5V7a2 2 0 0 1 2-2h4.2l1.6 1.8H18.5a2 2 0 0 1 2 2v8.2a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2V8.5Z"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+export function FolderPlusIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden>
+      <path
+        d="M3.5 8.5V7a2 2 0 0 1 2-2h4.2l1.6 1.8H18.5a2 2 0 0 1 2 2v8.2a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2V8.5Z"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinejoin="round"
+      />
+      <path d="M12 11v5M9.5 13.5h5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function ArrowUpIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden>
+      <path
+        d="M12 19V5M6.5 10.5 12 5l5.5 5.5"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+export function ArrowDownIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden>
+      <path
+        d="M12 5v14M6.5 13.5 12 19l5.5-5.5"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+export function ChevronRightIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden>
+      <path
+        d="m9 6 6 6-6 6"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 export function FlagIcon() {
   return (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden>
@@ -287,6 +377,140 @@ export function ImportAssistantIcon() {
         strokeWidth="1.8"
         strokeLinecap="round"
       />
+    </svg>
+  );
+}
+
+export function DefaultAssistantIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden>
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.8" />
+      <path
+        d="M12 7.2l1.35 2.74 3.02.44-2.18 2.12.52 3.01L12 14.1l-2.71 1.41.52-3.01-2.18-2.12 3.02-.44L12 7.2Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+/**
+ * Upright thumbtack (shared by Pin / Unpin).
+ * Round head → short neck → barrel body → needle tip.
+ * Unpin’s slash crosses the barrel (not the head).
+ */
+function PinGlyph() {
+  return (
+    <>
+      {/* Round head */}
+      <circle
+        cx="12"
+        cy="5"
+        r="3"
+        stroke="currentColor"
+        strokeWidth="1.8"
+      />
+      {/* Barrel body */}
+      <path
+        d="M9.6 8.6v4a2.4 2.4 0 0 0 4.8 0v-4"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      {/* Needle */}
+      <path
+        d="M12 14.8v5.7"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+    </>
+  );
+}
+
+/** Push-pin for session list 置顶 / 取消置顶. */
+export function PinIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden>
+      <PinGlyph />
+    </svg>
+  );
+}
+
+/**
+ * Pin with diagonal strike — 取消置顶.
+ * Slash runs through the barrel body; mask clears pin strokes under it.
+ */
+export function UnpinIcon() {
+  const maskId = `okbot-unpin-${useId().replace(/:/g, '')}`;
+  const slash = 'M5.5 7.5L18.5 17.5';
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden>
+      <defs>
+        <mask id={maskId}>
+          <rect width="24" height="24" fill="white" />
+          <path d={slash} stroke="black" strokeWidth="3.6" strokeLinecap="round" />
+        </mask>
+      </defs>
+      <g mask={`url(#${maskId})`}>
+        <PinGlyph />
+      </g>
+      <path
+        d={slash}
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+/** Envelope open / check — 标为已读. */
+export function MarkAsReadIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden>
+      <path
+        d="M4 7.5h16v10.2a1.3 1.3 0 0 1-1.3 1.3H5.3A1.3 1.3 0 0 1 4 17.7V7.5z"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+      <path
+        d="m4.4 8.2 7.6 5.2 7.6-5.2"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="m14.2 13.2 1.8 1.8 3.4-3.6"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** Envelope with unread dot — 标为未读. */
+export function MarkAsUnreadIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden>
+      <path
+        d="M4 7.5h16v10.2a1.3 1.3 0 0 1-1.3 1.3H5.3A1.3 1.3 0 0 1 4 17.7V7.5z"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+      <path
+        d="m4.4 8.2 7.6 5.2 7.6-5.2"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <circle cx="18.5" cy="6" r="2.2" fill="currentColor" />
     </svg>
   );
 }
@@ -448,25 +672,6 @@ export function TurnTraceIcon() {
   );
 }
 
-/** Route / waypoints — open this run's tool trajectory.
- *  Slight inset so optical size matches About inside the shared header glyph. */
-export function RunTraceIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" aria-hidden>
-      <g transform="translate(12 12) scale(0.92) translate(-12 -12)">
-        <circle cx="6" cy="19" r="2.5" stroke="currentColor" strokeWidth="1.8" />
-        <circle cx="18" cy="5" r="2.5" stroke="currentColor" strokeWidth="1.8" />
-        <path
-          d="M8.5 18.2h7.2a3.3 3.3 0 0 0 0-6.6H8.3a3.3 3.3 0 0 1 0-6.6H15.5"
-          stroke="currentColor"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </g>
-    </svg>
-  );
-}
 
 /** Enter immersive = Maximize2; exit = Minimize2 (lucide-style). */
 export function ImmersiveChatIcon({ immersive }: { immersive: boolean }) {
@@ -505,6 +710,21 @@ export function ChevronsRightIcon() {
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden>
       <path
         d="m6 17 5-5-5-5M13 17l5-5-5-5"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** Lucide-style ChevronDown — scroll / jump to bottom. */
+export function ChevronDownIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden>
+      <path
+        d="m6 9 6 6 6-6"
         stroke="currentColor"
         strokeWidth="1.8"
         strokeLinecap="round"
@@ -638,6 +858,18 @@ export function ExtensionsNavIcon() {
 }
 
 /** Four tiles — 「市场」 (starter assistants). */
+/** Stacked disks — round token usage popover header. */
+export function UsageStackIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <ellipse cx="12" cy="6" rx="7" ry="2.5" />
+      <path d="M5 6v4c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5V6" />
+      <path d="M5 10v4c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-4" />
+      <path d="M5 14v4c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-4" />
+    </svg>
+  );
+}
+
 export function AssistantGalleryIcon() {
   return (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden>

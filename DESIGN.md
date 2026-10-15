@@ -1,5 +1,7 @@
 # OkBot 架构
 
+架构与进程/模块边界。产品行为见 `GUIDE.md`；改码流程见 `AGENTS.md`。HTTP 路由表以本文「网关 HTTP」为准。
+
 只写现在代码里的模块和连线。产品 UI 细节见 `GUIDE.md`。界面走共享组件与 token；约定见 `AGENTS.md`。
 
 **UI chrome（终态）**：浮层 / 抽屉 / 对话框 / 菜单 / 按钮等优先边框与填充分层，不用软 `box-shadow` elevation（焦点环除外）。详见 `AGENTS.md`「UI 约束」。
@@ -38,22 +40,24 @@ localHttpApi          网关 HTTP。不是独立服务
 
 ## IPC
 
-常量在 `packages/shared` 的 `IpcChannels`。只有拥有后端的 Electron 窗口注册这些 handler。附着窗口只留窗口控制和一次性令牌 IPC。
+常量在 `packages/shared`（`ipc.ts` → barrel）的 `IpcChannels`。只有拥有后端的 Electron 窗口注册这些 handler。附着窗口只留窗口控制和一次性令牌 IPC。
 
 | 注册 | 通道 |
 | --- | --- |
-| `registerEntity.ts` | bootstrap、bots/squads CRUD、AGENTS.md、记忆、技能、助手包导入导出、助手市场（含 `importAssistantFromUrl`）、settings、`getGatewayAccessToken`、用量、模型探测与连通测试、消息分页与搜索、prompt context、run trace、错误日志、清模型绑定、`probeComputer`、`setChatUnread` |
+| `registerEntity.ts` | bootstrap、bots/squads CRUD、AGENTS.md、记忆、技能、助手包导入导出、助手市场（含 `importAssistantFromUrl`）、settings、`getGatewayAccessToken`、用量、模型探测与连通测试、消息分页与搜索、prompt context、错误日志、清模型绑定、`probeComputer`、`setChatUnread` |
 | `registerChat.ts` | `chatStart`、`chatAbort`、`toolRespond`、`compressSessionNow`。运行中的 `chatEvent` 由 main 推给渲染进程 |
 | `registerSystem.ts` | 窗口最小化/最大化/关闭、红绿灯位置、麦克风、剪贴板、选路径、生成图 data URL、`getAppInfo`、updater 四个调用 |
 | `main.ts`（仅附着） | `attachGatewayToken`：`ipcMain.on` + `sendSync`，把已保存令牌交给 attach preload。不放进命令行 |
 
 网关 HTTP 在进程内直接调 `startChatTurn`，不再绕一圈 IPC。
 
+1:1 忙碌发送经 `orchestrateBotTurn`（`electron/ipc/chat/orchestrateBotTurn.ts`）：轻量路由 `classifyBusyIntent`（`packages/agent`）区分补充 vs 新任务；补充经 `softSteerGate` 软改向最近在途回合，新任务走既有并行门闩 / 任务条。小队仍直接 `startSquadTurn`。
+
 助手、小队、记忆、技能、助手市场（含 GitHub URL 导入）、模型探测这些操作写在 `electron/entityOps.ts`（`createEntityOps(ctx)`），不带传输层。`registerEntity.ts` 的 IPC 和网关 `POST /v1/rpc/:op` 都调它，两边行为一致。模型探测的实现在 `electron/modelProbe.ts`。
 
 ## 网关 HTTP
 
-实现：`localHttpApi.ts`。默认绑 `127.0.0.1`；`bindLan` 才绑 `0.0.0.0`。除注明外都要 `Authorization: Bearer`、`X-OkBot-Token`，或浏览器登录留下的 HttpOnly cookie。
+实现：`localHttpApi.ts`。默认绑 `127.0.0.1`；`bindLan` 才绑 `0.0.0.0`。除注明外都要 `Authorization: Bearer`、`X-OkBot-Token`，或浏览器登录留下的 HttpOnly cookie。`GET /v1/media/…` 额外接受查询参数 `?token=`（供聊天 `<img src>`；不要把令牌写进普通 API 文档示例）。
 
 | 方法与路径 | 作用 |
 | --- | --- |
@@ -68,13 +72,14 @@ localHttpApi          网关 HTTP。不是独立服务
 | `GET /v1/bots/:id/messages`、`GET /v1/squads/:id/messages` | 分页。`limit` 缺省 50，最大 200。可用 `beforeMessageId` |
 | `GET /v1/computers` | 本机 `local` 加已登记远程电脑（不含令牌） |
 | `GET /v1/usage` | 与 IPC `getUsageStats` 同一形状 |
+| `GET /v1/media/:ownerId/resources/:file` | 聊天气泡内嵌图：读 `~/.okbot/<ownerId>/resources/<file>`。鉴权除 Bearer / cookie 外，**允许 `?token=`**（`<img>` 无法带 Authorization）。路径必须恰好三段且落在该 owner 的 `resources/` 下；单文件上限 25MB |
 | `GET /v1/approvals` | 进行中的回合和待审批 |
 | `GET /v1/events` | SSE，只推 `sessions_changed` |
 | `POST /v1/bots/:id/messages`、`POST /v1/squads/:id/messages` | `{ text, computerId? }`。默认 202；`Accept: text/event-stream` 则 SSE 到本轮结束 |
 | `POST /v1/tool-respond` | `{ requestId, approved, message? }`。成功 200，失败 409 |
 | `POST /v1/bots/:id/abort`、`POST /v1/squads/:id/abort` | 与桌面停止同一条 `abortChatOwner` |
 | `POST /v1/settings` | 只接受 `GATEWAY_SETTINGS_PATCH_KEYS` 里的键。其它键有真实改动则整次 409 `settings_not_allowed` |
-| `POST /v1/rpc/:op` | 助手/小队增删改、引导、AGENTS.md、记忆、技能、助手市场、全局搜索、prompt context、run trace、错误日志、模型发现与连通测试、立即压缩。`op` 只认 `gatewayRpc.ts` 的 `GATEWAY_RPC_OPS`，其它 404 `unknown_op`；存储报错 400。成功 `{ ok: true, result }` |
+| `POST /v1/rpc/:op` | 助手/小队增删改、引导、AGENTS.md、记忆、技能、助手市场、全局搜索、prompt context、错误日志、模型发现与连通测试、立即压缩。`op` 只认 `gatewayRpc.ts` 的 `GATEWAY_RPC_OPS`，其它 404 `unknown_op`；存储报错 400。成功 `{ ok: true, result }` |
 | `GET /`、静态资源 | 仅 `serveUi`。未登录是令牌页，不是 JSON |
 
 `okbot serve` 启动横幅会打印当前访问令牌一次。请求处理路径不打印令牌。
@@ -84,6 +89,8 @@ localHttpApi          网关 HTTP。不是独立服务
 `packages/agent/src/computerSelection.ts` 决定 shell/文件工具去哪。`LOCAL_COMPUTER_ID` 是 `local`。
 
 - 设置里的默认电脑是 `settings.defaultComputerId`。**空等于本机**（`local`）。已设置但未知或已禁用的 id 不会偷偷改回本机执行。
+- 用户选定的默认助手是 `settings.defaultAssistantId`（空=无）。仅身份/UI；删除对应 bot 时清空。读写走 `SettingsStore`，与花名册校验在 UI / 保存与 `deleteOwner`。
+- 侧栏置顶顺序是 `settings.pinnedOwnerIds`（bot/squad owner id 有序数组；可多选）。删除对应 owner 时从数组移除。与 `defaultAssistantId` 独立。
 - 本轮 HTTP 的 `computerId` 低于对话里点名的电脑。
 - 用户文本点名恰好一台（远程电脑用 id 或名称；本机用「本机」，不用路径里的 `local`）就改到那台。
 - 点名多台时，每次工具调用必须带 `computer`。
@@ -96,7 +103,10 @@ localHttpApi          网关 HTTP。不是独立服务
 
 ## 磁盘
 
-`FileStorage` 根目录默认 `~/.okbot`（`path.join(homedir, '.okbot')`）。构造时 `chmod` 目录 `0700`。`settings.json` 经 `writeJson(..., { mode: 0o600 })` 写出，并在创建/读到已有文件后再 `chmod` `0600`。`chmod` 失败会 `console.error`，不抛。
+产品侧目录一览与备份行为见 [`GUIDE.md` §12](./GUIDE.md#12-数据目录一览)。本节只写架构边界与关键路径角色。
+
+
+`FileStorage` 是薄门面：共享根路径、组装域 Store（`SettingsStore` / `SessionStore` / `RosterStore` / `SkillsStore` / `MemoryStore` / `ScheduleStore` / `PendingHitlStore` / `AssistantPackageStore`），并保持原有调用面。墓碑与 session 写锁集中在 `ownerLifecycle.ts`（`OwnerLifecycle`）；各 Store 的写路径自行调用，不在门面复制。根目录默认 `~/.okbot`（`path.join(homedir, '.okbot')`）。构造时 `chmod` 目录 `0700`。`settings.json` 经 `writeJson(..., { mode: 0o600 })` 写出，并在创建/读到已有文件后再 `chmod` `0600`。`chmod` 失败会 `console.error`，不抛。
 
 ```text
 ~/.okbot/
@@ -109,9 +119,9 @@ localHttpApi          网关 HTTP。不是独立服务
   memory.md              全局记忆
   logs/errors-YYYY-MM-DD.jsonl
   <botId>/  bot.json、AGENTS.md、memory.md、skills/、session.jsonl、
-            session-summary.json、last-run-trace.json、pending-hitl/、resources/、
+            session-summary.json、pending-hitl/、resources/、
             schedules.json
-  <squadId>/  session.jsonl、session-summary.json、last-run-trace.json、
+  <squadId>/  session.jsonl、session-summary.json、
               pending-hitl/、pending-hitl-replies/、resources/、schedules.json
 ```
 
@@ -127,9 +137,9 @@ localHttpApi          网关 HTTP。不是独立服务
 - 一轮只收尾一次（`planSquadResumeAfter`）：同一轮还有队长的审批在等时，成员恢复后不续跑队长，由队长那条审批收尾；队长恢复跑完后，同一轮还在等的成员审批作废（发 `tool_result` 拒绝并删记录），收集的回复清空。
 - 每次运行（实时的小队回合和冷恢复）结束时只放掉自己挂起的审批（`releaseRunApprovals`），不清别的回合留在磁盘上的审批。新消息并行时不清掉其他回合的待审批；停止 / 删除会话才清。
 
-助手消息可带 `trace`（`MessageTrace`：本轮 spans 瀑布，随 session.jsonl 持久化；与每会话 `last-run-trace.json` 互补）。
+助手消息可带 `trace`（`MessageTrace`：本轮 spans 瀑布，随 session.jsonl 持久化）。
 
-删除助手或小队后，进程内留下墓碑（`storage/fs.ts` 的 `markDirDeleted`）。`ensureDir`、`writeJson`、`writeText`、`appendText` 都先查墓碑，所以还在收尾的运行（会话、轨迹、记忆、技能、待审批）写不回已删的目录，`RunTraceRecorder` 直接停写。`recordUsage` 仍计入总量，但不再给已删的 owner 写分项。删助手时因成员不足而一起删掉的小队也留墓碑。本进程删过的 id 不再分配给新助手或小队。
+删除助手或小队后，进程内留下墓碑（`storage/fs.ts` 的 `markDirDeleted`）。`ensureDir`、`writeJson`、`writeText`、`appendText` 都先查墓碑，所以还在收尾的运行（会话、记忆、技能、待审批）写不回已删的目录。`recordUsage` 仍计入总量，但不再给已删的 owner 写分项。删助手时因成员不足而一起删掉的小队也留墓碑。本进程删过的 id 不再分配给新助手或小队。
 
 ## 网关可写的设置
 

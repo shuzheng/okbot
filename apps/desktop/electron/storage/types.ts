@@ -9,6 +9,10 @@ export type SessionRecordV2 = {
     uiRole?: 'user' | 'assistant';
     /** Squad transcript: which bot authored this assistant bubble. */
     speakerBotId?: string;
+    /** 1:1 mesh status row (compact「已发消息给」; ask/reply in dialog). */
+    meshExchange?: import('@okbot/shared').MeshExchangeMeta;
+    /** Sealed ask_assistant interim (message A); UI hides later SDK dups of this text. */
+    meshInterim?: boolean;
     /** User message quotes another bubble by id (UI only; content stays body-only). */
     quoteMessageId?: string;
     /** Short preview snapshot of the quoted message. */

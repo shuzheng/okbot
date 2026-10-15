@@ -1,9 +1,11 @@
 /**
- * Built-in `web_search`: user-configured third-party search (Tavily / Brave / Serper).
- * No key → clear Chinese error pointing at Settings → Tools → Web.
+ * Built-in `web_search`: user-configured third-party search (Tavily / Brave / Serper / Custom).
+ * Built-in providers always use official endpoints; custom uses baseURL + compat wire format.
+ * No key (or custom without base URL) → clear Chinese error pointing at Settings → Tools → Web.
  */
 import {
   isWebSearchConfigured,
+  type WebSearchCompatId,
   type WebSearchProviderId,
   type WebSearchSettings,
 } from '@okbot/shared';
@@ -13,13 +15,23 @@ export const WEB_SEARCH_TIMEOUT_MS = 20_000;
 export const WEB_SEARCH_DEFAULT_LIMIT = 5;
 export const WEB_SEARCH_MAX_LIMIT = 10;
 
-export const WEB_SEARCH_PROVIDER_DEFAULTS: Record<
-  WebSearchProviderId,
+export const WEB_SEARCH_COMPAT_DEFAULTS: Record<
+  WebSearchCompatId,
   { label: string; defaultBaseURL: string }
 > = {
   tavily: { label: 'Tavily', defaultBaseURL: 'https://api.tavily.com' },
   brave: { label: 'Brave Search', defaultBaseURL: 'https://api.search.brave.com' },
   serper: { label: 'Serper', defaultBaseURL: 'https://google.serper.dev' },
+};
+
+export const WEB_SEARCH_PROVIDER_DEFAULTS: Record<
+  WebSearchProviderId,
+  { label: string }
+> = {
+  tavily: { label: 'Tavily' },
+  brave: { label: 'Brave Search' },
+  serper: { label: 'Serper' },
+  custom: { label: 'Custom' },
 };
 
 export type WebSearchHit = {
@@ -43,14 +55,28 @@ export type WebSearchOptions = {
 
 export function webSearchNotConfiguredMessage(): string {
   return (
-    '错误：尚未配置网页搜索。请打开设置 → 工具 → 网页，选择搜索服务商（Tavily / Brave / Serper）并填写 API Key 后再试。'
+    '错误：尚未配置网页搜索。请打开设置 → 工具 → 网页，选择搜索服务商（Tavily / Brave / Serper / 自定义）并填写 API Key 后再试。'
   );
 }
 
-function resolveBaseURL(settings: WebSearchSettings): string {
-  const override = (settings.baseURL || '').trim().replace(/\/$/, '');
-  if (override) return override;
-  return WEB_SEARCH_PROVIDER_DEFAULTS[settings.provider].defaultBaseURL.replace(/\/$/, '');
+/** Wire format for the HTTP call (built-in provider id, or custom.compat). */
+export function resolveWebSearchCompat(settings: WebSearchSettings): WebSearchCompatId {
+  if (settings.provider === 'custom') return settings.compat;
+  return settings.provider;
+}
+
+/**
+ * Official endpoint for built-in providers; custom base URL only when provider is `custom`.
+ */
+export function resolveWebSearchBaseURL(settings: WebSearchSettings): string {
+  if (settings.provider === 'custom') {
+    const override = (settings.baseURL || '').trim().replace(/\/$/, '');
+    if (!override) {
+      throw new Error('自定义搜索未填写接口地址。请在设置 → 工具 → 网页填写自定义接口地址。');
+    }
+    return override;
+  }
+  return WEB_SEARCH_COMPAT_DEFAULTS[settings.provider].defaultBaseURL.replace(/\/$/, '');
 }
 
 function asRecord(v: unknown): Record<string, unknown> | null {
@@ -68,7 +94,7 @@ async function searchTavily(
   fetchImpl: typeof fetch,
   signal: AbortSignal,
 ): Promise<WebSearchHit[]> {
-  const base = resolveBaseURL(settings);
+  const base = resolveWebSearchBaseURL(settings);
   const res = await fetchImpl(`${base}/search`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
@@ -111,7 +137,7 @@ async function searchBrave(
   fetchImpl: typeof fetch,
   signal: AbortSignal,
 ): Promise<WebSearchHit[]> {
-  const base = resolveBaseURL(settings);
+  const base = resolveWebSearchBaseURL(settings);
   const u = new URL(`${base}/res/v1/web/search`);
   u.searchParams.set('q', query);
   u.searchParams.set('count', String(limit));
@@ -154,7 +180,7 @@ async function searchSerper(
   fetchImpl: typeof fetch,
   signal: AbortSignal,
 ): Promise<WebSearchHit[]> {
-  const base = resolveBaseURL(settings);
+  const base = resolveWebSearchBaseURL(settings);
   const res = await fetchImpl(`${base}/search`, {
     method: 'POST',
     headers: {
@@ -187,6 +213,25 @@ async function searchSerper(
   });
 }
 
+async function dispatchSearch(
+  settings: WebSearchSettings,
+  query: string,
+  limit: number,
+  fetchImpl: typeof fetch,
+  signal: AbortSignal,
+): Promise<WebSearchHit[]> {
+  const compat = resolveWebSearchCompat(settings);
+  switch (compat) {
+    case 'brave':
+      return searchBrave(settings, query, limit, fetchImpl, signal);
+    case 'serper':
+      return searchSerper(settings, query, limit, fetchImpl, signal);
+    case 'tavily':
+    default:
+      return searchTavily(settings, query, limit, fetchImpl, signal);
+  }
+}
+
 export async function webSearch(
   settings: WebSearchSettings | null | undefined,
   query: string,
@@ -207,19 +252,7 @@ export async function webSearch(
   const timeout = AbortSignal.timeout(timeoutMs);
   const signal = opts?.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
 
-  let hits: WebSearchHit[];
-  switch (cfg.provider) {
-    case 'brave':
-      hits = await searchBrave(cfg, q, limit, fetchImpl, signal);
-      break;
-    case 'serper':
-      hits = await searchSerper(cfg, q, limit, fetchImpl, signal);
-      break;
-    case 'tavily':
-    default:
-      hits = await searchTavily(cfg, q, limit, fetchImpl, signal);
-      break;
-  }
+  const hits = await dispatchSearch(cfg, q, limit, fetchImpl, signal);
   return { provider: cfg.provider, query: q, hits };
 }
 

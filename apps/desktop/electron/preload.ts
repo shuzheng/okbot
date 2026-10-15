@@ -1,10 +1,12 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import {
   IpcChannels,
+  buildChatStartPayload,
   type AppInfo,
   type AppSettings,
   type Bot,
   type BotOnboardingAnswers,
+  type ChatStartOpts,
   type McpServerEntry,
   type RuntimeEvent,
   type UpdaterStatus,
@@ -156,52 +158,10 @@ const api = {
     ipcRenderer.invoke(IpcChannels.searchMessages, { query, limit: opts?.limit }),
   getPromptContext: (botId: string, messageId: string) =>
     ipcRenderer.invoke(IpcChannels.getPromptContext, { botId, messageId }) as Promise<{ text: string | null }>,
-  getLastRunTrace: (ownerId: string) =>
-    ipcRenderer.invoke(IpcChannels.getLastRunTrace, { ownerId }) as Promise<{
-      trace: {
-        runId: string;
-        startedAt: string;
-        endedAt?: string;
-        status: string;
-        events: Array<Record<string, unknown>>;
-      } | null;
-    }>,
-  chatStart: (
-    botId: string,
-    text: string,
-    opts?: {
-      quoteMessageId?: string;
-      attachments?: Array<{ kind: 'image' | 'file' | 'folder'; path: string; name: string }>;
-      computerId?: string;
-      clientTurnId?: string;
-    },
-  ) =>
-    ipcRenderer.invoke(IpcChannels.chatStart, {
-      botId,
-      text,
-      quoteMessageId: opts?.quoteMessageId,
-      attachments: opts?.attachments,
-      computerId: opts?.computerId,
-      clientTurnId: opts?.clientTurnId,
-    }),
-  chatStartSquad: (
-    squadId: string,
-    text: string,
-    opts?: {
-      quoteMessageId?: string;
-      attachments?: Array<{ kind: 'image' | 'file' | 'folder'; path: string; name: string }>;
-      computerId?: string;
-      clientTurnId?: string;
-    },
-  ) =>
-    ipcRenderer.invoke(IpcChannels.chatStart, {
-      squadId,
-      text,
-      quoteMessageId: opts?.quoteMessageId,
-      attachments: opts?.attachments,
-      computerId: opts?.computerId,
-      clientTurnId: opts?.clientTurnId,
-    }),
+  chatStart: (botId: string, text: string, opts?: ChatStartOpts) =>
+    ipcRenderer.invoke(IpcChannels.chatStart, buildChatStartPayload({ botId }, text, opts)),
+  chatStartSquad: (squadId: string, text: string, opts?: ChatStartOpts) =>
+    ipcRenderer.invoke(IpcChannels.chatStart, buildChatStartPayload({ squadId }, text, opts)),
   chatAbort: (botId: string) => ipcRenderer.invoke(IpcChannels.chatAbort, botId),
   compressSessionNow: (payload: {
     botId?: string;

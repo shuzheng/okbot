@@ -1,6 +1,7 @@
 import { memo, useMemo } from 'react';
 import { parseThinkContent } from '@okbot/shared';
 import { t, type UiLang } from '../../i18n';
+import type { MentionBotRef } from '../../utils/botMentions';
 import { MarkdownContent } from './MarkdownContent';
 
 export type AssistantContentProps = {
@@ -8,6 +9,8 @@ export type AssistantContentProps = {
   content: string;
   /** Per-model flag; default true (`!== false`). */
   showThinking?: boolean;
+  /** Roster for `@助手` mention chips inside markdown. */
+  bots?: readonly MentionBotRef[];
 };
 
 /**
@@ -19,17 +22,26 @@ export const AssistantContent = memo(function AssistantContent({
   lang,
   content,
   showThinking = true,
+  bots = [],
 }: AssistantContentProps) {
   const parsed = useMemo(() => parseThinkContent(content || ''), [content]);
 
   if (!showThinking) {
     if (!parsed.answer) return null;
-    return <MarkdownContent lang={lang}>{parsed.answer}</MarkdownContent>;
+    return (
+      <MarkdownContent lang={lang} bots={bots}>
+        {parsed.answer}
+      </MarkdownContent>
+    );
   }
 
   if (!parsed.hasThinking) {
     if (!content) return null;
-    return <MarkdownContent lang={lang}>{content}</MarkdownContent>;
+    return (
+      <MarkdownContent lang={lang} bots={bots}>
+        {content}
+      </MarkdownContent>
+    );
   }
 
   return (
@@ -40,13 +52,19 @@ export const AssistantContent = memo(function AssistantContent({
           <div className="md-thinking-body">
             {parsed.thinking.map((block, i) => (
               <div key={i} className="md-thinking-block">
-                <MarkdownContent lang={lang}>{block}</MarkdownContent>
+                <MarkdownContent lang={lang} bots={bots}>
+                  {block}
+                </MarkdownContent>
               </div>
             ))}
           </div>
         </details>
       ) : null}
-      {parsed.answer ? <MarkdownContent lang={lang}>{parsed.answer}</MarkdownContent> : null}
+      {parsed.answer ? (
+        <MarkdownContent lang={lang} bots={bots}>
+          {parsed.answer}
+        </MarkdownContent>
+      ) : null}
     </>
   );
 });

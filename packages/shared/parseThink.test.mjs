@@ -42,3 +42,11 @@ assert.deepEqual(normalizeTokenUsage({ input: 0, output: 0, cache: 0 }), {
 });
 
 console.log('parseThink/redact/normalizeTokenUsage ok');
+
+{
+  const long = 'x'.repeat(600);
+  assert.equal(redactSensitiveText(long).length, 500);
+  assert.equal(redactSensitiveText(long, undefined, 240).length, 240);
+  assert.equal(redactSensitiveText(long, undefined, 0).length, 500);
+}
+

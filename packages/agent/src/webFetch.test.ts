@@ -248,4 +248,28 @@ await assert.rejects(
   /SSRF|内网|本机/,
 );
 
+
+// Error path redacts secrets in upstream body snippets
+{
+  await assert.rejects(
+    async () => {
+      await webFetch('https://public.example/err', { allowPrivateNetwork: false }, {
+        lookup: publicLookup,
+        fetchImpl: (async () =>
+          new Response('fail Bearer sk-abcdefghijklmnopqrst and sk-abcdefghijklmnop', {
+            status: 500,
+            headers: { 'content-type': 'text/plain' },
+          })) as typeof fetch,
+      });
+    },
+    (err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      assert.match(msg, /拉取失败（HTTP 500）/);
+      assert.ok(!msg.includes('sk-abcdefghijklmnop'));
+      assert.ok(msg.includes('Bearer ***') || msg.includes('sk-***'));
+      return true;
+    },
+  );
+}
+
 console.log('webFetch.test.ts: ok');

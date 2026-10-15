@@ -1,6 +1,7 @@
 import {
   normalizeApiFormat,
   redactSensitiveText,
+  sortCatalogModels,
   type ApiFormat,
   type AppSettings,
   type CatalogModel,
@@ -96,7 +97,7 @@ export async function discoverModels(
       models.push({ id, name: id, contextWindow: 128_000, maxTokens: null, enabled: true });
     }
     if (!models.length) return { ok: false, error: '接口未返回可用模型，请手动添加' };
-    return { ok: true, models };
+    return { ok: true, models: sortCatalogModels(models) };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return { ok: false, error: redactSensitiveText(`拉取模型失败：${msg}`, apiKey) };
@@ -115,7 +116,7 @@ export async function testModelConnection(
   if (!apiKey) return { ok: false, error: '请先填写 API Key' };
   if (!modelId) return { ok: false, error: '缺少模型 ID' };
 
-  const redact = (msg: string): string => redactSensitiveText(msg, apiKey).slice(0, 240);
+  const redact = (msg: string): string => redactSensitiveText(msg, apiKey, 240);
   const responses = apiFormat === 'responses';
   try {
     const res = await fetch(`${baseURL}/${responses ? 'responses' : 'chat/completions'}`, {

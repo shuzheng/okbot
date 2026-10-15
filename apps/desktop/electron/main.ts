@@ -528,12 +528,6 @@ app.whenReady().then(async () => {
     stopSkillWatch = startSkillWatch(storage, sendRuntimeEvent);
     stopScheduleTicker = startScheduleTicker({ storage, ctx: ipcCtx });
     initAutoUpdater(() => storage.getSettings());
-    try {
-      const n = storage.abandonRunningTracesOnStartup();
-      if (n > 0) console.info(`[okbot] marked ${n} abandoned run trace(s) on startup`);
-    } catch (err) {
-      console.error('[okbot] abandonRunningTracesOnStartup failed', err);
-    }
   }
   }
   }

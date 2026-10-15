@@ -26,6 +26,7 @@ export const GATEWAY_SETTINGS_PATCH_KEYS = [
   'maintenance',
   'squad',
   'toolRun',
+  'mesh',
   'notifications',
   'showAdvancedSettings',
   'assistantMarketplace',

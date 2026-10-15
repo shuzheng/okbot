@@ -18,6 +18,7 @@ import type { BotFormValues } from '../../types';
 import { FlatAvatar } from '../../components/ui/avatars';
 import { ChevronsRightIcon, ChevronsDownIcon, ChevronsUpIcon } from '../../components/ui/icons';
 import { updateScrollFade } from '../../utils/scrollFade';
+import { useDrawerClose } from '../../utils/useDrawerClose';
 import { ModelRefSelect } from '../settings/ModelRefSelect';
 import { BotAdvancedSection } from './BotAdvancedSection';
 
@@ -54,6 +55,7 @@ export function BotFormModal({
   defaultModelId,
   botId = null,
   autoApply = false,
+  showAdvancedSettings = false,
   onCancel,
   onSave,
   onApply,
@@ -68,20 +70,24 @@ export function BotFormModal({
   /** Existing bot id (create flow allocates before opening the modal). */
   botId?: string | null;
   autoApply?: boolean;
+  /** When false, hide description (read-only when shown) and Advanced (AGENTS / memory / skills / schedules). */
+  showAdvancedSettings?: boolean;
   onCancel: () => void;
   onSave?: (v: BotFormValues) => void;
   onApply?: (v: BotFormValues) => void;
 }) {
+  const { closing, requestClose, onDrawerAnimationEnd } = useDrawerClose(onCancel);
+
   /* esc-close-modal */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       e.preventDefault();
-      onCancel();
+      requestClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onCancel]);
+  }, [requestClose]);
 
 
   const [name, setName] = useState(initial.name);
@@ -367,17 +373,21 @@ export function BotFormModal({
   }
 
   return (
-    <div className="modal-backdrop drawer-backdrop" onClick={onCancel}>
+    <div
+      className={`modal-backdrop drawer-backdrop${closing ? ' closing' : ''}`}
+      onClick={requestClose}
+    >
       <div
-        className="modal modal-compact form-drawer"
+        className={`modal modal-compact form-drawer${closing ? ' closing' : ''}`}
         onClick={(e) => e.stopPropagation()}
+        onAnimationEnd={onDrawerAnimationEnd}
         role="dialog"
         aria-modal="true"
         aria-label={title}
       >
         <div className="modal-head form-drawer-head">
           <h2>{title}</h2>
-          <button type="button" className="modal-close" onClick={onCancel} aria-label={t(lang, 'close')}>
+          <button type="button" className="modal-close" onClick={requestClose} aria-label={t(lang, 'close')}>
             <ChevronsRightIcon />
           </button>
         </div>
@@ -450,42 +460,25 @@ export function BotFormModal({
                 if (e.key !== 'Enter') return;
                 e.preventDefault();
                 flushEmit();
-                if (autoApply) onCancel();
+                if (autoApply) requestClose();
                 else onSave?.(current());
               }}
             />
           </div>
         </div>
-        <div className="field">
-          <label>{t(lang, 'descriptionLabel')}</label>
-          <textarea
-            spellCheck={false}
-            rows={2}
-            value={description}
-            onChange={(e) => {
-              const v = e.target.value;
-              setDescription(v);
-              emit(formValues({ name, description: v, avatarKind, emoji, color, botAvatarType, providerId, modelId }));
-            }}
-            onCompositionStart={onComposeStart}
-            onCompositionEnd={(e) => {
-              const v = (e.target as HTMLTextAreaElement).value;
-              setDescription(v);
-              pendingEmitRef.current = formValues({
-                name,
-                description: v,
-                avatarKind,
-                emoji,
-                color,
-                botAvatarType,
-                providerId,
-                modelId,
-              });
-              onComposeEnd();
-            }}
-            onBlur={() => flushEmit()}
-          />
-        </div>
+        {showAdvancedSettings ? (
+          <div className="field">
+            <label>{t(lang, 'descriptionLabel')}</label>
+            <textarea
+              spellCheck={false}
+              rows={2}
+              value={description}
+              readOnly
+              aria-readonly="true"
+            />
+            <p className="bot-form-model-hint">{t(lang, 'descriptionAutoHint')}</p>
+          </div>
+        ) : null}
         <div className="field bot-form-model-row">
           <label>{t(lang, 'botModel')}</label>
           <ModelRefSelect
@@ -777,17 +770,19 @@ export function BotFormModal({
             )}
           </>
         ) : null}
-        <BotAdvancedSection
-          lang={lang}
-          botId={botId}
-          useGlobalSkills={useGlobalSkills}
-          enabledGlobalSkills={enabledGlobalSkills}
-          onAgentsMdChange={onAgentsMdChange}
-          onGlobalSkillsChange={persistGlobalSkills}
-        />
+        {showAdvancedSettings ? (
+          <BotAdvancedSection
+            lang={lang}
+            botId={botId}
+            useGlobalSkills={useGlobalSkills}
+            enabledGlobalSkills={enabledGlobalSkills}
+            onAgentsMdChange={onAgentsMdChange}
+            onGlobalSkillsChange={persistGlobalSkills}
+          />
+        ) : null}
         {!autoApply && (
           <div className="modal-actions">
-            <button type="button" className="ghost" onClick={onCancel}>
+            <button type="button" className="ghost" onClick={requestClose}>
               {t(lang, 'cancel')}
             </button>
             <button type="button" className="primary" onClick={() => onSave?.(current())}>

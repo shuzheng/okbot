@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { ScheduledJobInfo } from '@okbot/shared';
 import { t, type UiLang } from '../../i18n';
+import { requestConfirm } from '../../components/ui';
 
 type Props = {
   lang: UiLang;
@@ -8,7 +9,7 @@ type Props = {
   active: boolean;
   /** When set, only jobs for this bot/squad are shown (edit assistant / squad UI). */
   ownerId?: string | null;
-  /** Skip the long settings hint (edit panels use a shorter label above). */
+  /** Reserved for denser edit-panel layout (no extra chrome). */
   compact?: boolean;
 };
 
@@ -23,7 +24,7 @@ function shortIso(iso: string | null): string {
   }
 }
 
-export function SchedulesList({ lang, active, ownerId, compact }: Props) {
+export function SchedulesList({ lang, active, ownerId, compact: _compact }: Props) {
   const [jobs, setJobs] = useState<ScheduledJobInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -50,6 +51,24 @@ export function SchedulesList({ lang, active, ownerId, compact }: Props) {
     void reload();
   }, [active, reload]);
 
+  // Re-fetch when the drawer stays open but the window regains focus / tab becomes visible
+  // (e.g. a schedule was created or edited in chat meanwhile).
+  useEffect(() => {
+    if (!active) return;
+    const onVis = () => {
+      if (document.visibilityState === 'visible') void reload();
+    };
+    const onFocus = () => {
+      void reload();
+    };
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('focus', onFocus);
+    return () => {
+      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [active, reload]);
+
   const act = async (job: ScheduledJobInfo, action: 'pause' | 'resume' | 'delete') => {
     const key = `${job.ownerId}:${job.id}:${action}`;
     setBusyKey(key);
@@ -70,11 +89,6 @@ export function SchedulesList({ lang, active, ownerId, compact }: Props) {
 
   return (
     <div className="settings-card" data-settings-id={filterOwner ? undefined : 'scheduledJobsList'}>
-      {compact ? null : (
-        <div className="settings-hint" style={{ marginBottom: 8 }}>
-          {t(lang, 'scheduledJobsHint')}
-        </div>
-      )}
       {error ? (
         <div className="settings-hint" style={{ color: 'var(--danger, #c44)', marginBottom: 8 }}>
           {error}
@@ -146,8 +160,16 @@ export function SchedulesList({ lang, active, ownerId, compact }: Props) {
                     className="settings-inline-link"
                     disabled={busyKey !== null}
                     onClick={() => {
-                      if (!window.confirm(t(lang, 'scheduledJobsDeleteConfirm'))) return;
-                      void act(job, 'delete');
+                      void (async () => {
+                        const ok = await requestConfirm({
+                          message: t(lang, 'scheduledJobsDeleteConfirm'),
+                          confirmLabel: t(lang, 'scheduledJobsDelete'),
+                          cancelLabel: t(lang, 'cancel'),
+                          danger: true,
+                        });
+                        if (!ok) return;
+                        await act(job, 'delete');
+                      })();
                     }}
                   >
                     {t(lang, 'scheduledJobsDelete')}
@@ -158,16 +180,6 @@ export function SchedulesList({ lang, active, ownerId, compact }: Props) {
           })}
         </ul>
       )}
-      <div style={{ marginTop: 8 }}>
-        <button
-          type="button"
-          className="settings-inline-link"
-          disabled={loading || busyKey !== null}
-          onClick={() => void reload()}
-        >
-          {t(lang, 'scheduledJobsRefresh')}
-        </button>
-      </div>
     </div>
   );
 }

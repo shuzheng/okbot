@@ -13,6 +13,12 @@ files:
   # macOS menu-bar template icons (black + alpha); see electron/appTray.ts
   - resources/trayTemplate.png
   - resources/trayTemplate@2x.png
+extraResources:
+  # Built-in marketplace packs (offline preload). Source: packages/agent/gallery
+  - from: ../../packages/agent/gallery
+    to: assistant-gallery
+    filter:
+      - "**/*"
 extraMetadata:
   name: okbot
   main: out/main/index.js

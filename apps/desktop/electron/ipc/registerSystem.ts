@@ -187,7 +187,7 @@ export function registerSystemIpc(_ctx: IpcContext): void {
     },
   );
 
-  /** Resolve okbot-asset:… markdown images under ~/.okbot/<owner>/resources (CSP-safe data URLs). */
+  /** Resolve ~/.okbot/<owner>/resources images as data URLs when gateway /v1/media is unavailable. */
   ipcMain.handle(
     IpcChannels.readGeneratedAssetDataUrl,
     async (
@@ -195,7 +195,11 @@ export function registerSystemIpc(_ctx: IpcContext): void {
       payload: { assetRel?: string },
     ): Promise<{ ok: true; dataUrl: string } | { ok: false; error: string }> => {
       const relRaw = typeof payload?.assetRel === 'string' ? payload.assetRel.trim() : '';
-      const rel = relRaw.replace(/^okbot-asset:/i, '').replace(/^\/+/, '').replace(/\\/g, '/');
+      const rel = relRaw
+        .replace(/^okbot-asset:/i, '')
+        .replace(/^\/v1\/media\//i, '')
+        .replace(/^\/+/, '')
+        .replace(/\\/g, '/');
       if (!rel || rel.includes('..') || path.isAbsolute(rel)) {
         return { ok: false, error: 'invalid asset path' };
       }

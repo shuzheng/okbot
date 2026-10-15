@@ -1,33 +1,30 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  TOOL_IDS,
   DEFAULT_TOOL_PREFERENCES,
-  DEFAULT_CONTEXT_COMPRESSION,
   normalizeContextCompression,
   normalizeMaxTurns,
   normalizeModelSettings,
   normalizeSecuritySettings,
-  DEFAULT_DANGEROUS_SHELL_PATTERNS,
   normalizeSquadSettings,
   normalizeInstructionsSettings,
   normalizeMemorySettings,
   normalizeMaintenanceSettings,
   normalizeToolRunSettings,
-  normalizeToolRunMaxToolCalls,
-  normalizeToolRunMaxDurationSec,
-  DEFAULT_LOCAL_HTTP_API_PORT,
+  normalizeMeshSettings,
   normalizeLocalHttpApiSettings,
-  sanitizeLocalHttpApiToken,
-  generateLocalHttpApiToken,
   normalizeComputers,
   normalizeDefaultComputerId,
+  normalizeDefaultAssistantId,
+  normalizePinnedOwnerIds,
+  normalizeHiddenOwnerIds,
+  normalizeOwnerGroups,
+  normalizeOwnerGroupMembership,
+  normalizeOwnerGroupOrder,
   normalizeMcpSettings,
   normalizeWebSettings,
   normalizeAssistantMarketplaceSettings,
-  WEB_SEARCH_PROVIDER_IDS,
   type McpSettings,
   type WebSettings,
-  type WebSearchProviderId,
   type ComputerEntry,
   type MemoryEntry,
   type AppSettings,
@@ -43,13 +40,9 @@ import {
   type Squad,
 } from '@okbot/shared';
 import { resolveUiLang, t } from '../../i18n';
-import { AutoApprovalRulesList } from './AutoApprovalRulesList';
-import { ShellPatternsList } from './ShellPatternsList';
-import { MemoryEntriesList } from './MemoryEntriesList';
 import { CompressRatioSlider } from './CompressRatioSlider';
 import type { InstructionsSubTab, SettingsTab } from './types';
-import { SettingsIcon, ModelNavIcon, SecurityNavIcon, InstructionsNavIcon, MemoryNavIcon, DownloadUpdateIcon, CopyIcon, ExtensionsNavIcon } from '../../components/ui/icons';
-import { applyTheme } from '../../utils/theme';
+import { SettingsIcon, ModelNavIcon, SecurityNavIcon, InstructionsNavIcon, MemoryNavIcon, DownloadUpdateIcon, ExtensionsNavIcon } from '../../components/ui/icons';
 import { updateScrollFade } from '../../utils/scrollFade';
 import { formatSystemError } from '../../utils/formatSystemError';
 import { toast } from '../../components/ui';
@@ -59,36 +52,20 @@ import { ModelProvidersPanel } from './ModelProvidersPanel';
 import { UsagePanel } from './UsagePanel';
 import { ComputersSettingsPanel } from './ComputersSettingsPanel';
 import { McpSettingsPanel } from './McpSettingsPanel';
+import { UpdatesSettingsPanel } from './UpdatesSettingsPanel';
+import { MemorySettingsPanel } from './MemorySettingsPanel';
+import { InstructionsSettingsPanel } from './InstructionsSettingsPanel';
+import { SecuritySettingsPanel } from './SecuritySettingsPanel';
+import { ToolsSettingsPanel } from './ToolsSettingsPanel';
+import { GatewaySettingsPanel } from './GatewaySettingsPanel';
+import { GeneralSettingsPanel } from './GeneralSettingsPanel';
 import { isAdvancedSettingsTab } from './settingsSearch';
 import { isGatewayClient } from '../../utils/gatewayClient';
 import { omitGatewayDesktopOnlySettings } from '../../utils/settingsPatch';
 import { requestConfirm } from '../../components/ui';
 
 
-function keptNumber(raw: string, previous: number): number {
-  const trimmed = raw.trim();
-  if (!trimmed) return previous;
-  const n = Number(trimmed);
-  return Number.isFinite(n) ? n : previous;
-}
-
-function gatewayWebUiUrl(portRaw: string, _token?: string): string {
-  const n = Number(portRaw);
-  const port = Number.isInteger(n) && n >= 1024 && n <= 65535 ? n : DEFAULT_LOCAL_HTTP_API_PORT;
-  // Login sets an HttpOnly cookie. Never put the access token in the address bar.
-  return `http://127.0.0.1:${port}/`;
-}
-
-/** Token the running server checks. Gateway bootstrap blanks it, so attached windows use a separate call. */
-async function readSavedGatewayToken(): Promise<string> {
-  const bridge = window.okbot as { getGatewayAccessToken?: () => Promise<string> };
-  if (typeof bridge.getGatewayAccessToken === 'function') {
-    const live = await bridge.getGatewayAccessToken();
-    return typeof live === 'string' ? live : '';
-  }
-  const saved = await window.okbot.getSettings();
-  return saved.localHttpApi?.token || '';
-}
+import { keptNumber } from './settingsHelpers';
 
 export function SettingsModal({
   settings,
@@ -192,6 +169,9 @@ export function SettingsModal({
   const [defaultComputerId, setDefaultComputerId] = useState(() =>
     normalizeDefaultComputerId(settings.defaultComputerId, normalizeComputers(settings.computers)),
   );
+  const [defaultAssistantId, setDefaultAssistantId] = useState(() =>
+    normalizeDefaultAssistantId(settings.defaultAssistantId, bots),
+  );
 
   const [updaterStatus, setUpdaterStatus] = useState<UpdaterStatus | null>(null);
   const [updaterBusy, setUpdaterBusy] = useState(false);
@@ -208,7 +188,6 @@ export function SettingsModal({
   const initialToolRun = normalizeToolRunSettings(settings.toolRun);
   const [maxToolCalls, setMaxToolCalls] = useState(String(initialToolRun.maxToolCalls));
   const [maxDurationSec, setMaxDurationSec] = useState(String(initialToolRun.maxDurationSec));
-  const [recordTrajectory, setRecordTrajectory] = useState(initialToolRun.recordTrajectory !== false);
   const initialSecurity = normalizeSecuritySettings(settings.security);
   const [securityEnabled, setSecurityEnabled] = useState(initialSecurity.enabled);
   const [restrictToHome, setRestrictToHome] = useState(initialSecurity.restrictToHome);
@@ -269,7 +248,7 @@ export function SettingsModal({
   const [squadPlaybook, setSquadPlaybook] = useState(initialSquad.playbook);
   const [captainMaxTurns, setCaptainMaxTurns] = useState(String(initialSquad.captainMaxTurns));
   const [memberMaxTurns, setMemberMaxTurns] = useState(String(initialSquad.memberMaxTurns));
-  const [showKey, setShowKey] = useState(false);
+  const [_showKey, _setShowKey] = useState(false);
   const skipFirstSave = useRef(true);
   const onSaveRef = useRef(onSave);
   onSaveRef.current = onSave;
@@ -463,14 +442,26 @@ export function SettingsModal({
         })(),
         computers: normalizeComputers(computersDraft),
         defaultComputerId: normalizeDefaultComputerId(defaultComputerId, normalizeComputers(computersDraft)),
+        defaultAssistantId: normalizeDefaultAssistantId(defaultAssistantId, bots),
+        pinnedOwnerIds: normalizePinnedOwnerIds(settings.pinnedOwnerIds),
+        hiddenOwnerIds: normalizeHiddenOwnerIds(settings.hiddenOwnerIds),
+        ownerGroups: normalizeOwnerGroups(settings.ownerGroups),
+        ownerGroupOrder: normalizeOwnerGroupOrder(
+          settings.ownerGroupOrder,
+          normalizeOwnerGroups(settings.ownerGroups),
+        ),
+        ownerGroupMembership: normalizeOwnerGroupMembership(
+          settings.ownerGroupMembership,
+          normalizeOwnerGroups(settings.ownerGroups),
+        ),
         autoApprovalEnabled,
         autoApprovalRules,
         tools,
         toolRun: normalizeToolRunSettings({
           maxToolCalls: keptNumber(maxToolCalls, normalizeToolRunSettings(settings.toolRun).maxToolCalls),
           maxDurationSec: keptNumber(maxDurationSec, normalizeToolRunSettings(settings.toolRun).maxDurationSec),
-          recordTrajectory,
         }),
+        mesh: normalizeMeshSettings(settings.mesh),
         security,
         model: normalizeModelSettings(modelSettings),
         contextCompression: normalizeContextCompression({
@@ -544,12 +535,13 @@ export function SettingsModal({
     localHttpApiServeUi,
     computersDraft,
     defaultComputerId,
+    defaultAssistantId,
+    bots,
     autoApprovalEnabled,
     autoApprovalRules,
     tools,
     maxToolCalls,
     maxDurationSec,
-    recordTrajectory,
     securityEnabled,
     restrictToHome,
     allowedPathsText,
@@ -776,344 +768,58 @@ export function SettingsModal({
             }}
           >
             {tab === 'general' ? (
-              <div>
-                <div className="settings-section-label">{t(lang, 'appearance')}</div>
-                <div className="settings-card">
-                  <div className="settings-row" data-settings-id="theme">
-                    <span className="settings-row-label">{t(lang, 'theme')}</span>
-                    <select
-                      value={theme}
-                      onChange={(e) => {
-                        const next = e.target.value as ThemeMode;
-                        setTheme(next);
-                        applyTheme(next);
-                      }}
-                    >
-                      <option value="system">{t(lang, 'themeSystem')}</option>
-                      <option value="light">{t(lang, 'themeLight')}</option>
-                      <option value="dark">{t(lang, 'themeDark')}</option>
-                    </select>
-                  </div>
-                  <div className="settings-row" data-settings-id="language">
-                    <span className="settings-row-label">{t(lang, 'language')}</span>
-                    <select
-                      value={language}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setLanguage(v === 'en' || v === 'zh' || v === 'system' ? v : 'system');
-                      }}
-                    >
-                      <option value="system">{t(lang, 'langSystem')}</option>
-                      <option value="zh">{t(lang, 'langZh')}</option>
-                      <option value="en">{t(lang, 'langEn')}</option>
-                    </select>
-                  </div>
-                  <div className="settings-row" data-settings-id="sidebarDockMagnify">
-                    <span className="settings-row-label">
-                      <span className="settings-row-label-text">{t(lang, 'sidebarDockMagnify')}</span>
-                      <SettingsHelpTip text={t(lang, 'sidebarDockMagnifyHint')} />
-                    </span>
-                    <SettingsToggle
-                      checked={sidebarDockMagnify}
-                      onChange={() => setSidebarDockMagnify((v) => !v)}
-                    />
-                  </div>
-                </div>
-
-                <div className="settings-section-label" style={{ marginTop: 16 }}>
-                  {t(lang, 'system')}
-                </div>
-                <div className="settings-card">
-                  <div className="settings-row" data-settings-id="microphone">
-                    <span className="settings-row-label">
-                      <span className="settings-row-label-text">{t(lang, 'microphone')}</span>
-                      <SettingsHelpTip text={t(lang, 'micSpeechDeviceHint')} />
-                    </span>
-                    <select
-                      value={microphoneId}
-                      onChange={(e) => setMicrophoneId(e.target.value)}
-                    >
-                      <option value="">{t(lang, 'micDefault')}</option>
-                      {micOptions.map((m) => (
-                        <option key={m.id || m.label} value={m.id}>
-                          {m.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="settings-row" data-settings-id="hardwareAcceleration">
-                    <span className="settings-row-label">{t(lang, 'hardwareAcceleration')}</span>
-                      <SettingsToggle checked={hardwareAcceleration} onChange={() => setHardwareAcceleration((v) => !v)} />
-                  </div>
-                  <div className="settings-row" data-settings-id="notifications">
-                    <span className="settings-row-label">
-                      <span className="settings-row-label-text">{t(lang, 'notificationsSetting')}</span>
-                      <SettingsHelpTip text={t(lang, 'notificationsSettingHint')} />
-                    </span>
-                    <SettingsToggle checked={notifications} onChange={() => setNotifications((v) => !v)} />
-                  </div>
-                  <div
-                    className="settings-row"
-                    data-settings-id="closeAction"
-                    aria-disabled={gatewayClient ? 'true' : undefined}
-                    title={gatewayClient ? t(lang, 'closeActionDesktopOnly') : undefined}
-                  >
-                    <span className="settings-row-label">
-                      <span className="settings-row-label-text">{t(lang, 'closeActionSetting')}</span>
-                      <SettingsHelpTip text={t(lang, 'closeActionSettingHint')} />
-                    </span>
-                    <select
-                      value={closeAction}
-                      disabled={gatewayClient}
-                      onChange={(e) => setCloseAction(normalizeCloseAction(e.target.value))}
-                    >
-                      <option value="ask">{t(lang, 'closeActionAsk')}</option>
-                      <option value="tray">{t(lang, 'closeActionTray')}</option>
-                      <option value="quit">{t(lang, 'closeActionQuit')}</option>
-                    </select>
-                  </div>
-                </div>
-                {needsHwRestart ? (
-                  <div className="settings-restart-hint">{t(lang, 'hardwareRestart')}</div>
-                ) : null}
-
-
-                <div className="settings-section-label" style={{ marginTop: 16 }} data-settings-id="advanced">
-                  {t(lang, 'advanced')}
-                </div>
-                <div className="settings-card">
-                  <div className="settings-row" data-settings-id="showAdvancedSettings">
-                    <span className="settings-row-label">
-                      <span className="settings-row-label-text">{t(lang, 'showAdvancedSettings')}</span>
-                      <SettingsHelpTip text={t(lang, 'showAdvancedSettingsHint')} />
-                    </span>
-                    <SettingsToggle
-                      checked={showAdvancedSettings}
-                      onChange={() => {
-                        setShowAdvancedSettings((v) => !v);
-                        setRevealAdvanced(false);
-                      }}
-                    />
-                  </div>
-                  <div className="settings-row" data-settings-id="developerMode">
-                    <span className="settings-row-label">{t(lang, 'developerMode')}</span>
-                    <SettingsToggle
-                      checked={developerMode}
-                      onChange={() => setDeveloperMode((v) => !v)}
-                    />
-                  </div>
-                </div>
-
-                <div className="settings-section-label" style={{ marginTop: 16 }} data-settings-id="data">
-                  {t(lang, 'data')}
-                </div>
-                <div
-                  className="settings-card"
-                  aria-disabled={gatewayClient ? 'true' : undefined}
-                  title={gatewayClient ? t(lang, 'backupDesktopOnly') : undefined}
-                >
-                  <div className="settings-row settings-row-stack" data-settings-id="dataDir">
-                    <span className="settings-row-label">{t(lang, 'dataDir')}</span>
-                    <span className="settings-hint settings-data-dir">{dataDir}</span>
-                  </div>
-                  <div className="settings-row" data-settings-id="backupExcludeSecrets">
-                    <span className="settings-row-label">
-                      <span className="settings-row-label-text">{t(lang, 'backupExcludeSecrets')}</span>
-                      <SettingsHelpTip text={t(lang, 'backupExcludeSecretsHint')} />
-                    </span>
-                    <SettingsToggle
-                      checked={backupExcludeSecrets}
-                      disabled={gatewayClient}
-                      onChange={() => setBackupExcludeSecrets((v) => !v)}
-                    />
-                  </div>
-                  <div className="settings-row" data-settings-id="backupExport">
-                    <span className="settings-row-label">
-                      <span className="settings-row-label-text">{t(lang, 'backupExport')}</span>
-                      <SettingsHelpTip text={t(lang, 'backupExportHint')} />
-                    </span>
-                    <button
-                      type="button"
-                      className="settings-aar-add-btn"
-                      disabled={gatewayClient || backupBusy}
-                      onClick={() => void exportBackup()}
-                    >
-                      {t(lang, 'backupExportAction')}
-                    </button>
-                  </div>
-                  <div className="settings-row" data-settings-id="backupRestore">
-                    <span className="settings-row-label">
-                      <span className="settings-row-label-text">{t(lang, 'backupRestore')}</span>
-                      <SettingsHelpTip text={t(lang, 'backupRestoreHint')} />
-                    </span>
-                    <button
-                      type="button"
-                      className="settings-aar-add-btn"
-                      disabled={gatewayClient || backupBusy}
-                      onClick={() => void restoreBackup()}
-                    >
-                      {t(lang, 'backupRestoreAction')}
-                    </button>
-                  </div>
-                </div>
-              </div>
+              <GeneralSettingsPanel
+                gatewayClient={gatewayClient}
+                needsHwRestart={needsHwRestart}
+                dataDir={dataDir}
+                exportBackup={exportBackup}
+                restoreBackup={restoreBackup}
+                lang={lang}
+                backupBusy={backupBusy}
+                backupExcludeSecrets={backupExcludeSecrets}
+                closeAction={closeAction}
+                developerMode={developerMode}
+                hardwareAcceleration={hardwareAcceleration}
+                language={language}
+                micOptions={micOptions}
+                microphoneId={microphoneId}
+                notifications={notifications}
+                setBackupExcludeSecrets={setBackupExcludeSecrets}
+                setCloseAction={setCloseAction}
+                setDeveloperMode={setDeveloperMode}
+                setHardwareAcceleration={setHardwareAcceleration}
+                setLanguage={setLanguage}
+                setMicrophoneId={setMicrophoneId}
+                setNotifications={setNotifications}
+                setRevealAdvanced={setRevealAdvanced}
+                setShowAdvancedSettings={setShowAdvancedSettings}
+                setSidebarDockMagnify={setSidebarDockMagnify}
+                setTheme={setTheme}
+                showAdvancedSettings={showAdvancedSettings}
+                sidebarDockMagnify={sidebarDockMagnify}
+                theme={theme}
+                bots={bots}
+                defaultAssistantId={defaultAssistantId}
+                setDefaultAssistantId={setDefaultAssistantId}
+              />
             ) : tab === 'gateway' ? (
-              <div>
-                <div className="settings-section-label" data-settings-id="localHttpApi">
-                  {t(lang, 'localHttpApi')}
-                </div>
-                <div className="settings-card">
-                  <div className="settings-row" data-settings-id="localHttpApiEnable">
-                    <span className="settings-row-label">
-                      <span className="settings-row-label-text">{t(lang, 'localHttpApiEnable')}</span>
-                      <SettingsHelpTip text={t(lang, 'localHttpApiHint')} />
-                    </span>
-                    <SettingsToggle
-                      checked={localHttpApiEnabled}
-                      onChange={() => setLocalHttpApiEnabled((v) => !v)}
-                    />
-                  </div>
-                  <div className="settings-row" data-settings-id="localHttpApiPort">
-                    <span className="settings-row-label">
-                      <span className="settings-row-label-text">{t(lang, 'localHttpApiPort')}</span>
-                      <SettingsHelpTip text={t(lang, 'localHttpApiPortHint')} />
-                    </span>
-                    <input
-                      spellCheck={false}
-                      className="wide"
-                      type="number"
-                      min={1024}
-                      max={65535}
-                      step={1}
-                      value={localHttpApiPort}
-                      disabled={!localHttpApiEnabled}
-                      onChange={(e) => setLocalHttpApiPort(e.target.value)}
-                    />
-                  </div>
-                  <div className="settings-row settings-row-stack" data-settings-id="localHttpApiToken">
-                    <span className="settings-row-label">
-                      <span className="settings-row-label-text">{t(lang, 'localHttpApiToken')}</span>
-                      <SettingsHelpTip text={t(lang, 'localHttpApiTokenHint')} />
-                    </span>
-                    <div className="settings-secret settings-secret-multi">
-                      <input
-                        type={showLocalHttpApiToken ? 'text' : 'password'}
-                        className="wide"
-                        value={localHttpApiToken}
-                        disabled={!localHttpApiEnabled}
-                        onChange={(e) => setLocalHttpApiToken(sanitizeLocalHttpApiToken(e.target.value))}
-                        spellCheck={false}
-                        autoComplete="off"
-                        style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12 }}
-                      />
-                      <div className="settings-secret-actions">
-                        <button
-                          type="button"
-                          className="settings-eye"
-                          disabled={!localHttpApiEnabled}
-                          aria-label={t(lang, showLocalHttpApiToken ? 'localHttpApiHideToken' : 'localHttpApiShowToken')}
-                          title={t(lang, showLocalHttpApiToken ? 'localHttpApiHideToken' : 'localHttpApiShowToken')}
-                          onClick={() => setShowLocalHttpApiToken((v) => !v)}
-                        >
-                          {showLocalHttpApiToken ? (
-                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8">
-                              <path d="M3 3l18 18M10.7 10.7a2 2 0 002.6 2.6M9.9 5.1A10.5 10.5 0 0121 12c-.5 1-1.2 2-2.1 2.9M6.1 6.1C4.7 7.3 3.6 8.8 3 12c1.5 4.5 5.5 7 9 7 1.4 0 2.8-.3 4.1-.9" />
-                            </svg>
-                          ) : (
-                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8">
-                              <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" />
-                              <circle cx="12" cy="12" r="3" />
-                            </svg>
-                          )}
-                        </button>
-                        <button
-                          type="button"
-                          className="settings-eye"
-                          disabled={!localHttpApiEnabled}
-                          aria-label={t(lang, 'localHttpApiCopyToken')}
-                          title={t(lang, 'localHttpApiCopyToken')}
-                          onClick={() => {
-                            void (async () => {
-                              if (saveTimerRef.current != null) {
-                                window.clearTimeout(saveTimerRef.current);
-                                saveTimerRef.current = null;
-                              }
-                              const pending = pendingSaveRef.current;
-                              pendingSaveRef.current = null;
-                              if (pending) await pending();
-                              const token = await readSavedGatewayToken();
-                              if (!token) {
-                                toast.info(t(lang, 'localHttpApiTokenEmpty'));
-                                return;
-                              }
-                              if (token !== localHttpApiToken) {
-                                setLocalHttpApiToken(token);
-                                toast.info(t(lang, 'localHttpApiTokenSynced'));
-                              }
-                              await window.okbot.copyText(token);
-                              toast.success(t(lang, 'localHttpApiTokenCopied'));
-                            })();
-                          }}
-                        >
-                          <CopyIcon />
-                        </button>
-                        <button
-                          type="button"
-                          className="settings-eye"
-                          disabled={!localHttpApiEnabled}
-                          aria-label={t(lang, 'localHttpApiRegenerateToken')}
-                          title={t(lang, 'localHttpApiRegenerateToken')}
-                          onClick={() => {
-                            setLocalHttpApiToken(generateLocalHttpApiToken());
-                            toast.success(t(lang, 'localHttpApiTokenRegenerated'));
-                          }}
-                        >
-                          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-                            <path d="M3 3v5h5" />
-                            <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
-                            <path d="M16 16h5v5" />
-                          </svg>
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="settings-row" data-settings-id="localHttpApiBindLan">
-                    <span className="settings-row-label">
-                      <span className="settings-row-label-text">{t(lang, 'localHttpApiBindLan')}</span>
-                      <SettingsHelpTip text={t(lang, 'localHttpApiBindLanHint')} />
-                    </span>
-                    <SettingsToggle
-                      checked={localHttpApiBindLan}
-                      disabled={!localHttpApiEnabled}
-                      onChange={() => setLocalHttpApiBindLan((v) => !v)}
-                    />
-                  </div>
-                  <div className="settings-row" data-settings-id="localHttpApiServeUi">
-                    <span className="settings-row-label">
-                      <span className="settings-row-label-text">{t(lang, 'localHttpApiServeUi')}</span>
-                      <SettingsHelpTip text={t(lang, 'localHttpApiServeUiHint')} />
-                    </span>
-                    <span className="settings-row-trailing">
-                      {localHttpApiServeUi ? (
-                        <a
-                          className="settings-inline-link"
-                          href={gatewayWebUiUrl(localHttpApiPort, localHttpApiToken)}
-                          target="_blank"
-                          rel="noreferrer noopener"
-                        >
-                          {t(lang, 'localHttpApiOpenUi')}
-                        </a>
-                      ) : null}
-                      <SettingsToggle
-                        checked={localHttpApiServeUi}
-                        disabled={!localHttpApiEnabled}
-                        onChange={() => setLocalHttpApiServeUi((v) => !v)}
-                      />
-                    </span>
-                  </div>
-                </div>
-              </div>
+              <GatewaySettingsPanel
+                saveTimerRef={saveTimerRef}
+                pendingSaveRef={pendingSaveRef}
+                lang={lang}
+                localHttpApiBindLan={localHttpApiBindLan}
+                localHttpApiEnabled={localHttpApiEnabled}
+                localHttpApiPort={localHttpApiPort}
+                localHttpApiServeUi={localHttpApiServeUi}
+                localHttpApiToken={localHttpApiToken}
+                setLocalHttpApiBindLan={setLocalHttpApiBindLan}
+                setLocalHttpApiEnabled={setLocalHttpApiEnabled}
+                setLocalHttpApiPort={setLocalHttpApiPort}
+                setLocalHttpApiServeUi={setLocalHttpApiServeUi}
+                setLocalHttpApiToken={setLocalHttpApiToken}
+                setShowLocalHttpApiToken={setShowLocalHttpApiToken}
+                showLocalHttpApiToken={showLocalHttpApiToken}
+              />
             ) : tab === 'computers' ? (
               <ComputersSettingsPanel
                 lang={lang}
@@ -1130,389 +836,48 @@ export function SettingsModal({
                 readOnly={gatewayClient}
               />
             ) : tab === 'tools' ? (
-              <div>
-                <div className="settings-section-label" data-settings-id="toolManagement">{t(lang, 'toolManagement')}</div>
-                <div className="settings-card tool-mgmt-card">
-                  {TOOL_IDS.map((id) => {
-                    const pref = tools[id];
-                    const labelKey =
-                      (
-                        {
-                          run_shell: 'toolRunShell',
-                          read_file: 'toolReadFile',
-                          read_skill: 'toolReadSkill',
-                          write_file: 'toolWriteFile',
-                          edit_file: 'toolEditFile',
-                          generate_image: 'toolGenerateImage',
-                          search_history: 'toolSearchHistory',
-                          manage_schedule: 'toolManageSchedule',
-                          web_fetch: 'toolWebFetch',
-                          web_search: 'toolWebSearch',
-                        } as const
-                      )[id];
-                    return (
-                      <div
-                        key={id}
-                        className="tool-mgmt-row settings-row"
-                        data-settings-id={labelKey}
-                      >
-                        <span className="settings-row-label">{t(lang, labelKey)}</span>
-                        <div className="tool-mgmt-controls">
-                          <select
-                            className="tool-mgmt-approval-select"
-                            aria-label={t(lang, 'toolApproval')}
-                            aria-hidden={!pref.enabled}
-                            tabIndex={pref.enabled ? 0 : -1}
-                            disabled={!pref.enabled}
-                            value={pref.approval}
-                            onChange={(e) => {
-                              const approval = e.target.value === 'allow' ? 'allow' : 'ask';
-                              setTools((prev) => ({
-                                ...prev,
-                                [id]: { ...prev[id], approval },
-                              }));
-                            }}
-                            style={pref.enabled ? undefined : { visibility: 'hidden' }}
-                          >
-                            <option value="ask">{t(lang, 'autoApprovalAsk')}</option>
-                            <option value="allow">{t(lang, 'autoApprovalAllow')}</option>
-                          </select>
-                            <SettingsToggle checked={pref.enabled} onChange={() =>
-                              setTools((prev) => ({
-                                ...prev,
-                                [id]: { ...prev[id], enabled: !prev[id].enabled },
-                              }))} />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                <div className="settings-section-label" style={{ marginTop: 16 }} data-settings-id="scheduledJobsList">
-                  {t(lang, 'scheduledJobsList')}
-                </div>
-                <div className="settings-card">
-                  <div className="settings-hint">{t(lang, 'scheduledJobsSettingsPointer')}</div>
-                </div>
-
-                <div className="settings-section-label" style={{ marginTop: 16 }} data-settings-id="webTools">
-                  {t(lang, 'webTools')}
-                </div>
-                <div className="settings-card" aria-disabled={gatewayClient ? 'true' : undefined}>
-                  <div className="settings-hint" data-settings-id="webSearchHint" style={{ marginBottom: 8 }}>
-                    {t(lang, 'webSearchHint')}
-                  </div>
-                  <div className="settings-row" data-settings-id="webSearchProvider">
-                    <span className="settings-row-label">{t(lang, 'webSearchProvider')}</span>
-                    <select
-                      className="wide"
-                      disabled={gatewayClient}
-                      value={webDraft.search.provider}
-                      onChange={(e) => {
-                        const provider = e.target.value as WebSearchProviderId;
-                        if (!(WEB_SEARCH_PROVIDER_IDS as readonly string[]).includes(provider)) return;
-                        setWebDraft((prev) => ({
-                          ...prev,
-                          search: { ...prev.search, provider },
-                        }));
-                      }}
-                    >
-                      <option value="tavily">Tavily</option>
-                      <option value="brave">Brave</option>
-                      <option value="serper">Serper</option>
-                    </select>
-                  </div>
-                  <div className="settings-row" data-settings-id="webSearchApiKey">
-                    <span className="settings-row-label">{t(lang, 'webSearchApiKey')}</span>
-                    <div className="settings-secret">
-                      <input
-                        spellCheck={false}
-                        className="wide"
-                        type={showWebSearchKey ? 'text' : 'password'}
-                        placeholder={t(lang, 'webSearchApiKeyPlaceholder')}
-                        value={webDraft.search.apiKey}
-                        disabled={gatewayClient}
-                        autoComplete="off"
-                        onChange={(e) =>
-                          setWebDraft((prev) => ({
-                            ...prev,
-                            search: { ...prev.search, apiKey: e.target.value },
-                          }))
-                        }
-                      />
-                      <button
-                        type="button"
-                        className="settings-eye"
-                        disabled={gatewayClient}
-                        aria-label={showWebSearchKey ? 'Hide' : 'Show'}
-                        onClick={() => setShowWebSearchKey((v) => !v)}
-                      >
-                        {showWebSearchKey ? '🙈' : '👁'}
-                      </button>
-                    </div>
-                  </div>
-                  <div className="settings-row" data-settings-id="webSearchBaseURL">
-                    <span className="settings-row-label">
-                      <span className="settings-row-label-text">{t(lang, 'webSearchBaseURL')}</span>
-                      <SettingsHelpTip text={t(lang, 'webSearchBaseURLHint')} />
-                    </span>
-                    <input
-                      spellCheck={false}
-                      className="wide"
-                      type="text"
-                      placeholder={t(lang, 'webSearchBaseURLPlaceholder')}
-                      value={webDraft.search.baseURL}
-                      disabled={gatewayClient}
-                      onChange={(e) =>
-                        setWebDraft((prev) => ({
-                          ...prev,
-                          search: { ...prev.search, baseURL: e.target.value },
-                        }))
-                      }
-                    />
-                  </div>
-                  <div className="settings-row" data-settings-id="webFetchAllowPrivate">
-                    <span className="settings-row-label">
-                      <span className="settings-row-label-text">{t(lang, 'webFetchAllowPrivate')}</span>
-                      <SettingsHelpTip text={t(lang, 'webFetchAllowPrivateHint')} />
-                    </span>
-                    <SettingsToggle
-                      checked={webDraft.fetch.allowPrivateNetwork}
-                      disabled={gatewayClient}
-                      onChange={() =>
-                        setWebDraft((prev) => ({
-                          ...prev,
-                          fetch: {
-                            ...prev.fetch,
-                            allowPrivateNetwork: !prev.fetch.allowPrivateNetwork,
-                          },
-                        }))
-                      }
-                    />
-                  </div>
-                </div>
-
-                <div className="settings-section-label" style={{ marginTop: 16 }} data-settings-id="autoApproval">
-                  {t(lang, 'autoApproval')}
-                </div>
-                <div className="settings-card" aria-disabled={gatewayClient ? 'true' : undefined}>
-                  <div className="settings-row">
-                    <span className="settings-row-label">{t(lang, 'autoApproval')}</span>
-                    <div className="settings-row-trailing">
-                      <button
-                        type="button"
-                        className="settings-aar-add-btn"
-                        disabled={!autoApprovalEnabled || gatewayClient}
-                        onClick={() => setAarAddRequest((n) => n + 1)}
-                      >
-                        {t(lang, 'autoApprovalAdd')}
-                      </button>
-                      <SettingsToggle
-                        checked={autoApprovalEnabled}
-                        disabled={gatewayClient}
-                        onChange={() => setAutoApprovalEnabled((v) => !v)}
-                      />
-                    </div>
-                  </div>
-                  {autoApprovalEnabled || gatewayClient ? (
-                    <AutoApprovalRulesList
-                      lang={lang}
-                      rules={autoApprovalRules}
-                      onChange={setAutoApprovalRules}
-                      requestAdd={aarAddRequest}
-                      readOnly={gatewayClient}
-                    />
-                  ) : null}
-                </div>
-
-                {advancedVisible ? (<>
-                <div className="settings-section-label" style={{ marginTop: 16 }} data-settings-id="toolRunLimits">
-                  {t(lang, 'toolRunLimits')}
-                </div>
-                <div className="settings-card">
-                  <div className="settings-row" data-settings-id="toolRunMaxToolCalls">
-                    <span className="settings-row-label">
-                      <span className="settings-row-label-text">{t(lang, 'toolRunMaxToolCalls')}</span>
-                      <SettingsHelpTip text={t(lang, 'toolRunMaxToolCallsHint')} />
-                    </span>
-                    <input
-                      spellCheck={false}
-                      className="wide"
-                      type="number"
-                      min={0}
-                      max={500}
-                      step={1}
-                      placeholder={t(lang, 'toolRunUnlimited')}
-                      value={maxToolCalls}
-                      onChange={(e) => setMaxToolCalls(e.target.value)}
-                      onBlur={() => {
-                        setMaxToolCalls(String(normalizeToolRunMaxToolCalls(keptNumber(maxToolCalls, normalizeToolRunSettings(settings.toolRun).maxToolCalls))));
-                      }}
-                    />
-                  </div>
-                  <div className="settings-row" data-settings-id="toolRunMaxDurationSec">
-                    <span className="settings-row-label">
-                      <span className="settings-row-label-text">{t(lang, 'toolRunMaxDurationSec')}</span>
-                      <SettingsHelpTip text={t(lang, 'toolRunMaxDurationSecHint')} />
-                    </span>
-                    <input
-                      spellCheck={false}
-                      className="wide"
-                      type="number"
-                      min={0}
-                      max={86400}
-                      step={1}
-                      placeholder={t(lang, 'toolRunUnlimited')}
-                      value={maxDurationSec}
-                      onChange={(e) => setMaxDurationSec(e.target.value)}
-                      onBlur={() => {
-                        setMaxDurationSec(
-                          String(normalizeToolRunMaxDurationSec(keptNumber(maxDurationSec, normalizeToolRunSettings(settings.toolRun).maxDurationSec))),
-                        );
-                      }}
-                    />
-                  </div>
-                  <div className="settings-row" data-settings-id="toolRunRecordTrajectory">
-                    <span className="settings-row-label">
-                      <span className="settings-row-label-text">{t(lang, 'toolRunRecordTrajectory')}</span>
-                      <SettingsHelpTip text={t(lang, 'toolRunRecordTrajectoryHint')} />
-                    </span>
-                    <SettingsToggle
-                      checked={recordTrajectory}
-                      onChange={() => setRecordTrajectory((v) => !v)}
-                    />
-                  </div>
-                </div>
-                </>) : null}
-
-              </div>
+              <ToolsSettingsPanel
+                gatewayClient={gatewayClient}
+                advancedVisible={advancedVisible}
+                settings={settings}
+                lang={lang}
+                aarAddRequest={aarAddRequest}
+                autoApprovalEnabled={autoApprovalEnabled}
+                autoApprovalRules={autoApprovalRules}
+                maxDurationSec={maxDurationSec}
+                maxToolCalls={maxToolCalls}
+                setAarAddRequest={setAarAddRequest}
+                setAutoApprovalEnabled={setAutoApprovalEnabled}
+                setAutoApprovalRules={setAutoApprovalRules}
+                setMaxDurationSec={setMaxDurationSec}
+                setMaxToolCalls={setMaxToolCalls}
+                setShowWebSearchKey={setShowWebSearchKey}
+                setTools={setTools}
+                setWebDraft={setWebDraft}
+                showWebSearchKey={showWebSearchKey}
+                tools={tools}
+                webDraft={webDraft}
+              />
             ) : tab === 'security' ? (
-              <div>
-                <div className="settings-section-label" data-settings-id="securityMaster">
-                  {t(lang, 'security')}
-                </div>
-                <div className="settings-card settings-card-security">
-                  <div className="settings-row" data-settings-id="securityMaster">
-                    <span className="settings-row-label">
-                      <span className="settings-row-label-text">{t(lang, 'securityMaster')}</span>
-                      <SettingsHelpTip text={t(lang, 'securityMasterHint')} />
-                    </span>
-                      <SettingsToggle checked={securityEnabled} onChange={() => setSecurityEnabled((v) => !v)} />
-                  </div>
-                  <div className="settings-row" data-settings-id="securityBlockMode">
-                    <span className="settings-row-label">
-                      <span className="settings-row-label-text">{t(lang, 'securityBlockMode')}</span>
-                      <SettingsHelpTip text={t(lang, 'securityBlockModeHint')} />
-                    </span>
-                    <select
-                      value={blockMode}
-                      disabled={!securityEnabled}
-                      onChange={(e) =>
-                        setBlockMode(e.target.value === 'tripwire' ? 'tripwire' : 'reject')
-                      }
-                    >
-                      <option value="reject">{t(lang, 'securityBlockReject')}</option>
-                      <option value="tripwire">{t(lang, 'securityBlockTripwire')}</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="settings-section-label" style={{ marginTop: 16 }} data-settings-id="securityRestrictToHome">
-                  {t(lang, 'securityPathScope')}
-                </div>
-                <div className="settings-card settings-card-security">
-                  <div className="settings-row" data-settings-id="securityRestrictToHome">
-                    <span className="settings-row-label">
-                      <span className="settings-row-label-text">{t(lang, 'securityRestrictToHome')}</span>
-                      <SettingsHelpTip text={t(lang, 'securityRestrictToHomeHint')} />
-                    </span>
-                      <SettingsToggle checked={restrictToHome} onChange={() => setRestrictToHome((v) => !v)} disabled={!securityEnabled} />
-                  </div>
-                  <div className="settings-row settings-row-stack" data-settings-id="securityAllowedPaths">
-                    <span className="settings-row-label">
-                      <span className="settings-row-label-text">{t(lang, 'securityAllowedPaths')}</span>
-                      <SettingsHelpTip text={t(lang, 'securityAllowedPathsHint')} />
-                    </span>
-                    <textarea
-                      className="settings-paths-textarea"
-                      spellCheck={false}
-                      disabled={!securityEnabled}
-                      placeholder={t(lang, 'securityAllowedPathsPlaceholder')}
-                      value={allowedPathsText}
-                      onChange={(e) => setAllowedPathsText(e.target.value)}
-                      rows={3}
-                    />
-                  </div>
-                  <div className="settings-row settings-row-stack" data-settings-id="securityDeniedPaths">
-                    <span className="settings-row-label">
-                      <span className="settings-row-label-text">{t(lang, 'securityDeniedPaths')}</span>
-                      <SettingsHelpTip text={t(lang, 'securityDeniedPathsHint')} />
-                    </span>
-                    <textarea
-                      className="settings-paths-textarea"
-                      spellCheck={false}
-                      disabled={!securityEnabled}
-                      placeholder={t(lang, 'securityDeniedPathsPlaceholder')}
-                      value={deniedPathsText}
-                      onChange={(e) => setDeniedPathsText(e.target.value)}
-                      rows={3}
-                    />
-                  </div>
-                </div>
-
-                <div className="settings-section-label" style={{ marginTop: 16 }} data-settings-id="securityShellPatterns">
-                  {t(lang, 'securityShellPolicy')}
-                </div>
-                <div className="settings-card settings-card-security">
-                  <div className="settings-row" data-settings-id="securityShellPatterns">
-                    <span className="settings-row-label">
-                      <span className="settings-row-label-text">{t(lang, 'securityShellPatterns')}</span>
-                      <SettingsHelpTip text={t(lang, 'securityShellPatternsHint')} />
-                    </span>
-                    <div className="settings-row-trailing">
-                      <button
-                        type="button"
-                        className="settings-aar-add-btn"
-                        disabled={!securityEnabled || !shellPatternsEnabled}
-                        onClick={() => setShellPatternAddRequest((n) => n + 1)}
-                      >
-                        {t(lang, 'securityShellPatternAdd')}
-                      </button>
-                      <button
-                        type="button"
-                        className="settings-aar-add-btn"
-                        disabled={!securityEnabled || !shellPatternsEnabled || shellPatterns === undefined}
-                        onClick={() => setShellPatterns(undefined)}
-                        title={t(lang, 'securityShellPatternsResetHint')}
-                      >
-                        {t(lang, 'securityShellPatternsReset')}
-                      </button>
-                      <SettingsToggle
-                        checked={shellPatternsEnabled}
-                        onChange={() => setShellPatternsEnabled((v) => !v)}
-                        disabled={!securityEnabled}
-                      />
-                    </div>
-                  </div>
-                  {shellPatternsEnabled ? (
-                    <div className="settings-row settings-row-stack" data-settings-id="securityShellPatternsList">
-                      <ShellPatternsList
-                        lang={lang}
-                        patterns={shellPatterns ?? DEFAULT_DANGEROUS_SHELL_PATTERNS}
-                        disabled={!securityEnabled}
-                        requestAdd={shellPatternAddRequest}
-                        onChange={(next) => setShellPatterns(next)}
-                      />
-                    </div>
-                  ) : null}
-                </div>
-
-                <div className="settings-hint settings-security-approval-hint" data-settings-id="securityApprovalRelation">
-                  <strong>{t(lang, 'securityApprovalRelation')}</strong>
-                  {' — '}
-                  {t(lang, 'securityApprovalRelationHint')}
-                </div>
-              </div>
+              <SecuritySettingsPanel
+                lang={lang}
+                allowedPathsText={allowedPathsText}
+                blockMode={blockMode}
+                deniedPathsText={deniedPathsText}
+                restrictToHome={restrictToHome}
+                securityEnabled={securityEnabled}
+                setAllowedPathsText={setAllowedPathsText}
+                setBlockMode={setBlockMode}
+                setDeniedPathsText={setDeniedPathsText}
+                setRestrictToHome={setRestrictToHome}
+                setSecurityEnabled={setSecurityEnabled}
+                setShellPatternAddRequest={setShellPatternAddRequest}
+                setShellPatterns={setShellPatterns}
+                setShellPatternsEnabled={setShellPatternsEnabled}
+                shellPatternAddRequest={shellPatternAddRequest}
+                shellPatterns={shellPatterns}
+                shellPatternsEnabled={shellPatternsEnabled}
+              />
             ) : tab === 'model' ? (
               <div>
                 <ModelProvidersPanel
@@ -1649,530 +1014,55 @@ export function SettingsModal({
               </div>
 
             ) : tab === 'instructions' ? (
-              <div>
-                <div
-                  className="avatar-kind-toggle instructions-subtab-toggle"
-                  role="tablist"
-                  aria-label={t(lang, 'instructions')}
-                >
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={instructionsSubTab === 'assistant'}
-                    className={instructionsSubTab === 'assistant' ? 'active' : ''}
-                    onClick={() => setInstructionsSubTab('assistant')}
-                  >
-                    {t(lang, 'instructionsAssistant')}
-                  </button>
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={instructionsSubTab === 'squad'}
-                    className={instructionsSubTab === 'squad' ? 'active' : ''}
-                    onClick={() => setInstructionsSubTab('squad')}
-                  >
-                    {t(lang, 'instructionsSquad')}
-                  </button>
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={instructionsSubTab === 'agents'}
-                    className={instructionsSubTab === 'agents' ? 'active' : ''}
-                    onClick={() => setInstructionsSubTab('agents')}
-                  >
-                    {t(lang, 'instructionsAgents')}
-                  </button>
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={instructionsSubTab === 'memory'}
-                    className={instructionsSubTab === 'memory' ? 'active' : ''}
-                    onClick={() => setInstructionsSubTab('memory')}
-                  >
-                    {t(lang, 'instructionsMemory')}
-                  </button>
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={instructionsSubTab === 'skills'}
-                    className={instructionsSubTab === 'skills' ? 'active' : ''}
-                    onClick={() => setInstructionsSubTab('skills')}
-                  >
-                    {t(lang, 'instructionsSkills')}
-                  </button>
-                </div>
-
-                {instructionsSubTab === 'assistant' ? (
-                  <>
-                    <div className="settings-section-label" data-settings-id="assistantRoleTemplate">
-                      {t(lang, 'instructionsAssistant')}
-                    </div>
-                    <div className="settings-card settings-card-squad">
-                      <div
-                        className="settings-row settings-row-stack"
-                        data-settings-id="assistantRoleTemplate"
-                      >
-                        <span className="settings-row-label">
-                          <span className="settings-row-label-text">
-                            {t(lang, 'assistantRoleTemplate')}
-                          </span>
-                          <SettingsHelpTip text={t(lang, 'assistantRoleTemplateHint')} />
-                        </span>
-                        <textarea
-                          className="settings-paths-textarea"
-                          spellCheck={false}
-                          rows={3}
-                          value={assistantRoleTemplate}
-                          onChange={(e) => setAssistantRoleTemplate(e.target.value)}
-                          onBlur={() => {
-                            const s = normalizeInstructionsSettings({
-                              assistantRoleTemplate,
-                              agentsMdRefreshSystemPrompt,
-                              agentsMdRecentMessageLimit: keptNumber(agentsMdRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).agentsMdRecentMessageLimit),
-                              skillsCreateUpdateInstruction,
-                              skillsRecentMessageLimit: keptNumber(skillsRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).skillsRecentMessageLimit),
-                            });
-                            setAssistantRoleTemplate(s.assistantRoleTemplate);
-                          }}
-                        />
-                      </div>
-                    </div>
-                  </>
-                ) : instructionsSubTab === 'squad' ? (
-                  <>
-                    <div className="settings-section-label" data-settings-id="squadCaptainPersona">
-                      {t(lang, 'squadSettingsTitle')}
-                    </div>
-                    <div className="settings-card settings-card-squad">
-                      <div
-                        className="settings-row settings-row-stack"
-                        data-settings-id="squadCaptainPersona"
-                      >
-                        <span className="settings-row-label">
-                          <span className="settings-row-label-text">{t(lang, 'squadCaptainPersona')}</span>
-                          <SettingsHelpTip text={t(lang, 'squadCaptainPersonaHint')} />
-                        </span>
-                        <textarea
-                          className="settings-paths-textarea"
-                          spellCheck={false}
-                          rows={5}
-                          value={captainPersona}
-                          onChange={(e) => setCaptainPersona(e.target.value)}
-                          onBlur={() => {
-                            const s = normalizeSquadSettings({
-                              captainPersona,
-                              playbook: squadPlaybook,
-                              captainMaxTurns: keptNumber(captainMaxTurns, normalizeSquadSettings(settings.squad).captainMaxTurns),
-                              memberMaxTurns: keptNumber(memberMaxTurns, normalizeSquadSettings(settings.squad).memberMaxTurns),
-                            });
-                            setCaptainPersona(s.captainPersona);
-                          }}
-                        />
-                      </div>
-                      <div
-                        className="settings-row settings-row-stack"
-                        data-settings-id="squadPlaybook"
-                      >
-                        <span className="settings-row-label">
-                          <span className="settings-row-label-text">{t(lang, 'squadPlaybook')}</span>
-                          <SettingsHelpTip text={t(lang, 'squadPlaybookHint')} />
-                        </span>
-                        <textarea
-                          className="settings-paths-textarea"
-                          spellCheck={false}
-                          rows={5}
-                          value={squadPlaybook}
-                          onChange={(e) => setSquadPlaybook(e.target.value)}
-                          onBlur={() => {
-                            const s = normalizeSquadSettings({
-                              captainPersona,
-                              playbook: squadPlaybook,
-                              captainMaxTurns: keptNumber(captainMaxTurns, normalizeSquadSettings(settings.squad).captainMaxTurns),
-                              memberMaxTurns: keptNumber(memberMaxTurns, normalizeSquadSettings(settings.squad).memberMaxTurns),
-                            });
-                            setSquadPlaybook(s.playbook);
-                          }}
-                        />
-                      </div>
-                      <div className="settings-row" data-settings-id="squadCaptainMaxTurns">
-                        <span className="settings-row-label">
-                          <span className="settings-row-label-text">
-                            {t(lang, 'squadCaptainMaxTurns')}
-                          </span>
-                          <SettingsHelpTip text={t(lang, 'squadCaptainMaxTurnsHint')} />
-                        </span>
-                        <input
-                          spellCheck={false}
-                          className="wide"
-                          type="number"
-                          min={1}
-                          max={100}
-                          step={1}
-                          value={captainMaxTurns}
-                          onChange={(e) => setCaptainMaxTurns(e.target.value)}
-                          onBlur={() => {
-                            const s = normalizeSquadSettings({
-                              captainPersona,
-                              playbook: squadPlaybook,
-                              captainMaxTurns: keptNumber(captainMaxTurns, normalizeSquadSettings(settings.squad).captainMaxTurns),
-                              memberMaxTurns: keptNumber(memberMaxTurns, normalizeSquadSettings(settings.squad).memberMaxTurns),
-                            });
-                            setCaptainMaxTurns(String(s.captainMaxTurns));
-                          }}
-                        />
-                      </div>
-                      <div className="settings-row" data-settings-id="squadMemberMaxTurns">
-                        <span className="settings-row-label">
-                          <span className="settings-row-label-text">
-                            {t(lang, 'squadMemberMaxTurns')}
-                          </span>
-                          <SettingsHelpTip text={t(lang, 'squadMemberMaxTurnsHint')} />
-                        </span>
-                        <input
-                          spellCheck={false}
-                          className="wide"
-                          type="number"
-                          min={1}
-                          max={100}
-                          step={1}
-                          value={memberMaxTurns}
-                          onChange={(e) => setMemberMaxTurns(e.target.value)}
-                          onBlur={() => {
-                            const s = normalizeSquadSettings({
-                              captainPersona,
-                              playbook: squadPlaybook,
-                              captainMaxTurns: keptNumber(captainMaxTurns, normalizeSquadSettings(settings.squad).captainMaxTurns),
-                              memberMaxTurns: keptNumber(memberMaxTurns, normalizeSquadSettings(settings.squad).memberMaxTurns),
-                            });
-                            setMemberMaxTurns(String(s.memberMaxTurns));
-                          }}
-                        />
-                      </div>
-                    </div>
-                  </>
-                ) : instructionsSubTab === 'agents' ? (
-                  <>
-                    <div
-                      className="settings-section-label"
-                      data-settings-id="agentsMdRefreshSystemPrompt"
-                    >
-                      {t(lang, 'instructionsAgents')}
-                    </div>
-                    <div className="settings-card settings-card-squad">
-                      <div
-                        className="settings-row settings-row-stack"
-                        data-settings-id="agentsMdRefreshSystemPrompt"
-                      >
-                        <span className="settings-row-label">
-                          <span className="settings-row-label-text">
-                            {t(lang, 'agentsMdRefreshSystemPrompt')}
-                          </span>
-                          <SettingsHelpTip text={t(lang, 'agentsMdRefreshSystemPromptHint')} />
-                        </span>
-                        <textarea
-                          className="settings-paths-textarea"
-                          spellCheck={false}
-                          rows={8}
-                          value={agentsMdRefreshSystemPrompt}
-                          onChange={(e) => setAgentsMdRefreshSystemPrompt(e.target.value)}
-                          onBlur={() => {
-                            const s = normalizeInstructionsSettings({
-                              assistantRoleTemplate,
-                              agentsMdRefreshSystemPrompt,
-                              agentsMdRecentMessageLimit: keptNumber(agentsMdRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).agentsMdRecentMessageLimit),
-                              skillsCreateUpdateInstruction,
-                              skillsRecentMessageLimit: keptNumber(skillsRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).skillsRecentMessageLimit),
-                            });
-                            setAgentsMdRefreshSystemPrompt(s.agentsMdRefreshSystemPrompt);
-                          }}
-                        />
-                      </div>
-                      <div className="settings-row" data-settings-id="agentsMdRecentMessageLimit">
-                        <span className="settings-row-label">
-                          <span className="settings-row-label-text">
-                            {t(lang, 'agentsMdRecentMessageLimit')}
-                          </span>
-                          <SettingsHelpTip text={t(lang, 'agentsMdRecentMessageLimitHint')} />
-                        </span>
-                        <input
-                          spellCheck={false}
-                          className="wide"
-                          type="number"
-                          min={1}
-                          max={100}
-                          step={1}
-                          value={agentsMdRecentMessageLimit}
-                          onChange={(e) => setAgentsMdRecentMessageLimit(e.target.value)}
-                          onBlur={() => {
-                            const s = normalizeInstructionsSettings({
-                              assistantRoleTemplate,
-                              agentsMdRefreshSystemPrompt,
-                              agentsMdRecentMessageLimit: keptNumber(agentsMdRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).agentsMdRecentMessageLimit),
-                              skillsCreateUpdateInstruction,
-                              skillsRecentMessageLimit: keptNumber(skillsRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).skillsRecentMessageLimit),
-                            });
-                            setAgentsMdRecentMessageLimit(String(s.agentsMdRecentMessageLimit));
-                          }}
-                        />
-                      </div>
-                    </div>
-                  </>
-                ) : instructionsSubTab === 'memory' ? (
-                  <>
-                    <div className="settings-section-label" data-settings-id="scopeInstruction">
-                      {t(lang, 'instructionsMemory')}
-                    </div>
-                    <div className="settings-card settings-card-squad">
-                      <div
-                        className="settings-row settings-row-stack"
-                        data-settings-id="scopeInstruction"
-                      >
-                        <span className="settings-row-label">
-                          <span className="settings-row-label-text">
-                            {t(lang, 'memoryScopeInstruction')}
-                          </span>
-                          <SettingsHelpTip text={t(lang, 'memoryScopeInstructionHint')} />
-                        </span>
-                        <textarea
-                          className="settings-paths-textarea"
-                          spellCheck={false}
-                          rows={3}
-                          value={scopeInstruction}
-                          onChange={(e) => setScopeInstruction(e.target.value)}
-                          onBlur={() => {
-                            const s = normalizeMemorySettings({
-                              scopeInstruction,
-                              recentMessageLimit: keptNumber(memoryRecentMessageLimit, normalizeMemorySettings(settings.memory).recentMessageLimit),
-                            });
-                            setScopeInstruction(s.scopeInstruction);
-                          }}
-                        />
-                      </div>
-                      <div className="settings-row" data-settings-id="memoryRecentMessageLimit">
-                        <span className="settings-row-label">
-                          <span className="settings-row-label-text">
-                            {t(lang, 'memoryRecentMessageLimit')}
-                          </span>
-                          <SettingsHelpTip text={t(lang, 'memoryRecentMessageLimitHint')} />
-                        </span>
-                        <input
-                          spellCheck={false}
-                          className="wide"
-                          type="number"
-                          min={1}
-                          max={100}
-                          step={1}
-                          value={memoryRecentMessageLimit}
-                          onChange={(e) => setMemoryRecentMessageLimit(e.target.value)}
-                          onBlur={() => {
-                            const s = normalizeMemorySettings({
-                              scopeInstruction,
-                              recentMessageLimit: keptNumber(memoryRecentMessageLimit, normalizeMemorySettings(settings.memory).recentMessageLimit),
-                            });
-                            setMemoryRecentMessageLimit(String(s.recentMessageLimit));
-                          }}
-                        />
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div
-                      className="settings-section-label"
-                      data-settings-id="skillsCreateUpdateInstruction"
-                    >
-                      {t(lang, 'instructionsSkills')}
-                    </div>
-                    <div className="settings-card settings-card-squad">
-                      <div
-                        className="settings-row settings-row-stack"
-                        data-settings-id="skillsCreateUpdateInstruction"
-                      >
-                        <span className="settings-row-label">
-                          <span className="settings-row-label-text">
-                            {t(lang, 'skillsCreateUpdateInstruction')}
-                          </span>
-                          <SettingsHelpTip text={t(lang, 'skillsCreateUpdateInstructionHint')} />
-                        </span>
-                        <textarea
-                          className="settings-paths-textarea"
-                          spellCheck={false}
-                          rows={3}
-                          value={skillsCreateUpdateInstruction}
-                          onChange={(e) => setSkillsCreateUpdateInstruction(e.target.value)}
-                          onBlur={() => {
-                            const s = normalizeInstructionsSettings({
-                              assistantRoleTemplate,
-                              agentsMdRefreshSystemPrompt,
-                              agentsMdRecentMessageLimit: keptNumber(agentsMdRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).agentsMdRecentMessageLimit),
-                              skillsCreateUpdateInstruction,
-                              skillsRecentMessageLimit: keptNumber(skillsRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).skillsRecentMessageLimit),
-                            });
-                            setSkillsCreateUpdateInstruction(s.skillsCreateUpdateInstruction);
-                          }}
-                        />
-                      </div>
-                      <div className="settings-row" data-settings-id="skillsRecentMessageLimit">
-                        <span className="settings-row-label">
-                          <span className="settings-row-label-text">
-                            {t(lang, 'skillsRecentMessageLimit')}
-                          </span>
-                          <SettingsHelpTip text={t(lang, 'skillsRecentMessageLimitHint')} />
-                        </span>
-                        <input
-                          spellCheck={false}
-                          className="wide"
-                          type="number"
-                          min={1}
-                          max={100}
-                          step={1}
-                          value={skillsRecentMessageLimit}
-                          onChange={(e) => setSkillsRecentMessageLimit(e.target.value)}
-                          onBlur={() => {
-                            const s = normalizeInstructionsSettings({
-                              assistantRoleTemplate,
-                              agentsMdRefreshSystemPrompt,
-                              agentsMdRecentMessageLimit: keptNumber(agentsMdRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).agentsMdRecentMessageLimit),
-                              skillsCreateUpdateInstruction,
-                              skillsRecentMessageLimit: keptNumber(skillsRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).skillsRecentMessageLimit),
-                            });
-                            setSkillsRecentMessageLimit(String(s.skillsRecentMessageLimit));
-                          }}
-                        />
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
+              <InstructionsSettingsPanel
+                settings={settings}
+                lang={lang}
+                agentsMdRecentMessageLimit={agentsMdRecentMessageLimit}
+                agentsMdRefreshSystemPrompt={agentsMdRefreshSystemPrompt}
+                assistantRoleTemplate={assistantRoleTemplate}
+                captainMaxTurns={captainMaxTurns}
+                captainPersona={captainPersona}
+                instructionsSubTab={instructionsSubTab}
+                memberMaxTurns={memberMaxTurns}
+                memoryRecentMessageLimit={memoryRecentMessageLimit}
+                scopeInstruction={scopeInstruction}
+                setAgentsMdRecentMessageLimit={setAgentsMdRecentMessageLimit}
+                setAgentsMdRefreshSystemPrompt={setAgentsMdRefreshSystemPrompt}
+                setAssistantRoleTemplate={setAssistantRoleTemplate}
+                setCaptainMaxTurns={setCaptainMaxTurns}
+                setCaptainPersona={setCaptainPersona}
+                setInstructionsSubTab={setInstructionsSubTab}
+                setMemberMaxTurns={setMemberMaxTurns}
+                setMemoryRecentMessageLimit={setMemoryRecentMessageLimit}
+                setScopeInstruction={setScopeInstruction}
+                setSkillsCreateUpdateInstruction={setSkillsCreateUpdateInstruction}
+                setSkillsRecentMessageLimit={setSkillsRecentMessageLimit}
+                setSquadPlaybook={setSquadPlaybook}
+                skillsCreateUpdateInstruction={skillsCreateUpdateInstruction}
+                skillsRecentMessageLimit={skillsRecentMessageLimit}
+                squadPlaybook={squadPlaybook}
+                tab={tab}
+              />
             ) : tab === 'memory' ? (
-              <div>
-                <div
-                  className="settings-section-label settings-section-label-with-help"
-                  data-settings-id="globalMemories"
-                >
-                  <span>{t(lang, 'globalMemoriesManage')}</span>
-                  <SettingsHelpTip text={t(lang, 'globalMemoriesManageHint')} />
-                </div>
-                <div className="settings-card">
-                  <div className="settings-row">
-                    <span className="settings-row-label">{t(lang, 'memoryList')}</span>
-                    <div className="settings-row-trailing">
-                      <button
-                        type="button"
-                        className="settings-aar-add-btn"
-                        onClick={() => setGlobalMemAddRequest((n) => n + 1)}
-                      >
-                        {t(lang, 'globalMemoriesAdd')}
-                      </button>
-                    </div>
-                  </div>
-                  <MemoryEntriesList
-                    lang={lang}
-                    entries={globalMemories}
-                    requestAdd={globalMemAddRequest}
-                    emptyLabel={t(lang, 'globalMemoriesEmpty')}
-                    placeholder={t(lang, 'globalMemoryPlaceholder')}
-                    newBotId="global"
-                    onCommit={async (entry) => {
-                      try {
-                        await window.okbot.upsertGlobalMemory(entry);
-                        setGlobalMemories((list) => {
-                          const idx = list.findIndex((m) => m.id === entry.id);
-                          if (idx >= 0) {
-                            const next = list.slice();
-                            next[idx] = entry;
-                            return next;
-                          }
-                          return [...list, entry];
-                        });
-                      } catch (err) {
-                        toast.error(formatSystemError(err));
-                        throw err;
-                      }
-                    }}
-                    onDelete={async (id) => {
-                      try {
-                        await window.okbot.deleteGlobalMemory(id);
-                        setGlobalMemories((list) => list.filter((m) => m.id !== id));
-                      } catch (err) {
-                        toast.error(formatSystemError(err));
-                      }
-                    }}
-                  />
-                </div>
-              </div>
+              <MemorySettingsPanel
+                lang={lang}
+                globalMemories={globalMemories}
+                setGlobalMemories={setGlobalMemories}
+                globalMemAddRequest={globalMemAddRequest}
+                setGlobalMemAddRequest={setGlobalMemAddRequest}
+              />
             ) : tab === 'usage' ? (
               <UsagePanel lang={lang} bots={bots} squads={squads} />
             ) : tab === 'updates' ? (
-              <div>
-                <div className="settings-section-label" data-settings-id="updateSection">
-                  {t(lang, 'updateSection')}
-                </div>
-                <div className="settings-card">
-                  <div className="settings-row" data-settings-id="currentVersion">
-                    <span className="settings-row-label">
-                      <span className="settings-row-label-text">{t(lang, 'currentVersion')}</span>
-                      <SettingsHelpTip text={t(lang, 'currentVersionHint')} />
-                    </span>
-                    <span className="settings-row-meta">{updaterStatus?.currentVersion || '—'}</span>
-                  </div>
-                  <div className="settings-row" data-settings-id="autoUpdate">
-                    <span className="settings-row-label">
-                      <span className="settings-row-label-text">{t(lang, 'autoUpdate')}</span>
-                      <SettingsHelpTip text={t(lang, 'autoUpdateHint')} />
-                    </span>
-                    <SettingsToggle checked={autoUpdate} onChange={() => setAutoUpdate((v) => !v)} />
-                  </div>
-                  <div className="settings-row" data-settings-id="checkUpdate">
-                    <span className="settings-row-label">
-                      {updaterStatus?.phase === 'available' && updaterStatus.availableVersion
-                        ? t(lang, 'updateAvailable', { version: updaterStatus.availableVersion })
-                        : updaterStatus?.phase === 'downloading'
-                          ? t(lang, 'updateDownloading', {
-                              progress: String(updaterStatus.progress ?? 0),
-                            })
-                          : updaterStatus?.phase === 'downloaded'
-                            ? t(lang, 'updateDownloaded')
-                            : updaterStatus?.phase === 'error' && updaterStatus.error
-                              ? t(lang, 'updateError', { error: updaterStatus.error })
-                              : updaterStatus?.phase === 'not-available'
-                                ? t(lang, 'updateNotAvailable')
-                                : t(lang, 'checkUpdate')}
-                    </span>
-                    <button
-                      type="button"
-                      className="settings-aar-add-btn"
-                      disabled={updaterBusy || updaterStatus?.phase === 'downloading'}
-                      onClick={() => {
-                        void (async () => {
-                          setUpdaterBusy(true);
-                          try {
-                            if (updaterStatus?.phase === 'downloaded') {
-                              await window.okbot.updaterInstall();
-                            } else if (updaterStatus?.phase === 'available') {
-                              setUpdaterStatus(await window.okbot.updaterDownload());
-                            } else {
-                              setUpdaterStatus(await window.okbot.updaterCheck());
-                            }
-                          } finally {
-                            setUpdaterBusy(false);
-                          }
-                        })();
-                      }}
-                    >
-                      {updaterStatus?.phase === 'downloaded'
-                        ? t(lang, 'installUpdate')
-                        : updaterStatus?.phase === 'available'
-                          ? t(lang, 'downloadUpdate')
-                          : updaterStatus?.phase === 'downloading'
-                            ? t(lang, 'downloadingUpdate')
-                            : updaterBusy || updaterStatus?.phase === 'checking'
-                              ? t(lang, 'checkingUpdate')
-                              : t(lang, 'checkUpdate')}
-                    </button>
-                  </div>
-                </div>
-              </div>
+              <UpdatesSettingsPanel
+                lang={lang}
+                autoUpdate={autoUpdate}
+                setAutoUpdate={setAutoUpdate}
+                updaterStatus={updaterStatus}
+                setUpdaterStatus={setUpdaterStatus}
+                updaterBusy={updaterBusy}
+                setUpdaterBusy={setUpdaterBusy}
+              />
             ) : null}
           </div>
         </div>

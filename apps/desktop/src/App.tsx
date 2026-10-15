@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { createPortal } from 'react-dom';
 import { type OrbState } from 'thinking-orbs';
 import { resolveUiLang, t } from './i18n';
-import { FlatAvatar, SquadAvatar } from './components/ui/avatars';
+import { FlatAvatar, SquadAvatar, type SquadAvatarMember } from './components/ui/avatars';
 import {
   ThemeModeIcon,
   CopyIcon,
@@ -13,11 +13,20 @@ import {
   PersonIcon,
   SquadNavIcon,
   ExportAssistantIcon,
-  DownloadUpdateIcon,
-  InstallUpdateIcon,
+  DefaultAssistantIcon,
+  PinIcon,
+  UnpinIcon,
+  MarkAsReadIcon,
+  MarkAsUnreadIcon,
+  EyeIcon,
+  EyeOffIcon,
   AboutIcon,
   CopyRequestUrlIcon,
-  RunTraceIcon,
+  FolderIcon,
+  FolderPlusIcon,
+  ArrowUpIcon,
+  ArrowDownIcon,
+  ChevronRightIcon,
 } from './components/ui/icons';
 import { AboutModal } from './features/about';
 import { AssistantMarketplacePage, BotFormModal } from './features/bots';
@@ -52,6 +61,12 @@ import { SquadWizardModal } from './features/squads';
 import { WindowControls } from './features/window';
 import { QuickTip } from './components/ui/QuickTip';
 import { useScrollFade } from './hooks/useScrollFade';
+import {
+  useAttachments,
+  useChatEvents,
+  useParallelTasks,
+  useSessions,
+} from './features/chat/hooks';
 import { applyTheme, subscribeSystemTheme } from './utils/theme';
 import { mergeSettingsPatch } from './utils/settingsPatch';
 import { updateScrollFade } from './utils/scrollFade';
@@ -62,17 +77,13 @@ import {
   transcribeWithLocalWhisper,
 } from './voice';
 import { formatSystemError } from './utils/formatSystemError';
+import { joinMenuSections } from './utils/joinMenuSections';
 import { showSystemNotification, windowIsFocused } from './utils/systemNotify';
 import { applyOptimisticSendFailure, rememberReconciledLocalId } from './utils/optimisticSend';
 import {
   formatMessageWithAttachments,
   resolveMessageAttachments,
 } from './utils/messageAttachments';
-import {
-  collectDroppedAttachments,
-  dataTransferHasFiles,
-  type DroppedAttachment,
-} from './utils/dropAttachments';
 import { isAbortLikeError, isMcpToolName } from '@okbot/shared';
 import { toast, ToastHost, requestConfirm, ConfirmHost } from './components/ui';
 import type {
@@ -87,7 +98,6 @@ import type {
 } from './types';
 import type { DockTipTarget } from './features/sidebar';
 import {
-  removeParallelTask,
   upsertParallelTask,
   type ParallelTask,
 } from './features/chat/ParallelTasksStrip';
@@ -106,6 +116,11 @@ import {
   formatContextWindowBadge,
   randomBotAvatarType,
   createId,
+  createOwnerGroupId,
+  UNGROUPED_OWNER_GROUP_ID,
+  DEFAULT_NEW_OWNER_GROUP_NAME,
+  allocateUniqueOwnerGroupName,
+  normalizeOwnerGroupOrder,
   plainTextFromMarkdown,
   clipQuotePreview,
   stripThinkContent,
@@ -125,8 +140,26 @@ import {
 
 
 export function App() {
-  const [bots, setBots] = useState<Bot[]>([]);
-  const [squads, setSquads] = useState<Squad[]>([]);
+  const {
+    bots,
+    setBots,
+    squads,
+    setSquads,
+    selection,
+    setSelection,
+    selectSession,
+    markSessionUnread,
+    clearUnreadForSelection,
+    sessionHasUnread,
+    sessions,
+  } = useSessions();
+
+  const {
+    parallelTasksByOwner,
+    setParallelTasksByOwner,
+    sendsInFlightRef,
+  } = useParallelTasks();
+
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [dataDir, setDataDir] = useState('');
   const [hwAccelActive, setHwAccelActive] = useState(true);
@@ -136,10 +169,6 @@ export function App() {
   const [aboutOpen, setAboutOpen] = useState(false);
   /** process.platform from main — used to gate Windows frameless chrome only. */
   const [platform, setPlatform] = useState<string | null>(null);
-  const [tokenUsageView, setTokenUsageView] = useState<null | {
-    messageId: string;
-    usage?: import('@okbot/shared').TokenUsage;
-  }>(null);
   const [turnTraceView, setTurnTraceView] = useState<null | {
     messageId: string;
     trace?: MessageTrace;
@@ -149,7 +178,6 @@ export function App() {
   const [bootToast, setBootToast] = useState<null | 'restoreMcp' | 'installFailed' | 'installNoSpace'>(null);
   const [highlightMessageId, setHighlightMessageId] = useState<string | null>(null);
   const pendingMessageFocusRef = useRef<{ botId: string; messageId: string } | null>(null);
-  const [selection, setSelection] = useState<Selection>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [toolCardsByBot, setToolCardsByBot] = useState<Record<string, ToolCard[]>>({});
   const [promptContextView, setPromptContextView] = useState<null | {
@@ -158,11 +186,6 @@ export function App() {
     loading: boolean;
   }>(null);
   const [promptContextCopied, setPromptContextCopied] = useState(false);
-  const [runTraceView, setRunTraceView] = useState<null | {
-    text: string;
-    loading: boolean;
-  }>(null);
-  const [runTraceCopied, setRunTraceCopied] = useState(false);
   const [hasMoreOlder, setHasMoreOlder] = useState(false);
   const [olderBeforeMessageId, setOlderBeforeMessageId] = useState<string | null>(null);
   /** Owner id whose history is currently reflected in `messages` (null = none loaded). */
@@ -171,16 +194,22 @@ export function App() {
   const loadingOlderRef = useRef(false);
   const [draft, setDraft] = useState('');
   const draftRef = useRef('');
+  /** Per-session composer text; survives session switches until send/clear. */
+  const draftsByOwnerRef = useRef<Record<string, string>>({});
+  /**
+   * Sidebar subtitle drafts for *inactive* sessions (same map as the ref).
+   * Updated on session switch / clear-send — not on every keystroke — so typing
+   * in the active composer does not re-render the whole session list.
+   */
+  const [draftPreviewsByOwner, setDraftPreviewsByOwner] = useState<Record<string, string>>({});
+  /** Owner id that `draft` / `draftRef` currently mirror (for map writes). */
+  const draftOwnerRef = useRef<string | null>(null);
   const [quoteDraft, setQuoteDraft] = useState<{ messageId: string; preview: string } | null>(null);
   const quoteDraftRef = useRef<{ messageId: string; preview: string } | null>(null);
-  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
-  const attachmentsRef = useRef<ComposerAttachment[]>([]);
   /** Per-bot in-flight flag (streaming OR awaiting tool approval). */
   const [busyByBot, setBusyByBot] = useState<Record<string, boolean>>({});
   /** Count of renderer chatStart awaits per owner — keeps BorderBeam up while any parallel turn wraps up. */
-  const sendsInFlightRef = useRef<Record<string, number>>({});
   /** Unfinished parallel turns per owner (task strip when length > 1). */
-  const [parallelTasksByOwner, setParallelTasksByOwner] = useState<Record<string, ParallelTask[]>>({});
   /** local_* ids already replaced by a persisted user_message. Failure must not re-append them. */
   const reconciledLocalIdsRef = useRef<Set<string>>(new Set());
   /** In-flight optimistic sends, including ones whose chat is not on screen. */
@@ -207,6 +236,7 @@ export function App() {
   const listeningRef = useRef(false);
   const electronAppPathRef = useRef<string>('');
   const [menu, setMenu] = useState<MenuState>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const [renameTarget, setRenameTarget] = useState<RenameTarget>(null);
   const [renameValue, setRenameValue] = useState('');
   const skipRenameCommitRef = useRef(false);
@@ -232,7 +262,7 @@ export function App() {
         avatarKind?: import('@okbot/shared').BotAvatarKind;
         botAvatarType?: import('@okbot/shared').BotAvatarShape;
       }
-    | { kind: 'squad'; members: Array<{ emoji: string; color: string }> }
+    | { kind: 'squad'; members: SquadAvatarMember[] }
   )>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const messagesBoxRef = useRef<HTMLDivElement>(null);
@@ -264,12 +294,13 @@ export function App() {
   const lastDockYRef = useRef<number | null>(null);
   /** Pending show delay for collapsed-sidebar dock tip (avatar + name + desc). */
   const dockTipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /** Grace hide so moving between session rows (or icon → tip) does not flicker. */
-  const dockTipHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** True while the tip card is visible — skip re-delay when sliding across sessions. */
   const dockTipVisibleRef = useRef(false);
+  /** After leave-avatar hide, briefly skip show-delay when entering a neighboring avatar. */
+  const dockTipScanUntilRef = useRef(0);
   const DOCK_TIP_SHOW_DELAY_MS = 500;
-  const DOCK_TIP_HIDE_GRACE_MS = 150;
+  /** Neighbor-avatar hop window after immediate leave-hide (not for tip-card hover). */
+  const DOCK_TIP_SCAN_MS = 200;
 
   function clearDockTipTimer() {
     if (dockTipTimerRef.current != null) {
@@ -278,189 +309,42 @@ export function App() {
     }
   }
 
-  function clearDockTipHideTimer() {
-    if (dockTipHideTimerRef.current != null) {
-      clearTimeout(dockTipHideTimerRef.current);
-      dockTipHideTimerRef.current = null;
-    }
-  }
-
   function hideDockTip() {
     clearDockTipTimer();
-    clearDockTipHideTimer();
     dockTipVisibleRef.current = false;
     setDockTip(null);
   }
 
-  /** Leave rail / tip: brief grace so row gaps and icon→card moves do not flash-hide. */
+  /** Leave avatar / rail: hide tip immediately (do not keep open while moving toward the card). */
   function scheduleHideDockTip() {
-    clearDockTipTimer();
-    clearDockTipHideTimer();
-    dockTipHideTimerRef.current = setTimeout(() => {
-      dockTipHideTimerRef.current = null;
-      dockTipVisibleRef.current = false;
-      setDockTip(null);
-    }, DOCK_TIP_HIDE_GRACE_MS);
+    if (dockTipVisibleRef.current) {
+      dockTipScanUntilRef.current = Date.now() + DOCK_TIP_SCAN_MS;
+    }
+    hideDockTip();
   }
-
-  /** Pointer re-entered rail or tip card — keep sticky session scanning. */
-  function cancelHideDockTip() {
-    clearDockTipHideTimer();
-  }
-  const updateDraft = (value: string) => {
+  const updateDraft = useCallback((value: string) => {
     draftRef.current = value;
+    const owner = draftOwnerRef.current;
+    if (owner) {
+      if (value) draftsByOwnerRef.current[owner] = value;
+      else delete draftsByOwnerRef.current[owner];
+      // Drop list 「草稿」 when composer is cleared/sent (active row never shows it).
+      if (!value) {
+        setDraftPreviewsByOwner((prev) => {
+          if (!(owner in prev)) return prev;
+          const next = { ...prev };
+          delete next[owner];
+          return next;
+        });
+      }
+    }
     setDraft(value);
-  };
+  }, []);
 
-  const updateQuoteDraft = (value: { messageId: string; preview: string } | null) => {
+  const updateQuoteDraft = useCallback((value: { messageId: string; preview: string } | null) => {
     quoteDraftRef.current = value;
     setQuoteDraft(value);
-  };
-
-  const updateAttachments = (next: ComposerAttachment[]) => {
-    attachmentsRef.current = next;
-    setAttachments(next);
-  };
-
-  const basenameOf = (filePath: string) => {
-    const norm = filePath.replace(/\\/g, '/');
-    const i = norm.lastIndexOf('/');
-    return i >= 0 ? norm.slice(i + 1) || norm : norm;
-  };
-
-  const addAttachmentsFromDrops = (items: DroppedAttachment[]) => {
-    if (!items.length) return;
-    const prev = attachmentsRef.current;
-    const existing = new Set(prev.map((a) => a.path));
-    const added: ComposerAttachment[] = [];
-    for (const item of items) {
-      if (!item.path || existing.has(item.path)) continue;
-      existing.add(item.path);
-      added.push({
-        id: `att_${Date.now()}_${added.length}_${Math.random().toString(36).slice(2, 8)}`,
-        kind: item.kind,
-        path: item.path,
-        name: item.name || basenameOf(item.path),
-      });
-    }
-    if (added.length) updateAttachments([...prev, ...added]);
-  };
-
-  const onPickAttach = async (kind: AttachKind) => {
-    try {
-      const result = await window.okbot.pickPaths(kind);
-      if (result.canceled || !result.paths?.length) return;
-      addAttachmentsFromDrops(
-        result.paths
-          .filter((filePath): filePath is string => Boolean(filePath))
-          .map((filePath) => ({
-            kind,
-            path: filePath,
-            name: basenameOf(filePath),
-          })),
-      );
-    } catch (err) {
-      toast.error(formatSystemError(err));
-    }
-  };
-
-  const onRemoveAttachment = (id: string) => {
-    updateAttachments(attachmentsRef.current.filter((a) => a.id !== id));
-  };
-
-  const fileDragDepthRef = useRef(0);
-  const [fileDragOver, setFileDragOver] = useState(false);
-
-  const clearFileDragOver = () => {
-    fileDragDepthRef.current = 0;
-    setFileDragOver(false);
-  };
-
-  const onChatDragEnter = (e: React.DragEvent) => {
-    if (listening || !dataTransferHasFiles(e.dataTransfer)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    fileDragDepthRef.current += 1;
-    setFileDragOver(true);
-  };
-
-  const onChatDragLeave = (e: React.DragEvent) => {
-    if (!fileDragOver && fileDragDepthRef.current === 0) return;
-    e.preventDefault();
-    e.stopPropagation();
-    fileDragDepthRef.current = Math.max(0, fileDragDepthRef.current - 1);
-    if (fileDragDepthRef.current === 0) setFileDragOver(false);
-  };
-
-  const onChatDragOver = (e: React.DragEvent) => {
-    if (listening || !dataTransferHasFiles(e.dataTransfer)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    e.dataTransfer.dropEffect = 'copy';
-  };
-
-  const onChatDrop = (e: React.DragEvent) => {
-    const hadFiles = dataTransferHasFiles(e.dataTransfer);
-    if (hadFiles) {
-      e.preventDefault();
-      e.stopPropagation();
-    }
-    clearFileDragOver();
-    if (!hadFiles || listening) return;
-    const dt = e.dataTransfer;
-    const fileCount = dt.files?.length ?? 0;
-    const dropped = collectDroppedAttachments(dt, {
-      getPathForFile:
-        typeof window.okbot?.getPathForFile === 'function'
-          ? (file) => window.okbot.getPathForFile(file)
-          : undefined,
-    });
-    if (dropped.length) {
-      addAttachmentsFromDrops(dropped);
-      return;
-    }
-    if (fileCount > 0) {
-      toast.info(t(lang, 'attachDropNoPath'));
-    }
-  };
-
-  const markSessionUnread = (ownerId: string, hasUnread: boolean) => {
-    if (!ownerId) return;
-    if (ownerId.startsWith('squad_')) {
-      setSquads((prev) =>
-        prev.map((s) => {
-          if (s.id !== ownerId) return s;
-          if ((s.hasUnreadReply === true) === hasUnread) return s;
-          const next = { ...s };
-          if (hasUnread) next.hasUnreadReply = true;
-          else delete next.hasUnreadReply;
-          return next;
-        }),
-      );
-    } else {
-      setBots((prev) =>
-        prev.map((b) => {
-          if (b.id !== ownerId) return b;
-          if ((b.hasUnreadReply === true) === hasUnread) return b;
-          const next = { ...b };
-          if (hasUnread) next.hasUnreadReply = true;
-          else delete next.hasUnreadReply;
-          return next;
-        }),
-      );
-    }
-    void window.okbot.setChatUnread(ownerId, hasUnread);
-  };
-
-  const clearUnreadForSelection = (sel: Selection) => {
-    if (!sel) return;
-    markSessionUnread(sel.id, false);
-  };
-
-  const selectSession = (next: Selection) => {
-    setSelection(next);
-    if (next) clearUnreadForSelection(next);
-  };
+  }, []);
 
   const dragRef = useRef<{
     startX: number;
@@ -471,6 +355,20 @@ export function App() {
 
   const narrow = sidebarWidth <= SIDEBAR_NARROW_AT;
   const lang = resolveUiLang(settings?.language);
+
+  const {
+    attachments,
+    attachmentsRef,
+    updateAttachments,
+    onPickAttach,
+    onRemoveAttachment,
+    fileDragOver,
+    onChatDragEnter,
+    onChatDragLeave,
+    onChatDragOver,
+    onChatDrop,
+  } = useAttachments({ lang, listening });
+
 
   useEffect(() => {
     if (!narrow) {
@@ -489,7 +387,6 @@ export function App() {
   useEffect(
     () => () => {
       clearDockTipTimer();
-      clearDockTipHideTimer();
     },
     [],
   );
@@ -537,29 +434,15 @@ export function App() {
   /** Distinguishes two loads of the same owner (A→B→A). */
   const historyLoadGenRef = useRef(0);
 
-  async function openRunTrace() {
-    const sel = selectionRef.current;
-    const ownerId = sel?.kind === 'bot' || sel?.kind === 'squad' ? sel.id : null;
-    if (!ownerId) return;
-    setRunTraceCopied(false);
-    setRunTraceView({ text: '', loading: true });
-    try {
-      const res = await window.okbot.getLastRunTrace(ownerId);
-      const text = res?.trace ? JSON.stringify(res.trace, null, 2) : '';
-      setRunTraceView({ text, loading: false });
-    } catch (err) {
-      setRunTraceView({
-        text: err instanceof Error ? err.message : String(err),
-        loading: false,
-      });
-    }
-  }
-
-  /** Copy a ready SSE curl for the current bot/squad local HTTP API endpoint. */
-  async function copyLocalHttpRequestUrl() {
-    const sel = selectionRef.current;
-    const kind = sel?.kind === 'bot' || sel?.kind === 'squad' ? sel.kind : null;
-    const id = kind && sel ? sel.id : '';
+  /** Copy a ready SSE curl for a bot/squad local HTTP API endpoint (selection or explicit). */
+  async function copyLocalHttpRequestUrl(target?: { kind: 'bot' | 'squad'; id: string }) {
+    const sel = target ?? (
+      selectionRef.current?.kind === 'bot' || selectionRef.current?.kind === 'squad'
+        ? { kind: selectionRef.current.kind, id: selectionRef.current.id }
+        : null
+    );
+    const kind = sel?.kind ?? null;
+    const id = sel?.id ?? '';
     if (!kind || !id) return;
 
     const api = settings?.localHttpApi;
@@ -687,6 +570,49 @@ export function App() {
     return resolveModelConfig(modelSettings, override).showThinking;
   }, [settings?.model, selectedBot, selectedSquad]);
 
+  /** Provider display name / model name (or id) for the round-usage popover. */
+  const usageModelRef = useMemo(() => {
+    const modelSettings = normalizeModelSettings(settings?.model);
+    const override = selectedBot
+      ? { providerId: selectedBot.providerId, modelId: selectedBot.modelId }
+      : selectedSquad
+        ? { providerId: selectedSquad.providerId, modelId: selectedSquad.modelId }
+        : null;
+    const providers = modelSettings.providers || [];
+    const oPid = (override?.providerId || '').trim();
+    const oMid = (override?.modelId || '').trim();
+    let provider = oPid ? providers.find((p) => p.id === oPid) || null : null;
+    let modelId = oMid;
+    if (provider && modelId) {
+      const enabled = provider.models.filter((m) => m.enabled);
+      const pool = enabled.length ? enabled : provider.models;
+      if (!pool.some((m) => m.id === modelId)) {
+        modelId = pool[0]?.id || '';
+      }
+    } else {
+      provider =
+        providers.find((p) => p.id === modelSettings.defaultProviderId) ||
+        providers[0] ||
+        null;
+      if (provider) {
+        const enabled = provider.models.filter((m) => m.enabled);
+        const pool = enabled.length ? enabled : provider.models;
+        modelId =
+          (modelSettings.defaultModelId &&
+            pool.find((m) => m.id === modelSettings.defaultModelId)?.id) ||
+          pool[0]?.id ||
+          '';
+      } else {
+        modelId = '';
+      }
+    }
+    if (!provider?.id || !modelId) return '';
+    const providerLabel = provider.name.trim() || provider.id;
+    const catalog = provider.models.find((m) => m.id === modelId);
+    const modelLabel = (catalog?.name || '').trim() || modelId;
+    return `${providerLabel}/${modelLabel}`;
+  }, [settings?.model, selectedBot, selectedSquad]);
+
   const messagesLoading = chatOwnerId !== null && historyOwnerId !== chatOwnerId;
   const busy = chatOwnerId ? !!busyByBot[chatOwnerId] : false;
   const toolCards = chatOwnerId ? toolCardsByBot[chatOwnerId] ?? [] : [];
@@ -711,28 +637,17 @@ export function App() {
     [busyByBot, toolCardsByBot],
   );
 
-  const sessionHasUnread = useCallback(
-    (ownerId: string) => {
-      if (ownerId.startsWith('squad_')) {
-        return !!squads.find((s) => s.id === ownerId)?.hasUnreadReply;
-      }
-      return !!bots.find((b) => b.id === ownerId)?.hasUnreadReply;
-    },
-    [bots, squads],
-  );
-
-  const sessions = useMemo(() => {
-    const items: SessionItem[] = [
-      ...bots.map((bot) => ({ kind: 'bot' as const, bot, updatedAt: bot.updatedAt })),
-      ...squads.map((squad) => ({ kind: 'squad' as const, squad, updatedAt: squad.updatedAt })),
-    ];
-    items.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
-    return items;
-  }, [bots, squads]);
-
-  const sessionOrderKey = sessions
-    .map((s) => (s.kind === 'bot' ? `bot:${s.bot.id}` : `squad:${s.squad.id}`))
-    .join('|');
+  // Include group membership so 移至 / 创建分组 triggers the same FLIP path as 隐藏/显示.
+  const sessionOrderKey = [
+    ...(settings?.pinnedOwnerIds ?? []),
+    ...(settings?.hiddenOwnerIds ?? []),
+    ...(settings?.ownerGroups ?? []).map((g) => g.id),
+    ...(settings?.ownerGroupOrder ?? []),
+    ...Object.entries(settings?.ownerGroupMembership ?? {})
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([ownerId, groupId]) => `${ownerId}>${groupId}`),
+    ...sessions.map((s) => (s.kind === 'bot' ? `bot:${s.bot.id}` : `squad:${s.squad.id}`)),
+  ].join('|');
   useSessionListFlip(sessionListRef, sessionOrderKey);
 
 
@@ -963,464 +878,25 @@ export function App() {
     setBootToast(null);
   }, [bootToast, lang]);
 
-  useEffect(() => {
-    type PendingStream = {
-      raf: number | null;
-      previewByBot: Record<string, string>;
-      replyPhaseBots: Set<string>;
-      messageDeltas: Record<string, string>;
-    };
-    const pending: PendingStream = {
-      raf: null,
-      previewByBot: {},
-      replyPhaseBots: new Set(),
-      messageDeltas: {},
-    };
+  useChatEvents({
+    lang,
+    selectionRef,
+    streamingPreviewRef,
+    pendingOptimisticRef,
+    reconciledLocalIdsRef,
+    sendsInFlightRef,
+    notifyUnfocusedRef,
+    markSessionUnread,
+    setBots,
+    setSquads,
+    setSelection,
+    setMessages,
+    setToolCardsByBot,
+    setBusyByBot,
+    setTurnPhaseByBot,
+    setParallelTasksByOwner,
+  });
 
-    const flushPendingStream = () => {
-      if (pending.raf != null) {
-        cancelAnimationFrame(pending.raf);
-        pending.raf = null;
-      }
-      const previewByBot = pending.previewByBot;
-      const replyPhaseBots = pending.replyPhaseBots;
-      const messageDeltas = pending.messageDeltas;
-      const previewIds = Object.keys(previewByBot);
-      const deltaIds = Object.keys(messageDeltas);
-      const hasPreview = previewIds.length > 0;
-      const hasReply = replyPhaseBots.size > 0;
-      const hasMessages = deltaIds.length > 0;
-      if (!hasPreview && !hasReply && !hasMessages) return;
-
-      pending.previewByBot = {};
-      pending.replyPhaseBots = new Set();
-      pending.messageDeltas = {};
-
-      if (hasPreview) {
-        setBots((prev) => {
-          let changed = false;
-          const next = prev.map((b) => {
-            const md = previewByBot[b.id];
-            if (md == null) return b;
-            const text = plainTextFromMarkdown(stripThinkContent(md));
-            if (b.lastReplyPreview === text) return b;
-            changed = true;
-            return { ...b, lastReplyPreview: text };
-          });
-          return changed ? next : prev;
-        });
-      }
-      if (hasReply) {
-        setTurnPhaseByBot((prev) => {
-          let changed = false;
-          const next = { ...prev };
-          for (const botId of replyPhaseBots) {
-            if (next[botId] === 'replying') continue;
-            next[botId] = 'replying';
-            changed = true;
-          }
-          return changed ? next : prev;
-        });
-      }
-      if (hasMessages) {
-        setMessages((prev) => {
-          let next: ChatMessage[] | null = null;
-          for (const messageId of deltaIds) {
-            const delta = messageDeltas[messageId];
-            if (!delta) continue;
-            const list: ChatMessage[] = next ?? prev;
-            const idx = list.findIndex((m) => m.id === messageId);
-            if (idx < 0) {
-              let speakerBotId: string | undefined;
-              const sel = selectionRef.current;
-              if (sel?.kind === 'squad') {
-                speakerBotId = SQUAD_CAPTAIN_SPEAKER_ID;
-              }
-              // Switch-back mid-stream: seed full preview, not only the latest delta chunk.
-              const full =
-                streamingPreviewRef.current[messageId] ||
-                delta;
-              next = [
-                ...list,
-                {
-                  id: messageId,
-                  role: 'assistant',
-                  content: full,
-                  createdAt: new Date().toISOString(),
-                  ...(speakerBotId ? { speakerBotId } : {}),
-                },
-              ];
-            } else {
-              if (!next) next = [...list];
-              next[idx] = { ...next[idx], content: next[idx].content + delta };
-            }
-          }
-          return next ?? prev;
-        });
-      }
-    };
-
-    const scheduleStreamFlush = () => {
-      if (pending.raf != null) return;
-      pending.raf = requestAnimationFrame(() => {
-        pending.raf = null;
-        flushPendingStream();
-      });
-    };
-
-    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
-    let refreshSeq = 0;
-    const scheduleSessionsRefresh = () => {
-      if (refreshTimer != null) clearTimeout(refreshTimer);
-      refreshTimer = setTimeout(() => {
-        refreshTimer = null;
-        const ticket = ++refreshSeq;
-        void Promise.all([window.okbot.listBots(), window.okbot.listSquads()])
-          .then(([nextBots, nextSquads]) => {
-            if (ticket !== refreshSeq) return;
-            setBots(nextBots);
-            setSquads(nextSquads);
-            const sel = selectionRef.current;
-            if (!sel) return;
-            const stillThere =
-              sel.kind === 'bot'
-                ? nextBots.some((b: { id: string }) => b.id === sel.id)
-                : nextSquads.some((s: { id: string }) => s.id === sel.id);
-            if (!stillThere) {
-              setSelection(null);
-              saveLastSelection(null);
-            }
-          })
-          .catch((err) => {
-            console.error('[okbot] session list refresh failed', err);
-          });
-      }, 120);
-    };
-
-    const off = window.okbot.onRuntimeEvent((event) => {
-      // Other window (Electron or gateway) changed the shared ~/.okbot roster.
-      if (event.type === 'sessions_changed') {
-        scheduleSessionsRefresh();
-        return;
-      }
-
-      const isActive =
-        (selectionRef.current?.kind === 'bot' || selectionRef.current?.kind === 'squad') &&
-        selectionRef.current.id === event.botId;
-
-      // Hot-reload signal — catalog reloads on next turn; no transcript mutation.
-      if (event.type === 'skills_changed') {
-        return;
-      }
-
-      if (event.type === 'turn_started') {
-        const clientTurnId = (event.clientTurnId || '').trim();
-        const runId = (event.runId || '').trim();
-        setParallelTasksByOwner((prev) => {
-          const list = prev[event.botId] ?? [];
-          const existing =
-            (clientTurnId
-              ? list.find((x) => x.clientTurnId === clientTurnId || x.id === clientTurnId)
-              : undefined) ||
-            (runId ? list.find((x) => x.runId === runId) : undefined);
-          const id = existing?.id || clientTurnId || runId;
-          if (!id) return prev;
-          return {
-            ...prev,
-            [event.botId]: upsertParallelTask(list, {
-              id,
-              clientTurnId: clientTurnId || existing?.clientTurnId,
-              runId: runId || existing?.runId,
-              userMessageId: event.userMessageId || existing?.userMessageId,
-              assistantMessageId: event.assistantMessageId || existing?.assistantMessageId,
-              label: existing?.label || '…',
-              status: existing?.status || 'running',
-              startedAt: existing?.startedAt || Date.now(),
-            }),
-          };
-        });
-        return;
-      }
-
-      if (event.type === 'user_message') {
-        const pendingIdx = pendingOptimisticRef.current.findIndex((p) => p.ownerId === event.botId);
-        if (pendingIdx >= 0) {
-          const pending = pendingOptimisticRef.current[pendingIdx]!;
-          pendingOptimisticRef.current.splice(pendingIdx, 1);
-          rememberReconciledLocalId(reconciledLocalIdsRef.current, pending.localId);
-        }
-        // HTTP/API turns have no local send in flight; still show Stop.
-        setBusyByBot((prev) => (prev[event.botId] ? prev : { ...prev, [event.botId]: true }));
-        setTurnPhaseByBot((prev) =>
-          prev[event.botId] ? prev : { ...prev, [event.botId]: 'thinking' },
-        );
-        if (isActive) {
-          setMessages((prev) => {
-            const byId = prev.findIndex((m) => m.id === event.message.id);
-            if (byId >= 0) {
-              const next = [...prev];
-              next[byId] = event.message;
-              return next;
-            }
-            for (let i = prev.length - 1; i >= 0; i--) {
-              if (prev[i].role === 'user' && String(prev[i].id).startsWith('local_')) {
-                rememberReconciledLocalId(reconciledLocalIdsRef.current, String(prev[i].id));
-                const next = [...prev];
-                next[i] = event.message;
-                return next;
-              }
-            }
-            return [...prev, event.message];
-          });
-        }
-        // Keep parallel task labels/ids in sync when local_ bubbles become real ids.
-        setParallelTasksByOwner((prev) => {
-          const list = prev[event.botId] ?? [];
-          if (!list.length) return prev;
-          const runId = typeof (event as { runId?: string }).runId === 'string' ? (event as { runId?: string }).runId : '';
-          let changed = false;
-          const next = list.map((task) => {
-            if (runId && task.runId === runId) {
-              changed = true;
-              return {
-                ...task,
-                userMessageId: event.message.id,
-                label: (event.message.content || task.label).trim() || task.label,
-              };
-            }
-            if (task.userMessageId && String(task.userMessageId).startsWith('local_')) {
-              // FIFO: first local_ task without real id
-              if (!changed) {
-                changed = true;
-                return {
-                  ...task,
-                  userMessageId: event.message.id,
-                  label: (event.message.content || task.label).trim() || task.label,
-                };
-              }
-            }
-            return task;
-          });
-          return changed ? { ...prev, [event.botId]: next } : prev;
-        });
-        return;
-      }
-
-      if (event.type === 'assistant_message') {
-        if (isActive) {
-          setMessages((prev) => {
-            const byId = prev.findIndex((m) => m.id === event.message.id);
-            if (byId >= 0) {
-              const next = [...prev];
-              next[byId] = event.message;
-              return next;
-            }
-            return [...prev, event.message];
-          });
-        }
-        return;
-      }
-
-      if (event.type === 'tool_request') {
-        // Flush any coalesced deltas before clearing pre-tool think-aloud.
-        flushPendingStream();
-        delete streamingPreviewRef.current[event.messageId];
-        delete pending.messageDeltas[event.messageId];
-        delete pending.previewByBot[event.botId];
-        if (isActive) {
-          setMessages((prev) => {
-            const idx = prev.findIndex((m) => m.id === event.messageId);
-            if (idx < 0 || !prev[idx].content) return prev;
-            const next = [...prev];
-            next[idx] = { ...next[idx], content: '' };
-            return next;
-          });
-        }
-
-        setToolCardsByBot((prev) => {
-          const list = prev[event.botId] ?? [];
-          if (list.some((c) => c.requestId === event.requestId)) return prev;
-          return {
-            ...prev,
-            [event.botId]: [
-              ...list,
-              {
-                requestId: event.requestId,
-                messageId: event.messageId,
-                toolName: event.toolName,
-                arguments: event.arguments,
-                status: 'pending',
-              },
-            ],
-          };
-        });
-        setBusyByBot((prev) => ({ ...prev, [event.botId]: true }));
-        setTurnPhaseByBot((prev) => ({ ...prev, [event.botId]: 'awaiting_approval' }));
-        if (event.runId) {
-          setParallelTasksByOwner((prev) => ({
-            ...prev,
-            [event.botId]: upsertParallelTask(prev[event.botId] ?? [], {
-              id: event.runId!,
-              runId: event.runId,
-              assistantMessageId: event.messageId,
-              status: 'awaiting_approval',
-            }),
-          }));
-        }
-        if (!isActive || !windowIsFocused()) markSessionUnread(event.botId, true);
-        notifyUnfocusedRef.current(event.botId, 'approval', event.toolName, event.requestId || event.messageId);
-        return;
-      }
-      if (event.type === 'tool_result') {
-        setToolCardsByBot((prev) => ({
-          ...prev,
-          [event.botId]: (prev[event.botId] ?? []).map((c) =>
-            c.requestId === event.requestId
-              ? {
-                  ...c,
-                  status: event.approved ? 'approved' : 'denied',
-                  output: event.output,
-                }
-              : c,
-          ),
-        }));
-        if (event.approved) {
-          const phase: TurnPhase =
-            event.toolName === 'run_shell' ? 'running_shell' : 'running_tool';
-          setTurnPhaseByBot((prev) => ({ ...prev, [event.botId]: phase }));
-        } else {
-          setTurnPhaseByBot((prev) => ({ ...prev, [event.botId]: 'thinking' }));
-        }
-        if (event.runId) {
-          setParallelTasksByOwner((prev) => ({
-            ...prev,
-            [event.botId]: upsertParallelTask(prev[event.botId] ?? [], {
-              id: event.runId!,
-              runId: event.runId,
-              status: 'running',
-            }),
-          }));
-        }
-        return;
-      }
-      if (event.type === 'done' || event.type === 'error') {
-        flushPendingStream();
-        if (event.runId) {
-          setParallelTasksByOwner((prev) => ({
-            ...prev,
-            [event.botId]: removeParallelTask(prev[event.botId] ?? [], { runId: event.runId }),
-          }));
-        }
-        const inFlight = sendsInFlightRef.current[event.botId] || 0;
-        // Parallel: one turn's done must not clear busy while other sends still await.
-        if (inFlight === 0) {
-          setBusyByBot((prev) => ({ ...prev, [event.botId]: false }));
-          setTurnPhaseByBot((prev) => {
-            if (!(event.botId in prev)) return prev;
-            const next = { ...prev };
-            delete next[event.botId];
-            return next;
-          });
-        } else {
-          // Final content is on screen but chatStart IPC is still wrapping up
-          // (persist, AGENTS/skills/memory refresh). Keep busy via sendsInFlight;
-          // show wrapping_up instead of lingering on replying.
-          // Skip aborted done / inFlight>1 so a finished sibling does not clobber
-          // another in-flight turn's thinking/replying phase.
-          const isAbortedDone = event.type === 'done' && !!event.aborted;
-          if (!isAbortedDone && inFlight === 1) {
-            setTurnPhaseByBot((prev) => ({ ...prev, [event.botId]: 'wrapping_up' }));
-          }
-        }
-        if ((event.type === 'done' && !event.aborted) || event.type === 'error') {
-          if (!isActive || !windowIsFocused()) {
-            markSessionUnread(event.botId, true);
-          } else {
-            // This window shows the chat in front. Another window may mark it unread
-            // for the same event; write "read" a moment later so the viewer wins.
-            const ownerId = event.botId;
-            window.setTimeout(() => {
-              if (windowIsFocused()) markSessionUnread(ownerId, false);
-            }, 400);
-          }
-          if (event.type === 'done') {
-            notifyUnfocusedRef.current(event.botId, 'reply', undefined, event.messageId);
-          }
-        }
-      }
-
-      if (event.type === 'delta') {
-        const soFar = (streamingPreviewRef.current[event.messageId] || '') + event.delta;
-        streamingPreviewRef.current[event.messageId] = soFar;
-        pending.previewByBot[event.botId] = soFar;
-        pending.replyPhaseBots.add(event.botId);
-        if (isActive) {
-          pending.messageDeltas[event.messageId] =
-            (pending.messageDeltas[event.messageId] || '') + event.delta;
-        }
-        scheduleStreamFlush();
-        return;
-      } else if (event.type === 'done') {
-        delete streamingPreviewRef.current[event.messageId];
-        const text = plainTextFromMarkdown(stripThinkContent(event.content || ''));
-        setBots((prev) =>
-          prev.map((b) =>
-            b.id === event.botId
-              ? {
-                  ...b,
-                  lastReplyPreview: text,
-                  ...(event.aborted ? {} : { onboardingComplete: true }),
-                }
-              : b,
-          ),
-        );
-      } else if (event.type === 'error') {
-        delete streamingPreviewRef.current[event.messageId];
-        toast.error(formatSystemError(event.error));
-      }
-
-      // Message stream UI only for the active bot; inactive bots keep working state above.
-      if (!isActive) return;
-      if (event.type !== 'done' && event.type !== 'error') return;
-
-      setMessages((prev) => {
-        const idx = prev.findIndex((m) => m.id === event.messageId);
-        if (event.type === 'done' || event.type === 'error') {
-          if (idx < 0) return prev;
-          const next = [...prev];
-          const prevContent = next[idx].content || '';
-          let nextContent =
-            event.type === 'done' ? event.content || '' : prevContent || `${t(lang, 'errorPrefix')}${event.error}`;
-          // Stable display: never flash to a shorter "final-only" string while live text
-          // already shows the full streamed reply (reload used to fight this too).
-          if (
-            event.type === 'done' &&
-            prevContent.trim() &&
-            nextContent.trim() &&
-            nextContent.length < prevContent.length
-          ) {
-            nextContent = prevContent;
-          }
-          next[idx] = {
-            ...next[idx],
-            content: nextContent,
-            ...(event.type === 'done' && event.usage ? { usage: event.usage } : {}),
-            ...(event.type === 'done' && event.trace ? { trace: event.trace } : {}),
-          };
-          return next;
-        }
-        return prev;
-      });
-    });
-    return () => {
-      off();
-      if (refreshTimer != null) clearTimeout(refreshTimer);
-      if (pending.raf != null) {
-        cancelAnimationFrame(pending.raf);
-        pending.raf = null;
-      }
-    };
-  }, []);
 
   const pinMessagesToBottom = useCallback(() => {
     const box = messagesBoxRef.current;
@@ -1553,11 +1029,104 @@ export function App() {
     return () => window.cancelAnimationFrame(id);
   }, [chatOwnerId, selectedBot?.onboardingComplete, createTarget, profileBot]);
 
+  // Restore per-session draft (and clear quote) when switching chats.
+  // After the controlled value commits, place caret at end so typing continues.
+  // Also pin textarea scroll to bottom so a tall draft's caret end stays visible
+  // after max-height / is-multiline layout settles (nested rAF).
   useEffect(() => {
+    const next = chatOwnerId ? (draftsByOwnerRef.current[chatOwnerId] ?? '') : '';
+    draftOwnerRef.current = chatOwnerId;
+    draftRef.current = next;
+    setDraft(next);
     updateQuoteDraft(null);
-  }, [chatOwnerId]);
+    // Snapshot drafts for inactive-session list previews (active row uses last reply).
+    setDraftPreviewsByOwner({ ...draftsByOwnerRef.current });
+    if (!chatOwnerId) return;
+    let cancelled = false;
+    const id = window.requestAnimationFrame(() => {
+      const el = composerRef.current;
+      if (!el || cancelled) return;
+      const len = next.length;
+      el.setSelectionRange(len, len);
+      el.scrollTop = el.scrollHeight;
+      // Second frame: ChatComposer useLayoutEffect may still flip is-multiline / height.
+      window.requestAnimationFrame(() => {
+        if (cancelled) return;
+        const ta = composerRef.current;
+        if (!ta) return;
+        ta.scrollTop = ta.scrollHeight;
+      });
+    });
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(id);
+    };
+  }, [chatOwnerId, updateQuoteDraft]);
 
   useScrollFade(sessionListRef, [bots, squads, sidebarWidth]);
+
+  
+  // Keep session context menus inside the window (flip/clamp near edges).
+  useLayoutEffect(() => {
+    if (!menu) return;
+    const el = menuRef.current;
+    if (!el) return;
+    const pad = 8;
+    const { width, height } = el.getBoundingClientRect();
+    const maxX = Math.max(pad, window.innerWidth - width - pad);
+    const maxY = Math.max(pad, window.innerHeight - height - pad);
+    const x = Math.min(Math.max(pad, menu.x), maxX);
+    const y = Math.min(Math.max(pad, menu.y), maxY);
+    if (x !== menu.x || y !== menu.y) {
+      setMenu({ ...menu, x, y });
+    }
+  }, [menu]);
+
+  // Clamp 「移至」 secondary menus inside the window (flip left / shift vertically).
+  useLayoutEffect(() => {
+    if (!menu) return;
+    const root = menuRef.current;
+    if (!root) return;
+    const pad = 8;
+    const wraps = root.querySelectorAll<HTMLElement>('.menu-item-submenu');
+    const cleanups: Array<() => void> = [];
+    wraps.forEach((wrap) => {
+      const sub = wrap.querySelector<HTMLElement>('.menu-submenu');
+      if (!sub) return;
+      const place = () => {
+        const trigger = wrap.getBoundingClientRect();
+        // Measure while forced visible (CSS also shows on :hover).
+        const prevVis = sub.style.visibility;
+        const prevDisp = sub.style.display;
+        sub.style.visibility = 'hidden';
+        sub.style.display = 'block';
+        const sw = sub.offsetWidth || 160;
+        const sh = sub.offsetHeight || 120;
+        sub.style.visibility = prevVis;
+        sub.style.display = prevDisp;
+        let left = trigger.right - 4;
+        let top = trigger.top - 4;
+        if (left + sw > window.innerWidth - pad) {
+          left = trigger.left - sw + 4;
+        }
+        left = Math.min(Math.max(pad, left), Math.max(pad, window.innerWidth - sw - pad));
+        if (top + sh > window.innerHeight - pad) {
+          top = window.innerHeight - sh - pad;
+        }
+        top = Math.min(Math.max(pad, top), Math.max(pad, window.innerHeight - sh - pad));
+        sub.style.left = `${left}px`;
+        sub.style.top = `${top}px`;
+      };
+      const onEnter = () => place();
+      wrap.addEventListener('mouseenter', onEnter);
+      wrap.addEventListener('focusin', onEnter);
+      cleanups.push(() => {
+        wrap.removeEventListener('mouseenter', onEnter);
+        wrap.removeEventListener('focusin', onEnter);
+      });
+    });
+    return () => cleanups.forEach((fn) => fn());
+  }, [menu]);
 
   useEffect(() => {
     const closeMenu = () => setMenu(null);
@@ -1880,7 +1449,7 @@ export function App() {
   async function persistBotForm(botId: string, values: BotFormValues) {
     const updated = await window.okbot.updateBot(botId, {
       name: values.name,
-      description: values.description,
+      // description evolved by post-turn refresh (read-only in form)
       emoji: values.emoji,
       color: values.color,
       providerId: values.providerId,
@@ -1936,6 +1505,23 @@ export function App() {
     const prevName = target.name;
     setRenameTarget(null);
     setRenameValue('');
+    if (target.kind === 'owner-group') {
+      const nextName = name || prevName || DEFAULT_NEW_OWNER_GROUP_NAME;
+      if (nextName === prevName) return;
+      try {
+        const disk = (await window.okbot.getSettings()) as AppSettings;
+        const groups = (disk.ownerGroups || []).map((g) =>
+          g.id === target.id ? { ...g, name: nextName } : g,
+        );
+        const saved = await window.okbot.saveSettings(
+          mergeSettingsPatch(disk, { ownerGroups: groups }),
+        );
+        setSettings(saved);
+      } catch (err) {
+        toast.error(formatSystemError(err));
+      }
+      return;
+    }
     if (!name || name === prevName) return;
     try {
       if (target.kind === 'bot') {
@@ -1949,6 +1535,148 @@ export function App() {
     } catch (err) {
       toast.error(formatSystemError(err));
     }
+  }
+
+  function currentOwnerGroupId(ownerId: string): string {
+    const gid = settings?.ownerGroupMembership?.[ownerId];
+    if (gid && (settings?.ownerGroups || []).some((g) => g.id === gid)) return gid;
+    return UNGROUPED_OWNER_GROUP_ID;
+  }
+
+  async function moveOwnerToGroup(ownerId: string, groupId: string) {
+    try {
+      const disk = (await window.okbot.getSettings()) as AppSettings;
+      const membership = { ...(disk.ownerGroupMembership || {}) };
+      if (groupId === UNGROUPED_OWNER_GROUP_ID) {
+        delete membership[ownerId];
+      } else {
+        membership[ownerId] = groupId;
+      }
+      const saved = await window.okbot.saveSettings(
+        mergeSettingsPatch(disk, { ownerGroupMembership: membership }),
+      );
+      setSettings(saved);
+    } catch (err) {
+      toast.error(formatSystemError(err));
+    }
+  }
+
+  async function createGroupAndMoveOwner(ownerId: string) {
+    try {
+      const disk = (await window.okbot.getSettings()) as AppSettings;
+      const id = createOwnerGroupId();
+      const base = t(lang, 'newOwnerGroup') || DEFAULT_NEW_OWNER_GROUP_NAME;
+      const name = allocateUniqueOwnerGroupName(disk.ownerGroups || [], base);
+      // New group at top of both metadata list and display order.
+      const groups = [{ id, name }, ...(disk.ownerGroups || [])];
+      const prevOrder = normalizeOwnerGroupOrder(disk.ownerGroupOrder, disk.ownerGroups || []);
+      const order = [
+        id,
+        ...prevOrder.filter((x) => x !== id),
+      ];
+      const membership = { ...(disk.ownerGroupMembership || {}), [ownerId]: id };
+      const saved = await window.okbot.saveSettings(
+        mergeSettingsPatch(disk, {
+          ownerGroups: groups,
+          ownerGroupOrder: order,
+          ownerGroupMembership: membership,
+        }),
+      );
+      setSettings(saved);
+      if (narrow) tryExpandSidebar();
+      setRenameTarget({ kind: 'owner-group', id, name });
+      setRenameValue(name);
+    } catch (err) {
+      toast.error(formatSystemError(err));
+    }
+  }
+
+
+  async function reorderOwnerGroupBefore(fromId: string, toId: string) {
+    if (fromId === toId) return;
+    try {
+      const disk = (await window.okbot.getSettings()) as AppSettings;
+      const order = normalizeOwnerGroupOrder(disk.ownerGroupOrder, disk.ownerGroups || []);
+      const from = order.indexOf(fromId);
+      const to = order.indexOf(toId);
+      if (from < 0 || to < 0) return;
+      const next = order.filter((id) => id !== fromId);
+      const insertAt = next.indexOf(toId);
+      if (insertAt < 0) return;
+      next.splice(insertAt, 0, fromId);
+      const saved = await window.okbot.saveSettings(
+        mergeSettingsPatch(disk, { ownerGroupOrder: next }),
+      );
+      setSettings(saved);
+    } catch (err) {
+      toast.error(formatSystemError(err));
+    }
+  }
+
+  function renderMoveMenuItems(ownerId: string) {
+    const customGroups = settings?.ownerGroups ?? [];
+    const currentGid = currentOwnerGroupId(ownerId);
+    if (customGroups.length === 0) {
+      return (
+        <button
+          type="button"
+          onClick={() => {
+            setMenu(null);
+            void createGroupAndMoveOwner(ownerId);
+          }}
+        >
+          <span className="menu-item-icon"><FolderPlusIcon /></span>
+          <span>{t(lang, 'moveToNewGroup')}</span>
+        </button>
+      );
+    }
+    const byId = new Map(customGroups.map((g) => [g.id, g]));
+    const order = normalizeOwnerGroupOrder(settings?.ownerGroupOrder, customGroups);
+    return (
+      <div className="menu-item-submenu">
+        <button type="button" className="has-submenu" onClick={(e) => e.preventDefault()}>
+          <span className="menu-item-icon"><FolderIcon /></span>
+          <span>{t(lang, 'moveToGroup')}</span>
+          <span className="menu-submenu-chevron" aria-hidden>
+            <ChevronRightIcon />
+          </span>
+        </button>
+        <div className="menu-submenu" onClick={(e) => e.stopPropagation()}>
+          {order.map((gid) => {
+            const isUngrouped = gid === UNGROUPED_OWNER_GROUP_ID;
+            const label = isUngrouped
+              ? t(lang, 'ungroupedGroup')
+              : byId.get(gid)?.name || gid;
+            return (
+              <button
+                key={gid}
+                type="button"
+                onClick={() => {
+                  setMenu(null);
+                  void moveOwnerToGroup(ownerId, gid);
+                }}
+              >
+                <span className="menu-item-icon">
+                  {currentGid === gid ? <CheckIcon /> : <FolderIcon />}
+                </span>
+                <span>{label}</span>
+              </button>
+            );
+          })}
+          <div className="menu-sep" />
+          <button
+            type="button"
+            onClick={() => {
+              setMenu(null);
+              void createGroupAndMoveOwner(ownerId);
+            }}
+          >
+            <span className="menu-item-icon"><FolderPlusIcon /></span>
+            <span>{t(lang, 'createOwnerGroup')}</span>
+          </button>
+        </div>
+      </div>
+    );
   }
 
   function cancelInlineRename() {
@@ -2039,7 +1767,7 @@ export function App() {
       if (squadWizard.id) {
         await window.okbot.updateSquad(squadWizard.id, {
           name,
-          description: squadWizard.description,
+          // description evolved by post-turn refresh (read-only in form)
           members,
           providerId: squadWizard.providerId.trim(),
           modelId: squadWizard.modelId.trim(),
@@ -2058,6 +1786,29 @@ export function App() {
         setSquadWizard(null);
         selectSession({ kind: 'squad', id: squad.id });
       }
+    } catch (err) {
+      toast.error(formatSystemError(err));
+    }
+  }
+
+  /** Edit drawer auto-save (BotForm-style); does not close the modal. */
+  async function handleSquadApply(values: SquadWizardState) {
+    if (!values.id) return;
+    const name = values.name.trim();
+    if (!name) return;
+    const members: SquadMember[] = values.memberIds.map((botId) => ({
+      botId,
+      role: (values.roles[botId] || '').trim() || t(lang, 'squadMemberDefaultRole'),
+    }));
+    try {
+      await window.okbot.updateSquad(values.id, {
+        name,
+        // description evolved by post-turn refresh (read-only in form)
+        members,
+        providerId: values.providerId.trim(),
+        modelId: values.modelId.trim(),
+      });
+      setSquads(await window.okbot.listSquads());
     } catch (err) {
       toast.error(formatSystemError(err));
     }
@@ -2721,8 +2472,10 @@ async function handleSend(retry?: {
 
 
   function updateDockMagnify(clientY: number) {
-    const root = sessionListRef.current;
-    if (!root) return;
+    const list = sessionListRef.current;
+    if (!list) return;
+    // Pins sit outside the scrollport; measure the whole session-pane.
+    const root = list.closest('.session-pane') ?? list;
     // Setting default OFF: only magnify when explicitly enabled in General settings.
     if (settings?.sidebarDockMagnify !== true) {
       lastDockYRef.current = null;
@@ -2779,15 +2532,14 @@ async function handleSend(retry?: {
   }
 
   function placeDockTipFor(node: HTMLElement, target: DockTipTarget) {
-    // Entering a session cancels a pending grace-hide (sliding across rows).
-    clearDockTipHideTimer();
     const showNow = () => {
       dockTipTimerRef.current = null;
       dockTipVisibleRef.current = true;
+      dockTipScanUntilRef.current = 0;
       setDockTip(buildDockTip(node, target));
     };
-    // Once open, update content/position immediately — no re-delay between sessions.
-    if (dockTipVisibleRef.current) {
+    // Already open, or hopping to a neighbor right after leave-hide — no re-delay.
+    if (dockTipVisibleRef.current || Date.now() < dockTipScanUntilRef.current) {
       clearDockTipTimer();
       showNow();
       return;
@@ -2837,12 +2589,6 @@ async function handleSend(retry?: {
     }
   }
 
-  function themeModeLabel(mode: ThemeMode) {
-    if (mode === 'light') return t(lang, 'themeLight');
-    if (mode === 'dark') return t(lang, 'themeDark');
-    return t(lang, 'themeSystem');
-  }
-
   // Stable identities for memo(SessionSidebar) / memo(ChatTranscript).
   const onOpenSearch = useCallback(() => setSearchOpen(true), []);
   const onToggleImmersiveChat = useCallback(() => setImmersiveChat((v) => !v), []);
@@ -2890,9 +2636,6 @@ async function handleSend(retry?: {
   const onCopyMessage = useCallback((message: ChatMessage) => {
     return handleCopyMessage(message);
   }, [lang]);
-  const onViewTokenUsage = useCallback((message: ChatMessage) => {
-    setTokenUsageView({ messageId: message.id, usage: message.usage });
-  }, []);
   const onViewTurnTrace = useCallback((message: ChatMessage) => {
     setTurnTraceView({ messageId: message.id, trace: message.trace });
   }, []);
@@ -2976,6 +2719,7 @@ async function handleSend(retry?: {
       micStream,
       voiceStatusLabel,
       composerPlaceholder,
+      updateDraft,
       onClearQuote,
       onRemoveAttachment,
       onPickAttach,
@@ -2984,6 +2728,55 @@ async function handleSend(retry?: {
       onToggleVoice,
     ],
   );
+
+
+  const sidebarUpdateControl = useMemo(() => {
+    const phase = updaterStatus?.phase;
+    if (
+      !updaterStatus ||
+      (phase !== 'available' && phase !== 'downloading' && phase !== 'downloaded')
+    ) {
+      return null;
+    }
+    const autoUpdateOn = settings?.autoUpdate !== false;
+    const showBadge = !autoUpdateOn && phase === 'available';
+    const isDownloading = phase === 'downloading';
+    const isReady = phase === 'downloaded';
+    const title = isReady
+      ? t(lang, 'updateDownloaded')
+      : isDownloading
+        ? t(lang, 'updateDownloading', {
+            progress: String(updaterStatus.progress ?? 0),
+          })
+        : showBadge
+          ? t(lang, 'newVersionFound')
+          : t(lang, 'updateAvailable', {
+              version: updaterStatus.availableVersion ?? '',
+            });
+    const aria = isReady
+      ? t(lang, 'installUpdate')
+      : isDownloading
+        ? t(lang, 'downloadingUpdate')
+        : showBadge
+          ? t(lang, 'newVersionFound')
+          : t(lang, 'downloadUpdate');
+    return {
+      phase,
+      title,
+      aria,
+      showBadge,
+      disabled: isDownloading && autoUpdateOn,
+      onClick: () => {
+        if (isReady) {
+          void window.okbot.updaterInstall();
+          return;
+        }
+        if (isDownloading) return;
+        setSettingsFocus({ tab: 'updates', sectionId: 'autoUpdate' });
+        setSettingsOpen(true);
+      },
+    };
+  }, [updaterStatus, settings?.autoUpdate, lang]);
 
   return (
     <div
@@ -2999,6 +2792,7 @@ async function handleSend(retry?: {
         createMenuPos={createMenuPos}
         sessions={sessions}
         selection={selection}
+        draftPreviewsByOwner={draftPreviewsByOwner}
         bots={bots}
         renameTarget={renameTarget}
         renameValue={renameValue}
@@ -3017,7 +2811,10 @@ async function handleSend(retry?: {
           void importAssistantPackage();
         }}
         onOpenAssistantGallery={openAssistantGallery}
-        onSelect={selectSession}
+        onSelect={(sel) => {
+          setGalleryOpen(false);
+          selectSession(sel);
+        }}
         onOpenSessionMenu={setMenu}
         onRenameValueChange={setRenameValue}
         onCommitRename={onCommitRename}
@@ -3027,6 +2824,22 @@ async function handleSend(retry?: {
         onDockScroll={onDockScroll}
         onDockMouseLeave={onDockMouseLeave}
         onPlaceDockTip={placeDockTipFor}
+        onScheduleHideDockTip={scheduleHideDockTip}
+        onHideDockTip={hideDockTip}
+        defaultAssistantId={settings?.defaultAssistantId ?? ''}
+        pinnedOwnerIds={settings?.pinnedOwnerIds ?? []}
+        hiddenOwnerIds={settings?.hiddenOwnerIds ?? []}
+        ownerGroups={settings?.ownerGroups ?? []}
+        ownerGroupOrder={settings?.ownerGroupOrder ?? []}
+        ownerGroupMembership={settings?.ownerGroupMembership ?? {}}
+        onOpenOwnerGroupMenu={setMenu}
+        onMoveOwnerToGroup={(ownerId, groupId) => {
+          void moveOwnerToGroup(ownerId, groupId);
+        }}
+        onReorderOwnerGroup={(fromId, toId) => {
+          void reorderOwnerGroupBefore(fromId, toId);
+        }}
+        updateControl={sidebarUpdateControl}
       />
 
       <div
@@ -3063,6 +2876,11 @@ async function handleSend(retry?: {
             onSettingsPatch={async (next) => {
               const saved = await window.okbot.saveSettings(next);
               setSettings(saved);
+            }}
+            onOpenMcpSettings={() => {
+              setGalleryOpen(false);
+              setSettingsFocus({ tab: 'extensions', sectionId: '' });
+              setSettingsOpen(true);
             }}
           />
         ) : !selection && settings && bots.length === 0 && squads.length === 0 ? (
@@ -3131,105 +2949,23 @@ async function handleSend(retry?: {
                       members={selectedSquad.members
                         .map((m) => bots.find((b) => b.id === m.botId))
                         .filter((b): b is Bot => !!b)
-                        .map((b) => ({ emoji: b.emoji, color: b.color }))}
+                        .map((b) => ({
+                          emoji: b.emoji,
+                          color: b.color,
+                          avatarKind: b.avatarKind,
+                          botAvatarType: b.botAvatarType,
+                        }))}
                     />
                   </span>
                   <h1>{selectedSquad.name}</h1>
                 </button>
               ) : null}
               <div className="header-actions">
-                {(() => {
-                  const phase = updaterStatus?.phase;
-                  if (
-                    !updaterStatus ||
-                    (phase !== 'available' &&
-                      phase !== 'downloading' &&
-                      phase !== 'downloaded')
-                  ) {
-                    return null;
-                  }
-                  const autoUpdateOn = settings?.autoUpdate !== false;
-                  // Auto-update ON: header tracks download → install (no settings jump).
-                  // Auto-update OFF: badge on "available" opens Settings → Auto-update.
-                  const showBadge = !autoUpdateOn && phase === 'available';
-                  const isDownloading = phase === 'downloading';
-                  const isReady = phase === 'downloaded';
-                  const title = isReady
-                    ? t(lang, 'updateDownloaded')
-                    : isDownloading
-                      ? t(lang, 'updateDownloading', {
-                          progress: String(updaterStatus.progress ?? 0),
-                        })
-                      : showBadge
-                        ? t(lang, 'newVersionFound')
-                        : t(lang, 'updateAvailable', {
-                            version: updaterStatus.availableVersion ?? '',
-                          });
-                  const aria = isReady
-                    ? t(lang, 'installUpdate')
-                    : isDownloading
-                      ? t(lang, 'downloadingUpdate')
-                      : showBadge
-                        ? t(lang, 'newVersionFound')
-                        : t(lang, 'downloadUpdate');
-                  return (
-                    <QuickTip text={title} place="below">
-                    <button
-                      type="button"
-                      className={`header-icon-btn header-update-btn${
-                        isDownloading
-                          ? ' downloading'
-                          : isReady
-                            ? ' ready'
-                            : ' available'
-                      }${showBadge ? ' has-badge' : ''}`}
-                      aria-label={aria}
-                      disabled={isDownloading && autoUpdateOn}
-                      onClick={() => {
-                        if (isReady) {
-                          void window.okbot.updaterInstall();
-                          return;
-                        }
-                        if (isDownloading) return;
-                        // available (auto-update OFF, or brief ON before auto-download)
-                        setSettingsFocus({ tab: 'updates', sectionId: 'autoUpdate' });
-                        setSettingsOpen(true);
-                      }}
-                    >
-                      {isReady ? <InstallUpdateIcon /> : <DownloadUpdateIcon />}
-                    </button>
-                    </QuickTip>
-                  );
-                })()}
-                <QuickTip text={t(lang, 'copyRequestUrl')} place="below">
+                <QuickTip place="below" text={t(lang, 'themeCycle')}>
                 <button
                   type="button"
                   className="header-icon-btn"
-                  aria-label={t(lang, 'copyRequestUrl')}
-                  onClick={() => void copyLocalHttpRequestUrl()}
-                >
-                  <CopyRequestUrlIcon />
-                </button>
-                </QuickTip>
-                <QuickTip text={t(lang, 'runTraceButton')} place="below">
-                <button
-                  type="button"
-                  className="header-icon-btn"
-                  aria-label={t(lang, 'runTraceButton')}
-                  onClick={() => void openRunTrace()}
-                >
-                  <RunTraceIcon />
-                </button>
-                </QuickTip>
-                <QuickTip place="below" text={t(lang, 'themeCycle', {
-                    mode: themeModeLabel(settings?.theme ?? 'system'),
-                  })}>
-                <button
-                  type="button"
-                  className="header-icon-btn"
-                  aria-label={t(lang, 'themeCycle', {
-                    mode: themeModeLabel(settings?.theme ?? 'system'),
-                  })}
+                  aria-label={t(lang, 'themeCycle')}
                   onClick={() => void cycleTheme()}
                 >
                   <ThemeModeIcon mode={settings?.theme ?? 'system'} />
@@ -3270,7 +3006,7 @@ async function handleSend(retry?: {
               onOpenPromptContext={onOpenPromptContext}
               onQuoteMessage={onQuoteMessage}
               onCopyMessage={onCopyMessage}
-              onViewTokenUsage={onViewTokenUsage}
+              usageModelRef={usageModelRef}
               onViewTurnTrace={onViewTurnTrace}
               onJumpToQuotedMessage={onJumpToQuotedMessage}
               onJumpToBottom={onJumpToBottom}
@@ -3285,19 +3021,18 @@ async function handleSend(retry?: {
               immersiveChat={immersiveChat}
               onToggleImmersiveChat={onToggleImmersiveChat}
               showThinking={showThinking}
+              showAdvancedSettings={settings?.showAdvancedSettings === true}
             />
           </div>
         )}
 
       </main>
 
-      {narrow && dockTip && (
+      {dockTip && (
         <div
           className="dock-tip"
           style={{ top: dockTip.top, left: dockTip.left }}
           role="tooltip"
-          onMouseEnter={() => cancelHideDockTip()}
-          onMouseLeave={() => scheduleHideDockTip()}
         >
           <div className="dock-tip-head">
             {dockTip.kind === 'bot' ? (
@@ -3308,6 +3043,8 @@ async function handleSend(retry?: {
                 avatarKind={dockTip.avatarKind}
                 botAvatarType={dockTip.botAvatarType}
                 busy={botIsWorking(dockTip.id)}
+                showDefaultMark={settings?.defaultAssistantId === dockTip.id}
+                defaultMarkTitle={t(lang, 'defaultAssistant')}
               />
             ) : (
               <span className="dock-tip-avatar">
@@ -3324,179 +3061,595 @@ async function handleSend(retry?: {
 
       {menu && (
         <div
+          ref={menuRef}
           className="menu"
           style={{ left: menu.x, top: menu.y }}
           onClick={(e) => e.stopPropagation()}
         >
           {menu.kind === 'bot' ? (
-            <>
-              <button
-                type="button"
-                onClick={() => {
-                  const bot = menu.bot;
-                  setMenu(null);
-                  if (narrow) tryExpandSidebar();
-                  setRenameTarget({ kind: 'bot', id: bot.id, name: bot.name });
-                  setRenameValue(bot.name);
-                }}
-              >
-                <span className="menu-item-icon"><EditIcon /></span>
-                <span>{t(lang, 'rename')}</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setProfileBot(menu.bot);
-                  setMenu(null);
-                }}
-              >
-                <span className="menu-item-icon"><PersonIcon /></span>
-                <span>{t(lang, 'profile')}</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  const botId = menu.bot.id;
-                  setMenu(null);
-                  void (async () => {
-                    try {
-                      const res = await window.okbot.exportAssistantPackage(botId);
-                      if (res && !res.canceled && 'path' in res) {
-                        toast.success(`${t(lang, 'botPackageExported')}: ${res.path}`);
+            joinMenuSections(
+              [
+                (settings?.hiddenOwnerIds ?? []).includes(menu.bot.id) ? null : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const ownerId = menu.bot.id;
+                      const pinned = settings?.pinnedOwnerIds ?? [];
+                      const next = pinned.includes(ownerId)
+                        ? pinned.filter((id) => id !== ownerId)
+                        : [...pinned, ownerId];
+                      setMenu(null);
+                      void (async () => {
+                        try {
+                          const disk = await window.okbot.getSettings();
+                          const saved = await window.okbot.saveSettings(
+                            mergeSettingsPatch(disk, { pinnedOwnerIds: next }),
+                          );
+                          setSettings(saved);
+                        } catch (err) {
+                          toast.error(formatSystemError(err));
+                        }
+                      })();
+                    }}
+                  >
+                    <span className="menu-item-icon">
+                      {(settings?.pinnedOwnerIds ?? []).includes(menu.bot.id) ? (
+                        <UnpinIcon />
+                      ) : (
+                        <PinIcon />
+                      )}
+                    </span>
+                    <span>
+                      {(settings?.pinnedOwnerIds ?? []).includes(menu.bot.id)
+                        ? t(lang, 'unpinSession')
+                        : t(lang, 'pinSession')}
+                    </span>
+                  </button>
+                ),
+                (settings?.hiddenOwnerIds ?? []).includes(menu.bot.id) ? null : renderMoveMenuItems(menu.bot.id),
+                <button
+                  type="button"
+                  onClick={() => {
+                    const ownerId = menu.bot.id;
+                    const nextUnread = !sessionHasUnread(ownerId);
+                    setMenu(null);
+                    markSessionUnread(ownerId, nextUnread);
+                  }}
+                >
+                  <span className="menu-item-icon">
+                    {sessionHasUnread(menu.bot.id) ? <MarkAsReadIcon /> : <MarkAsUnreadIcon />}
+                  </span>
+                  <span>
+                    {sessionHasUnread(menu.bot.id)
+                      ? t(lang, 'markAsRead')
+                      : t(lang, 'markAsUnread')}
+                  </span>
+                </button>,
+              ],
+              [
+                <button
+                  type="button"
+                  onClick={() => {
+                    const bot = menu.bot;
+                    setMenu(null);
+                    if (narrow) tryExpandSidebar();
+                    setRenameTarget({ kind: 'bot', id: bot.id, name: bot.name });
+                    setRenameValue(bot.name);
+                  }}
+                >
+                  <span className="menu-item-icon"><EditIcon /></span>
+                  <span>{t(lang, 'rename')}</span>
+                </button>,
+                (settings?.hiddenOwnerIds ?? []).includes(menu.bot.id) ? null : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setProfileBot(menu.bot);
+                      setMenu(null);
+                    }}
+                  >
+                    <span className="menu-item-icon"><PersonIcon /></span>
+                    <span>{t(lang, 'profile')}</span>
+                  </button>
+                ),
+                (settings?.hiddenOwnerIds ?? []).includes(menu.bot.id) ? null : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const botId = menu.bot.id;
+                      const clear = settings?.defaultAssistantId === botId;
+                      setMenu(null);
+                      void (async () => {
+                        try {
+                          const disk = await window.okbot.getSettings();
+                          const saved = await window.okbot.saveSettings(
+                            mergeSettingsPatch(disk, {
+                              defaultAssistantId: clear ? '' : botId,
+                            }),
+                          );
+                          setSettings(saved);
+                        } catch (err) {
+                          toast.error(formatSystemError(err));
+                        }
+                      })();
+                    }}
+                  >
+                    <span className="menu-item-icon"><DefaultAssistantIcon /></span>
+                    <span>
+                      {settings?.defaultAssistantId === menu.bot.id
+                        ? t(lang, 'clearDefaultAssistant')
+                        : t(lang, 'setDefaultAssistant')}
+                    </span>
+                  </button>
+                ),
+              ],
+              [
+                settings?.showAdvancedSettings === true ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const bot = menu.bot;
+                      setMenu(null);
+                      void copyLocalHttpRequestUrl({ kind: 'bot', id: bot.id });
+                    }}
+                  >
+                    <span className="menu-item-icon"><CopyRequestUrlIcon /></span>
+                    <span>{t(lang, 'copyRequestUrl')}</span>
+                  </button>
+                ) : null,
+                <button
+                  type="button"
+                  onClick={() => {
+                    const botId = menu.bot.id;
+                    setMenu(null);
+                    void (async () => {
+                      try {
+                        const res = await window.okbot.exportAssistantPackage(botId);
+                        if (res && !res.canceled && 'path' in res) {
+                          toast.success(`${t(lang, 'botPackageExported')}: ${res.path}`);
+                        }
+                      } catch (err) {
+                        toast.error(formatSystemError(err));
                       }
-                    } catch (err) {
-                      toast.error(formatSystemError(err));
-                    }
-                  })();
-                }}
-              >
-                <span className="menu-item-icon"><ExportAssistantIcon /></span>
-                <span>{t(lang, 'botExportPackage')}</span>
-              </button>
-              <button
-                type="button"
-                className="danger"
-                onClick={() => {
-                  const botId = menu.bot.id;
-                  const botName = menu.bot.name;
-                  setMenu(null);
-                  void (async () => {
-                    const ok = await requestConfirm({
-                      message: t(lang, 'deleteConfirm', { name: botName }),
-                      confirmLabel: t(lang, 'delete'),
-                      cancelLabel: t(lang, 'cancel'),
-                      danger: true,
-                    });
-                    if (!ok) return;
-                    try {
-                      await window.okbot.deleteBot(botId);
-                      setBots(await window.okbot.listBots());
-                      setBusyByBot((prev) => {
-                        if (!(botId in prev)) return prev;
-                        const next = { ...prev };
-                        delete next[botId];
-                        return next;
-                      });
-                      setToolCardsByBot((prev) => {
-                        if (!(botId in prev)) return prev;
-                        const next = { ...prev };
-                        delete next[botId];
-                        return next;
-                      });
-                      setTurnPhaseByBot((prev) => {
-                        if (!(botId in prev)) return prev;
-                        const next = { ...prev };
-                        delete next[botId];
-                        return next;
-                      });
-                      if (selectionRef.current?.kind === 'bot' && selectionRef.current.id === botId) {
-                        setSelection(null);
-                        saveLastSelection(null);
+                    })();
+                  }}
+                >
+                  <span className="menu-item-icon"><ExportAssistantIcon /></span>
+                  <span>{t(lang, 'botExportPackage')}</span>
+                </button>,
+              ],
+              [
+                <button
+                  type="button"
+                  onClick={() => {
+                    const ownerId = menu.bot.id;
+                    setMenu(null);
+                    void (async () => {
+                      try {
+                        const disk = (await window.okbot.getSettings()) as AppSettings;
+                        const hidden = disk.hiddenOwnerIds ?? [];
+                        const isHidden = hidden.includes(ownerId);
+                        const nextHidden = isHidden
+                          ? hidden.filter((id) => id !== ownerId)
+                          : [...hidden, ownerId];
+                        // Hide unpins; 显示 restores to main list only (not re-pin).
+                        const nextPinned = isHidden
+                          ? (disk.pinnedOwnerIds ?? [])
+                          : (disk.pinnedOwnerIds ?? []).filter((id) => id !== ownerId);
+                        const saved = await window.okbot.saveSettings(
+                          mergeSettingsPatch(disk, {
+                            hiddenOwnerIds: nextHidden,
+                            pinnedOwnerIds: nextPinned,
+                          }),
+                        );
+                        setSettings(saved);
+                      } catch (err) {
+                        toast.error(formatSystemError(err));
                       }
-                    } catch (err) {
-                      toast.error(formatSystemError(err));
-                    }
-                  })();
-                }}
-              >
-                <span className="menu-item-icon"><TrashIcon /></span>
-                <span>{t(lang, 'delete')}</span>
-              </button>
-            </>
+                    })();
+                  }}
+                >
+                  <span className="menu-item-icon">
+                    {(settings?.hiddenOwnerIds ?? []).includes(menu.bot.id) ? (
+                      <EyeIcon />
+                    ) : (
+                      <EyeOffIcon />
+                    )}
+                  </span>
+                  <span>
+                    {(settings?.hiddenOwnerIds ?? []).includes(menu.bot.id)
+                      ? t(lang, 'showSession')
+                      : t(lang, 'hideSession')}
+                  </span>
+                </button>,
+                <button
+                  type="button"
+                  className="danger"
+                  onClick={() => {
+                    const botId = menu.bot.id;
+                    const botName = menu.bot.name;
+                    setMenu(null);
+                    void (async () => {
+                      const ok = await requestConfirm({
+                        message: t(lang, 'deleteConfirm', { name: botName }),
+                        confirmLabel: t(lang, 'delete'),
+                        cancelLabel: t(lang, 'cancel'),
+                        danger: true,
+                      });
+                      if (!ok) return;
+                      try {
+                        await window.okbot.deleteBot(botId);
+                        setBots(await window.okbot.listBots());
+                        try {
+                          setSettings(await window.okbot.getSettings());
+                        } catch {
+                          /* ignore */
+                        }
+                        setBusyByBot((prev) => {
+                          if (!(botId in prev)) return prev;
+                          const next = { ...prev };
+                          delete next[botId];
+                          return next;
+                        });
+                        setToolCardsByBot((prev) => {
+                          if (!(botId in prev)) return prev;
+                          const next = { ...prev };
+                          delete next[botId];
+                          return next;
+                        });
+                        setTurnPhaseByBot((prev) => {
+                          if (!(botId in prev)) return prev;
+                          const next = { ...prev };
+                          delete next[botId];
+                          return next;
+                        });
+                        if (selectionRef.current?.kind === 'bot' && selectionRef.current.id === botId) {
+                          setSelection(null);
+                          saveLastSelection(null);
+                        }
+                      } catch (err) {
+                        toast.error(formatSystemError(err));
+                      }
+                    })();
+                  }}
+                >
+                  <span className="menu-item-icon"><TrashIcon /></span>
+                  <span>{t(lang, 'delete')}</span>
+                </button>,
+              ],
+            )
+          ) : menu.kind === 'squad' ? (
+            joinMenuSections(
+              [
+                (settings?.hiddenOwnerIds ?? []).includes(menu.squad.id) ? null : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const ownerId = menu.squad.id;
+                      const pinned = settings?.pinnedOwnerIds ?? [];
+                      const next = pinned.includes(ownerId)
+                        ? pinned.filter((id) => id !== ownerId)
+                        : [...pinned, ownerId];
+                      setMenu(null);
+                      void (async () => {
+                        try {
+                          const disk = await window.okbot.getSettings();
+                          const saved = await window.okbot.saveSettings(
+                            mergeSettingsPatch(disk, { pinnedOwnerIds: next }),
+                          );
+                          setSettings(saved);
+                        } catch (err) {
+                          toast.error(formatSystemError(err));
+                        }
+                      })();
+                    }}
+                  >
+                    <span className="menu-item-icon">
+                      {(settings?.pinnedOwnerIds ?? []).includes(menu.squad.id) ? (
+                        <UnpinIcon />
+                      ) : (
+                        <PinIcon />
+                      )}
+                    </span>
+                    <span>
+                      {(settings?.pinnedOwnerIds ?? []).includes(menu.squad.id)
+                        ? t(lang, 'unpinSession')
+                        : t(lang, 'pinSession')}
+                    </span>
+                  </button>
+                ),
+                (settings?.hiddenOwnerIds ?? []).includes(menu.squad.id) ? null : renderMoveMenuItems(menu.squad.id),
+                <button
+                  type="button"
+                  onClick={() => {
+                    const ownerId = menu.squad.id;
+                    const nextUnread = !sessionHasUnread(ownerId);
+                    setMenu(null);
+                    markSessionUnread(ownerId, nextUnread);
+                  }}
+                >
+                  <span className="menu-item-icon">
+                    {sessionHasUnread(menu.squad.id) ? <MarkAsReadIcon /> : <MarkAsUnreadIcon />}
+                  </span>
+                  <span>
+                    {sessionHasUnread(menu.squad.id)
+                      ? t(lang, 'markAsRead')
+                      : t(lang, 'markAsUnread')}
+                  </span>
+                </button>,
+              ],
+              [
+                <button
+                  type="button"
+                  onClick={() => {
+                    const squad = menu.squad;
+                    setMenu(null);
+                    if (narrow) tryExpandSidebar();
+                    setRenameTarget({ kind: 'squad', id: squad.id, name: squad.name });
+                    setRenameValue(squad.name);
+                  }}
+                >
+                  <span className="menu-item-icon"><EditIcon /></span>
+                  <span>{t(lang, 'rename')}</span>
+                </button>,
+                (settings?.hiddenOwnerIds ?? []).includes(menu.squad.id) ? null : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      openSquadEditor(menu.squad);
+                      setMenu(null);
+                    }}
+                  >
+                    <span className="menu-item-icon"><SquadNavIcon /></span>
+                    <span>{t(lang, 'squadProfile')}</span>
+                  </button>
+                ),
+              ],
+              [
+                settings?.showAdvancedSettings === true ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const squad = menu.squad;
+                      setMenu(null);
+                      void copyLocalHttpRequestUrl({ kind: 'squad', id: squad.id });
+                    }}
+                  >
+                    <span className="menu-item-icon"><CopyRequestUrlIcon /></span>
+                    <span>{t(lang, 'copyRequestUrl')}</span>
+                  </button>
+                ) : null,
+              ],
+              [
+                <button
+                  type="button"
+                  onClick={() => {
+                    const ownerId = menu.squad.id;
+                    setMenu(null);
+                    void (async () => {
+                      try {
+                        const disk = (await window.okbot.getSettings()) as AppSettings;
+                        const hidden = disk.hiddenOwnerIds ?? [];
+                        const isHidden = hidden.includes(ownerId);
+                        const nextHidden = isHidden
+                          ? hidden.filter((id) => id !== ownerId)
+                          : [...hidden, ownerId];
+                        const nextPinned = isHidden
+                          ? (disk.pinnedOwnerIds ?? [])
+                          : (disk.pinnedOwnerIds ?? []).filter((id) => id !== ownerId);
+                        const saved = await window.okbot.saveSettings(
+                          mergeSettingsPatch(disk, {
+                            hiddenOwnerIds: nextHidden,
+                            pinnedOwnerIds: nextPinned,
+                          }),
+                        );
+                        setSettings(saved);
+                      } catch (err) {
+                        toast.error(formatSystemError(err));
+                      }
+                    })();
+                  }}
+                >
+                  <span className="menu-item-icon">
+                    {(settings?.hiddenOwnerIds ?? []).includes(menu.squad.id) ? (
+                      <EyeIcon />
+                    ) : (
+                      <EyeOffIcon />
+                    )}
+                  </span>
+                  <span>
+                    {(settings?.hiddenOwnerIds ?? []).includes(menu.squad.id)
+                      ? t(lang, 'showSession')
+                      : t(lang, 'hideSession')}
+                  </span>
+                </button>,
+                <button
+                  type="button"
+                  className="danger"
+                  onClick={() => {
+                    const squadId = menu.squad.id;
+                    const squadName = menu.squad.name;
+                    setMenu(null);
+                    void (async () => {
+                      const ok = await requestConfirm({
+                        message: t(lang, 'deleteSquadConfirm', { name: squadName }),
+                        confirmLabel: t(lang, 'delete'),
+                        cancelLabel: t(lang, 'cancel'),
+                        danger: true,
+                      });
+                      if (!ok) return;
+                      try {
+                        await window.okbot.deleteSquad(squadId);
+                        setSquads(await window.okbot.listSquads());
+                        try {
+                          setSettings(await window.okbot.getSettings());
+                        } catch {
+                          /* ignore */
+                        }
+                        setBusyByBot((prev) => {
+                          if (!(squadId in prev)) return prev;
+                          const next = { ...prev };
+                          delete next[squadId];
+                          return next;
+                        });
+                        setToolCardsByBot((prev) => {
+                          if (!(squadId in prev)) return prev;
+                          const next = { ...prev };
+                          delete next[squadId];
+                          return next;
+                        });
+                        setTurnPhaseByBot((prev) => {
+                          if (!(squadId in prev)) return prev;
+                          const next = { ...prev };
+                          delete next[squadId];
+                          return next;
+                        });
+                        if (selectionRef.current?.kind === 'squad' && selectionRef.current.id === squadId) {
+                          setSelection(null);
+                          saveLastSelection(null);
+                        }
+                      } catch (err) {
+                        toast.error(formatSystemError(err));
+                      }
+                    })();
+                  }}
+                >
+                  <span className="menu-item-icon"><TrashIcon /></span>
+                  <span>{t(lang, 'delete')}</span>
+                </button>,
+              ],
+            )
           ) : (
             <>
-              <button
-                type="button"
-                onClick={() => {
-                  const squad = menu.squad;
-                  setMenu(null);
-                  if (narrow) tryExpandSidebar();
-                  setRenameTarget({ kind: 'squad', id: squad.id, name: squad.name });
-                  setRenameValue(squad.name);
-                }}
-              >
-                <span className="menu-item-icon"><EditIcon /></span>
-                <span>{t(lang, 'rename')}</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  openSquadEditor(menu.squad);
-                  setMenu(null);
-                }}
-              >
-                <span className="menu-item-icon"><SquadNavIcon /></span>
-                <span>{t(lang, 'squadProfile')}</span>
-              </button>
-              <button
-                type="button"
-                className="danger"
-                onClick={() => {
-                  const squadId = menu.squad.id;
-                  const squadName = menu.squad.name;
-                  setMenu(null);
+              {(() => {
+                const groupId = menu.groupId;
+                const isUngrouped = groupId === UNGROUPED_OWNER_GROUP_ID;
+                const groups = settings?.ownerGroups ?? [];
+                const order = normalizeOwnerGroupOrder(settings?.ownerGroupOrder, groups);
+                const idx = order.indexOf(groupId);
+                const canUp = idx > 0;
+                const canDown = idx >= 0 && idx < order.length - 1;
+                const groupName =
+                  isUngrouped
+                    ? t(lang, 'ungroupedGroup')
+                    : groups.find((g) => g.id === groupId)?.name || t(lang, 'newOwnerGroup');
+                const moveInOrder = (dir: -1 | 1) => {
                   void (async () => {
-                    const ok = await requestConfirm({
-                      message: t(lang, 'deleteSquadConfirm', { name: squadName }),
-                      confirmLabel: t(lang, 'delete'),
-                      cancelLabel: t(lang, 'cancel'),
-                      danger: true,
-                    });
-                    if (!ok) return;
                     try {
-                      await window.okbot.deleteSquad(squadId);
-                      setSquads(await window.okbot.listSquads());
-                      setBusyByBot((prev) => {
-                        if (!(squadId in prev)) return prev;
-                        const next = { ...prev };
-                        delete next[squadId];
-                        return next;
-                      });
-                      setToolCardsByBot((prev) => {
-                        if (!(squadId in prev)) return prev;
-                        const next = { ...prev };
-                        delete next[squadId];
-                        return next;
-                      });
-                      setTurnPhaseByBot((prev) => {
-                        if (!(squadId in prev)) return prev;
-                        const next = { ...prev };
-                        delete next[squadId];
-                        return next;
-                      });
-                      if (selectionRef.current?.kind === 'squad' && selectionRef.current.id === squadId) {
-                        setSelection(null);
-                        saveLastSelection(null);
-                      }
+                      const disk = (await window.okbot.getSettings()) as AppSettings;
+                      const list = normalizeOwnerGroupOrder(
+                        disk.ownerGroupOrder,
+                        disk.ownerGroups || [],
+                      );
+                      const i = list.indexOf(groupId);
+                      const j = i + dir;
+                      if (i < 0 || j < 0 || j >= list.length) return;
+                      const next = [...list];
+                      const tmp = next[j]!;
+                      next[j] = next[i]!;
+                      next[i] = tmp;
+                      const saved = await window.okbot.saveSettings(
+                        mergeSettingsPatch(disk, { ownerGroupOrder: next }),
+                      );
+                      setSettings(saved);
                     } catch (err) {
                       toast.error(formatSystemError(err));
                     }
                   })();
-                }}
-              >
-                <span className="menu-item-icon"><TrashIcon /></span>
-                <span>{t(lang, 'delete')}</span>
-              </button>
+                };
+                return (
+                  joinMenuSections(
+                    [
+                      !isUngrouped ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setMenu(null);
+                            if (narrow) tryExpandSidebar();
+                            setRenameTarget({
+                              kind: 'owner-group',
+                              id: groupId,
+                              name: groupName,
+                            });
+                            setRenameValue(groupName);
+                          }}
+                        >
+                          <span className="menu-item-icon"><EditIcon /></span>
+                          <span>{t(lang, 'rename')}</span>
+                        </button>
+                      ) : null,
+                    ],
+                    [
+                      <button
+                        type="button"
+                        disabled={!canUp}
+                        onClick={() => {
+                          if (!canUp) return;
+                          setMenu(null);
+                          moveInOrder(-1);
+                        }}
+                      >
+                        <span className="menu-item-icon"><ArrowUpIcon /></span>
+                        <span>{t(lang, 'moveGroupUp')}</span>
+                      </button>,
+                      <button
+                        type="button"
+                        disabled={!canDown}
+                        onClick={() => {
+                          if (!canDown) return;
+                          setMenu(null);
+                          moveInOrder(1);
+                        }}
+                      >
+                        <span className="menu-item-icon"><ArrowDownIcon /></span>
+                        <span>{t(lang, 'moveGroupDown')}</span>
+                      </button>,
+                    ],
+                    [
+                      !isUngrouped ? (
+                        <button
+                          type="button"
+                          className="danger"
+                          onClick={() => {
+                            setMenu(null);
+                            void (async () => {
+                              try {
+                                const disk = (await window.okbot.getSettings()) as AppSettings;
+                                const list = (disk.ownerGroups || []).filter(
+                                  (g) => g.id !== groupId,
+                                );
+                                const membership = {
+                                  ...(disk.ownerGroupMembership || {}),
+                                };
+                                for (const [oid, gid] of Object.entries(membership)) {
+                                  if (gid === groupId) delete membership[oid];
+                                }
+                                const nextOrder = normalizeOwnerGroupOrder(
+                                  (disk.ownerGroupOrder || []).filter((x) => x !== groupId),
+                                  list,
+                                );
+                                const saved = await window.okbot.saveSettings(
+                                  mergeSettingsPatch(disk, {
+                                    ownerGroups: list,
+                                    ownerGroupOrder: nextOrder,
+                                    ownerGroupMembership: membership,
+                                  }),
+                                );
+                                setSettings(saved);
+                              } catch (err) {
+                                toast.error(formatSystemError(err));
+                              }
+                            })();
+                          }}
+                        >
+                          <span className="menu-item-icon"><TrashIcon /></span>
+                          <span>{t(lang, 'delete')}</span>
+                        </button>
+                      ) : null,
+                    ],
+                  )
+                );
+              })()}
             </>
           )}
         </div>
@@ -3570,69 +3723,6 @@ async function handleSend(retry?: {
         </div>
       ) : null}
 
-      {runTraceView ? (
-        <div
-          className="prompt-context-overlay"
-          onClick={() => setRunTraceView(null)}
-          role="presentation"
-        >
-          <div
-            className="prompt-context-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-label={t(lang, 'runTraceTitle')}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="prompt-context-header">
-              <h3>{t(lang, 'runTraceTitle')}</h3>
-              <div className="prompt-context-actions">
-                <button
-                  type="button"
-                  className={`prompt-context-icon-btn${runTraceCopied ? ' copied' : ''}`}
-                  disabled={runTraceView.loading || !runTraceView.text.trim()}
-                  title={
-                    runTraceCopied ? t(lang, 'runTraceCopied') : t(lang, 'runTraceCopy')
-                  }
-                  aria-label={
-                    runTraceCopied ? t(lang, 'runTraceCopied') : t(lang, 'runTraceCopy')
-                  }
-                  onClick={() => {
-                    const text = runTraceView.text;
-                    if (!text.trim()) return;
-                    void (async () => {
-                      try {
-                        await copyTextToClipboard(text);
-                        setRunTraceCopied(true);
-                        window.setTimeout(() => setRunTraceCopied(false), 1500);
-                      } catch (err) {
-                        toast.error(formatSystemError(err));
-                      }
-                    })();
-                  }}
-                >
-                  {runTraceCopied ? <CheckIcon /> : <CopyIcon />}
-                </button>
-                <button
-                  type="button"
-                  className="prompt-context-icon-btn"
-                  title={t(lang, 'runTraceClose')}
-                  aria-label={t(lang, 'runTraceClose')}
-                  onClick={() => setRunTraceView(null)}
-                >
-                  <CloseIcon />
-                </button>
-              </div>
-            </div>
-            <pre className="prompt-context-body">
-              {runTraceView.loading
-                ? t(lang, 'runTraceLoading')
-                : runTraceView.text.trim()
-                  ? runTraceView.text
-                  : t(lang, 'runTraceEmpty')}
-            </pre>
-          </div>
-        </div>
-      ) : null}
 
       {createTarget && (
         <BotFormModal
@@ -3640,6 +3730,7 @@ async function handleSend(retry?: {
           title={t(lang, 'createTitle')}
           autoApply
           botId={createTarget.id}
+          showAdvancedSettings={settings?.showAdvancedSettings === true}
           providers={normalizeModelSettings(settings?.model).providers}
           defaultProviderId={normalizeModelSettings(settings?.model).defaultProviderId}
           defaultModelId={normalizeModelSettings(settings?.model).defaultModelId}
@@ -3666,6 +3757,7 @@ async function handleSend(retry?: {
           title={t(lang, 'profile')}
           autoApply
           botId={profileBot.id}
+          showAdvancedSettings={settings?.showAdvancedSettings === true}
           providers={normalizeModelSettings(settings?.model).providers}
           defaultProviderId={normalizeModelSettings(settings?.model).defaultProviderId}
           defaultModelId={normalizeModelSettings(settings?.model).defaultModelId}
@@ -3703,12 +3795,15 @@ async function handleSend(retry?: {
           lang={lang}
           bots={bots}
           value={squadWizard}
+          autoApply={Boolean(squadWizard.id)}
+          showAdvancedSettings={settings?.showAdvancedSettings === true}
           providers={normalizeModelSettings(settings?.model).providers}
           defaultProviderId={normalizeModelSettings(settings?.model).defaultProviderId}
           defaultModelId={normalizeModelSettings(settings?.model).defaultModelId}
           onChange={setSquadWizard}
           onClose={() => setSquadWizard(null)}
           onSubmit={() => void submitSquadWizard()}
+          onApply={(v) => void handleSquadApply(v)}
           syncMembers={syncSquadMembers}
           removeMember={removeSquadMember}
           reorderMember={reorderSquadMember}
@@ -3745,47 +3840,6 @@ async function handleSend(retry?: {
         <AboutModal lang={lang} onClose={() => setAboutOpen(false)} />
       ) : null}
 
-      {tokenUsageView ? (
-        <div
-          className="modal-backdrop"
-          onClick={() => setTokenUsageView(null)}
-          role="presentation"
-        >
-          <div
-            className="modal about-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-label={t(lang, 'tokenUsageTitle')}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              type="button"
-              className="modal-close"
-              onClick={() => setTokenUsageView(null)}
-              aria-label={t(lang, 'close')}
-            >
-              <CloseIcon />
-            </button>
-            <h2 className="about-name" style={{ fontSize: 18, marginTop: 8 }}>
-              {t(lang, 'tokenUsageTitle')}
-            </h2>
-            {tokenUsageView.usage &&
-            (tokenUsageView.usage.input ||
-              tokenUsageView.usage.output ||
-              tokenUsageView.usage.cache) ? (
-              <p className="about-meta">
-                {t(lang, 'usageInput')}：{tokenUsageView.usage.input}
-                <br />
-                {t(lang, 'usageOutput')}：{tokenUsageView.usage.output}
-                <br />
-                {t(lang, 'usageCache')}：{tokenUsageView.usage.cache}
-              </p>
-            ) : (
-              <p className="about-meta">{t(lang, 'tokenUsageEmpty')}</p>
-            )}
-          </div>
-        </div>
-      ) : null}
       {turnTraceView ? (
         <TurnTraceModal
           lang={lang}

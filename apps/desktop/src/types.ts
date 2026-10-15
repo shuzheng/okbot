@@ -25,11 +25,13 @@ export type SquadWizardState = {
 export type MenuState =
   | { kind: 'bot'; x: number; y: number; bot: Bot }
   | { kind: 'squad'; x: number; y: number; squad: Squad }
+  | { kind: 'owner-group'; x: number; y: number; groupId: string }
   | null;
 
 export type RenameTarget =
   | { kind: 'bot'; id: string; name: string }
   | { kind: 'squad'; id: string; name: string }
+  | { kind: 'owner-group'; id: string; name: string }
   | null;
 
 export type BotFormValues = {

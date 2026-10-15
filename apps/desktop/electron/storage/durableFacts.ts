@@ -1,3 +1,5 @@
+import { isAcceptableMemoryFact } from '@okbot/shared';
+
 /** Stable 约定 / 决定 lines pulled out of a rolling session summary. */
 
 const SECTION_NAME = '目标|约定|决定|路径/命令|未完成|其他';
@@ -63,9 +65,11 @@ export function dedupeMemoryFacts(facts: string[], existing: string[]): string[]
   const seen = existing.slice();
   for (const fact of facts) {
     const text = fact.trim();
-    if (!text || isDuplicateMemoryFact(text, seen)) continue;
+    if (!text || !isAcceptableMemoryFact(text) || isDuplicateMemoryFact(text, seen)) continue;
     out.push(text);
     seen.push(text);
   }
   return out;
 }
+
+export { isAcceptableMemoryFact } from '@okbot/shared';

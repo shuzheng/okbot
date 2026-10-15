@@ -1,3 +1,5 @@
+import { CHAT_START_BODY_KEYS } from '@okbot/shared';
+
 /**
  * Browser entry for the desktop gateway.
  * Programmatic `/v1/*` routes stay JSON; a person opening the gateway URL gets this form.
@@ -70,7 +72,6 @@ export const GATEWAY_BRIDGE_METHOD_NAMES = [
   'getMessagesPage',
   'searchMessages',
   'getPromptContext',
-  'getLastRunTrace',
   'chatStart',
   'chatStartSquad',
   'chatAbort',
@@ -128,9 +129,11 @@ const GATEWAY_EVENT_METHODS = new Set([
 export function gatewayBootJs(): string {
   const names = JSON.stringify([...GATEWAY_BRIDGE_METHOD_NAMES]);
   const events = JSON.stringify([...GATEWAY_EVENT_METHODS]);
+  const chatStartBodyKeys = JSON.stringify([...CHAT_START_BODY_KEYS]);
   return `(function(){
   var names=${names};
   var events=${events};
+  var chatStartBodyKeys=${chatStartBodyKeys};
   function noopUnsubscribe(){return function(){};}
   function gatewayToken(){
     try{
@@ -201,6 +204,16 @@ export function gatewayBootJs(): string {
       credentials:'include',
       body:JSON.stringify(body)
     }).then(readSse);
+  }
+  function buildChatStartBody(text, opts){
+    var body={text:text};
+    if(!opts) return body;
+    for(var i=0;i<chatStartBodyKeys.length;i++){
+      var k=chatStartBodyKeys[i];
+      if(k==='text') continue;
+      if(opts[k]!==undefined) body[k]=opts[k];
+    }
+    return body;
   }
   function unsupported(message){
     return function(){ return Promise.reject(new Error(message)); };
@@ -380,20 +393,10 @@ export function gatewayBootJs(): string {
         return okbot.getMessagesPage(botId,{limit:limit}).then(function(page){ return (page&&page.messages)||[]; });
       },
       chatStart:function(botId, text, opts){
-        return postChat('/v1/bots/'+encodeURIComponent(botId)+'/messages',{
-          text:text,
-          computerId:opts&&opts.computerId,
-          quoteMessageId:opts&&opts.quoteMessageId,
-          attachments:opts&&opts.attachments
-        });
+        return postChat('/v1/bots/'+encodeURIComponent(botId)+'/messages', buildChatStartBody(text, opts));
       },
       chatStartSquad:function(squadId, text, opts){
-        return postChat('/v1/squads/'+encodeURIComponent(squadId)+'/messages',{
-          text:text,
-          computerId:opts&&opts.computerId,
-          quoteMessageId:opts&&opts.quoteMessageId,
-          attachments:opts&&opts.attachments
-        });
+        return postChat('/v1/squads/'+encodeURIComponent(squadId)+'/messages', buildChatStartBody(text, opts));
       },
       chatAbort:function(ownerId){
         var id=String(ownerId||'').trim();
@@ -495,7 +498,6 @@ export function gatewayBootJs(): string {
       manageScheduledJob:function(){ return Promise.resolve({ok:true, summary:''}); },
       readGeneratedAssetDataUrl:function(){ return Promise.resolve(null); },
       getPromptContext:function(){ return Promise.resolve({text:null}); },
-      getLastRunTrace:function(){ return Promise.resolve(null); },
       searchMessages:function(){ return Promise.resolve([]); },
       listBotMemories:function(){ return Promise.resolve([]); },
       listGlobalMemories:function(){ return Promise.resolve([]); },

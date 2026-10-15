@@ -1,4 +1,4 @@
-import { Fragment, memo, useState, type ReactNode, type RefObject } from 'react';
+import { Fragment, memo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import { BorderBeam } from 'border-beam';
 import { ThinkingOrb, type OrbState } from 'thinking-orbs';
 import {
@@ -12,19 +12,35 @@ import { t, type UiLang } from '../../i18n';
 import { QuickTip } from '../../components/ui/QuickTip';
 import type { ToolCard, TurnPhase } from '../../types';
 import { FlatAvatar } from '../../components/ui/avatars';
+import { BotMentionChip } from '../../components/ui/BotMentionChip';
 import {
   CheckIcon,
   CopyIcon,
   FileAttachIcon,
   FolderAttachIcon,
   ImageAttachIcon,
+  ChevronDownIcon,
   ImmersiveChatIcon,
 } from '../../components/ui/icons';
 import { resolveMessageAttachments } from '../../utils/messageAttachments';
+import { isAvatarAccentHex, userBubbleTintStyle } from '../../utils/userBubbleTint';
+import {
+  formatSessionUpdatedAt,
+  shouldShowMessageTimeDivider,
+} from '../../utils/formatSessionUpdatedAt';
 import { BotOnboarding } from '../bots/BotOnboarding';
 import { AssistantContent } from './AssistantContent';
+import { MentionsText } from './MentionsText';
 import { ToolCardView } from './ToolCardView';
 import { ParallelTasksStrip, type ParallelTask } from './ParallelTasksStrip';
+import { TokenUsagePopover } from './TokenUsagePopover';
+import { BubbleSwipeRow } from './BubbleSwipeRow';
+import { MeshExchangeModal } from './MeshExchangeModal';
+import {
+  buildMeshReceivedCollapse,
+  isMeshReceived,
+  meshStatusChipRef,
+} from './meshStatusDisplay';
 
 export type ChatTranscriptProps = {
   lang: UiLang;
@@ -49,7 +65,8 @@ export type ChatTranscriptProps = {
   onOpenPromptContext: (messageId: string) => void;
   onQuoteMessage: (message: ChatMessage) => void;
   onCopyMessage: (message: ChatMessage) => boolean | Promise<boolean>;
-  onViewTokenUsage: (message: ChatMessage) => void;
+  /** `ProviderDisplayName/modelNameOrId` for the active chat (usage popover). */
+  usageModelRef?: string;
   onViewTurnTrace: (message: ChatMessage) => void;
   onJumpToQuotedMessage: (messageId: string) => void;
   onJumpToBottom: () => void;
@@ -66,13 +83,67 @@ export type ChatTranscriptProps = {
   onToggleImmersiveChat: () => void;
   /** Per resolved model: show `<think>` as collapsible (default true). */
   showThinking?: boolean;
+  /** When false, hide view-context / usage / turn-trace bubble actions. */
+  showAdvancedSettings?: boolean;
 };
 
+
+/** Legacy 1:1 mesh ask line (`向 @Name 求助：…`) — hide from main transcript. */
+const LEGACY_MESH_ASK_RE = /^向\s*@?.+?\s*求助[：:]/;
+
+function isLegacyMeshTrailBubble(m: ChatMessage, isSquad: boolean): boolean {
+  if (isSquad || m.role !== 'assistant' || m.meshExchange) return false;
+  // Pre-status-row mesh ask/reply used speakerBotId on 1:1 bubbles.
+  if (m.speakerBotId?.trim()) return true;
+  return LEGACY_MESH_ASK_RE.test((m.content || '').trim());
+}
 
 function AttachKindIcon({ kind }: { kind: MessageAttachment['kind'] }) {
   if (kind === 'image') return <ImageAttachIcon />;
   if (kind === 'folder') return <FolderAttachIcon />;
   return <FileAttachIcon />;
+}
+
+
+function BubbleUsageButton({
+  lang,
+  message,
+  modelRef,
+}: {
+  lang: UiLang;
+  message: ChatMessage;
+  modelRef?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const btnRef = useRef<HTMLButtonElement | null>(null);
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        className={`bubble-action-btn${open ? ' is-active' : ''}`}
+        title={t(lang, 'viewTokenUsage')}
+        aria-label={t(lang, 'viewTokenUsage')}
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
+          <path d="M4 19V5M4 19h16" />
+          <path d="M8 15v-4M12 15V8M16 15v-7" />
+        </svg>
+      </button>
+      {open ? (
+        <TokenUsagePopover
+          lang={lang}
+          usage={message.usage}
+          modelRef={modelRef}
+          anchorEl={btnRef.current}
+          onClose={() => setOpen(false)}
+        />
+      ) : null}
+    </>
+  );
 }
 
 function BubbleCopyButton({
@@ -162,7 +233,7 @@ export const ChatTranscript = memo(function ChatTranscript({
   onOpenPromptContext,
   onQuoteMessage,
   onCopyMessage,
-  onViewTokenUsage,
+  usageModelRef,
   onViewTurnTrace,
   onJumpToQuotedMessage,
   onJumpToBottom,
@@ -177,7 +248,18 @@ export const ChatTranscript = memo(function ChatTranscript({
   immersiveChat,
   onToggleImmersiveChat,
   showThinking = true,
+  showAdvancedSettings = false,
 }: ChatTranscriptProps) {
+  const [meshViewMessage, setMeshViewMessage] = useState<ChatMessage | null>(null);
+  const sessionOwnerId = selectedSquad ? undefined : selectedBot?.id;
+  const meshRecvCollapse = buildMeshReceivedCollapse(messages, sessionOwnerId);
+  // Squad has no squad-level color; tint only when 1:1 bot accent is set.
+  const userBubbleAccent =
+    !selectedSquad && selectedBot && isAvatarAccentHex(selectedBot.color)
+      ? selectedBot.color
+      : undefined;
+  const userBubbleTint = userBubbleTintStyle(userBubbleAccent);
+
   const renderToolCard = (card: ToolCard) => (
     <ToolCardView
       key={card.requestId}
@@ -192,7 +274,11 @@ export const ChatTranscript = memo(function ChatTranscript({
   return (
     <>
       <div className="messages-shell">
-        <div className="messages scroll-fade" ref={messagesBoxRef}>
+        <div
+          className={`messages scroll-fade${userBubbleAccent ? ' has-user-bubble-tint' : ''}`}
+          style={userBubbleTint as CSSProperties | undefined}
+          ref={messagesBoxRef}
+        >
           {loadingOlder ? (
             <div className="messages-page-hint">{t(lang, 'loadEarlierMessages')}</div>
           ) : hasMoreOlder ? (
@@ -222,12 +308,21 @@ export const ChatTranscript = memo(function ChatTranscript({
                 : t(lang, 'emptyChatHint', { name: selectedBot!.name })}
             </div>
           ) : null}
-          {messages.map((m) => {
-            const cardsForMsg = toolCards.filter((c) => c.messageId === m.id);
+          {messages.map((m, index) => {
+            const cardsForMsg = toolCards.filter(
+              (c) => c.messageId === m.id && c.toolName !== 'ask_assistant',
+            );
             const hideEmptyAssistant = m.role === 'assistant' && !m.content && busy;
             const showCtx = m.role === 'user';
             const isSquadAssistant = !!(selectedSquad && m.role === 'assistant');
-            const speakerId = isSquadAssistant ? m.speakerBotId || SQUAD_CAPTAIN_SPEAKER_ID : null;
+            // 1:1 mesh exchanges also tag speakerBotId (ask/reply trail).
+            const meshSpeakerId =
+              !selectedSquad && m.role === 'assistant' && m.speakerBotId?.trim()
+                ? m.speakerBotId.trim()
+                : null;
+            const speakerId = isSquadAssistant
+              ? m.speakerBotId || SQUAD_CAPTAIN_SPEAKER_ID
+              : meshSpeakerId;
             const isCaptainSpeaker =
               isSquadAssistant &&
               (!speakerId ||
@@ -237,18 +332,81 @@ export const ChatTranscript = memo(function ChatTranscript({
               speakerId && !isCaptainSpeaker
                 ? bots.find((b) => b.id === speakerId) ?? null
                 : null;
-            // Captain replies: no avatar / no has-speaker gap. Members keep FlatAvatar.
-            const showMemberAvatar = isSquadAssistant && !isCaptainSpeaker;
+            // Squad members + 1:1 mesh peer bubbles keep FlatAvatar; captain has none.
+            const showMemberAvatar =
+              (!!isSquadAssistant && !isCaptainSpeaker) ||
+              (!!meshSpeakerId && !!speakerBot);
+            // Name label makes A↔B mesh / squad exchanges scannable (avatar alone is easy to miss).
+            const speakerLabel = showMemberAvatar
+              ? (speakerBot?.name || '').trim() || speakerId || ''
+              : '';
             const userAtts = showCtx ? resolveMessageAttachments(m) : null;
             const userBody = userAtts ? userAtts.body : m.content;
             const userAttachments = userAtts?.attachments ?? [];
             const hasUserBody = Boolean((userBody || '').trim());
+            const prevCreatedAt = index > 0 ? messages[index - 1]?.createdAt : null;
+            const timeLabel =
+              !hideEmptyAssistant && shouldShowMessageTimeDivider(prevCreatedAt, m.createdAt)
+                ? formatSessionUpdatedAt(m.createdAt, lang)
+                : '';
+            if (!selectedSquad && isLegacyMeshTrailBubble(m, false)) {
+              return null;
+            }
+            if (m.meshExchange) {
+              if (meshRecvCollapse.skipIds.has(m.id)) {
+                return null;
+              }
+              const chip = meshStatusChipRef(m.meshExchange, sessionOwnerId);
+              const chipBot = bots.find((b) => b.id === chip.id) ?? null;
+              const chipRef = chipBot
+                ? chipBot
+                : {
+                    id: chip.id,
+                    name: chip.name,
+                    emoji: '🤖',
+                    color: '',
+                  };
+              const group = meshRecvCollapse.groups.get(m.id);
+              const received = isMeshReceived(m.meshExchange);
+              const labelText = received
+                ? group
+                  ? t(lang, 'meshReceivedFromCount', { n: String(group.count) })
+                  : t(lang, 'meshReceivedFrom')
+                : t(lang, 'meshSentTo');
+              const openMessage = group?.openMessage ?? m;
+              const openLabel = `${labelText} ${chipRef.name}`;
+              return (
+                <Fragment key={m.id}>
+                  {timeLabel ? (
+                    <div className="message-time-divider" role="separator" aria-label={timeLabel}>
+                      {timeLabel}
+                    </div>
+                  ) : null}
+                  <div className="mesh-status-row" role="status">
+                    <span className="mesh-status-row-text">{labelText}</span>
+                    <BotMentionChip
+                      bot={chipRef}
+                      onClick={() => setMeshViewMessage(openMessage)}
+                      aria-label={openLabel}
+                    />
+                  </div>
+                </Fragment>
+              );
+            }
+
             return (
               <Fragment key={m.id}>
+                {timeLabel ? (
+                  <div className="message-time-divider" role="separator" aria-label={timeLabel}>
+                    {timeLabel}
+                  </div>
+                ) : null}
                 {cardsForMsg.map((card) => renderToolCard(card))}
                 {hideEmptyAssistant ? null : (
-                  <div
-                    data-message-id={m.id}
+                  <BubbleSwipeRow
+                    messageId={m.id}
+                    createdAt={m.createdAt}
+                    role={m.role === 'user' ? 'user' : 'assistant'}
                     className={`bubble-row ${m.role === 'user' ? 'user' : 'assistant'}${
                       highlightMessageId === m.id ? ' message-highlight' : ''
                     }${showMemberAvatar ? ' has-speaker' : ''}`}
@@ -257,10 +415,11 @@ export const ChatTranscript = memo(function ChatTranscript({
                       <FlatAvatar
                         className="bubble-speaker-avatar"
                         emoji={speakerBot?.emoji || '🤖'}
-                        color={speakerBot?.color || '#6366F1'}
+                        color={speakerBot?.color || ''}
                         avatarKind={speakerBot?.avatarKind}
                         botAvatarType={speakerBot?.botAvatarType}
                         title={speakerBot?.name || speakerId || ''}
+                        paused
                       />
                     ) : null}
                     {showCtx ? (
@@ -285,17 +444,19 @@ export const ChatTranscript = memo(function ChatTranscript({
                               message={m}
                               onCopyMessage={onCopyMessage}
                             />
-                            <button
-                              type="button"
-                              className="bubble-action-btn"
-                              title={t(lang, 'viewPromptContext')}
-                              aria-label={t(lang, 'viewPromptContext')}
-                              onClick={() => onOpenPromptContext(m.id)}
-                            >
-                              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
-                                <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
-                              </svg>
-                            </button>
+                            {showAdvancedSettings ? (
+                              <button
+                                type="button"
+                                className="bubble-action-btn"
+                                title={t(lang, 'viewPromptContext')}
+                                aria-label={t(lang, 'viewPromptContext')}
+                                onClick={() => onOpenPromptContext(m.id)}
+                              >
+                                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
+                                  <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
+                                </svg>
+                              </button>
+                            ) : null}
                             <button
                               type="button"
                               className="bubble-action-btn"
@@ -323,7 +484,7 @@ export const ChatTranscript = memo(function ChatTranscript({
                                   hasUserBody ? '' : ' bubble-attach-only'
                                 }`}
                               >
-                                {hasUserBody ? userBody : null}
+                                {hasUserBody ? <MentionsText text={userBody} bots={bots} /> : null}
                               </div>
                             </BorderBeam>
                           ) : hasUserBody || m.sendStatus === 'failed' ? (
@@ -332,7 +493,7 @@ export const ChatTranscript = memo(function ChatTranscript({
                                 m.sendStatus === 'failed' ? ' send-failed' : ''
                               }${hasUserBody ? '' : ' bubble-attach-only'}`}
                             >
-                              {hasUserBody ? userBody : null}
+                              {hasUserBody ? <MentionsText text={userBody} bots={bots} /> : null}
                               {m.sendStatus === 'failed' ? (
                                 <button
                                   type="button"
@@ -363,40 +524,37 @@ export const ChatTranscript = memo(function ChatTranscript({
                       </div>
                     ) : (
                       <div className="bubble-body-row bubble-body-row-assistant">
-                        <div className="bubble assistant">
+                        <div className={`bubble assistant${showMemberAvatar ? ' has-speaker-label' : ''}`}>
+                          {speakerLabel ? (
+                            <div className="bubble-speaker-label">{speakerLabel}</div>
+                          ) : null}
                           <AssistantContent
                             lang={lang}
                             content={m.content}
                             showThinking={showThinking}
+                            bots={bots}
                           />
                         </div>
                         <div className="bubble-actions">
-                          <button
-                            type="button"
-                            className="bubble-action-btn"
-                            title={t(lang, 'viewTokenUsage')}
-                            aria-label={t(lang, 'viewTokenUsage')}
-                            onClick={() => onViewTokenUsage(m)}
-                          >
-                            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
-                              <path d="M4 19V5M4 19h16" />
-                              <path d="M8 15v-4M12 15V8M16 15v-7" />
-                            </svg>
-                          </button>
-                          <button
-                            type="button"
-                            className="bubble-action-btn"
-                            title={t(lang, 'viewTurnTrace')}
-                            aria-label={t(lang, 'viewTurnTrace')}
-                            onClick={() => onViewTurnTrace(m)}
-                          >
-                            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
-                              <path d="M4 6h8" />
-                              <path d="M4 12h14" />
-                              <path d="M4 18h10" />
-                              <path d="M4 4v16" />
-                            </svg>
-                          </button>
+                          {showAdvancedSettings ? (
+                            <>
+                              <BubbleUsageButton lang={lang} message={m} modelRef={usageModelRef} />
+                              <button
+                                type="button"
+                                className="bubble-action-btn"
+                                title={t(lang, 'viewTurnTrace')}
+                                aria-label={t(lang, 'viewTurnTrace')}
+                                onClick={() => onViewTurnTrace(m)}
+                              >
+                                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
+                                  <path d="M4 6h8" />
+                                  <path d="M4 12h14" />
+                                  <path d="M4 18h10" />
+                                  <path d="M4 4v16" />
+                                </svg>
+                              </button>
+                            </>
+                          ) : null}
                           <button
                             type="button"
                             className="bubble-action-btn"
@@ -416,20 +574,31 @@ export const ChatTranscript = memo(function ChatTranscript({
                         </div>
                       </div>
                     )}
-                  </div>
+                  </BubbleSwipeRow>
                 )}
               </Fragment>
             );
           })}
           {toolCards
-            .filter((c) => !messages.some((m) => m.id === c.messageId))
+            .filter(
+              (c) =>
+                c.toolName !== 'ask_assistant' &&
+                !messages.some((m) => m.id === c.messageId),
+            )
             .map((card) => renderToolCard(card))}
           <div ref={bottomRef} />
         </div>
         {showJumpToBottom ? (
-          <button type="button" className="scroll-to-bottom-btn" onClick={onJumpToBottom}>
-            {t(lang, 'scrollToBottom')}
-          </button>
+          <QuickTip text={t(lang, 'scrollToBottom')}>
+            <button
+              type="button"
+              className="scroll-to-bottom-btn"
+              aria-label={t(lang, 'scrollToBottom')}
+              onClick={onJumpToBottom}
+            >
+              <ChevronDownIcon />
+            </button>
+          </QuickTip>
         ) : null}
         <QuickTip text={t(lang, immersiveChat ? 'immersiveChatExit' : 'immersiveChatEnable')}>
         <button
@@ -461,6 +630,14 @@ export const ChatTranscript = memo(function ChatTranscript({
         </div>
       ) : null}
       {composerSlot}
+      {meshViewMessage?.meshExchange ? (
+        <MeshExchangeModal
+          lang={lang}
+          bots={bots}
+          message={meshViewMessage}
+          onClose={() => setMeshViewMessage(null)}
+        />
+      ) : null}
     </>
   );
 });function resolvedOrbTheme(): 'light' | 'dark' {

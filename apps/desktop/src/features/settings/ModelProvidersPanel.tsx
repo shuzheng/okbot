@@ -3,6 +3,7 @@ import {
   createId,
   formatContextWindowBadge,
   DEFAULT_PROVIDER_NAME,
+  sortCatalogModels,
   type ApiFormat,
   type CatalogModel,
   type ModelProvider,
@@ -17,6 +18,7 @@ import { ModelRefSelect } from './ModelRefSelect';
 import { requestConfirm, toast } from '../../components/ui';
 import { formatSystemError } from '../../utils/formatSystemError';
 import { isGatewayClient } from '../../utils/gatewayClient';
+import { EyeIcon, EyeOffIcon } from '../../components/ui/icons';
 
 export type ModelProvidersPanelProps = {
   lang: UiLang;
@@ -80,7 +82,7 @@ export function ModelProvidersPanel({ lang, value, onChange }: ModelProvidersPan
 
   const active = providers.find((p) => p.id === activeProviderId) || null;
 
-  const displayModels = active?.models ?? [];
+  const displayModels = sortCatalogModels(active?.models ?? []);
 
   useEffect(() => {
     const el = modelListScrollRef.current;
@@ -188,8 +190,9 @@ export function ModelProvidersPanel({ lang, value, onChange }: ModelProvidersPan
     if (!active) return;
     const prev = active.models;
     const idx = prev.findIndex((m) => m.id === nextModel.id);
-    const models =
-      idx >= 0 ? prev.map((m, i) => (i === idx ? nextModel : m)) : [...prev, nextModel];
+    const models = sortCatalogModels(
+      idx >= 0 ? prev.map((m, i) => (i === idx ? nextModel : m)) : [...prev, nextModel],
+    );
     const providersNext = patchProvider(providers, active.id, { models });
     let nextDefaultPid = defaultProviderId;
     let nextDefaultMid = defaultModelId;
@@ -305,7 +308,7 @@ export function ModelProvidersPanel({ lang, value, onChange }: ModelProvidersPan
           byId.set(m.id, m);
         }
       }
-      const models = [...byId.values()];
+      const models = sortCatalogModels([...byId.values()]);
       const providersNext = patchProvider(providers, providerId, { models });
       let nextDefaultPid = defaultProviderId;
       let nextDefaultMid = defaultModelId;
@@ -583,16 +586,7 @@ export function ModelProvidersPanel({ lang, value, onChange }: ModelProvidersPan
                   aria-label={showKey ? 'Hide' : 'Show'}
                   onClick={() => setShowKey((v) => !v)}
                 >
-                  {showKey ? (
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8">
-                      <path d="M3 3l18 18M10.7 10.7a2 2 0 002.6 2.6M9.9 5.1A10.5 10.5 0 0121 12c-.5 1-1.2 2-2.1 2.9M6.1 6.1C4.7 7.3 3.6 8.8 3 12c1.5 4.5 5.5 7 9 7 1.4 0 2.8-.3 4.1-.9" />
-                    </svg>
-                  ) : (
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8">
-                      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" />
-                      <circle cx="12" cy="12" r="3" />
-                    </svg>
-                  )}
+                  {showKey ? <EyeOffIcon /> : <EyeIcon />}
                 </button>
               </div>
             </div>
@@ -779,7 +773,9 @@ export function ModelProvidersPanel({ lang, value, onChange }: ModelProvidersPan
           onSave={(nextModel) => {
             if (modelEditor.mode === 'edit') {
               const prevId = modelEditor.model.id;
-              const models = active.models.map((m) => (m.id === prevId ? nextModel : m));
+              const models = sortCatalogModels(
+                active.models.map((m) => (m.id === prevId ? nextModel : m)),
+              );
               const providersNext = patchProvider(providers, active.id, { models });
               let nextDefaultMid = defaultModelId;
               if (defaultProviderId === active.id && defaultModelId === prevId) {

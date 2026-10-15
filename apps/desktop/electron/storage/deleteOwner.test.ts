@@ -62,12 +62,7 @@ assert.throws(() =>
 assert.equal(fs.existsSync(path.join(root, squad.id)), false);
 assert.equal(fs.existsSync(path.join(root, bot.id)), false);
 
-// Other late writers: run trace, usage, memory, squad purge.
-const { RunTraceRecorder } = await import('./runTrace');
-const lateTrace = new RunTraceRecorder(storage.ownerDir(bot.id), true, 'run_late');
-lateTrace.append({ type: 'error', message: 'late' } as never);
-lateTrace.finish('done');
-assert.equal(fs.existsSync(path.join(root, bot.id)), false, 'run trace must not recreate a deleted owner');
+// Other late writers: usage, memory, squad purge.
 storage.recordUsage(bot.id, { input: 5, output: 5, cache: 0 } as never);
 const stats = storage.getUsageStats();
 assert.equal(stats.byOwner[bot.id], undefined, 'no usage entry for a deleted owner');

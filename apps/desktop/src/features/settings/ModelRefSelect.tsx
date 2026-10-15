@@ -1,5 +1,6 @@
 import {
   formatContextWindowBadge,
+  sortCatalogModels,
   type ModelProvider,
 } from '@okbot/shared';
 import { t, type UiLang } from '../../i18n';
@@ -52,8 +53,10 @@ export function ModelRefSelect({
     >
       {emptyLabel != null ? <option value="">{emptyLabel}</option> : null}
       {providers.map((p) => {
-        const models = p.models.filter(
-          (m) => m.enabled || (p.id === providerId && m.id === modelId),
+        const models = sortCatalogModels(
+          p.models.filter(
+            (m) => m.enabled || (p.id === providerId && m.id === modelId),
+          ),
         );
         if (!models.length) return null;
         const groupLabel = p.name.trim() || p.id;

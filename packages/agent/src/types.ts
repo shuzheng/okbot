@@ -33,6 +33,8 @@ export interface RunChatInput {
   sessionSummary?: string;
   /** settings.instructions.assistantRoleTemplate (`{name}` → botName). */
   assistantRoleTemplate?: string;
+  /** User-chosen default assistant (identity hint in system prompt). */
+  isDefaultAssistant?: boolean;
   model: ResolvedModelConfig;
   /** Recent UI transcript; ignored for model history when `session` is provided. */
   history?: ChatMessage[];
@@ -97,6 +99,32 @@ export interface RunAgentChatInput extends RunChatInput {
   computerRoute?: ComputerRoute;
   /** Extra tools appended after the built-ins (for example MCP tools). Resume must pass the same set. */
   extraTools?: readonly Tool[];
+  /**
+   * 1:1 peer mesh peers (other assistants). Omitted / empty → no roster / no ask_assistant.
+   * Squad runs must not pass this.
+   */
+  meshPeers?: import('./mesh.js').MeshPeerSpec[];
+  /** Mesh settings bag (empty; depth/call caps removed). */
+  meshSettings?: import('@okbot/shared').MeshSettings;
+  /** Current nesting depth (0 = root). Nested runs set this internally. */
+  meshDepth?: number;
+  /** Call stack of bot ids (root should be [ownerId]). */
+  meshStack?: string[];
+  /** @deprecated Call caps removed; optional leftover counter. */
+  meshCallBudget?: import('./mesh.js').MeshCallBudget;
+  /** Nested ask_assistant maxTurns; prefer settings.squad.memberMaxTurns. */
+  meshMemberMaxTurns?: number;
+  /** Surface mesh ask/reply bubbles in the current 1:1 session. */
+  onMeshExchange?: (info: {
+    kind: 'ask' | 'reply';
+    exchangeId: string;
+    peerBotId: string;
+    peerName: string;
+    callerBotId: string;
+    callerName: string;
+    content: string;
+    usage?: TokenUsage;
+  }) => void | Promise<void>;
   onToolApprovalRequest: (req: ToolApprovalRequest) => Promise<ToolApprovalDecision>;
   onToolResult?: (info: {
     requestId: string;
@@ -106,6 +134,11 @@ export interface RunAgentChatInput extends RunChatInput {
   }) => void;
   /** Clear pre-tool narration from the live assistant bubble when tools interrupt. */
   onClearLiveText?: () => void;
+  /**
+   * Mesh ask_assistant: commit interim live text as message A and start message B
+   * for the post-peer reply (see HitlLoopHooks.onCommitLiveAssistant).
+   */
+  onCommitLiveAssistant?: () => void | Promise<void>;
   onModelTurnStart?: () => void | string;
   onModelTurnEnd?: (info: { ok: boolean; error?: string; spanId?: string }) => void;
   onApprovalWaitStart?: (toolName: string) => void | string;
@@ -125,6 +158,8 @@ export interface ResumeAgentChatAfterHitlInput {
   memoriesText?: string;
   sessionSummary?: string;
   assistantRoleTemplate?: string;
+  /** User-chosen default assistant (identity hint in system prompt). */
+  isDefaultAssistant?: boolean;
   model: ResolvedModelConfig;
   tools?: ToolPreferences;
   security?: SecuritySettings;
@@ -145,6 +180,22 @@ export interface ResumeAgentChatAfterHitlInput {
   computerRoute?: ComputerRoute;
   /** Extra tools appended after the built-ins (for example MCP tools). Resume must pass the same set. */
   extraTools?: readonly Tool[];
+  meshPeers?: import('./mesh.js').MeshPeerSpec[];
+  meshSettings?: import('@okbot/shared').MeshSettings;
+  meshDepth?: number;
+  meshStack?: string[];
+  meshCallBudget?: import('./mesh.js').MeshCallBudget;
+  meshMemberMaxTurns?: number;
+  onMeshExchange?: (info: {
+    kind: 'ask' | 'reply';
+    exchangeId: string;
+    peerBotId: string;
+    peerName: string;
+    callerBotId: string;
+    callerName: string;
+    content: string;
+    usage?: TokenUsage;
+  }) => void | Promise<void>;
   signal?: AbortSignal;
   onDelta?: (delta: string) => void;
   onToolApprovalRequest: (req: ToolApprovalRequest) => Promise<ToolApprovalDecision>;
@@ -155,6 +206,7 @@ export interface ResumeAgentChatAfterHitlInput {
     output?: string;
   }) => void;
   onClearLiveText?: () => void;
+  onCommitLiveAssistant?: () => void | Promise<void>;
   onModelTurnStart?: () => void | string;
   onModelTurnEnd?: (info: { ok: boolean; error?: string; spanId?: string }) => void;
   onApprovalWaitStart?: (toolName: string) => void | string;
@@ -176,6 +228,12 @@ export type HitlLoopHooks = {
    * live bubble so only the post-tool formal reply remains visible.
    */
   onClearLiveText?: () => void;
+  /**
+   * 1:1 mesh ask_assistant: finalize the current live assistant text as its own
+   * persisted bubble, then rotate to a fresh streaming message id for the
+   * post-peer follow-up (do not append into the interim bubble).
+   */
+  onCommitLiveAssistant?: () => void | Promise<void>;
   /** When set, duration budget pauses while waiting for tool approval (HITL). */
   toolRunBudget?: ToolRunBudget;
   /** Optional turn-span hooks (desktop RunTraceRecorder → message.trace waterfall). */
@@ -196,6 +254,17 @@ export type HitlLoopHooks = {
     memberBotId: string;
     memberName: string;
     toolName: string;
+    content: string;
+    usage?: TokenUsage;
+  }) => void | Promise<void>;
+  /** 1:1 mesh only: surface ask_assistant ask/reply in the UI transcript. */
+  onMeshExchange?: (info: {
+    kind: 'ask' | 'reply';
+    exchangeId: string;
+    peerBotId: string;
+    peerName: string;
+    callerBotId: string;
+    callerName: string;
     content: string;
     usage?: TokenUsage;
   }) => void | Promise<void>;

@@ -1,6 +1,7 @@
 import {
   DEFAULT_TOOL_PREFERENCES,
   DEFAULT_SQUAD_SETTINGS,
+  resolveModelConfig,
   type BotOnboardingAnswers,
   type BotSkill,
   type CreateSquadInput,
@@ -14,6 +15,8 @@ import {
   formatSessionPromptContext,
   galleryAssistantPackage,
   listAssistantGallery,
+  resolveImageCapability,
+  meshAskToolAllowed,
   type GalleryLang,
 } from '@okbot/agent';
 import { fetchAssistantPackageFromUrl } from './storage/fetchGithubAssistant';
@@ -23,6 +26,7 @@ import { isSquadOwnerId } from './storage/ids';
 import { discoverModels, testModelConnection } from './modelProbe';
 import { compressSessionNow } from './ipc/registerChat';
 import { abortAllOwnerRuns } from './ipc/ownerRuns';
+import { buildMeshPeerSpecs } from './ipc/chatTurnHelpers';
 
 /**
  * Bot / squad / memory / skill / model-probe operations without a transport.
@@ -59,8 +63,43 @@ export function deleteOwner(ctx: IpcContext, ownerId: string, kind: 'bot' | 'squ
   } catch {
     /* ignore */
   }
-  if (kind === 'bot') ctx.storage.deleteBot(id);
-  else ctx.storage.deleteSquad(id);
+  if (kind === 'bot') {
+    ctx.storage.deleteBot(id);
+  } else {
+    ctx.storage.deleteSquad(id);
+  }
+  try {
+    const settings = ctx.storage.getSettings();
+    let next = settings;
+    let changed = false;
+    if (kind === 'bot' && settings.defaultAssistantId === id) {
+      next = { ...next, defaultAssistantId: '' };
+      changed = true;
+    }
+    if ((settings.pinnedOwnerIds || []).includes(id)) {
+      next = {
+        ...next,
+        pinnedOwnerIds: (next.pinnedOwnerIds || []).filter((x) => x !== id),
+      };
+      changed = true;
+    }
+    if ((settings.hiddenOwnerIds || []).includes(id)) {
+      next = {
+        ...next,
+        hiddenOwnerIds: (next.hiddenOwnerIds || []).filter((x) => x !== id),
+      };
+      changed = true;
+    }
+    const membership = { ...(next.ownerGroupMembership || {}) };
+    if (id in membership) {
+      delete membership[id];
+      next = { ...next, ownerGroupMembership: membership };
+      changed = true;
+    }
+    if (changed) ctx.storage.saveSettings(next);
+  } catch (err) {
+    console.error('[okbot] clear defaultAssistantId/pinnedOwnerIds/hiddenOwnerIds/ownerGroupMembership on delete failed', err);
+  }
   return true;
 }
 
@@ -95,6 +134,17 @@ export function buildPromptContext(
       const summaryState = ctx.storage.readSessionSummary(squad.id);
       const sessionSummary = summaryState?.summary?.trim() || '';
       const coveredThroughId = summaryState?.coveredThroughId || null;
+      const modelConfig = resolveModelConfig(settings.model, {
+        providerId: squad.providerId,
+        modelId: squad.modelId,
+      });
+      const imageCapable =
+        resolveImageCapability({
+          baseURL: modelConfig.baseURL,
+          apiKey: modelConfig.apiKey,
+          catalogModelIds: modelConfig.providerModelIds,
+          providerName: modelConfig.providerName,
+        }) != null;
       // Mirror runSquadChat captain instructions (roster only; member AGENTS/skills/memories stay inside ask_* tools).
       const instructions = buildCaptainSquadInstructions({
         squadName: squad.name,
@@ -106,10 +156,14 @@ export function buildPromptContext(
         prefs: toolPrefs,
         sessionSummary: sessionSummary || undefined,
         history: [] /* session owns history */,
-        computerRouting: formatComputerRoutingSection({
-          defaultComputerId: settings.defaultComputerId,
-          computers: settings.computers,
-        }),
+        computerRouting: formatComputerRoutingSection(
+          {
+            defaultComputerId: settings.defaultComputerId,
+            computers: settings.computers,
+          },
+          { mentionGenerateImage: toolPrefs.generate_image?.enabled === true },
+        ),
+        imageCapable,
       });
       const { items, found } = ctx.storage.getSessionItemsThroughMessage(
         squad.id,
@@ -137,6 +191,18 @@ export function buildPromptContext(
     const summaryState = ctx.storage.readSessionSummary(bot.id);
     const sessionSummary = summaryState?.summary?.trim() || '';
     const coveredThroughId = summaryState?.coveredThroughId || null;
+    const modelConfig = resolveModelConfig(settings.model, {
+      providerId: bot.providerId,
+      modelId: bot.modelId,
+    });
+    const imageCapable =
+      resolveImageCapability({
+        baseURL: modelConfig.baseURL,
+        apiKey: modelConfig.apiKey,
+        catalogModelIds: modelConfig.providerModelIds,
+        providerName: modelConfig.providerName,
+      }) != null;
+    const meshPeers = buildMeshPeerSpecs(ctx.storage, bot.id);
     const instructions = buildAgentInstructions(
       bot.name,
       bot.description,
@@ -148,10 +214,17 @@ export function buildPromptContext(
       sessionSummary || undefined,
       settings.instructions?.assistantRoleTemplate,
       false,
-      formatComputerRoutingSection({
-        defaultComputerId: settings.defaultComputerId,
-        computers: settings.computers,
-      }),
+      formatComputerRoutingSection(
+        {
+          defaultComputerId: settings.defaultComputerId,
+          computers: settings.computers,
+        },
+        { mentionGenerateImage: toolPrefs.generate_image?.enabled === true },
+      ),
+      imageCapable,
+      meshPeers.map((p) => ({ id: p.id, name: p.name, description: p.description })),
+      meshPeers.length > 0 && meshAskToolAllowed(),
+      settings.defaultAssistantId === bot.id,
     );
     const { items, found } = ctx.storage.getSessionItemsThroughMessage(bot.id, payload.messageId, {
       afterMessageId: coveredThroughId,
@@ -265,12 +338,6 @@ export function createEntityOps(ctx: IpcContext) {
     listGlobalAgentsSkills: () => s.listGlobalAgentsSkills(),
     searchMessages: (a: Obj) =>
       s.searchMessages(str(a.query), { limit: typeof a.limit === 'number' ? a.limit : undefined }),
-    getLastRunTrace: (a: Obj) => {
-      const ownerId = str(a.ownerId).trim();
-      if (!ownerId) return { trace: null };
-      s.assertKnownOwnerId(ownerId);
-      return { trace: s.getLastRunTrace(ownerId) };
-    },
     getPromptContext: (a: Obj) =>
       buildPromptContext(ctx, { botId: str(a.botId), messageId: str(a.messageId) }),
     getRecentErrorLog: (a: Obj) => {

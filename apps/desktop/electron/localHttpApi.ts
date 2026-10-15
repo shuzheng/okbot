@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Socket } from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
-import { isLoopbackHostname, normalizeUsageStats, type AppSettings, type RuntimeEvent, type LocalHttpApiSettings } from '@okbot/shared';
+import { isLoopbackHostname, normalizeChatStartPayload, normalizeUsageStats, type AppSettings, type RuntimeEvent, type LocalHttpApiSettings } from '@okbot/shared';
 import { acceptRuntimeEventForSseTurn, encodeRuntimeEventSse } from '@okbot/agent';
 import type { IpcContext } from './ipc/context';
 import { abortChatOwner } from './ipc/chatControl';
@@ -61,7 +61,7 @@ function projectSettingsForGateway(settings: AppSettings): AppSettings {
     web: {
       ...settings.web,
       search: {
-        ...(settings.web?.search ?? { provider: 'tavily', apiKey: '', baseURL: '' }),
+        ...(settings.web?.search ?? { provider: 'tavily', apiKey: '', baseURL: '', compat: 'tavily' }),
         apiKey: '',
       },
       fetch: {
@@ -113,6 +113,50 @@ function extractToken(req: IncomingMessage): string {
     if (m?.[1]) return m[1].trim();
   }
   return cookieGatewayToken(req);
+}
+
+
+/** MIME for owner resources served at GET /v1/media/… */
+function mediaMimeForExt(ext: string): string {
+  const e = (ext || '').toLowerCase();
+  if (e === '.jpg' || e === '.jpeg') return 'image/jpeg';
+  if (e === '.webp') return 'image/webp';
+  if (e === '.gif') return 'image/gif';
+  if (e === '.svg') return 'image/svg+xml';
+  if (e === '.png') return 'image/png';
+  return 'application/octet-stream';
+}
+
+/**
+ * Resolve ~/.okbot/<ownerId>/resources/<file> for the media gateway.
+ * Same path rules as IPC readGeneratedAssetDataUrl.
+ */
+function resolveOwnerResourceFile(
+  okbotRootRaw: string,
+  ownerId: string,
+  fileName: string,
+): { ok: true; filePath: string } | { ok: false; error: string } {
+  const id = (ownerId || '').trim();
+  const name = (fileName || '').trim();
+  if (!id || !name || id.includes('..') || name.includes('..')) {
+    return { ok: false, error: 'invalid asset path' };
+  }
+  if (id.includes('/') || id.includes('\\') || id.includes('\0')) {
+    return { ok: false, error: 'invalid asset path' };
+  }
+  if (name.includes('/') || name.includes('\\') || name.includes('\0')) {
+    return { ok: false, error: 'invalid asset path' };
+  }
+  const okbotRoot = path.resolve(okbotRootRaw);
+  const resourcesDir = path.resolve(okbotRoot, id, 'resources');
+  const filePath = path.resolve(resourcesDir, name);
+  if (filePath !== resourcesDir && !filePath.startsWith(resourcesDir + path.sep)) {
+    return { ok: false, error: 'path outside owner resources' };
+  }
+  if (filePath !== okbotRoot && !filePath.startsWith(okbotRoot + path.sep)) {
+    return { ok: false, error: 'path outside okbot root' };
+  }
+  return { ok: true, filePath };
 }
 
 function matchPath(url: string): { pathname: string; parts: string[] } {
@@ -481,6 +525,63 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
       }
     }
 
+    // GET /v1/media/:ownerId/resources/:file — chat markdown images from ~/.okbot/…/resources/.
+    // Auth accepts Bearer / cookie / ?token= because <img> cannot set Authorization.
+    if (
+      method === 'GET' &&
+      parts.length === 5 &&
+      parts[0] === 'v1' &&
+      parts[1] === 'media' &&
+      parts[3] === 'resources'
+    ) {
+      const mediaUrl = new URL(req.url || '/', 'http://127.0.0.1');
+      if (!requestGatewayAuthed(req, mediaUrl, currentToken)) {
+        sendJson(res, 401, { ok: false, error: 'unauthorized' });
+        return;
+      }
+      let ownerId = parts[2] || '';
+      let fileName = parts[4] || '';
+      try {
+        ownerId = decodeURIComponent(ownerId);
+        fileName = decodeURIComponent(fileName);
+      } catch {
+        sendJson(res, 400, { ok: false, error: 'invalid asset path' });
+        return;
+      }
+      const resolved = resolveOwnerResourceFile(deps.ctx.storage.root, ownerId, fileName);
+      if (!resolved.ok) {
+        sendJson(res, 400, { ok: false, error: resolved.error });
+        return;
+      }
+      try {
+        const st = fs.statSync(resolved.filePath);
+        if (!st.isFile()) {
+          sendJson(res, 404, { ok: false, error: 'not_found' });
+          return;
+        }
+        if (st.size > 25 * 1024 * 1024) {
+          sendJson(res, 413, { ok: false, error: 'asset too large' });
+          return;
+        }
+        const buf = fs.readFileSync(resolved.filePath);
+        const mime = mediaMimeForExt(path.extname(resolved.filePath));
+        const headers: Record<string, string> = {
+          'Content-Type': mime,
+          'Content-Length': String(buf.byteLength),
+          'Cache-Control': 'private, max-age=3600',
+          'X-Content-Type-Options': 'nosniff',
+        };
+        if (bindLan) {
+          headers['Access-Control-Allow-Origin'] = '*';
+        }
+        res.writeHead(200, headers);
+        res.end(buf);
+      } catch {
+        sendJson(res, 404, { ok: false, error: 'not_found' });
+      }
+      return;
+    }
+
     const token = extractToken(req);
     if (!currentToken || token !== currentToken) {
       // A query token skips the login gate but is not an API credential.
@@ -771,11 +872,12 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
           return;
         }
 
-        const text = typeof parsed.text === 'string' ? parsed.text.trim() : '';
-        if (!text) {
-          sendJson(res, 400, { ok: false, error: 'text_required' });
+        const normalized = normalizeChatStartPayload(parsed);
+        if ('error' in normalized) {
+          sendJson(res, 400, { ok: false, error: normalized.error });
           return;
         }
+        const text = normalized.text;
         if (text.length > MAX_CHAT_TEXT_CHARS) {
           sendJson(res, 413, { ok: false, error: 'text_too_long' });
           return;
@@ -784,18 +886,9 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
           sendJson(res, 429, { ok: false, error: 'rate_limited' });
           return;
         }
-        const computerId =
-          typeof parsed.computerId === 'string' && parsed.computerId.trim()
-            ? parsed.computerId.trim()
-            : undefined;
-        const clientTurnId =
-          typeof parsed.clientTurnId === 'string' && parsed.clientTurnId.trim()
-            ? parsed.clientTurnId.trim()
-            : undefined;
-        const quoteMessageId =
-          typeof parsed.quoteMessageId === 'string' && parsed.quoteMessageId.trim()
-            ? parsed.quoteMessageId.trim()
-            : undefined;
+        const computerId = normalized.computerId;
+        const clientTurnId = normalized.clientTurnId;
+        const quoteMessageId = normalized.quoteMessageId;
         const attachments = normalizeMessageAttachments(parsed.attachments);
 
         if (isBotMsg) {

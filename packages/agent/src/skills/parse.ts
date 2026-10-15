@@ -1,4 +1,4 @@
-import type { BotSkill } from '@okbot/shared';
+import { normalizeSkillDescription, type BotSkill } from '@okbot/shared';
 
 /** Canonical skill directory / slug prefix. */
 export const OKBOT_SKILL_SLUG_PREFIX = 'okbot-';
@@ -65,7 +65,7 @@ export function parseSkillMarkdown(slug: string, raw: string): BotSkill {
 export function formatSkillMarkdown(skill: Pick<BotSkill, 'slug' | 'name' | 'description' | 'body'>): string {
   const slug = normalizeSkillSlug(skill.slug);
   const nm = ensureOkbotSkillName(skill.name, slug).replace(/"/g, "'");
-  const desc = (skill.description.trim() || nm).replace(/"/g, "'");
+  const desc = normalizeSkillDescription(skill.description, nm).replace(/"/g, "'");
   const body = skill.body.trim();
   return [
     '---',

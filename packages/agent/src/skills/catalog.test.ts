@@ -22,7 +22,11 @@ import {
   parseExecStreamSseBlocks,
   foldExecStreamToFormatted,
 } from '../runtime/execStream.js';
-import type { RuntimeEvent } from '@okbot/shared';
+import {
+  SKILL_DESCRIPTION_MAX_CHARS,
+  normalizeSkillDescription,
+  type RuntimeEvent,
+} from '@okbot/shared';
 
 // --- progressive skill catalog ---
 const catalog = formatSkillCatalog(
@@ -235,3 +239,19 @@ const bareMd = formatSkillMarkdown({
 });
 assert.match(bareMd, /name: "okbot-打包演示"/);
 assert.equal(normalizeSkillSlug('demo-pack'), normalizeSkillSlug('okbot-demo-pack'));
+
+// --- skill description soft clamp on format ---
+assert.equal(SKILL_DESCRIPTION_MAX_CHARS, 1024);
+const longDesc = '中'.repeat(SKILL_DESCRIPTION_MAX_CHARS + 50);
+const clampedMd = formatSkillMarkdown({
+  slug: 'okbot-long-desc',
+  name: 'okbot-long-desc',
+  description: longDesc,
+  body: '1. 做某事',
+});
+const clampedParsed = parseSkillMarkdown('okbot-long-desc', clampedMd);
+assert.equal(clampedParsed.description.length, SKILL_DESCRIPTION_MAX_CHARS);
+assert.equal(
+  normalizeSkillDescription(longDesc, 'okbot-long-desc').length,
+  SKILL_DESCRIPTION_MAX_CHARS,
+);

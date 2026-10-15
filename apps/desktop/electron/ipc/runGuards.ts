@@ -21,20 +21,16 @@ export type RunGuards = {
   dispose: () => void;
   /** After a run returns without throw: if duration breaker fired, throw CircuitBreakError. */
   throwIfBroken: () => void;
-  /** Finalize trace + clear timer. Call from finally/catch paths. */
+  /** Finalize message.trace + clear timer. Call from finally/catch paths. */
   finish: (status: Exclude<RunTraceStatus, 'running'>) => void;
-  /** Record error into trace (does not finish). */
-  recordError: (message: string) => void;
 };
 
 export function createRunGuards(input: {
-  ownerDir: string;
   toolRun: ToolRunSettings;
   controller: AbortController;
 }): RunGuards {
   const runId = createId('run');
-  const record = input.toolRun.recordTrajectory === true;
-  const trace = new RunTraceRecorder(input.ownerDir, record, runId);
+  const trace = new RunTraceRecorder(runId);
   const budget = new ToolRunBudget(input.toolRun, input.controller, {
     onToolRequest: (info) => {
       trace.beginTool(info.name, info.argsSummary);
@@ -45,9 +41,6 @@ export function createRunGuards(input: {
         ok: info.ok,
         ...(info.outputSummary != null ? { outputSummary: info.outputSummary } : {}),
       });
-    },
-    onCircuitBreak: (reason) => {
-      trace.append({ type: 'circuit_break', reason });
     },
   });
   budget.start();
@@ -66,9 +59,6 @@ export function createRunGuards(input: {
       finished = true;
       budget.dispose();
       trace.finish(status);
-    },
-    recordError: (message) => {
-      trace.append({ type: 'run_error', message });
     },
   };
 }
@@ -115,7 +105,7 @@ export function resolveRunFinishStatus(input: {
   return 'done';
 }
 
-/** Shared catch path: error log + trace markers. Returns Chinese-facing message. */
+/** Shared catch path: error log + seal message.trace. Returns Chinese-facing message. */
 export function handleRunFailure(input: {
   root: string;
   ownerId: string;
@@ -133,7 +123,6 @@ export function handleRunFailure(input: {
         ? input.err.message
         : String(input.err);
   const message = redactSensitiveText(raw);
-  input.guards.recordError(message);
   appendErrorLog(input.root, {
     ownerId: input.ownerId,
     messageId: input.messageId,

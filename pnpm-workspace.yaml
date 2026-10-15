@@ -12,4 +12,4 @@ onlyBuiltDependencies:
   - esbuild
 
 patchedDependencies:
-  bot-avatars@0.1.1: patches/bot-avatars.patch
+  bot-avatars@0.2.2: patches/bot-avatars.patch

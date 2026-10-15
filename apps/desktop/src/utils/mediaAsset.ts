@@ -1,0 +1,177 @@
+/**
+ * Chat markdown images under ~/.okbot/<owner>/resources/.
+ * Canonical src is absolute gateway `/v1/media/<owner>/resources/<file>`
+ * (also accept legacy okbot-asset:… / file://…/.okbot/…/resources/…);
+ * rendered via the local gateway GET /v1/media/… (not file://, not remote https).
+ */
+
+export type ParsedOwnerResource = {
+  /** `<ownerId>/resources/<fileName>` */
+  assetRel: string;
+  ownerId: string;
+  fileName: string;
+};
+
+const OWNER_RESOURCES_RE =
+  /(?:^|[\\/])\.okbot[\\/]([^/\\]+)[\\/]resources[\\/]([^/\\?#]+)/i;
+
+/** True for legacy okbot-asset: srcs (canonical form is `/v1/media/…`). */
+export function isOkbotAssetSrc(src: string | undefined): src is string {
+  return Boolean(src && /^okbot-asset:/i.test(src));
+}
+
+/**
+ * Safe inline `data:image/*` from legacy replies (tool copy forbids new ones).
+ * CSP allows `data:`; reject non-image data URLs (e.g. text/html).
+ */
+export function isSafeDataImageSrc(src: string | undefined): src is string {
+  return Boolean(
+    src && /^data:image\/(png|jpe?g|gif|webp|svg\+xml|bmp|x-icon)[;,]/i.test(src.trim()),
+  );
+}
+
+/**
+ * Parse `/v1/media/<ownerId>/resources/<file>`, okbot-asset:…, or a file://
+ * (or absolute) path that points at ~/.okbot/<ownerId>/resources/<file>.
+ */
+export function parseOwnerResourceSrc(src: string | undefined): ParsedOwnerResource | null {
+  if (!src || typeof src !== 'string') return null;
+  const trimmed = src.trim();
+  if (!trimmed) return null;
+
+  const fromMediaPathname = (pathname: string): ParsedOwnerResource | null => {
+    const pathOnly = pathname.split('?')[0]!.split('#')[0]!;
+    const m = /^\/v1\/media\/([^/]+)\/resources\/([^/]+)$/i.exec(pathOnly);
+    if (!m?.[1] || !m?.[2]) return null;
+    let ownerId = m[1];
+    let fileName = m[2];
+    try {
+      ownerId = decodeURIComponent(ownerId);
+      fileName = decodeURIComponent(fileName);
+    } catch {
+      /* keep encoded */
+    }
+    return parseAssetRel(`${ownerId}/resources/${fileName}`);
+  };
+
+  if (/^\/v1\/media\//i.test(trimmed)) {
+    return fromMediaPathname(trimmed);
+  }
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    try {
+      const u = new URL(trimmed);
+      return fromMediaPathname(u.pathname || '');
+    } catch {
+      return null;
+    }
+  }
+
+  if (/^okbot-asset:/i.test(trimmed)) {
+    const rel = trimmed
+      .replace(/^okbot-asset:/i, '')
+      .replace(/^\/+/, '')
+      .replace(/\\/g, '/');
+    return parseAssetRel(rel);
+  }
+
+  let pathPart = trimmed;
+  if (/^file:/i.test(trimmed)) {
+    try {
+      // file:///Users/… or file://localhost/Users/… or file:///C:/Users/…
+      const u = new URL(trimmed);
+      pathPart = decodeURIComponent(u.pathname || '');
+      // Windows: URL pathname is /C:/Users/… — keep as-is for the .okbot match.
+    } catch {
+      pathPart = trimmed.replace(/^file:\/\//i, '');
+      try {
+        pathPart = decodeURIComponent(pathPart);
+      } catch {
+        /* keep raw */
+      }
+    }
+  }
+
+  const m = OWNER_RESOURCES_RE.exec(pathPart.replace(/\\/g, '/'));
+  if (!m?.[1] || !m?.[2]) return null;
+  return parseAssetRel(`${m[1]}/resources/${m[2]}`);
+}
+
+export function parseAssetRel(relRaw: string): ParsedOwnerResource | null {
+  const rel = (relRaw || '').replace(/^\/+/, '').replace(/\\/g, '/');
+  if (!rel || rel.includes('..') || rel.startsWith('/')) return null;
+  const parts = rel.split('/');
+  if (parts.length !== 3 || parts[1] !== 'resources') return null;
+  const ownerId = parts[0] || '';
+  const fileName = parts[2] || '';
+  if (!ownerId || !fileName) return null;
+  if (ownerId.includes('\\') || fileName.includes('\\')) return null;
+  if (ownerId.includes('\0') || fileName.includes('\0')) return null;
+  return { assetRel: `${ownerId}/resources/${fileName}`, ownerId, fileName };
+}
+
+/** Pathname only: `/v1/media/<ownerId>/resources/<fileName>` (encoded). */
+export function mediaAssetPathname(assetRel: string): string | null {
+  const parsed = parseAssetRel(assetRel);
+  if (!parsed) return null;
+  return `/v1/media/${encodeURIComponent(parsed.ownerId)}/resources/${encodeURIComponent(parsed.fileName)}`;
+}
+
+type AttachCfg = { base?: string; token?: string };
+
+function attachConfig(): AttachCfg | null {
+  const raw = (globalThis as { __okbotAttach?: AttachCfg }).__okbotAttach;
+  if (!raw || typeof raw.base !== 'string' || !raw.base.trim()) return null;
+  return raw;
+}
+
+/**
+ * Build a gateway URL the <img> tag can load (Bearer is not available on img).
+ * - Attach / Electron loopback: absolute http://127.0.0.1:<port>/v1/media/…?token=
+ * - Same-origin gateway Web UI: relative /v1/media/… (cookie) or with ?token= when known
+ */
+export async function resolveMediaAssetUrl(assetRel: string): Promise<string | null> {
+  const pathname = mediaAssetPathname(assetRel);
+  if (!pathname) return null;
+
+  const attach = attachConfig();
+  if (attach?.base) {
+    const base = attach.base.replace(/\/+$/, '');
+    const token = typeof attach.token === 'string' ? attach.token.trim() : '';
+    return token ? `${base}${pathname}?token=${encodeURIComponent(token)}` : `${base}${pathname}`;
+  }
+
+  const okbot = (globalThis as { okbot?: {
+    getSettings?: () => Promise<{ localHttpApi?: { port?: number; token?: string } }>;
+    getGatewayAccessToken?: () => Promise<string>;
+  } }).okbot;
+
+  let token = '';
+  try {
+    if (typeof okbot?.getGatewayAccessToken === 'function') {
+      token = (await okbot.getGatewayAccessToken())?.trim() || '';
+    }
+  } catch {
+    token = '';
+  }
+
+  // Gateway Web UI (page origin is the API). Cookie auth works; token query is optional.
+  if (typeof document !== 'undefined' && document.documentElement?.dataset?.okbotGateway === '1') {
+    return token ? `${pathname}?token=${encodeURIComponent(token)}` : pathname;
+  }
+
+  // Electron owns-server: renderer is file:// or vite; images load from loopback gateway.
+  try {
+    const settings = typeof okbot?.getSettings === 'function' ? await okbot.getSettings() : null;
+    const port = settings?.localHttpApi?.port;
+    if (!token) {
+      token = typeof settings?.localHttpApi?.token === 'string' ? settings.localHttpApi.token.trim() : '';
+    }
+    if (typeof port === 'number' && port > 0 && token) {
+      return `http://127.0.0.1:${port}${pathname}?token=${encodeURIComponent(token)}`;
+    }
+  } catch {
+    /* fall through */
+  }
+  return null;
+}

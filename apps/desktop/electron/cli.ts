@@ -158,12 +158,6 @@ async function serve(): Promise<number> {
     return 1;
   }
 
-  try {
-    const n = storage.abandonRunningTracesOnStartup();
-    if (n > 0) console.info(`[okbot] marked ${n} abandoned run trace(s) on startup`);
-  } catch (err) {
-    console.error('[okbot] abandonRunningTracesOnStartup failed', err);
-  }
   stopSkills = startSkillWatch(storage, sendRuntimeEvent);
   stopScheduleTicker = startScheduleTicker({ storage, ctx });
 

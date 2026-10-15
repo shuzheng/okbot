@@ -30,7 +30,7 @@ import {
   runModelSegment,
   type AgentRunStreamResult,
 } from './hitl.js';
-import { buildTools, type SkillLookup } from './tools.js';
+import { buildTools, resolveImageCapability, type SkillLookup } from './tools.js';
 import type { ExecutionBackend } from './executionBackend.js';
 import { shellFsRoutingSection, type ComputerRoute } from './computerSelection.js';
 import { wrapToolExecute, type ToolRunBudget } from './toolRunBudget.js';
@@ -133,6 +133,7 @@ function buildMemberSquadInstructions(
   member: SquadMemberAgentSpec,
   prefs: ToolPreferences,
   computerRouting?: string,
+  imageCapable?: boolean,
 ): string {
   const roleLine = `你在《${squadName}》小队中的角色是：${member.role || '成员'}。请严格按该角色完成队长交给你的子任务，直接给出结果，不要扮演队长或调用其他队员。`;
   return normalizeMarkdownHeadings(
@@ -153,7 +154,7 @@ function buildMemberSquadInstructions(
       '只处理队长通过工具传入的任务。完成后把结论返回给队长。',
       computerRouting?.trim() || '',
       (() => {
-        const enabled = listEnabledToolIds(prefs);
+        const enabled = listEnabledToolIds(prefs, { imageCapable: imageCapable === true });
         return enabled.length
           ? `你当前可用的本机工具：${enabled.join('、')}。`
           : '当前没有启用任何本机工具，请直接回答。';
@@ -177,6 +178,8 @@ export function buildCaptainSquadInstructions(input: {
   history: ChatMessage[];
   hasVisionInput?: boolean;
   computerRouting?: string;
+  /** Must match buildTools generate_image gate for this provider. */
+  imageCapable?: boolean;
 }): string {
   const roster = input.members
     .map((m) => {
@@ -188,7 +191,7 @@ export function buildCaptainSquadInstructions(input: {
         .map((m, i) => `${input.askToolNames[i] || `ask_${sanitizeToolName(m.name || m.botId)}`}（参数 task：子任务说明；${m.name} / ${m.role || '成员'}）`)
         .join('、')}。`
     : '当前没有可调用的队员工具，请亲自回答。';
-  const enabled = listEnabledToolIds(input.prefs);
+  const enabled = listEnabledToolIds(input.prefs, { imageCapable: input.imageCapable === true });
   const localTools = enabled.length
     ? `你自己也可用本机工具：${enabled.join('、')}。`
     : '';
@@ -255,6 +258,13 @@ function createSquadRuntime(input: RunSquadChatInput & { resumeNote?: string }) 
   const squadSettings = input.squadSettings ?? DEFAULT_SQUAD_SETTINGS;
   const captainMaxTurns = squadSettings.captainMaxTurns;
   const memberMaxTurns = squadSettings.memberMaxTurns;
+  const imageApi = {
+    baseURL: input.model.baseURL,
+    apiKey: input.model.apiKey,
+    catalogModelIds: input.model.providerModelIds,
+    providerName: input.model.providerName,
+  };
+  const imageCapable = resolveImageCapability(imageApi) != null;
   const provider = new OpenAIProvider({
     apiKey: input.model.apiKey,
     baseURL: input.model.baseURL.replace(/\/$/, ''),
@@ -277,7 +287,8 @@ function createSquadRuntime(input: RunSquadChatInput & { resumeNote?: string }) 
         input.squadName,
         member,
         toolPrefs,
-        shellFsRoutingSection(memberRoute, toolPrefs),
+        shellFsRoutingSection(memberRoute, toolPrefs, { imageCapable }),
+        imageCapable,
       ),
       model: input.model.model,
       ...(typeof input.model.maxTokens === 'number' && input.model.maxTokens >= 1
@@ -287,12 +298,7 @@ function createSquadRuntime(input: RunSquadChatInput & { resumeNote?: string }) 
         skillLookup: member.skillLookup,
         historySearch: input.historySearch,
         scheduleManage: input.scheduleManage,
-        imageApi: {
-          baseURL: input.model.baseURL,
-          apiKey: input.model.apiKey,
-          catalogModelIds: input.model.providerModelIds,
-          providerName: input.model.providerName,
-        },
+        imageApi,
         imageAssets: { ownerId: input.ownerId, resourcesDir: input.resourcesDir },
         backend: memberRoute ? undefined : input.executionBackend,
         computerRoute: memberRoute,
@@ -422,7 +428,8 @@ function createSquadRuntime(input: RunSquadChatInput & { resumeNote?: string }) 
         sessionSummary: input.sessionSummary,
         history: historyForInstructions,
         hasVisionInput: input.hasVisionInput === true,
-        computerRouting: shellFsRoutingSection(input.computerRoute, toolPrefs),
+        computerRouting: shellFsRoutingSection(input.computerRoute, toolPrefs, { imageCapable }),
+        imageCapable,
       }),
       input.resumeNote?.trim() || '',
     ]
@@ -440,12 +447,7 @@ function createSquadRuntime(input: RunSquadChatInput & { resumeNote?: string }) 
       ...buildTools(toolPrefs, security, input.toolRunBudget, {
         historySearch: input.historySearch,
         scheduleManage: input.scheduleManage,
-        imageApi: {
-          baseURL: input.model.baseURL,
-          apiKey: input.model.apiKey,
-          catalogModelIds: input.model.providerModelIds,
-          providerName: input.model.providerName,
-        },
+        imageApi,
         imageAssets: { ownerId: input.ownerId, resourcesDir: input.resourcesDir },
         backend: input.computerRoute ? undefined : input.executionBackend,
         computerRoute: input.computerRoute,

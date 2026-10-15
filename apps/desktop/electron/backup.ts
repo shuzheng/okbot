@@ -168,7 +168,7 @@ export function carryOverSecrets(restored: unknown, current: unknown): unknown {
     const cSearch = asObj(cWeb?.search);
     if (rSearch && !rSearch.apiKey && cSearch && typeof cSearch.apiKey === 'string') {
       // Same provider (+ optional baseURL) before restoring the key.
-      if (sameFields(cSearch, rSearch, ['provider', 'baseURL'])) {
+      if (sameFields(cSearch, rSearch, ['provider', 'baseURL', 'compat'])) {
         out.web = {
           ...rWeb,
           search: { ...rSearch, apiKey: cSearch.apiKey },

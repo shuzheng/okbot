@@ -1,4 +1,4 @@
-import type { RefObject } from 'react';
+import { memo, useLayoutEffect, useState, type RefObject } from 'react';
 import { BorderBeam } from 'border-beam';
 import { ThinkingOrb } from 'thinking-orbs';
 import { VoiceBeam } from 'voice-glow';
@@ -57,7 +57,7 @@ function AttachKindIcon({ kind }: { kind: AttachKind }) {
   return <FileAttachIcon />;
 }
 
-export function ChatComposer({
+export const ChatComposer = memo(function ChatComposer({
   lang,
   listening,
   busy,
@@ -76,6 +76,123 @@ export function ChatComposer({
   onStop,
   onToggleVoice,
 }: ChatComposerProps) {
+  // Auto-grow up to 5 lines (matches .composer-inner textarea max-height).
+  // Toggle is-multiline when taller than 1 line so CSS can stack textarea full-width
+  // above the action row (GrokBot-style), without changing the compact single-line row.
+  //
+  // Height stability while typing in multi-line mode:
+  // - Snap to whole line steps (never apply raw scrollHeight px noise).
+  // - Keep CSS height transition off except on intentional single↔multi switches
+  //   (grow past 1 line / shrink under 2 lines — slightly slow ease in app.css).
+  // - overflow-y hidden until the 5-line cap so the scrollbar gutter cannot
+  //   flip wrap width and bounce height by 1–2px every keystroke.
+  // - Probe wrap at compact (side-icons) width so soft-wrap enter/exit does not
+  //   oscillate when the class itself changes textarea width.
+  // - Skip height=0 reset while already at max and content still overflows.
+  const [isMultiline, setIsMultiline] = useState(false);
+  useLayoutEffect(() => {
+    const el = composerRef.current;
+    if (!el) return;
+    const linePx = 18;
+    const padPx = 10; // textarea vertical padding 5+5
+    const maxLines = 5;
+    const maxPx = maxLines * linePx + padPx;
+    const singleLinePx = linePx + padPx;
+    const inner = el.closest('.composer-inner');
+    // Prefer live DOM class over React state so we do not re-run this effect
+    // (and kill the 1↔N height animation) just to sync isMultiline.
+    const currentlyMultiline = Boolean(inner?.classList.contains('is-multiline'));
+    const startH = el.offsetHeight;
+    const wasAtMax = startH >= maxPx - 0.5;
+    // scrollHeight vs clientHeight before any probe (overflow may still be auto).
+    const hadOverflow = el.scrollHeight > el.clientHeight + 0.5;
+
+    const parentW = el.parentElement?.clientWidth ?? el.clientWidth;
+    // Worst-case side chrome: + | mic | stop | send + gaps + inner horizontal pad.
+    const sideChrome = 30 + 8 + 30 + 8 + 28 + 8 + 28 + 14;
+    const compactW = Math.max(64, parentW - sideChrome);
+
+    const prevWidth = el.style.width;
+    const prevFlex = el.style.flex;
+    const prevMinWidth = el.style.minWidth;
+    const prevOrder = el.style.order;
+
+    // Never animate through the height=0 probe or same-mode px updates.
+    el.style.transition = 'none';
+    // Hide scrollbar during measure so gutter cannot change wrap width.
+    el.style.overflowY = 'hidden';
+
+    // 1) Decide multi-line from compact wrap (stable vs class-driven width change).
+    el.style.flex = '0 0 auto';
+    el.style.width = `${compactW}px`;
+    el.style.minWidth = `${compactW}px`;
+    el.style.height = '0px';
+    const compactSh = el.scrollHeight;
+    const nextMultiline = compactSh > singleLinePx + 0.5;
+
+    // Apply layout class immediately so display measure + chrome match final mode
+    // without waiting for a second React commit (avoids remount/focus risk too).
+    inner?.classList.toggle('is-multiline', nextMultiline);
+
+    // 2) Measure display height in the layout we are about to show.
+    if (nextMultiline) {
+      el.style.flex = '1 0 100%';
+      el.style.width = '100%';
+      el.style.minWidth = '100%';
+      el.style.order = '-1';
+    } else {
+      el.style.flex = prevFlex;
+      el.style.width = prevWidth;
+      el.style.minWidth = prevMinWidth;
+      el.style.order = prevOrder;
+    }
+
+    let contentSh: number;
+    if (wasAtMax && hadOverflow && nextMultiline === currentlyMultiline) {
+      // Same mode, still over cap — skip second height=0 thrash.
+      contentSh = maxPx + 1;
+    } else {
+      el.style.height = '0px';
+      contentSh = el.scrollHeight;
+    }
+
+    // Let CSS class own width/flex/order; keep only the pixel height inline.
+    el.style.flex = '';
+    el.style.width = '';
+    el.style.minWidth = '';
+    el.style.order = '';
+
+    // Snap to whole lines so subpixel / font-metric noise cannot bounce height.
+    const rawLines = Math.max(1, Math.ceil((contentSh - padPx) / linePx - 1e-6));
+    const lines = Math.min(maxLines, rawLines);
+    const nextH = lines * linePx + padPx;
+    const atCap = lines >= maxLines;
+
+    const modeChanged = nextMultiline !== currentlyMultiline;
+    // Freeze when already showing this snapped height (continuous typing on same line).
+    if (!modeChanged && Math.abs(startH - nextH) < 0.5) {
+      el.style.height = `${nextH}px`;
+      el.style.overflowY = atCap ? 'auto' : 'hidden';
+      // Leave transition:none — typing must not animate 1px noise.
+      setIsMultiline((prev) => (prev === nextMultiline ? prev : nextMultiline));
+      return;
+    }
+
+    if (modeChanged && startH > 0 && Math.abs(startH - nextH) > 0.5) {
+      el.style.height = `${startH}px`;
+      // Force reflow so the browser registers the start height before transitioning.
+      void el.offsetHeight;
+      el.style.transition = '';
+      el.style.height = `${nextH}px`;
+    } else {
+      el.style.height = `${nextH}px`;
+      // Keep transition disabled for same-mode grow/shrink (2→3 lines etc.).
+    }
+    el.style.overflowY = atCap ? 'auto' : 'hidden';
+
+    setIsMultiline((prev) => (prev === nextMultiline ? prev : nextMultiline));
+  }, [draft, listening, composerRef]);
+
   const hasDraft = Boolean(draft.trim());
   const hasAttachments = attachments.length > 0;
   const canSend = hasDraft || hasAttachments;
@@ -86,7 +203,7 @@ export function ChatComposer({
   const showSend = !listening && (canSend || !showStop);
 
   const inner = (
-    <div className={`composer-inner${listening ? ' listening' : ''}`}>
+    <div className={`composer-inner${listening ? ' listening' : ''}${isMultiline ? ' is-multiline' : ''}`}>
       {listening ? (
         <ThinkingOrb
           className="composer-orb"
@@ -213,7 +330,9 @@ export function ChatComposer({
           </VoiceBeam>
         ) : listening ? (
           <div className="composer-beam composer-beam-static">{inner}</div>
-        ) : busy ? (
+        ) : (
+          // Keep BorderBeam mounted when busy toggles (evolve / wrapping_up end).
+          // Swapping BorderBeam ↔ div remounted the textarea and stole focus + height.
           <BorderBeam
             className="composer-beam"
             size="md"
@@ -222,14 +341,12 @@ export function ChatComposer({
             strength={0.95}
             borderRadius={20}
             duration={2.4}
-            active
+            active={busy}
           >
             {inner}
           </BorderBeam>
-        ) : (
-          <div className="composer-beam">{inner}</div>
         )}
       </div>
     </div>
   );
-}
+});

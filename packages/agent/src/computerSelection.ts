@@ -248,7 +248,10 @@ type ShellFsPrefs = {
   edit_file?: { enabled?: boolean };
 };
 
-export function formatComputerRoutingSection(route: ComputerRoute): string {
+export function formatComputerRoutingSection(
+  route: ComputerRoute,
+  opts?: { mentionGenerateImage?: boolean },
+): string {
   const list = computerCatalog(route);
   const problem = configuredComputerProblem(route);
   if (problem) {
@@ -261,21 +264,30 @@ export function formatComputerRoutingSection(route: ComputerRoute): string {
   }
   const id = effectiveDefaultComputerId(route);
   const current = list.find((c) => c.id === id) || list[0]!;
+  const hostBound = opts?.mentionGenerateImage
+    ? 'read_skill 与 generate_image 始终在运行 OkBot 的桌面主机上，不随电脑切换。'
+    : 'read_skill 始终在运行 OkBot 的桌面主机上，不随电脑切换。';
   return [
     '## 执行电脑',
     `可用电脑：${formatComputerChoices(list)}。`,
     `默认电脑：${current.name}（id=${current.id}）。用户没有点名电脑时，run_shell / read_file / write_file / edit_file 在默认电脑上执行。`,
     '用户点名恰好一台时，可以省略 computer，也会在那台执行。',
     '用户要求在多台电脑上执行时，每次调用上述工具都必须传 computer（填 id 或名称），分别在对应电脑上执行。',
-    'read_skill 与 generate_image 始终在运行 OkBot 的桌面主机上，不随电脑切换。',
+    hostBound,
   ].join('\n');
 }
+
+type ShellFsRoutingPrefs = ShellFsPrefs & {
+  generate_image?: { enabled?: boolean };
+};
 
 /** Omit the routing section when no shell/fs tool is enabled. */
 export function shellFsRoutingSection(
   route: ComputerRoute | undefined,
-  prefs?: ShellFsPrefs | null,
+  prefs?: ShellFsRoutingPrefs | null,
+  opts?: { imageCapable?: boolean },
 ): string {
+  void opts;
   if (!route) return '';
   const on = Boolean(
     prefs?.run_shell?.enabled ||
@@ -284,5 +296,8 @@ export function shellFsRoutingSection(
       prefs?.edit_file?.enabled,
   );
   if (!on) return '';
-  return formatComputerRoutingSection(route);
+  return formatComputerRoutingSection(route, {
+    // Prefs-only: matches buildTools / listEnabledToolIds (capability checked at execute).
+    mentionGenerateImage: prefs?.generate_image?.enabled === true,
+  });
 }

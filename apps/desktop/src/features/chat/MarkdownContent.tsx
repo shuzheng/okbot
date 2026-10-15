@@ -1,5 +1,18 @@
 import { memo, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { resolveUiLang, t, type UiLang } from '../../i18n';
+import {
+  isOkbotAssetSrc,
+  isSafeDataImageSrc,
+  parseOwnerResourceSrc,
+  resolveMediaAssetUrl,
+} from '../../utils/mediaAsset';
+import { BotMentionChip } from '../../components/ui/BotMentionChip';
+import {
+  botIdFromMentionHref,
+  isBotMentionHref,
+  linkifyBotMentions,
+  type MentionBotRef,
+} from '../../utils/botMentions';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import hljs from 'highlight.js/lib/core';
@@ -197,11 +210,7 @@ function isInlineCode(
   return true;
 }
 
-function isOkbotAssetSrc(src: string | undefined): src is string {
-  return Boolean(src && /^okbot-asset:/i.test(src));
-}
-
-/** Load ~/.okbot/<owner>/resources images via IPC (CSP allows data: only, not remote https). */
+/** Load ~/.okbot/<owner>/resources images via gateway /v1/media (CSP: no file:// / https). */
 const OkbotAssetImage = memo(function OkbotAssetImage({
   src,
   alt,
@@ -211,20 +220,38 @@ const OkbotAssetImage = memo(function OkbotAssetImage({
   alt?: string;
   lang: UiLang;
 }) {
-  const [dataUrl, setDataUrl] = useState<string | null>(null);
+  const [imgSrc, setImgSrc] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    setDataUrl(null);
+    setImgSrc(null);
     setError(null);
-    const rel = src.replace(/^okbot-asset:/i, '');
+    const parsed = parseOwnerResourceSrc(src);
+    if (!parsed) {
+      setError('invalid asset path');
+      return;
+    }
     void (async () => {
       try {
-        const res = await window.okbot.readGeneratedAssetDataUrl(rel);
+        const mediaUrl = await resolveMediaAssetUrl(parsed.assetRel);
         if (cancelled) return;
-        if (res.ok) setDataUrl(res.dataUrl);
-        else setError(res.error || 'load failed');
+        if (mediaUrl) {
+          setImgSrc(mediaUrl);
+          return;
+        }
+        // Fallback: Electron IPC data URL when gateway base/token is unavailable.
+        const res = await window.okbot.readGeneratedAssetDataUrl(parsed.assetRel);
+        if (cancelled) return;
+        if (res && typeof res === 'object' && 'ok' in res && res.ok && 'dataUrl' in res) {
+          setImgSrc(res.dataUrl as string);
+        } else {
+          const err =
+            res && typeof res === 'object' && 'error' in res && typeof res.error === 'string'
+              ? res.error
+              : 'load failed';
+          setError(err);
+        }
       } catch (err) {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : String(err));
@@ -242,50 +269,92 @@ const OkbotAssetImage = memo(function OkbotAssetImage({
       </span>
     );
   }
-  if (!dataUrl) {
+  if (!imgSrc) {
     return <span className="md-asset-loading">{alt || 'image'}…</span>;
   }
-  return <img src={dataUrl} alt={alt || ''} />;
+  return <img src={imgSrc} alt={alt || ''} />;
 });
 
 /**
  * react-markdown's defaultUrlTransform only allows http(s)/mailto/irc/xmpp.
- * Without this, `okbot-asset:…` src is stripped to "" → empty/broken <img>.
+ * Keep `/v1/media/…`, legacy okbot-asset: / file://…/.okbot/…/resources/… for
+ * gateway rewrite, and legacy data:image/* so old replies are not stripped to "".
+ * New generate_image replies use `/v1/media/…` only. Never load arbitrary file://.
  */
 function markdownUrlTransform(url: string): string {
-  if (/^okbot-asset:/i.test(url)) return url;
+  if (isBotMentionHref(url)) return url;
+  if (parseOwnerResourceSrc(url)) return url;
+  if (isSafeDataImageSrc(url)) return url;
   return defaultUrlTransform(url);
 }
 
 export const MarkdownContent = memo(function MarkdownContent({
   children,
   lang,
+  bots = [],
 }: {
   children: string;
   lang?: UiLang;
+  /** Roster for resolving `@助手名` / `@id` mention chips. */
+  bots?: readonly MentionBotRef[];
 }) {
   const uiLang = lang ?? resolveUiLang(undefined);
+  const source = useMemo(() => linkifyBotMentions(children, bots), [children, bots]);
+  const botsById = useMemo(() => {
+    const map = new Map<string, MentionBotRef>();
+    for (const b of bots) map.set(b.id, b);
+    return map;
+  }, [bots]);
   return (
     <div className="md">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         urlTransform={markdownUrlTransform}
         components={{
-          a: ({ href, children: linkChildren }) => (
-            <a href={href} target="_blank" rel="noreferrer noopener">
-              {linkChildren}
-            </a>
-          ),
-          img: ({ src, alt }) =>
-            isOkbotAssetSrc(src) ? (
-              <OkbotAssetImage src={src} alt={alt} lang={uiLang} />
-            ) : src && /^https?:/i.test(src) ? (
-              <span className="md-asset-missing" title={src}>
-                {t(uiLang, 'externalImageBlocked')}
-              </span>
-            ) : (
-              <img src={src} alt={alt || ''} />
-            ),
+          a: ({ href, children: linkChildren }) => {
+            if (isBotMentionHref(href)) {
+              const id = botIdFromMentionHref(href || '');
+              const bot = botsById.get(id);
+              if (bot) return <BotMentionChip bot={bot} />;
+              // Roster may have changed; still show avatar+name chip from link text.
+              const name = String(linkChildren ?? '').replace(/^@/, '').trim() || id;
+              return (
+                <BotMentionChip
+                  bot={{ id, name, emoji: '🤖', color: '' }}
+                />
+              );
+            }
+            return (
+              <a href={href} target="_blank" rel="noreferrer noopener">
+                {linkChildren}
+              </a>
+            );
+          },
+          img: ({ src, alt }) => {
+            const resource = parseOwnerResourceSrc(src);
+            if (resource || isOkbotAssetSrc(src)) {
+              return <OkbotAssetImage src={src || ''} alt={alt} lang={uiLang} />;
+            }
+            if (src && isSafeDataImageSrc(src)) {
+              return <img src={src} alt={alt || ''} />;
+            }
+            if (src && /^https?:/i.test(src)) {
+              return (
+                <span className="md-asset-missing" title={src}>
+                  {t(uiLang, 'externalImageBlocked')}
+                </span>
+              );
+            }
+            // Never render bare file:// (CSP + security). Show missing instead.
+            if (src && /^file:/i.test(src)) {
+              return (
+                <span className="md-asset-missing" title={src}>
+                  {(alt ? `${alt} · ` : '') + t(uiLang, 'imageLoadFailed')}
+                </span>
+              );
+            }
+            return <img src={src} alt={alt || ''} />;
+          },
           code: ({ className, children: codeChildren, node }) => {
             const text = String(codeChildren).replace(/\n$/, '');
             if (
@@ -302,7 +371,7 @@ export const MarkdownContent = memo(function MarkdownContent({
           pre: ({ children: preChildren }) => <>{preChildren as ReactNode}</>,
         }}
       >
-        {children}
+        {source}
       </ReactMarkdown>
     </div>
   );

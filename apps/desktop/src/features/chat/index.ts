@@ -11,3 +11,5 @@ export { MarkdownContent } from './MarkdownContent';
 export { ToolCardView } from './ToolCardView';
 export type { ToolCardViewProps } from './ToolCardView';
 export { TurnTraceModal } from './TurnTraceModal';
+export { TokenUsagePopover, deriveRoundUsage, formatTokCount } from './TokenUsagePopover';
+export { MeshExchangeModal } from './MeshExchangeModal';

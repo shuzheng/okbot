@@ -168,6 +168,55 @@ export function ownerHasRuns(map: AbortControllerMap, ownerId: string): boolean 
   return Boolean(inner && inner.size > 0);
 }
 
+/** In-flight run ids for an owner (Map insertion order: oldest → newest). */
+export function listOwnerRunIds(map: AbortControllerMap, ownerId: string): string[] {
+  const inner = map.get((ownerId || '').trim());
+  if (!inner || inner.size === 0) return [];
+  return [...inner.keys()];
+}
+
+/**
+ * Abort one in-flight run. Leaves unregister to the run's `finally`
+ * so parallel peers and the gate slot stay consistent.
+ */
+export function abortOwnerRun(
+  map: AbortControllerMap,
+  ownerId: string,
+  runId: string,
+): boolean {
+  const id = (ownerId || '').trim();
+  const rid = (runId || '').trim();
+  if (!id || !rid) return false;
+  const inner = map.get(id);
+  const ctrl = inner?.get(rid);
+  if (!ctrl) return false;
+  try {
+    ctrl.abort();
+  } catch {
+    /* ignore */
+  }
+  return true;
+}
+
+/** Poll until the run unregisters (or timeout). */
+export async function waitOwnerRunUnregistered(
+  map: AbortControllerMap,
+  ownerId: string,
+  runId: string,
+  timeoutMs = 30_000,
+): Promise<boolean> {
+  const id = (ownerId || '').trim();
+  const rid = (runId || '').trim();
+  if (!id || !rid) return true;
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const inner = map.get(id);
+    if (!inner || !inner.has(rid)) return true;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  return false;
+}
+
 export function listBusyOwnerIds(map: AbortControllerMap): string[] {
   return [...map.keys()].filter((id) => (map.get(id)?.size ?? 0) > 0);
 }

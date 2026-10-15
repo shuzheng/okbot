@@ -1,7 +1,7 @@
 :root {
   color-scheme: light dark;
   --bg: #f4f4f5;
-  --panel: #ececee;
+  --panel: #f1f1f3;
   --panel-2: #e4e4e7;
   --chat-bg: #fafafa;
   --border: #d4d4d8;
@@ -10,20 +10,53 @@
   --accent: #3f3f46;
   --accent-soft: rgba(0, 0, 0, 0.06);
   --danger: #dc2626;
+  /* Default-assistant avatar star badge (orange fill + white glyph). */
+  --default-assistant-mark: #f59e0b;
+  --default-assistant-mark-fg: #fff;
+  /* Transparent rim color; cutout halo uses box-shadow matching local surface. */
+  --default-assistant-mark-border: transparent;
+  /* Expanded pin strip avatar size (collapsed rail keeps --rail-avatar). */
+  --pin-avatar: 56px;
+  /* Expanded pin item hover/active bg inset (narrow uses --rail-row-pad). */
+  --pin-item-pad: 10px;
+  /* Expanded pin hover wash: wider left/right than vertical. */
+  --pin-item-pad-x: 16px;
   --bubble-user: #18181b;
   --bubble-user-text: #fff;
-  --bubble-bot: #ececee;
+  --bubble-bot: #f3f3f5;
   /* Attach +/fan chrome; no soft elevation (native border feel). */
-  --composer-attach: #e4e4e7;
+  --composer-attach: #ececee;
   --composer-attach-text: #3f3f46;
   --composer-attach-shadow: none;
   --input: #ffffff;
   --shadow: none;
   --sidebar-w: 250px;
   --sidebar-icon: 80px;
+  /* Sidebar rail: session expand/collapse share one row height. */
+  --rail-row-h: 52px;
+  --rail-avatar: 36px;
+  --rail-row-pad: 8px; /* (--rail-row-h - --rail-avatar) / 2 */
+  /* Session row / group-header hover wash; tighter than prior 10. */
+  --rail-row-radius: 7px;
+  /* Expanded settings/market: pre-rail-unification compact footer (8e10224). */
+  --footer-row-h: 36px;
+  --footer-row-pad-y: 4px;
+  --footer-row-pad-x: 8px;
   --traffic-pad: 40px; /* center band with trafficLightPosition y:14 */
   /* Left safe area when sidebar is gone (trafficLightPosition x:14 + 3 lights + gap). */
   --traffic-lights-inset: 76px;
+  /* Chat column caps readable width on ultrawide panes. Bubbles use 100% of
+     that column (minus FAB rail on assistant); no extra classic 960/1000 cap. */
+  --chat-column-max: 1280px;
+  --bubble-max: 100%;
+  --bubble-row-max: 100%;
+  --bubble-side-gutter: 48px;
+  /* Right rail for assistant hover FABs: 4×24px + 3×2px gaps + 4px row gap. */
+  --bubble-actions-rail: 100px;
+  /* Trailing gutter for message HH:MM clock (time enters from the right). */
+  --bubble-swipe-reveal: 52px;
+  /* Shared sticky inset for squad speaker avatar + bubble hover actions. */
+  --bubble-sticky-top: 0;
   --hairline: 0.5px;
   --hairline-color: #4a4a4a;
   font-family:
@@ -39,7 +72,7 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
     --bg: #000000;
-    --panel: #0a0a0a;
+    --panel: #121212;
     --panel-2: #161616;
     --chat-bg: #000000;
     --border: #1f1f1f;
@@ -59,7 +92,7 @@
 
 :root[data-theme='dark'] {
   --bg: #000000;
-  --panel: #0a0a0a;
+  --panel: #121212;
   --panel-2: #161616;
   --chat-bg: #000000;
   --border: #1f1f1f;
@@ -79,7 +112,7 @@
 :root[data-theme='light'] {
   --hairline-color: #a8a8ae;
   --bg: #f4f4f5;
-  --panel: #ececee;
+  --panel: #f1f1f3;
   --panel-2: #e4e4e7;
   --chat-bg: #fafafa;
   --border: #d4d4d8;
@@ -89,8 +122,8 @@
   --accent-soft: rgba(0, 0, 0, 0.06);
   --bubble-user: #18181b;
   --bubble-user-text: #fff;
-  --bubble-bot: #ececee;
-  --composer-attach: #e4e4e7;
+  --bubble-bot: #f3f3f5;
+  --composer-attach: #ececee;
   --composer-attach-text: #3f3f46;
   --composer-attach-shadow: none;
   --input: #ffffff;
@@ -169,24 +202,39 @@ input, textarea { user-select: text; }
   overflow: hidden;
   position: relative;
   -webkit-app-region: drag;
+  container-type: inline-size;
+  container-name: sidebar;
 }
 .sidebar * { -webkit-app-region: no-drag; }
 
 .sidebar-resize {
   position: relative;
   cursor: col-resize;
-  /* Fill with sidebar panel; hairline on the right meets chat header line */
-  background: var(--panel);
-  border-right: var(--hairline) solid #4a4a4a;
+  /* Hairline on the LEFT sits flush against the session-list scrollbar.
+     Fill the 5px hit strip with --chat-bg (not --panel, not transparent):
+     transparent showed body --bg past the hairline; match .main so the
+     splitter reads as chat surface, not sidebar bleed. */
+  background: var(--chat-bg);
+  border-left: var(--hairline) solid var(--hairline-color);
+  border-right: none;
   z-index: 5;
   -webkit-app-region: no-drag;
 }
 :root[data-theme='light'] .sidebar-resize {
-  border-right-color: #a8a8ae;
+  border-left-color: color-mix(in srgb, var(--hairline-color) 42%, transparent);
 }
 @media (prefers-color-scheme: light) {
   :root:not([data-theme='dark']) .sidebar-resize {
-    border-right-color: #a8a8ae;
+    border-left-color: color-mix(in srgb, #a8a8ae 42%, transparent);
+  }
+}
+/* Dark: fainter splitter than chat/header chrome */
+:root[data-theme='dark'] .sidebar-resize {
+  border-left-color: color-mix(in srgb, var(--hairline-color) 38%, transparent);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .sidebar-resize {
+    border-left-color: color-mix(in srgb, var(--hairline-color) 38%, transparent);
   }
 }
 
@@ -266,22 +314,693 @@ input, textarea { user-select: text; }
 
 /* Sidebar search is an icon button beside/above + (see .search-btn / .search-btn-footer) */
 
+.session-pane {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
 .session-list {
   flex: 1 1 0;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  /* Horizontal 14px matches footer chips; vertical pad lets bot-avatars hop
-     overscan (~0.35×size) paint inside the scrollport instead of being clipped
-     by this list / .sidebar overflow (not the avatar's own rounded frame). */
-  padding: 12px 14px;
+  /* No top padding — sticky group headers must sit flush at the scrollport top
+     with no seam. Bottom pad still lets bot-avatars hop overscan paint inside.
+     Horizontal inset lives on children so the scrollbar stays flush. */
+  padding: 0 0 12px;
+  margin: 0;
+  scrollbar-gutter: auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
-.app.narrow .session-list {
-  padding: 12px 14px;
+
+
+/* --- Session list pins (shortcut strip above rows) --- */
+.session-pin-strip {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 14px 22px;
+  /* Match session-item-wrap horizontal inset (14px). Top pad must clear
+     bot-avatars 1.5× overscan + rise bias (~0.35×--pin-avatar ≈ 20px) so
+     busy hops aren't clipped by .session-pane { overflow: hidden }. */
+  padding: 16px 14px 12px;
+  flex-shrink: 0;
+  overflow: visible;
+  position: relative;
+  /* Above session-list sticky headers if hop paint bleeds downward. */
+  z-index: 2;
+}
+.session-pin-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* Extra air between avatar and name under the pin. */
+  gap: 13px;
+  cursor: pointer;
+  border-radius: var(--rail-row-radius);
+  padding: var(--pin-item-pad) var(--pin-item-pad-x);
+  /* Fixed footprint so plastic / emoji / squad share one hover wash size. */
+  width: calc(var(--pin-avatar) + 2 * var(--pin-item-pad-x));
+  min-width: calc(var(--pin-avatar) + 2 * var(--pin-item-pad-x));
+  max-width: calc(var(--pin-avatar) + 2 * var(--pin-item-pad-x));
+  box-sizing: border-box;
+  outline: none;
+  transition: background 0.12s ease;
+  /* Default transparent; hover/active use accent-soft like session rows. */
+  background: transparent;
+  overflow: visible;
+  /* WAAPI pin enter/leave scale + neighbor squeeze. */
+  transform-origin: center center;
+}
+.session-pin-item:hover,
+.session-pin-item.active {
+  background: var(--accent-soft);
+}
+.session-pin-item:focus-visible {
+  outline: 1px solid #8a8a8a;
+  outline-offset: 1px;
+}
+/* Pin enter/leave: WAAPI scale on item; leave box from FLIP snapshot. */
+.session-pin-item.is-leaving {
+  box-sizing: border-box;
+}
+.session-pin-avatar-shell {
+  width: var(--pin-avatar);
+  height: var(--pin-avatar);
+  min-width: var(--pin-avatar);
+  min-height: var(--pin-avatar);
+  max-width: var(--pin-avatar);
+  max-height: var(--pin-avatar);
+  border-radius: 15px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  /* Keep 1.5× overscan hop visible above the shell (same as list rows). */
+  overflow: visible;
+  position: relative;
+  z-index: 1;
+  /* Lock layout size so BotAvatar overscan / emoji metrics cannot grow the pin hover pad. */
+  contain: layout size;
+}
+.session-pin-avatar {
+  width: var(--pin-avatar);
+  height: var(--pin-avatar);
+  min-width: var(--pin-avatar);
+  min-height: var(--pin-avatar);
+  max-width: var(--pin-avatar);
+  max-height: var(--pin-avatar);
+  border-radius: 15px;
+  flex-shrink: 0;
+  font-size: var(--pin-avatar);
+  display: grid;
+  place-items: center;
+  overflow: visible;
+  box-sizing: border-box;
+  line-height: 0;
+}
+.session-pin-avatar-shell > .session-pin-avatar {
+  width: var(--pin-avatar);
+  height: var(--pin-avatar);
+}
+/* Pin unread ring must match 15px shell (+3px inset), not rail's 12px. */
+.session-pin-avatar-shell.unread::after {
+  border-radius: 18px;
+}
+.session-pin-name {
+  display: block;
+  width: 100%;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.25;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Inset divider — same width as session rows (14px margins). */
+.session-pin-divider {
+  height: var(--hairline, 0.5px);
+  min-height: 1px;
+  margin: 2px 14px 8px;
+  background: var(--border);
+  flex-shrink: 0;
+  border: none;
+}
+/* --- Hidden assistants/squads collapsed group (bottom of session list) --- */
+.session-hidden-group {
+  margin-top: auto;
+  flex-shrink: 0;
+  /* Top pad lives on the sticky shell's siblings / list; avoid inset that
+     would leave a seam when the hidden header sticks to the scrollport top. */
+  padding: 0 0 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.session-hidden-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  /* Stretch so label flexes and count sits at the far right. */
+  width: calc(100% - 28px);
+  margin-inline: 14px;
+  box-sizing: border-box;
+  min-height: 24px;
+  padding: 4px 10px;
+  border: none;
+  border-radius: var(--rail-row-radius);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  text-align: left;
+  transition: background 0.12s ease;
+}
+.session-hidden-header:hover {
+  background: var(--accent-soft);
+}
+:root[data-theme='light'] .session-hidden-header:hover {
+  background: rgba(0, 0, 0, 0.035);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .session-hidden-header:hover {
+    background: rgba(0, 0, 0, 0.035);
+  }
+}
+.session-hidden-trailing {
+  margin-left: auto;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center end;
+  min-width: 16px;
+  min-height: 16px;
+  align-self: center;
+}
+.session-hidden-trailing > .session-hidden-count,
+.session-hidden-trailing > .session-hidden-chevron {
+  grid-area: 1 / 1;
+}
+.session-hidden-chevron {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  flex-shrink: 0;
+  transition: transform 0.15s ease, opacity 0.12s ease;
+  transform: rotate(-90deg);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+.session-hidden-header.expanded .session-hidden-chevron {
+  transform: rotate(0deg);
+}
+.session-hidden-header:hover .session-hidden-chevron,
+.session-hidden-header:focus-visible .session-hidden-chevron {
+  opacity: 0.8;
+  visibility: visible;
+}
+.session-hidden-header.expanded .session-hidden-count,
+.session-hidden-header:not(.expanded):hover .session-hidden-count,
+.session-hidden-header:not(.expanded):focus-visible .session-hidden-count {
+  opacity: 0;
+  visibility: hidden;
+}
+.session-hidden-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-hidden-count {
+  margin: 0;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+  line-height: 16px;
+}
+.app.narrow .session-hidden-header {
+  /* Default: horizontal divider; hover → chevron (same hit width as rail rows). */
+  position: relative;
+  width: var(--rail-avatar);
+  max-width: var(--rail-avatar);
+  margin-inline: auto;
+  justify-content: center;
+  align-items: center;
+  padding: 0;
+  height: 16px;
+  min-height: 16px;
+  box-sizing: border-box;
+  background: transparent !important;
+  border-radius: var(--rail-row-radius);
+}
+.app.narrow .session-hidden-header::before {
+  content: '';
+  display: block;
+  width: 100%;
+  height: var(--hairline, 0.5px);
+  min-height: 1px;
+  background: var(--border);
+  border-radius: 1px;
+  transition: opacity 0.12s ease;
+}
+.app.narrow .session-hidden-header:hover::before,
+.app.narrow .session-hidden-header:focus-visible::before {
+  opacity: 0;
+}
+.app.narrow .session-hidden-label,
+.app.narrow .session-hidden-count {
+  display: none;
+}
+.app.narrow .session-hidden-trailing {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+}
+.app.narrow .session-hidden-header .session-hidden-chevron {
+  width: 16px;
+  height: 16px;
+  opacity: 0;
+  visibility: hidden;
+}
+.app.narrow .session-hidden-header:hover .session-hidden-chevron,
+.app.narrow .session-hidden-header:focus-visible .session-hidden-chevron {
+  opacity: 0.8;
+  visibility: visible;
+}
+.app.narrow .session-hidden-header:hover,
+.app.narrow .session-hidden-header:focus-visible {
+  background: var(--accent-soft) !important;
+}
+
+/* Full-bleed sticky shell: sits flush at scrollport top (no padding gap/seam). */
+.session-group-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  flex-shrink: 0;
+  background: var(--panel);
+  /* Cancel list flex gap so stuck header has no hairline seam above. */
+  margin-top: -2px;
+  padding-top: 2px;
+}
+
+/* --- Custom owner groups + 「未分组」 headers (match 已隐藏 chrome) --- */
+.session-owner-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+/* Smooth expand/collapse for group member lists (0fr → 1fr; sticky headers stay outside). */
+.session-group-fold {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.session-group-fold.is-open {
+  grid-template-rows: 1fr;
+}
+.session-group-fold-inner {
+  overflow: hidden;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  /* Match session-list gap; keep FLIP targets measurable when open. */
+}
+.session-group-fold.is-open > .session-group-fold-inner {
+  opacity: 1;
+  transition-delay: 0.02s;
+}
+
+.session-group-fold:not(.is-open) > .session-group-fold-inner {
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .session-group-fold,
+  .session-group-fold-inner {
+    transition: none;
+  }
+}
+.session-owner-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: calc(100% - 28px);
+  margin-inline: 14px;
+  box-sizing: border-box;
+  /* 4+4 pad + 16px trailing — hover must not grow the row. */
+  min-height: 24px;
+  padding: 4px 10px;
+  border: none;
+  border-radius: var(--rail-row-radius);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  text-align: left;
+  transition: background 0.12s ease;
+  user-select: none;
+}
+.session-owner-group-header:hover {
+  background: var(--accent-soft);
+}
+:root[data-theme='light'] .session-owner-group-header:hover {
+  background: rgba(0, 0, 0, 0.035);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .session-owner-group-header:hover {
+    background: rgba(0, 0, 0, 0.035);
+  }
+}
+.session-owner-group-trailing {
+  margin-left: auto;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center end;
+  min-width: 16px;
+  min-height: 16px;
+  align-self: center;
+}
+.session-owner-group-trailing > .session-owner-group-count,
+.session-owner-group-trailing > .session-owner-group-chevron {
+  grid-area: 1 / 1;
+}
+.session-owner-group-chevron {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  flex-shrink: 0;
+  transition: transform 0.15s ease, opacity 0.12s ease;
+  transform: rotate(-90deg);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+.session-owner-group-header.expanded .session-owner-group-chevron {
+  transform: rotate(0deg);
+}
+/* Expanded: name only; hover → show chevron. Collapsed: name+count; hover → chevron, hide count.
+   Visibility/opacity only — trailing grid keeps height (and width) stable. */
+.session-owner-group-header:hover .session-owner-group-chevron,
+.session-owner-group-header:focus-visible .session-owner-group-chevron {
+  opacity: 0.8;
+  visibility: visible;
+}
+.session-owner-group-header.expanded .session-owner-group-count,
+.session-owner-group-header:not(.expanded):hover .session-owner-group-count,
+.session-owner-group-header:not(.expanded):focus-visible .session-owner-group-count {
+  opacity: 0;
+  visibility: hidden;
+}
+.session-owner-group-label-edit {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: block;
+  height: 1.25em;
+}
+.session-owner-group-label {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 1.25em;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.25;
+  letter-spacing: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-owner-group-label-edit.is-renaming > .session-owner-group-label {
+  visibility: hidden;
+  pointer-events: none;
+}
+.session-owner-group-count {
+  margin: 0;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+  line-height: 16px;
+}
+.session-owner-group-header.renaming {
+  cursor: default;
+}
+.session-owner-group-header.renaming .session-owner-group-trailing {
+  display: none !important;
+}
+/* Inline rename: absolute overlay on label box — identical metrics, no jump. */
+.session-owner-group-rename {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.25;
+  letter-spacing: normal;
+  appearance: none;
+  -webkit-appearance: none;
+  /* Electron/Chromium: input glyphs sit ~1px lower than the span. */
+  transform: translateY(-1px);
+}
+.app.narrow .session-owner-group-header {
+  /* Default: horizontal divider; hover → chevron (match 已隐藏). */
+  position: relative;
+  width: var(--rail-avatar);
+  max-width: var(--rail-avatar);
+  margin-inline: auto;
+  justify-content: center;
+  align-items: center;
+  padding: 0;
+  height: 16px;
+  min-height: 16px;
+  box-sizing: border-box;
+  background: transparent !important;
+  border-radius: var(--rail-row-radius);
+}
+.app.narrow .session-owner-group-header:not(.renaming)::before {
+  content: '';
+  display: block;
+  width: 100%;
+  height: var(--hairline, 0.5px);
+  min-height: 1px;
+  background: var(--border);
+  border-radius: 1px;
+  transition: opacity 0.12s ease;
+}
+.app.narrow .session-owner-group-header:not(.renaming):hover::before,
+.app.narrow .session-owner-group-header:not(.renaming):focus-visible::before {
+  opacity: 0;
+}
+.app.narrow .session-owner-group-header:not(.renaming) .session-owner-group-label,
+.app.narrow .session-owner-group-count {
+  display: none;
+}
+.app.narrow .session-owner-group-trailing {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+}
+.app.narrow .session-owner-group-header:not(.renaming) .session-owner-group-chevron {
+  width: 16px;
+  height: 16px;
+  opacity: 0;
+  visibility: hidden;
+}
+.app.narrow .session-owner-group-header:not(.renaming):hover .session-owner-group-chevron,
+.app.narrow .session-owner-group-header:not(.renaming):focus-visible .session-owner-group-chevron {
+  opacity: 0.8;
+  visibility: visible;
+}
+.app.narrow .session-owner-group-header:not(.renaming):hover,
+.app.narrow .session-owner-group-header:not(.renaming):focus-visible {
+  background: var(--accent-soft) !important;
+}
+.app.narrow .session-owner-group-header.renaming {
+  width: auto;
+  max-width: calc(100% - 8px);
+  height: auto;
+  min-height: 28px;
+  padding: 4px 6px;
+}
+.app.narrow .session-hidden-header:hover,
+.app.narrow .session-hidden-header:focus-visible,
+.app.narrow .session-owner-group-header:not(.renaming):hover,
+.app.narrow .session-owner-group-header:not(.renaming):focus-visible {
+  background: var(--accent-soft) !important;
+}
+:root[data-theme='light'] .app.narrow .session-hidden-header:hover,
+:root[data-theme='light'] .app.narrow .session-hidden-header:focus-visible,
+:root[data-theme='light'] .app.narrow .session-owner-group-header:not(.renaming):hover,
+:root[data-theme='light'] .app.narrow .session-owner-group-header:not(.renaming):focus-visible {
+  background: rgba(0, 0, 0, 0.035) !important;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .app.narrow .session-hidden-header:hover,
+  :root:not([data-theme='dark']) .app.narrow .session-hidden-header:focus-visible,
+  :root:not([data-theme='dark']) .app.narrow .session-owner-group-header:not(.renaming):hover,
+  :root:not([data-theme='dark']) .app.narrow .session-owner-group-header:not(.renaming):focus-visible {
+    background: rgba(0, 0, 0, 0.035) !important;
+  }
+}
+
+.app.narrow .session-owner-group-label-edit {
+  width: 4.5em;
+  height: 1.25em;
+}
+.app.narrow .session-owner-group-label,
+.app.narrow .session-owner-group-rename {
+  font-size: 11px;
+  text-align: center;
+}
+.app.narrow .session-owner-group-label {
+  display: block; /* override narrow hide when inside renaming edit */
+}
+.app.narrow .session-group-sticky {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+}
+
+/* Empty expanded group drop target */
+.session-group-drop-hint {
+  margin-inline: 22px;
+  margin-block: 8px;
+  padding: 8px 10px;
+  border-radius: var(--rail-row-radius);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  opacity: 0.75;
+  text-align: left;
+  border: 1px dashed color-mix(in srgb, var(--text) 22%, var(--border));
+  box-sizing: border-box;
+}
+.session-owner-group.is-drag-over > .session-group-sticky .session-owner-group-header,
+.session-owner-group.is-drag-over > .session-group-drop-hint {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--text) 25%, var(--border));
+}
+.session-item-wrap.is-dragging {
+  opacity: 0.45;
+}
+.session-group-sticky.is-dragging {
+  opacity: 0.55;
+}
+.app.narrow .session-group-drop-hint {
+  display: none;
+}
+
+/* When there is no pin strip, give the first list block a little top air for
+   avatar hop — sticky shell still paints flush over scrolling content. */
+.session-list > .session-owner-group:first-child,
+.session-list > .session-item-wrap:first-child,
+.session-list > .empty-side:first-child {
+  margin-top: 12px;
+}
+/* Pin strip is fixed above the scrollport — no top air when pins are present. */
+.session-pane:has(> .session-pin-strip) .session-list > .session-owner-group:first-child,
+.session-pane:has(> .session-pin-strip) .session-list > .session-item-wrap:first-child,
+.session-pane:has(> .session-pin-strip) .session-list > .empty-side:first-child {
+  margin-top: 0;
+}
+
+/* Collapsed rail: pins use normal session avatar size, stacked like dock rows. */
+.app.narrow .session-pin-strip {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 2px;
+  padding: 0;
+}
+.app.narrow .session-pin-item {
+  max-width: none;
+  min-width: 0;
+  width: fit-content;
+  margin-inline: auto;
+  padding: var(--rail-row-pad);
+  border-radius: var(--rail-row-radius);
+}
+.app.narrow .session-pin-item:hover,
+.app.narrow .session-pin-item.active {
+  background: var(--accent-soft);
+}
+.app.narrow .session-pin-avatar-shell {
+  width: var(--rail-avatar);
+  height: var(--rail-avatar);
+  min-width: var(--rail-avatar);
+  min-height: var(--rail-avatar);
+  max-width: var(--rail-avatar);
+  max-height: var(--rail-avatar);
+  border-radius: 10px;
+  /* Drop expanded pin size lock so rail avatar can shrink to --rail-avatar. */
+  contain: none;
+}
+/* Narrow pin unread ring matches rail session rows (10px shell → 12px ring). */
+.app.narrow .session-pin-avatar-shell.unread::after {
+  border-radius: 12px;
+}
+.app.narrow .session-pin-item .session-avatar {
+  width: var(--rail-avatar);
+  height: var(--rail-avatar);
+  border-radius: 10px;
+  font-size: var(--rail-avatar);
+  transform-origin: center center;
+  transition: transform 0.12s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+.app.narrow .session-pin-name {
+  display: none;
+}
+.app.narrow .session-pin-divider {
+  width: var(--rail-avatar);
+  margin: 6px auto 8px;
+  align-self: center;
 }
 
 .session-item {
@@ -290,24 +1009,28 @@ input, textarea { user-select: text; }
   gap: 10px;
   width: 100%;
   text-align: left;
-  padding: 8px;
-  border-radius: 12px;
-  min-height: 48px;
+  padding: var(--rail-row-pad);
+  border-radius: var(--rail-row-radius);
+  /* Fixed height (not min-only) so expand meta text cannot grow past collapsed. */
+  height: var(--rail-row-h);
+  min-height: var(--rail-row-h);
+  /* Let bot-avatars hop/flip paint past the row box (BorderBeam + neighbors). */
+  overflow: visible;
 }
 .session-item:hover { background: var(--accent-soft); }
 .session-item.active { background: var(--accent-soft); }
 .session-avatar {
-  width: 36px;
-  height: 36px;
+  width: var(--rail-avatar);
+  height: var(--rail-avatar);
   border-radius: 10px;
   flex-shrink: 0;
-  font-size: 36px;
+  font-size: var(--rail-avatar);
 }
 .session-avatar-shell {
   position: relative;
   flex-shrink: 0;
-  width: 36px;
-  height: 36px;
+  width: var(--rail-avatar);
+  height: var(--rail-avatar);
   border-radius: 10px;
   display: inline-flex;
   align-items: center;
@@ -320,8 +1043,8 @@ input, textarea { user-select: text; }
   /* Keep .flat-avatar display:grid so bot canvases stay centered. */
   display: grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
+  width: var(--rail-avatar);
+  height: var(--rail-avatar);
 }
 .session-avatar-shell.unread {
   animation: okbot-unread-glow 1.8s ease-in-out infinite;
@@ -349,6 +1072,77 @@ input, textarea { user-select: text; }
   overflow: hidden;
   border-radius: 10px;
   flex-shrink: 0;
+  position: relative;
+}
+.flat-avatar.has-default-mark {
+  overflow: visible;
+}
+.default-assistant-mark {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: max(13px, 0.4em);
+  height: max(13px, 0.4em);
+  border-radius: 50%;
+  /* Transparent border width kept for sizing; halo covers avatar underneath
+     with the sidebar surface so the gap reads as a colorless cutout. */
+  border: 1.5px solid var(--default-assistant-mark-border);
+  box-shadow: 0 0 0 1.5px var(--panel);
+  background: var(--default-assistant-mark);
+  color: var(--default-assistant-mark-fg);
+  display: grid;
+  place-items: center;
+  z-index: 3;
+  pointer-events: none;
+  box-sizing: border-box;
+  line-height: 0;
+  padding: 0;
+}
+.default-assistant-mark svg {
+  display: block;
+  /* Larger glyph; path is optically centered in the viewBox. */
+  width: 78%;
+  height: 78%;
+}
+/* Unpinned session-list rows only (pin strip may reuse .session-avatar when narrow). */
+.session-item-wrap .session-avatar .default-assistant-mark {
+  right: -3px;
+  bottom: -3px;
+  width: max(12px, 0.34em);
+  height: max(12px, 0.34em);
+  border-width: 1.5px;
+}
+/* Pin-strip (expanded .session-pin-avatar or narrow .session-avatar under pin item). */
+.session-pin-item .default-assistant-mark,
+.session-pin-avatar .default-assistant-mark {
+  right: -2px;
+  bottom: -2px;
+  width: max(9px, 0.28em);
+  height: max(9px, 0.28em);
+}
+.header-avatar .default-assistant-mark {
+  right: -3px;
+  bottom: -3px;
+  width: 11px;
+  height: 11px;
+  border-width: 1.25px;
+  /* Chat column surface (header sits on --chat-bg). */
+  box-shadow: 0 0 0 1.25px var(--chat-bg);
+}
+.dock-tip-avatar .default-assistant-mark {
+  width: 11px;
+  height: 11px;
+  border-width: 1.25px;
+  /* Match .dock-tip card fill (dark default). */
+  box-shadow: 0 0 0 1.25px #2a2a2a;
+}
+:root[data-theme='light'] .dock-tip-avatar .default-assistant-mark {
+  box-shadow: 0 0 0 1.25px #ffffff;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .dock-tip-avatar .default-assistant-mark {
+    box-shadow: 0 0 0 1.25px #ffffff;
+  }
 }
 .flat-avatar-bot {
   background: transparent;
@@ -435,6 +1229,7 @@ input, textarea { user-select: text; }
 }
 /* Same box→emoji fill ratio everywhere (≈32/36 of the square) */
 .session-avatar .flat-avatar-emoji,
+.session-pin-avatar .flat-avatar-emoji,
 .header-avatar .flat-avatar-emoji,
 .avatar-preview .flat-avatar-emoji,
 .global-search-avatar .flat-avatar-emoji,
@@ -566,16 +1361,25 @@ input, textarea { user-select: text; }
 }
 .session-item-wrap {
   cursor: pointer;
-  width: 100%;
-  border-radius: 12px;
+  /* Horizontal 14px matches .sidebar-footer; width auto + stretch so margins
+     inset the row without pushing past the flush scrollbar edge. */
+  width: auto;
+  margin-inline: 14px;
+  border-radius: var(--rail-row-radius);
   transition: background 0.12s ease;
   overflow: visible;
   position: relative;
 }
 .session-item-wrap:hover,
 .session-item-wrap:has(.session-item.active),
-.session-item-wrap.active {
+.session-item-wrap.active,
+.session-item-wrap:has(.session-beam) {
   z-index: 2;
+}
+/* BorderBeam size=sm injects overflow:hidden on [data-beam] — that clips the
+   library's 1.5× overscan busy hop/flip. Composer uses the same override. */
+.session-item-wrap > .session-beam {
+  overflow: visible !important;
 }
 .session-item-wrap:hover {
   background: var(--accent-soft);
@@ -586,6 +1390,40 @@ input, textarea { user-select: text; }
 .session-item-wrap:has(.session-item.active),
 .session-item-wrap.active {
   background: var(--accent-soft);
+}
+/* Light: fainter active/hover wash so the selected row is less prominent. */
+:root[data-theme='light'] .session-item-wrap:hover,
+:root[data-theme='light'] .session-item-wrap:has(.session-item.active),
+:root[data-theme='light'] .session-item-wrap.active {
+  background: rgba(0, 0, 0, 0.035);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .session-item-wrap:hover,
+  :root:not([data-theme='dark']) .session-item-wrap:has(.session-item.active),
+  :root:not([data-theme='dark']) .session-item-wrap.active {
+    background: rgba(0, 0, 0, 0.035);
+  }
+}
+:root[data-theme='light'] .session-item:hover,
+:root[data-theme='light'] .session-item.active {
+  background: rgba(0, 0, 0, 0.035);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .session-item:hover,
+  :root:not([data-theme='dark']) .session-item.active {
+    background: rgba(0, 0, 0, 0.035);
+  }
+}
+/* Pin strip shares the same light wash. */
+:root[data-theme='light'] .session-pin-item:hover,
+:root[data-theme='light'] .session-pin-item.active {
+  background: rgba(0, 0, 0, 0.035);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .session-pin-item:hover,
+  :root:not([data-theme='dark']) .session-pin-item.active {
+    background: rgba(0, 0, 0, 0.035);
+  }
 }
 .session-item-wrap:focus-visible {
   outline: 1px solid #8a8a8a;
@@ -610,18 +1448,33 @@ input, textarea { user-select: text; }
   width: 100%;
   height: 1.25em; /* same line box as .session-rename-input */
 }
-.session-name {
+.session-name-edit {
+  position: relative;
   display: block;
-  box-sizing: border-box;
   flex: 1 1 auto;
   min-width: 0;
   height: 1.25em;
+}
+.session-name {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 1.25em;
+  margin: 0;
+  padding: 0;
+  border: 0;
   font-weight: 600;
   font-size: 13.5px;
   line-height: 1.25;
+  letter-spacing: normal;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.session-name-edit.is-renaming > .session-name {
+  visibility: hidden;
+  pointer-events: none;
 }
 .session-updated {
   flex: 0 0 auto;
@@ -630,20 +1483,28 @@ input, textarea { user-select: text; }
   line-height: 1.25;
   color: var(--muted);
   white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  pointer-events: none;
+}
+.session-item-wrap:hover .session-updated,
+.session-item-wrap:focus-within .session-updated {
   opacity: 0.9;
 }
 .app.narrow .session-updated {
   display: none;
 }
+/* Absolute overlay on .session-name box — same metrics, no layout swap. */
 .session-rename-input {
+  position: absolute;
+  inset: 0;
   display: block;
-  width: 100%;
-  min-width: 0;
   box-sizing: border-box;
-  height: 1.25em; /* lock to .session-name line box — avoids row jitter */
+  width: 100%;
+  height: 100%;
   margin: 0;
   padding: 0;
-  border: none;
+  border: 0;
   outline: none;
   background: transparent;
   color: inherit;
@@ -651,11 +1512,11 @@ input, textarea { user-select: text; }
   font-weight: 600;
   font-size: 13.5px;
   line-height: 1.25;
+  letter-spacing: normal;
   appearance: none;
   -webkit-appearance: none;
   /* Electron/Chromium macOS: <input> glyphs sit ~1px lower than a span line box */
-  position: relative;
-  top: -1px;
+  transform: translateY(-1px);
   pointer-events: auto;
 }
 .session-item-wrap.renaming {
@@ -670,6 +1531,8 @@ input, textarea { user-select: text; }
 .session-desc {
   display: block;
   font-size: 12px;
+  line-height: 1.2;
+  height: 1.2em;
   color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
@@ -679,20 +1542,23 @@ input, textarea { user-select: text; }
 .app.narrow .session-item-wrap {
   width: fit-content;
   margin-inline: auto;
-  border-radius: 14px;
+  border-radius: var(--rail-row-radius);
 }
 .app.narrow .session-item {
-  /* equal inset around avatar on all sides */
+  /* Same chrome as expanded: pad + avatar → --rail-row-h (true equality). */
   justify-content: center;
   width: auto;
-  padding: 8px;
-  min-height: 0;
+  padding: var(--rail-row-pad);
+  height: var(--rail-row-h);
+  min-height: var(--rail-row-h);
   gap: 0;
 }
-.app.narrow .session-meta { display: none; }
+.app.narrow .session-meta { display: none !important; }
 
-/* Collapsed Dock magnification — no hover wash */
-.app.narrow .session-item-wrap:hover,
+/* Collapsed rail: keep session hover wash (dock magnify is opt-in). */
+.app.narrow .session-item-wrap:hover {
+  background: var(--accent-soft);
+}
 .app.narrow .session-item-wrap:hover .session-item,
 .app.narrow .session-item.dock-item:hover {
   background: transparent;
@@ -703,7 +1569,8 @@ input, textarea { user-select: text; }
 }
 .app.narrow .session-list {
   overflow-x: visible;
-  /* Keep shared vertical pad for hop overscan; extra bottom for dock magnify. */
+  /* Keep shared vertical pad for hop overscan; extra bottom for dock magnify.
+     No horizontal padding — scrollbar stays flush to the splitter. */
   padding-bottom: 16px;
 }
 .app.narrow .session-item-wrap.dock-item,
@@ -717,6 +1584,8 @@ input, textarea { user-select: text; }
 }
 
 .empty-side {
+  /* Match session-row horizontal inset (list itself has no side padding). */
+  margin-inline: 14px;
   padding: 16px 10px;
   color: var(--muted);
   font-size: 13px;
@@ -727,7 +1596,7 @@ input, textarea { user-select: text; }
 .sidebar-footer-row {
   display: flex;
   flex-direction: row;
-  align-items: stretch;
+  align-items: center;
   gap: 4px;
   width: 100%;
 }
@@ -735,18 +1604,29 @@ input, textarea { user-select: text; }
   flex: 1;
   min-width: 0;
 }
+/* Expanded: settings/market icon+text. Hide labels when sidebar is tight
+   (still expanded layout, before .narrow rail) — no tooltip. */
+@container sidebar (max-width: 200px) {
+  .sidebar-footer-row .footer-btn .label {
+    display: none;
+  }
+  .sidebar-footer-row .footer-btn {
+    justify-content: center;
+    gap: 0;
+  }
+}
 .sidebar-footer {
   flex-shrink: 0;
   /* horizontal 14px matches .session-list so settings aligns with session rows */
-  padding: 4px 14px 8px;
+  padding: 2px 14px 6px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 .app.narrow .sidebar-footer {
   /* Single hamburger toggle; actions fly out upward */
   align-items: center;
-  padding: 2px 6px 8px;
+  padding: 2px 6px 6px;
   gap: 0;
   position: relative;
   overflow: visible;
@@ -758,9 +1638,10 @@ input, textarea { user-select: text; }
   align-items: center;
   gap: 10px;
   width: 100%;
-  /* match .session-item row height (padding 8 + min-height 48) */
-  padding: 8px;
-  min-height: 48px;
+  /* Compact expanded footer (pre-9f7a22b); do not force = session rows. */
+  padding: var(--footer-row-pad-y) var(--footer-row-pad-x);
+  height: var(--footer-row-h);
+  min-height: var(--footer-row-h);
   border-radius: 12px;
   text-align: left;
   color: var(--muted);
@@ -791,9 +1672,9 @@ input, textarea { user-select: text; }
   font-weight: 500;
 }
 .app.narrow .footer-btn {
-  /* match .session-avatar size (36) + radius (10) */
-  width: 36px;
-  height: 36px;
+  /* Fly-out icons match .session-avatar size + radius (10). */
+  width: var(--rail-avatar);
+  height: var(--rail-avatar);
   min-height: 0;
   padding: 0;
   gap: 0;
@@ -802,7 +1683,17 @@ input, textarea { user-select: text; }
   opacity: 0.85;
   line-height: 0;
 }
-.app.narrow .footer-btn .label { display: none; }
+.app.narrow .footer-btn .label,
+.app.narrow .footer-fab .footer-btn .label { display: none !important; }
+.app.narrow .footer-fab .footer-btn {
+  /* settings / market: icon-only in collapsed dock */
+  width: var(--rail-avatar);
+  height: var(--rail-avatar);
+  min-height: 0;
+  padding: 0;
+  gap: 0;
+  justify-content: center;
+}
 .app.narrow .footer-btn .ico {
   width: 20px;
   height: 20px;
@@ -815,9 +1706,9 @@ input, textarea { user-select: text; }
 }
 .app.narrow .new-btn-footer,
 .app.narrow .search-btn-footer {
-  /* match .session-avatar size (36) + radius (10) */
-  width: 36px;
-  height: 36px;
+  /* Fly-out: match .session-avatar size + radius (10). */
+  width: var(--rail-avatar);
+  height: var(--rail-avatar);
   border-radius: 10px;
   display: inline-flex;
   align-items: center;
@@ -851,17 +1742,16 @@ input, textarea { user-select: text; }
   display: flex;
   flex-direction: column;
   align-items: center;
-  /* match toggle = narrow session-item chrome (avatar 36 + padding 8×2) */
-  width: 52px;
+  /* match toggle = narrow session-item chrome (--rail-row-h) */
+  width: var(--rail-row-h);
 }
 .footer-fab-toggle {
   /*
-   * Match the chrome/background behind session avatars in the collapsed rail:
-   * .app.narrow .session-item pads 8px around .session-avatar (36) → 52×52,
-   * with .session-item border-radius 12. Not the smaller 16px glyph / old 32 FAB.
+   * Match the chrome behind session avatars in the collapsed rail:
+   * pad + avatar → --rail-row-h, border-radius 12 (same as expanded rows).
    */
-  width: 52px;
-  height: 52px;
+  width: var(--rail-row-h);
+  height: var(--rail-row-h);
   border-radius: 12px;
   display: inline-flex;
   align-items: center;
@@ -877,7 +1767,8 @@ input, textarea { user-select: text; }
   z-index: 2;
 }
 .footer-fab-toggle:hover {
-  background: var(--accent-soft);
+  /* Fold icon: color only — no wash behind the bars */
+  background: transparent;
   color: var(--text);
   opacity: 1;
 }
@@ -894,7 +1785,7 @@ input, textarea { user-select: text; }
   right: 0;
   /* Center baseline; vertical offset via translateY — integer stroke for retina. */
   top: 7px;
-  height: 2px;
+  height: 1px;
   border-radius: 1px;
   background: currentColor;
   transform-origin: center;
@@ -1035,7 +1926,7 @@ input, textarea { user-select: text; }
   position: relative;
   flex: 1 1 0;
   min-height: 0;
-  min-width: 0;
+  min-width: 400px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1151,35 +2042,65 @@ input, textarea { user-select: text; }
   background: var(--accent-soft);
   color: var(--text);
 }
-.header-update-btn.available {
-  color: var(--accent, #6366f1);
+
+/* Sidebar footer update control (moved from chat header). */
+.footer-update-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: var(--footer-row-h);
+  height: var(--footer-row-h);
+  min-height: var(--footer-row-h);
+  padding: 0;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  color: #3b82f6;
+  cursor: pointer;
+  position: relative;
 }
-.header-update-btn.downloading {
-  color: var(--accent, #6366f1);
+.footer-update-btn svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+.footer-update-btn:hover {
+  background: var(--accent-soft);
+  color: #2563eb;
+}
+.footer-update-btn.downloading {
   animation: okbot-update-pulse 1.2s ease-in-out infinite;
 }
-.header-update-btn.ready {
-  color: var(--accent, #6366f1);
+.footer-update-btn.ready {
+  color: #3b82f6;
 }
-.header-update-btn.has-badge::after {
+.footer-update-btn.has-badge::after {
   content: '';
   position: absolute;
-  top: 5px;
-  right: 5px;
+  top: 6px;
+  right: 6px;
   width: 7px;
   height: 7px;
   border-radius: 50%;
   background: #ef4444;
-  box-shadow: 0 0 0 1.5px var(--bg, #0f1115);
+  box-shadow: 0 0 0 1.5px var(--panel, #fff);
   pointer-events: none;
 }
-.header-update-btn:disabled {
+.footer-update-btn:disabled {
   cursor: default;
   opacity: 1;
 }
-.header-update-btn:disabled:hover {
+.footer-update-btn:disabled:hover {
   background: transparent;
+  color: #3b82f6;
 }
+.app.narrow .footer-update-btn {
+  width: var(--rail-avatar);
+  height: var(--rail-avatar);
+  border-radius: 10px;
+}
+
 @keyframes okbot-update-pulse {
   0%, 100% { opacity: 0.55; }
   50% { opacity: 1; }
@@ -1289,10 +2210,8 @@ input, textarea { user-select: text; }
   color: var(--accent, #6366f1);
 }
 .main-header h1 {
-  font-size: 13px;
+  /* Typography lives on .header-identity h1 so mesh overlay matches private chat. */
   margin: 0;
-  font-weight: 650;
-  line-height: 1.2;
 }
 .header-identity {
   display: inline-flex;
@@ -1314,9 +2233,14 @@ input, textarea { user-select: text; }
   background: var(--accent-soft);
 }
 .header-identity h1 {
+  font-size: 13px;
+  margin: 0;
+  font-weight: 650;
+  line-height: 1.2;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--text);
 }
 .messages-shell {
   position: relative;
@@ -1336,26 +2260,37 @@ input, textarea { user-select: text; }
   transform: translateX(-50%);
   z-index: 6;
   margin: 0;
-  padding: 6px 14px;
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
   border: 1px solid color-mix(in srgb, var(--text) 14%, transparent);
-  border-radius: 999px;
+  border-radius: 50%;
   background: color-mix(in srgb, var(--panel, #1c1c1e) 92%, transparent);
-  color: var(--text);
-  font: inherit;
-  font-size: 12px;
-  line-height: 1.2;
-  letter-spacing: 0.01em;
+  color: var(--muted);
   cursor: pointer;
   box-shadow: none;
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
-  transition: opacity 0.15s ease, transform 0.15s ease, background 0.15s ease;
+  transition: opacity 0.15s ease, transform 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+.scroll-to-bottom-btn svg {
+  width: 18px;
+  height: 18px;
+  display: block;
 }
 .scroll-to-bottom-btn:hover {
   background: color-mix(in srgb, var(--panel, #1c1c1e) 98%, var(--accent, #6366f1) 8%);
+  color: var(--text);
 }
 .scroll-to-bottom-btn:active {
-  transform: translateX(-50%) scale(0.98);
+  transform: translateX(-50%) scale(0.96);
+}
+.scroll-to-bottom-btn:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent, #6366f1) 55%, transparent);
+  outline-offset: 2px;
 }
 :root[data-theme='light'] .scroll-to-bottom-btn {
   background: color-mix(in srgb, #fff 92%, transparent);
@@ -1364,6 +2299,10 @@ input, textarea { user-select: text; }
 .messages {
   flex: 1 1 0;
   min-height: 0;
+  width: 100%;
+  max-width: var(--chat-column-max);
+  margin-inline: auto;
+  box-sizing: border-box;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -1377,7 +2316,8 @@ input, textarea { user-select: text; }
   display: flex;
   align-items: flex-start;
   gap: 6px;
-  max-width: min(760px, 94%);
+  /* Full messages content width; assistant FAB room is --bubble-actions-rail only. */
+  max-width: 100%;
   position: relative;
 }
 .bubble-row.user {
@@ -1394,6 +2334,7 @@ input, textarea { user-select: text; }
      short replies into mid-line wraps every few glyphs. */
   align-self: stretch;
   width: 100%;
+  max-width: 100%;
   box-sizing: border-box;
   flex-direction: row;
 }
@@ -1403,7 +2344,7 @@ input, textarea { user-select: text; }
   align-items: flex-end;
   gap: 6px;
   width: fit-content;
-  max-width: min(760px, 94%);
+  max-width: 100%;
   box-sizing: border-box;
 }
 .bubble-body-row {
@@ -1417,37 +2358,46 @@ input, textarea { user-select: text; }
   box-sizing: border-box;
 }
 .bubble-body-row .bubble-actions {
-  /* Optical align with first line of bubble text (pad 10px, ~14px/1.4 line, 28px btn). */
-  margin-top: 6px;
+  /* Optical align with first line of bubble text (pad 10px, ~14px/1.4 line, 24px btn). */
+  margin-top: 8px;
 }
 .bubble-row-cluster .bubble {
   flex: 0 1 auto;
   width: fit-content;
-  max-width: min(720px, 100%);
+  max-width: min(var(--bubble-max), 100%);
 }
 .bubble-actions {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.12s ease;
+  /* Stick within .messages scrollport for the life of this bubble-body-row
+     (same approach as .bubble-speaker-avatar). Tall multi-line bubbles keep
+     copy/quote/usage pinned near the top of the visible message area. */
+  position: sticky;
+  top: var(--bubble-sticky-top);
+  z-index: 2;
+  align-self: flex-start;
 }
 .bubble-row:hover .bubble-actions,
-.bubble-row:focus-within .bubble-actions {
+.bubble-row:focus-within .bubble-actions,
+.bubble-row .bubble-actions:has(.is-active),
+.bubble-actions.is-pinned {
   opacity: 1;
   pointer-events: auto;
 }
 .bubble-action-btn {
   flex: 0 0 auto;
   box-sizing: border-box;
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   margin: 0;
   padding: 0;
   border: none;
-  border-radius: 8px;
+  border-radius: 7px;
   background: color-mix(in srgb, var(--text) 12%, transparent);
   color: var(--muted);
   cursor: pointer;
@@ -1459,8 +2409,8 @@ input, textarea { user-select: text; }
 }
 .bubble-action-btn svg {
   display: block;
-  width: 14px;
-  height: 14px;
+  width: 13px;
+  height: 13px;
   flex-shrink: 0;
 }
 .bubble-action-btn:hover,
@@ -1474,7 +2424,7 @@ input, textarea { user-select: text; }
 .bubble-row .bubble {
   /* Do not flex-grow: short CJK bubbles must stay width:fit-content. */
   flex: 0 1 auto;
-  max-width: min(720px, 100%);
+  max-width: min(var(--bubble-max), 100%);
 }
 .prompt-context-overlay {
   position: fixed;
@@ -1557,9 +2507,11 @@ input, textarea { user-select: text; }
   cursor: text;
 }
 .bubble {
-  /* fit-content + definite parent max-width: short CJK stays one line; long text still caps */
+  /* fit-content + definite parent max-width: short CJK stays one line; long text still caps.
+     Do not set min-width: min(260px, 100%) — that forces short send/reply bubbles to stretch
+     wide on the right. Attach-only keeps its own 28px min below. */
   width: fit-content;
-  max-width: min(720px, 100%);
+  max-width: min(var(--bubble-max), 100%);
   box-sizing: border-box;
   padding: 10px 12px;
   border-radius: 16px;
@@ -1579,6 +2531,19 @@ input, textarea { user-select: text; }
   color: var(--bubble-user-text);
   position: relative;
 }
+/* Assistant accent set: wash user send bubbles toward chat surface (readable via --text). */
+.messages.has-user-bubble-tint {
+  --bubble-user: color-mix(in srgb, var(--user-bubble-accent) 30%, var(--chat-bg));
+  --bubble-user-text: var(--text);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .messages.has-user-bubble-tint {
+    --bubble-user: color-mix(in srgb, var(--user-bubble-accent) 36%, var(--chat-bg));
+  }
+}
+:root[data-theme='dark'] .messages.has-user-bubble-tint {
+  --bubble-user: color-mix(in srgb, var(--user-bubble-accent) 36%, var(--chat-bg));
+}
 .bubble.user.send-pending {
   opacity: 0.78;
   /* pulse-outside rides the child's edge; keep a faint hairline while sending. */
@@ -1588,7 +2553,7 @@ input, textarea { user-select: text; }
 .bubble-send-beam {
   flex: 0 1 auto;
   width: fit-content;
-  max-width: min(720px, 100%);
+  max-width: min(var(--bubble-max), 100%);
   overflow: visible;
   display: block;
   box-sizing: border-box;
@@ -1636,7 +2601,7 @@ input, textarea { user-select: text; }
   white-space: normal;
 }
 .bubble .md {
-  line-height: 1.45;
+  line-height: 1.6;
 }
 
 /* Collapsible model thinking (`<think>…</think>`) — pure CSS <details> */
@@ -2031,6 +2996,10 @@ input, textarea { user-select: text; }
 }
 .composer {
   flex-shrink: 0;
+  width: 100%;
+  max-width: var(--chat-column-max);
+  margin-inline: auto;
+  box-sizing: border-box;
   padding: 10px 18px 14px;
   display: flex;
   flex-direction: column;
@@ -2067,7 +3036,7 @@ input, textarea { user-select: text; }
   width: 30px;
   height: 30px;
   flex-shrink: 0;
-  align-self: center;
+  align-self: flex-end;
   z-index: 12;
   overflow: visible;
 }
@@ -2425,13 +3394,91 @@ input, textarea { user-select: text; }
   resize: none;
   box-sizing: border-box;
   min-height: 28px;
-  max-height: 120px;
+  /* 5 lines × 18px line-height (matches ChatComposer linePx) + 5+5 vertical padding */
+  max-height: calc(5 * 18px + 10px);
+  /* hidden until 5-line cap (JS sets overflow-y:auto) — avoids scrollbar gutter wrap jitter */
+  overflow-y: hidden;
   border: none;
   outline: none;
   background: transparent;
   padding: 5px 2px;
+  /* Required for single-line height / is-multiline probe vs ChatComposer linePx=18 */
   line-height: 18px;
   font-size: 13.5px;
+  font-weight: 500;
+  /* Height animates only on JS-gated 1↔N mode change; measure / same-mode typing use transition:none.
+     Slightly slower than snappy so grow-past-1 and shrink-under-2 feel tasteful. */
+  transition: height 280ms cubic-bezier(0.22, 1, 0.36, 1);
+  /* Match chat .scroll-fade thin translucent scrollbar */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(128, 128, 128, 0.22) transparent;
+}
+@media (prefers-reduced-motion: reduce) {
+  .composer-inner textarea {
+    transition: none;
+  }
+}
+/* Multi-line (>1 line): textarea full width on top; +/orb left and mic+send
+   right on a bottom action row — removes side gutters beside wrapped text.
+   Single-line keeps the compact side-by-side row (no class). */
+.composer-inner.is-multiline {
+  flex-wrap: wrap;
+  align-items: flex-end;
+  row-gap: 4px;
+  column-gap: 8px;
+  padding-top: 8px;
+}
+.composer-inner.is-multiline textarea {
+  flex: 1 0 100%;
+  order: -1;
+  width: 100%;
+  min-width: 100%;
+  padding-left: 6px;
+  padding-right: 6px;
+}
+.composer-inner.is-multiline .mic-btn {
+  /* Push mic + following send/stop to the right; +/orb stays left. */
+  margin-left: auto;
+}
+.composer-inner textarea::-webkit-scrollbar,
+.composer-inner textarea::-webkit-scrollbar:hover {
+  width: 5px !important;
+  height: 5px !important;
+}
+.composer-inner textarea::-webkit-scrollbar-track,
+.composer-inner textarea::-webkit-scrollbar-track:hover {
+  background: transparent;
+}
+.composer-inner textarea::-webkit-scrollbar-thumb,
+.composer-inner textarea::-webkit-scrollbar-thumb:hover,
+.composer-inner textarea::-webkit-scrollbar-thumb:active {
+  width: 5px;
+  background: rgba(128, 128, 128, 0.22);
+  background-clip: padding-box;
+  border: 0 solid transparent;
+  border-radius: 999px;
+  box-shadow: none;
+}
+.composer-inner textarea::-webkit-scrollbar-corner {
+  background: transparent;
+}
+:root[data-theme='light'] .composer-inner textarea {
+  scrollbar-color: rgba(24, 24, 27, 0.18) transparent;
+}
+:root[data-theme='light'] .composer-inner textarea::-webkit-scrollbar-thumb,
+:root[data-theme='light'] .composer-inner textarea::-webkit-scrollbar-thumb:hover,
+:root[data-theme='light'] .composer-inner textarea::-webkit-scrollbar-thumb:active {
+  background: rgba(24, 24, 27, 0.18);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .composer-inner textarea {
+    scrollbar-color: rgba(24, 24, 27, 0.18) transparent;
+  }
+  :root:not([data-theme='dark']) .composer-inner textarea::-webkit-scrollbar-thumb,
+  :root:not([data-theme='dark']) .composer-inner textarea::-webkit-scrollbar-thumb:hover,
+  :root:not([data-theme='dark']) .composer-inner textarea::-webkit-scrollbar-thumb:active {
+    background: rgba(24, 24, 27, 0.18);
+  }
 }
 .composer-inner .send {
   width: 28px;
@@ -2447,7 +3494,7 @@ input, textarea { user-select: text; }
   font-size: 14px;
   line-height: 1;
   flex-shrink: 0;
-  align-self: center;
+  align-self: flex-end;
 }
 .composer-inner .send:disabled { opacity: 0.35; cursor: not-allowed; }
 .composer-inner .send.stop {
@@ -2487,12 +3534,33 @@ input, textarea { user-select: text; }
   -webkit-app-region: no-drag;
 }
 /* Right-side form drawer (assistant / squad create-edit) */
+@keyframes okbot-drawer-in {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+@keyframes okbot-drawer-out {
+  from { transform: translateX(0); }
+  to { transform: translateX(100%); }
+}
+@keyframes okbot-drawer-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes okbot-drawer-backdrop-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
 .modal-backdrop.drawer-backdrop {
   display: flex;
   justify-content: flex-end;
   align-items: stretch;
   place-items: unset;
   background: rgba(0, 0, 0, 0.4);
+  animation: okbot-drawer-backdrop-in 0.16s ease-out;
+}
+.modal-backdrop.drawer-backdrop.closing {
+  animation: okbot-drawer-backdrop-out 0.2s ease-in forwards;
+  pointer-events: none;
 }
 .form-drawer {
   width: min(420px, 100vw);
@@ -2505,6 +3573,11 @@ input, textarea { user-select: text; }
   overflow: hidden;
   padding: 0;
   box-shadow: none;
+  animation: okbot-drawer-in 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+.form-drawer.closing {
+  animation: okbot-drawer-out 0.2s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 .form-drawer-head {
   flex-shrink: 0;
@@ -2618,6 +3691,21 @@ input, textarea { user-select: text; }
   box-shadow: none;
   display: flex;
   flex-direction: column;
+  animation: okbot-drawer-in 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+.modal.form-drawer.closing {
+  animation: okbot-drawer-out 0.2s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  .modal-backdrop.drawer-backdrop,
+  .modal-backdrop.drawer-backdrop.closing,
+  .form-drawer,
+  .form-drawer.closing,
+  .modal.form-drawer,
+  .modal.form-drawer.closing {
+    animation: none;
+  }
 }
 :root[data-theme='light'] .modal.form-drawer {
   background: var(--panel);
@@ -2649,6 +3737,11 @@ input, textarea { user-select: text; }
   padding: 8px 10px;
   background: var(--panel-2);
   outline: none;
+}
+.field textarea[readonly] {
+  opacity: 0.85;
+  cursor: default;
+  color: var(--muted);
 }
 /* Match 「名称」 (.modal-compact .field-name input → 13px) for all modal form controls */
 .modal .field input,
@@ -2770,16 +3863,16 @@ input, textarea { user-select: text; }
 .menu {
   position: fixed;
   z-index: 60;
-  background: #111;
+  background: #1c1c1c;
   border: 1px solid var(--border);
   border-radius: 10px;
   min-width: 160px;
   padding: 4px;
   box-shadow: none;
 }
-:root[data-theme='light'] .menu { background: var(--panel); }
+:root[data-theme='light'] .menu { background: #fff; }
 @media (prefers-color-scheme: light) {
-  :root:not([data-theme='dark']) .menu { background: var(--panel); }
+  :root:not([data-theme='dark']) .menu { background: #fff; }
 }
 .menu button {
   display: flex;
@@ -2806,9 +3899,100 @@ input, textarea { user-select: text; }
   width: 16px;
   height: 16px;
 }
-.menu button:hover { background: var(--panel-2); }
+.menu button:hover { background: rgba(255, 255, 255, 0.06); }
+:root[data-theme='light'] .menu button:hover { background: rgba(0, 0, 0, 0.04); }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .menu button:hover { background: rgba(0, 0, 0, 0.04); }
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .menu button:hover { background: rgba(255, 255, 255, 0.06); }
+}
 .menu .danger { color: var(--danger); }
 .menu button:disabled { opacity: 0.45; cursor: default; }
+.menu button:disabled:hover { background: transparent; }
+.menu .menu-sep {
+  /* Match light .sidebar-resize vertical hairline (not .session-pin-divider). */
+  height: var(--hairline);
+  margin: 4px 6px;
+  background: color-mix(in srgb, var(--border) 94%, var(--text));
+  opacity: 1;
+  border: none;
+}
+:root[data-theme='light'] .menu .menu-sep {
+  background: color-mix(in srgb, var(--hairline-color) 42%, transparent);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .menu .menu-sep {
+    background: color-mix(in srgb, #a8a8ae 42%, transparent);
+  }
+}
+.menu-item-submenu {
+  position: relative;
+}
+.menu-item-submenu > button.has-submenu {
+  padding-right: 8px;
+}
+.menu-item-submenu .menu-submenu-chevron {
+  margin-left: auto;
+  display: inline-flex;
+  opacity: 0.7;
+}
+.menu-submenu {
+  display: none;
+  /* left/top set by JS clamp (fixed); fallback absolute for no-JS */
+  position: fixed;
+  z-index: 61;
+  background: #1c1c1c;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  min-width: 148px;
+  padding: 4px;
+  box-shadow: none;
+}
+:root[data-theme='light'] .menu-submenu { background: #fff; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .menu-submenu { background: #fff; }
+}
+.menu-item-submenu:hover > .menu-submenu,
+.menu-item-submenu:focus-within > .menu-submenu,
+.menu-item-submenu.open > .menu-submenu {
+  display: block;
+}
+.menu-submenu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 14px;
+  line-height: 1.35;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.menu-submenu button:hover { background: rgba(255, 255, 255, 0.06); }
+:root[data-theme='light'] .menu-submenu button:hover { background: rgba(0, 0, 0, 0.04); }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .menu-submenu button:hover { background: rgba(0, 0, 0, 0.04); }
+}
+.menu-submenu .menu-sep {
+  height: var(--hairline);
+  margin: 4px 6px;
+  background: color-mix(in srgb, var(--border) 94%, var(--text));
+  opacity: 1;
+  border: none;
+}
+:root[data-theme='light'] .menu-submenu .menu-sep {
+  background: color-mix(in srgb, var(--hairline-color) 42%, transparent);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .menu-submenu .menu-sep {
+    background: color-mix(in srgb, #a8a8ae 42%, transparent);
+  }
+}
 .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
 
 .create-menu {
@@ -2816,7 +4000,7 @@ input, textarea { user-select: text; }
   right: 10px;
   top: calc(var(--traffic-pad) + 2px);
   z-index: 50;
-  background: #111;
+  background: #1c1c1c;
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -2825,12 +4009,12 @@ input, textarea { user-select: text; }
   box-shadow: none;
 }
 :root[data-theme='light'] .create-menu {
-  background: var(--panel);
+  background: #fff;
   box-shadow: none;
 }
 @media (prefers-color-scheme: light) {
   :root:not([data-theme='dark']) .create-menu {
-    background: var(--panel);
+    background: #fff;
     box-shadow: none;
   }
 }
@@ -2931,28 +4115,28 @@ input, textarea { user-select: text; }
     background: rgba(24, 24, 27, 0.18);
   }
 }
-/* mask fades content (inset box-shadow is covered by children) */
+/* mask fades content (inset box-shadow is covered by children); keep bands short */
 .scroll-fade.fade-top {
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 28px, #000 100%);
-  mask-image: linear-gradient(to bottom, transparent 0, #000 28px, #000 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 18px, #000 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 18px, #000 100%);
 }
 .scroll-fade.fade-bottom {
-  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 28px), transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 28px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 18px), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 18px), transparent 100%);
 }
 .scroll-fade.fade-top.fade-bottom {
   -webkit-mask-image: linear-gradient(
     to bottom,
     transparent 0,
-    #000 28px,
-    #000 calc(100% - 28px),
+    #000 18px,
+    #000 calc(100% - 18px),
     transparent 100%
   );
   mask-image: linear-gradient(
     to bottom,
     transparent 0,
-    #000 28px,
-    #000 calc(100% - 28px),
+    #000 18px,
+    #000 calc(100% - 18px),
     transparent 100%
   );
 }
@@ -2971,6 +4155,10 @@ input, textarea { user-select: text; }
 
 /* Bottom turn status (orb + shimmer text) above composer while agent busy */
 .chat-turn-status {
+  width: 100%;
+  max-width: var(--chat-column-max);
+  margin-inline: auto;
+  box-sizing: border-box;
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -3067,7 +4255,7 @@ input, textarea { user-select: text; }
   justify-content: center;
   color: var(--muted);
   flex-shrink: 0;
-  align-self: center;
+  align-self: flex-end;
   background: transparent;
   line-height: 0;
 }
@@ -3523,11 +4711,11 @@ input, textarea { user-select: text; }
   pointer-events: none;
   letter-spacing: 0.02em;
 }
+/* Static brushed-metal fill — no keyframes / flow animation. */
 .chat-watermark-metal {
   font-size: 48px;
   font-weight: 650;
   line-height: 1.1;
-  /* Period = 180px; ends on same stop as start so the loop has no hitch. */
   background-image: repeating-linear-gradient(
     110deg,
     #6b6b6b 0px,
@@ -3536,14 +4724,13 @@ input, textarea { user-select: text; }
     #8a8a8a 135px,
     #6b6b6b 180px
   );
+  background-position: 60px 0;
+  background-size: auto;
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
   -webkit-text-fill-color: transparent;
   opacity: 0.55;
-  /* Static metal fill. An infinite background-position loop kept the GPU
-     process repainting this layer while OkBot was idle on the empty screen. */
-  background-position: 60px 0;
 }
 :root[data-theme='light'] .chat-watermark-metal {
   opacity: 0.42;
@@ -3567,16 +4754,6 @@ input, textarea { user-select: text; }
       #9a9a9a 135px,
       #8a8a8a 180px
     );
-  }
-}
-@keyframes okbot-metal-flow {
-  from { background-position: 0 0; }
-  to { background-position: 180px 0; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .chat-watermark-metal {
-    animation: none;
-    background-position: 60px 0;
   }
 }
 
@@ -3644,7 +4821,7 @@ input, textarea { user-select: text; }
 }
 
 
-/* Collapsed sidebar hover card */
+/* Session pin / collapsed-rail hover card (expanded pins reuse the same tip). */
 .dock-tip {
   position: fixed;
   z-index: 80;
@@ -3657,8 +4834,8 @@ input, textarea { user-select: text; }
   color: var(--text);
   box-shadow: none;
   border: 1px solid rgba(255, 255, 255, 0.06);
-  /* Receive hover so icon → tip moves cancel grace-hide (rail leave alone would flicker). */
-  pointer-events: auto;
+  /* Tip is display-only: leave avatar hides immediately (do not keep open on card hover). */
+  pointer-events: none;
 }
 :root[data-theme='light'] .dock-tip {
   background: #ffffff;
@@ -3835,6 +5012,217 @@ input, textarea { user-select: text; }
   padding: 8px 0 4px;
   user-select: none;
 }
+
+.message-time-divider {
+  align-self: stretch;
+  width: 100%;
+  box-sizing: border-box;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.25;
+  color: var(--muted);
+  opacity: 0.9;
+  padding: 6px 0 2px;
+  user-select: none;
+}
+
+/* 1:1 mesh: centered「已发消息给:」+ clickable avatar/name chip only. */
+.mesh-status-row {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px auto;
+  padding: 4px 10px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.3;
+  cursor: default;
+  box-shadow: none;
+  max-width: min(var(--bubble-row-max), calc(100% - var(--bubble-side-gutter, 24px)));
+  user-select: none;
+}
+.mesh-status-row-text {
+  white-space: nowrap;
+}
+.mesh-status-row .bot-mention-chip-clickable {
+  cursor: pointer;
+  font: inherit;
+  vertical-align: middle;
+  /* Roomier horizontal pad; keep fixed 18px height from .bot-mention-chip. */
+  height: 18px;
+  padding: 0 10px 0 4px;
+  /* Default: no fill, no border — soft bg only on hover. */
+  background: transparent;
+  border-color: transparent;
+}
+.mesh-status-row .bot-mention-chip-clickable:hover {
+  /* Soft fill only; keep border transparent; no shadow. */
+  background: var(--accent-soft);
+  border-color: transparent;
+}
+.mesh-status-row .bot-mention-chip-clickable:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+/* Full chat-area peer transcript (covers .chat-pane; not a floating dialog). */
+.mesh-exchange-panel {
+  position: absolute;
+  inset: 0;
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  background: var(--chat-bg);
+  border: none;
+  box-shadow: none;
+  min-height: 0;
+  min-width: 0;
+}
+.mesh-exchange-panel-header {
+  position: relative;
+  flex-shrink: 0;
+  height: 45px;
+  display: flex;
+  align-items: center;
+  /* Match .main-header: primary identity left-aligned in the private-chat slot. */
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 0 44px 0 14px;
+  border-bottom: var(--hairline) solid rgba(255, 255, 255, 0.12);
+  box-sizing: border-box;
+}
+:root[data-theme='light'] .mesh-exchange-panel-header {
+  border-bottom-color: rgba(0, 0, 0, 0.12);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .mesh-exchange-panel-header {
+    border-bottom-color: rgba(0, 0, 0, 0.12);
+  }
+}
+/* Caller + callee reuse .header-identity / .header-avatar / h1 (same as private chat). */
+.mesh-exchange-header-primary,
+.mesh-exchange-header-peer {
+  flex: 0 1 auto;
+  max-width: min(42%, 100%);
+  pointer-events: none; /* read-only overlay; profile stays on main-header underneath */
+  cursor: default;
+}
+.mesh-exchange-header-primary:hover,
+.mesh-exchange-header-peer:hover {
+  background: transparent;
+}
+.mesh-exchange-header-arrow {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+  user-select: none;
+}
+.mesh-exchange-panel-thread {
+  flex: 1 1 0;
+  min-height: 0;
+  width: 100%;
+  max-width: var(--chat-column-max);
+  margin-inline: auto;
+  box-sizing: border-box;
+}
+.mesh-exchange-bubble-row {
+  max-width: 100%;
+}
+.mesh-exchange-pending,
+.mesh-exchange-empty {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 8px 4px;
+  align-self: center;
+}
+.mesh-exchange-header-close {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.bot-mention-chip-clickable {
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  font: inherit;
+  color: inherit;
+  /* UA button padding/line-height must not break the fixed 18px chip. */
+  margin: 0 1px;
+  padding: 0 8px 0 2px;
+}
+
+
+
+/* Reveal message clock (HH:MM): user rows translate left → time from right; assistant fixed. */
+.bubble-swipe-host {
+  position: relative;
+  align-self: stretch;
+  width: 100%;
+  box-sizing: border-box;
+  /* pan-y: vertical scroll free; time reveal is wheel/trackpad only (no press-drag). */
+  touch-action: pan-y;
+  /* No overflow:hidden — that would become a scrollport and break sticky actions. */
+  cursor: default;
+}
+.bubble-swipe-time {
+  position: absolute;
+  left: auto;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 0;
+  width: var(--bubble-swipe-reveal);
+  box-sizing: border-box;
+  display: flex;
+  align-items: center; /* vertically centered in the row gutter */
+  justify-content: flex-end;
+  padding-right: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+  color: var(--muted);
+  pointer-events: none;
+  user-select: none;
+  opacity: 0;
+  /* Start off-screen to the right; JS sets translateX toward 0 with swipe. */
+  transform: translateX(var(--bubble-swipe-reveal));
+  will-change: opacity, transform;
+  transition:
+    opacity 0.12s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.12s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.bubble-swipe-host.is-dragging .bubble-swipe-time {
+  transition: none;
+}
+.bubble-swipe-slide {
+  position: relative;
+  z-index: 1;
+  /* Translate only — never set left/width (avoids stretching width:100% bubble-row). */
+  touch-action: pan-y;
+  will-change: transform;
+  transition: transform 0.12s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.bubble-swipe-host.is-dragging .bubble-swipe-slide {
+  transition: none;
+  user-select: none;
+}
+/* Hide assistant FAB group while time is revealing so they do not overlap HH:MM. */
+.bubble-swipe-host.is-dragging .bubble-actions,
+.bubble-swipe-host.is-revealing .bubble-actions {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
 
 
 /* Auto-approval rules (settings) */
@@ -4895,10 +6283,11 @@ input, textarea { user-select: text; }
 
 
 
-/* unified modal close tokens — settings / aar / prompt share modal-close geometry */
+/* unified modal close tokens — settings / aar / prompt / mesh share modal-close geometry */
 .settings-close,
 .aar-close-icon,
-.prompt-context-icon-btn {
+.prompt-context-icon-btn,
+.mesh-exchange-header-close {
   width: 28px;
   height: 28px;
   border-radius: 8px;
@@ -4916,7 +6305,8 @@ input, textarea { user-select: text; }
 }
 .settings-close:hover,
 .aar-close-icon:hover,
-.prompt-context-icon-btn:hover {
+.prompt-context-icon-btn:hover,
+.mesh-exchange-header-close:hover {
   background: var(--accent-soft);
   color: var(--text);
 }
@@ -4968,7 +6358,7 @@ input, textarea { user-select: text; }
   overflow: hidden;
   /* Stick within .messages scrollport for the life of this bubble-row. */
   position: sticky;
-  top: 0;
+  top: var(--bubble-sticky-top);
   z-index: 2;
   align-self: flex-start;
   /* Opaque so long markdown scrolling beside does not bleed through bot-avatar overscan. */
@@ -4981,6 +6371,93 @@ input, textarea { user-select: text; }
 }
 .bubble-row.has-speaker {
   gap: 8px;
+}
+
+.bubble-speaker-label {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--muted);
+  margin: 0 0 4px;
+  user-select: text;
+}
+.bubble-speaker-label .bot-mention-chip {
+  /* Speaker identity chip: keep pill chrome; slightly denser in label slot. */
+  font-weight: 600;
+  vertical-align: middle;
+}
+
+.bubble.assistant.has-speaker-label {
+  padding-top: 8px;
+}
+
+/* Inline @助手 mention chip (avatar + name), chrome via border not shadow.
+   Fixed height + centered avatar/name so emoji vs BotAvatar (plastic) chips
+   stay the same size and sit on one baseline next to 「呼叫」. */
+.bot-mention-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  box-sizing: border-box;
+  height: 18px;
+  max-width: 100%;
+  margin: 0 1px;
+  padding: 0 8px 0 2px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1;
+  vertical-align: middle;
+  white-space: nowrap;
+  box-shadow: none;
+}
+
+.bot-mention-chip-avatar {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  font-size: 14px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  /* Clip BotAvatar overscan and uneven emoji glyphs to a uniform tile. */
+  overflow: hidden !important;
+  line-height: 0;
+}
+
+.bot-mention-chip-avatar.flat-avatar-bot {
+  /* Mention chips are dense; do not let canvas overscan change chip height. */
+  overflow: hidden !important;
+  padding: 0;
+}
+
+.bot-mention-chip-avatar .flat-avatar-emoji {
+  font-size: 10px;
+  line-height: 1;
+  display: block;
+  /* Neutralize emoji font baseline / ascent differences across glyphs. */
+  transform: translateY(0.05em);
+}
+
+.bot-mention-chip-name {
+  min-width: 0;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  line-height: 14px;
+  font-size: 12px;
+}
+
+.bubble .md .bot-mention-chip {
+  /* Keep chips from inheriting paragraph margins; stay centered in bubble text. */
+  margin-block: 0;
+  vertical-align: middle;
 }
 
 /* Searchable bot picker (create-squad) */
@@ -5170,6 +6647,23 @@ input, textarea { user-select: text; }
 .squad-avatar.cells-2 .squad-avatar-emoji {
   /* Width-limited half cells (~17.5×36) */
   font-size: 0.42em;
+}
+
+.squad-avatar-cell-bot {
+  background: transparent;
+  overflow: visible;
+}
+.squad-avatar-cell-bot .flat-avatar-bot,
+.squad-avatar-cell-bot .squad-avatar-bot {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+}
+.squad-avatar-cell-bot .flat-avatar-bot canvas {
+  /* Keep plastic avatar centered inside the tiny collage cell. */
+  max-width: 100%;
+  max-height: 100%;
 }
 .squad-avatar.global-search-avatar {
   width: 28px;
@@ -5834,14 +7328,119 @@ input, textarea { user-select: text; }
 }
 
 
-/* Assistant bubble hover actions: mirror of user body-row (bubble then actions). */
+/* Assistant bubble hover actions: mirror of user body-row (bubble then actions).
+   Full row width; only --bubble-actions-rail is reserved so all 4 FABs stay visible. */
 .bubble-body-row-assistant {
-  max-width: min(760px, 94%);
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  /* Tighter than base 6px so the 100px rail still fits 4 FABs. */
+  gap: 4px;
 }
 .bubble-body-row-assistant .bubble {
   flex: 0 1 auto;
   width: fit-content;
-  max-width: min(720px, 100%);
+  /* Allow shrink below content min so rail reservation wins at narrow widths. */
+  min-width: 0;
+  /* Long content (code) grows to available width minus FAB rail only — no side-gutter. */
+  max-width: min(var(--bubble-max), calc(100% - var(--bubble-actions-rail)));
+}
+
+/* Round usage popover (assistant bubble action). */
+.token-usage-popover {
+  position: fixed;
+  z-index: 10060;
+  min-width: 260px;
+  max-width: min(360px, calc(100vw - 16px));
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  box-shadow: none;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+}
+:root[data-theme='light'] .token-usage-popover {
+  /* White surface (same token as inputs); gray --panel looked muddy on chat. */
+  background: var(--input);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .token-usage-popover {
+    background: var(--input);
+  }
+}
+.token-usage-popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.token-usage-popover-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  font-weight: 600;
+  font-size: 12px;
+  min-width: 0;
+}
+.token-usage-popover-title svg {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  color: var(--muted);
+}
+.token-usage-popover-total {
+  flex-shrink: 0;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.token-usage-popover-divider {
+  height: 1px;
+  margin: 10px 0;
+  background: var(--border);
+  border: 0;
+}
+.token-usage-popover-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.token-usage-popover-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+.token-usage-popover-row .k {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.token-usage-popover-row .v {
+  color: var(--text);
+  text-align: right;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.token-usage-popover-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.bubble-actions.is-pinned {
+  opacity: 1;
+  pointer-events: auto;
+}
+.bubble-action-btn.is-active {
+  background: color-mix(in srgb, var(--text) 20%, transparent);
+  color: var(--text);
 }
 
 /* Usage settings */
@@ -6056,6 +7655,13 @@ input, textarea { user-select: text; }
   width: 100%;
   resize: vertical;
   font-size: 12px;
+  /* Override .aar-inline-input single-line height/padding so multi-line editors
+     match settings-paths-textarea / assistant AGENTS.md field (even inset). */
+  height: auto;
+  min-height: 0;
+  padding: 10px 12px;
+  line-height: 1.45;
+  box-sizing: border-box;
 }
 .aar-item-stack {
   display: flex;
@@ -6246,6 +7852,95 @@ input, textarea { user-select: text; }
   font-size: 18px;
   font-weight: 650;
 }
+
+.marketplace-tabs {
+  margin: 0 20px 8px;
+  flex-shrink: 0;
+  display: flex;
+  justify-content: center;
+}
+.marketplace-tabs-track {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--panel-2, transparent);
+  border: 1px solid var(--border, rgba(255,255,255,0.12));
+}
+.marketplace-tabs-pill {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 0;
+  border-radius: 8px;
+  background: var(--accent-soft, color-mix(in srgb, var(--accent, #6366f1) 22%, transparent));
+  border: 1px solid color-mix(in srgb, var(--accent, #6366f1) 45%, transparent);
+  pointer-events: none;
+  transition: transform 180ms ease, width 180ms ease, opacity 120ms ease;
+  z-index: 0;
+}
+.marketplace-tabs-track > button {
+  position: relative;
+  z-index: 1;
+  border: none;
+  background: transparent;
+  color: var(--muted, var(--text));
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  line-height: 1.2;
+}
+.marketplace-tabs-track > button:hover {
+  color: var(--text);
+}
+.marketplace-tabs-track > button.active {
+  color: var(--text);
+  background: transparent;
+  border-color: transparent;
+}
+.marketplace-connector-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.marketplace-connector-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel-2, var(--panel));
+}
+.marketplace-connector-main {
+  flex: 1;
+  min-width: 0;
+}
+.marketplace-connector-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+.marketplace-connector-desc {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+.marketplace-connector-cmd {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  word-break: break-all;
+}
+
 .marketplace-page-body {
   flex: 1;
   min-height: 0;
@@ -6433,6 +8128,14 @@ input, textarea { user-select: text; }
 
 
 /* Per-message turn waterfall (链路追踪) */
+:root[data-theme='light'] .turn-trace-modal {
+  background: #fff;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .turn-trace-modal {
+    background: #fff;
+  }
+}
 .turn-trace-modal {
   width: min(640px, calc(100vw - 32px));
   max-height: min(80vh, 720px);
@@ -6583,11 +8286,14 @@ input, textarea { user-select: text; }
 
 /* Parallel in-flight tasks (shown only when >1 unfinished turn) */
 .parallel-tasks-strip {
-  margin: 0 18px 8px;
+  width: 100%;
+  max-width: var(--chat-column-max);
+  margin: 0 auto 8px;
+  box-sizing: border-box;
   padding: 8px 10px;
   border-radius: 10px;
-  background: color-mix(in srgb, var(--panel-2, var(--bg-elevated, #1e1e24)) 88%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border, #333) 80%, transparent);
+  background: color-mix(in srgb, var(--panel-2) 88%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
 }
 .parallel-tasks-head {
   display: flex;
@@ -6598,11 +8304,11 @@ input, textarea { user-select: text; }
 .parallel-tasks-title {
   font-size: 12px;
   font-weight: 600;
-  color: var(--muted, #9ca3af);
+  color: var(--muted);
 }
 .parallel-tasks-count {
   font-size: 11px;
-  color: var(--muted, #9ca3af);
+  color: var(--muted);
   opacity: 0.85;
 }
 .parallel-tasks-list {
@@ -6620,28 +8326,28 @@ input, textarea { user-select: text; }
   max-width: 100%;
   padding: 4px 8px 4px 7px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--border, #444) 70%, transparent);
-  background: color-mix(in srgb, var(--bg, #121216) 70%, transparent);
-  color: var(--fg, #e5e7eb);
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  color: var(--text);
   font-size: 12px;
   line-height: 1.2;
   cursor: pointer;
 }
 .parallel-task-chip:hover {
-  border-color: color-mix(in srgb, var(--accent, #6366f1) 55%, var(--border, #444));
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
 }
 .parallel-task-dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--accent, #6366f1);
+  background: var(--accent);
   flex: 0 0 auto;
 }
 .parallel-task-chip.status-awaiting_approval .parallel-task-dot {
   background: #f59e0b;
 }
 .parallel-task-chip.status-wrapping_up .parallel-task-dot {
-  background: #94a3b8;
+  background: var(--muted);
 }
 .parallel-task-label {
   overflow: hidden;
@@ -6653,7 +8359,7 @@ input, textarea { user-select: text; }
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: var(--muted, #9ca3af);
+  color: var(--muted);
   font-size: 11px;
   flex: 0 0 auto;
 }

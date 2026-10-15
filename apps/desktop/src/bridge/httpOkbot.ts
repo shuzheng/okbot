@@ -3,7 +3,7 @@
  * over the desktop LAN HTTP API (REST + SSE). Same UI codebase.
  */
 
-import { normalizeUsageStats, TOOL_IDS } from '@okbot/shared';
+import { buildChatStartBody, normalizeUsageStats, TOOL_IDS, type ChatStartOpts } from '@okbot/shared';
 
 
 type Json = Record<string, unknown>;
@@ -272,6 +272,7 @@ export function fillGatewaySettings(settings: unknown) {
     memory: s.memory && typeof s.memory === 'object' ? s.memory : {},
     squad: s.squad && typeof s.squad === 'object' ? s.squad : {},
     toolRun: s.toolRun && typeof s.toolRun === 'object' ? s.toolRun : {},
+    mesh: s.mesh && typeof s.mesh === 'object' ? s.mesh : {},
   };
 }
 
@@ -352,16 +353,7 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
       const page = await okbot.getMessagesPage(botId, { limit });
       return page.messages || [];
     },
-    chatStart: async (
-      botId: string,
-      text: string,
-      opts?: {
-        quoteMessageId?: string;
-        computerId?: string;
-        attachments?: unknown;
-        clientTurnId?: string;
-      },
-    ) => {
+    chatStart: async (botId: string, text: string, opts?: ChatStartOpts) => {
       const token = gatewayToken();
       const res = await fetch(endpoint(`/v1/bots/${encodeURIComponent(botId)}/messages`), {
         method: 'POST',
@@ -371,13 +363,7 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
           'Content-Type': 'application/json',
           Accept: 'text/event-stream',
         },
-        body: JSON.stringify({
-          text,
-          computerId: opts?.computerId,
-          quoteMessageId: opts?.quoteMessageId,
-          clientTurnId: opts?.clientTurnId,
-          attachments: opts?.attachments,
-        }),
+        body: JSON.stringify(buildChatStartBody(text, opts)),
       });
       if (!res.ok || !res.body) {
         const t = await res.text();
@@ -409,16 +395,7 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
       }
       return { ok: true };
     },
-    chatStartSquad: async (
-      squadId: string,
-      text: string,
-      opts?: {
-        quoteMessageId?: string;
-        computerId?: string;
-        attachments?: unknown;
-        clientTurnId?: string;
-      },
-    ) => {
+    chatStartSquad: async (squadId: string, text: string, opts?: ChatStartOpts) => {
       const token = gatewayToken();
       const res = await fetch(endpoint(`/v1/squads/${encodeURIComponent(squadId)}/messages`), {
         method: 'POST',
@@ -428,13 +405,7 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
           'Content-Type': 'application/json',
           Accept: 'text/event-stream',
         },
-        body: JSON.stringify({
-          text,
-          computerId: opts?.computerId,
-          quoteMessageId: opts?.quoteMessageId,
-          clientTurnId: opts?.clientTurnId,
-          attachments: opts?.attachments,
-        }),
+        body: JSON.stringify(buildChatStartBody(text, opts)),
       });
       if (!res.ok || !res.body) throw new Error(await res.text());
       const reader = res.body.getReader();
@@ -584,10 +555,56 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
         return '';
       }
     },
-    readGeneratedAssetDataUrl: async () => null,
+    readGeneratedAssetDataUrl: async (assetRel: string) => {
+      const rel = String(assetRel || '')
+        .replace(/^okbot-asset:/i, '')
+        .replace(/^\/v1\/media\//i, '')
+        .replace(/^\/+/, '')
+        .replace(/\\/g, '/');
+      const parts = rel.split('/');
+      if (parts.length !== 3 || parts[1] !== 'resources' || !parts[0] || !parts[2]) {
+        return { ok: false as const, error: 'asset must be <ownerId>/resources/<file>' };
+      }
+      if (rel.includes('..')) {
+        return { ok: false as const, error: 'invalid asset path' };
+      }
+      const path = `/v1/media/${encodeURIComponent(parts[0])}/resources/${encodeURIComponent(parts[2])}`;
+      try {
+        const token = gatewayToken();
+        const res = await fetch(endpoint(path), {
+          method: 'GET',
+          credentials: 'include',
+          headers: {
+            Accept: '*/*',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+        });
+        if (!res.ok) {
+          return { ok: false as const, error: `HTTP ${res.status}` };
+        }
+        const buf = await res.arrayBuffer();
+        if (buf.byteLength > 25 * 1024 * 1024) {
+          return { ok: false as const, error: 'asset too large' };
+        }
+        const mime = res.headers.get('content-type') || 'image/png';
+        const bytes = new Uint8Array(buf);
+        let binary = '';
+        const chunk = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunk) {
+          binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+        }
+        const dataUrl = `data:${mime.split(';')[0]};base64,${btoa(binary)}`;
+        return { ok: true as const, dataUrl };
+      } catch (err) {
+        return {
+          ok: false as const,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    },
+
     getPromptContext: (botId: string, messageId: string) =>
       rpc('getPromptContext', { botId, messageId }),
-    getLastRunTrace: (ownerId: string) => rpc('getLastRunTrace', { ownerId }),
     searchMessages: (query: string, opts?: { limit?: number }) =>
       rpc('searchMessages', { query, limit: opts?.limit }),
     listBotMemories: (botId: string) => rpc('listBotMemories', { botId }),

@@ -11,11 +11,18 @@ import type { ChatMessage, ResolvedModelConfig, SecuritySettings, ToolPreference
 import { createId, DEFAULT_SECURITY, DEFAULT_TOOL_PREFERENCES } from '@okbot/shared';
 import { buildAgentInstructions } from './instructions.js';
 import { shellFsRoutingSection, type ComputerRoute } from './computerSelection.js';
-import { buildTools, type SkillLookup } from './tools.js';
+import { buildTools, resolveImageCapability, type SkillLookup } from './tools.js';
 import type { ExecutionBackend } from './executionBackend.js';
 import type { ToolRunBudget } from './toolRunBudget.js';
 import type { HitlLoopHooks, RunChatResult } from './types.js';
+import { stripLeadingCommittedInterim } from './meshCommit.js';
 import { tokenUsageFromRunResult } from './usage.js';
+import {
+  meshAskToolAllowed,
+  type MeshCallBudget,
+  type MeshPeerSpec,
+} from './meshPolicy.js';
+import type { MeshSettings } from '@okbot/shared';
 
 
 
@@ -28,6 +35,15 @@ export function parseToolArgs(raw: string | undefined): unknown {
   }
 }
 
+/** Mutable handle so mid-stream hooks (mesh commit) can drop pre-tool accumulation. */
+export type StreamResetHandle = {
+  reset: () => void;
+  /** Set when mesh finalized an interim bubble; empty follow-up must not error. */
+  committedInterim?: boolean;
+  /** Sealed interim text (message A); follow-up content strips this prefix when repeated. */
+  committedText?: string;
+};
+
 export async function consumeAgentTextStream(
   result: {
     toTextStream: (options?: { compatibleWithNodeStreams: true }) => AsyncIterable<unknown>;
@@ -36,26 +52,41 @@ export async function consumeAgentTextStream(
   },
   onDelta: ((delta: string) => void) | undefined,
   signal?: AbortSignal,
+  resetHandle?: StreamResetHandle | null,
 ): Promise<string> {
   let streamed = '';
-  const textStream = result.toTextStream({ compatibleWithNodeStreams: true });
-  for await (const chunk of textStream) {
-    if (signal?.aborted) break;
-    const piece =
-      typeof chunk === 'string'
-        ? chunk
-        : Buffer.isBuffer(chunk)
-          ? chunk.toString('utf8')
-          : chunk == null
-            ? ''
-            : String(chunk);
-    if (!piece) continue;
-    streamed += piece;
-    onDelta?.(piece);
+  if (resetHandle) {
+    resetHandle.reset = () => {
+      if (streamed.trim() && !resetHandle.committedText) {
+        resetHandle.committedText = streamed;
+      }
+      streamed = '';
+    };
   }
-  await result.completed;
-  if (result.error) throw result.error;
-  return streamed;
+  try {
+    const textStream = result.toTextStream({ compatibleWithNodeStreams: true });
+    for await (const chunk of textStream) {
+      if (signal?.aborted) break;
+      const piece =
+        typeof chunk === 'string'
+          ? chunk
+          : Buffer.isBuffer(chunk)
+            ? chunk.toString('utf8')
+            : chunk == null
+              ? ''
+              : String(chunk);
+      if (!piece) continue;
+      streamed += piece;
+      onDelta?.(piece);
+    }
+    await result.completed;
+    if (result.error) throw result.error;
+    return streamed;
+  } finally {
+    if (resetHandle) {
+      resetHandle.reset = () => {};
+    }
+  }
 }
 
 export type AgentRunStreamResult = Awaited<ReturnType<Runner['run']>> & {
@@ -81,6 +112,8 @@ export function createAgentAndRunner(input: {
   sessionSummary?: string;
   /** settings.instructions.assistantRoleTemplate */
   assistantRoleTemplate?: string;
+  /** User-chosen default assistant (identity hint in system prompt). */
+  isDefaultAssistant?: boolean;
   model: ResolvedModelConfig;
   tools?: ToolPreferences;
   security?: SecuritySettings;
@@ -101,15 +134,46 @@ export function createAgentAndRunner(input: {
   extraTools?: readonly Tool[];
   /** Built-in web_fetch / web_search settings (`settings.web`). */
   web?: WebSettings;
+  /** 1:1 mesh peers; omit for squad / mesh-disabled. */
+  meshPeers?: MeshPeerSpec[];
+  meshSettings?: MeshSettings;
+  meshDepth?: number;
+  meshStack?: string[];
+  meshCallBudget?: MeshCallBudget;
+  meshMemberMaxTurns?: number;
+  onMeshExchange?: HitlLoopHooks['onMeshExchange'];
+  /** Pre-built ask_assistant tool (from runAgentChat); depth/roster already applied. */
+  meshAskTool?: Tool;
+  onToolApprovalRequest?: HitlLoopHooks['onToolApprovalRequest'];
+  onToolResult?: HitlLoopHooks['onToolResult'];
+  onModelTurnStart?: HitlLoopHooks['onModelTurnStart'];
+  onModelTurnEnd?: HitlLoopHooks['onModelTurnEnd'];
+  onApprovalWaitStart?: HitlLoopHooks['onApprovalWaitStart'];
+  onApprovalWaitEnd?: HitlLoopHooks['onApprovalWaitEnd'];
+  signal?: AbortSignal;
 }) {
   const toolPrefs = input.tools ?? DEFAULT_TOOL_PREFERENCES;
   const security = input.security ?? DEFAULT_SECURITY;
+  const imageApi = {
+    baseURL: input.model.baseURL,
+    apiKey: input.model.apiKey,
+    catalogModelIds: input.model.providerModelIds,
+    providerName: input.model.providerName,
+  };
+  const imageCapable = resolveImageCapability(imageApi) != null;
   const provider = new OpenAIProvider({
     apiKey: input.model.apiKey,
     baseURL: input.model.baseURL.replace(/\/$/, ''),
     useResponses: input.model.apiFormat === 'responses',
   });
   const historyForInstructions = input.session ? [] : (input.history ?? []);
+  const meshPeers = input.meshPeers ?? [];
+  const askEnabled = meshPeers.length > 0 && meshAskToolAllowed();
+  const peerRoster = meshPeers.map((p) => ({
+    id: p.id,
+    name: p.name,
+    description: p.description,
+  }));
   const agent = new Agent({
     name: input.botName || 'OkBot',
     instructions: buildAgentInstructions(
@@ -123,7 +187,12 @@ export function createAgentAndRunner(input: {
       input.sessionSummary,
       input.assistantRoleTemplate,
       input.hasVisionInput === true,
-      shellFsRoutingSection(input.computerRoute, toolPrefs),
+      shellFsRoutingSection(input.computerRoute, toolPrefs, { imageCapable }),
+      imageCapable,
+      // Only inject roster on 1:1 when peers were provided (including empty → "none").
+      input.meshPeers != null ? peerRoster : undefined,
+      askEnabled,
+      input.isDefaultAssistant === true,
     ),
     model: input.model.model,
     ...(typeof input.model.maxTokens === 'number' && input.model.maxTokens >= 1
@@ -134,12 +203,7 @@ export function createAgentAndRunner(input: {
       skillLookup: input.skillLookup,
       historySearch: input.historySearch,
       scheduleManage: input.scheduleManage,
-      imageApi: {
-        baseURL: input.model.baseURL,
-        apiKey: input.model.apiKey,
-        catalogModelIds: input.model.providerModelIds,
-        providerName: input.model.providerName,
-      },
+      imageApi,
       imageAssets:
         input.ownerId && input.resourcesDir
           ? { ownerId: input.ownerId, resourcesDir: input.resourcesDir }
@@ -149,6 +213,7 @@ export function createAgentAndRunner(input: {
       web: input.web,
       }),
       ...(input.extraTools ?? []),
+      ...(input.meshAskTool ? [input.meshAskTool] : []),
     ],
   });
   const runner = new Runner({
@@ -245,6 +310,7 @@ export async function runHitlStreamLoop(
   result: AgentRunStreamResult,
   streamedIn: string,
   hooks: HitlLoopHooks,
+  streamReset?: StreamResetHandle | null,
 ): Promise<RunChatResult> {
   let streamed = streamedIn;
   let current = result;
@@ -328,7 +394,12 @@ export async function runHitlStreamLoop(
 
     const resumed = await runModelSegment(hooks, async () => {
       const next = (await runner.run(agent, current.state, runOpts)) as AgentRunStreamResult;
-      const piece = await consumeAgentTextStream(next, hooks.onDelta, hooks.signal);
+      const piece = await consumeAgentTextStream(
+        next,
+        hooks.onDelta,
+        hooks.signal,
+        streamReset,
+      );
       return { result: next, streamed: piece };
     });
     current = resumed.result;
@@ -339,8 +410,17 @@ export async function runHitlStreamLoop(
     return { content: streamed, usage: tokenUsageFromRunResult(current) };
   }
 
-  const content = resolveFinalContent(current, streamed);
-  if (!content.trim()) throw new Error('模型返回为空');
+  let content = resolveFinalContent(current, streamed);
+  if (streamReset?.committedText) {
+    content = stripLeadingCommittedInterim(content, streamReset.committedText);
+  }
+  if (!content.trim()) {
+    // Mesh may have already persisted the interim reply as its own bubble.
+    if (streamReset?.committedInterim) {
+      return { content: '', usage: tokenUsageFromRunResult(current) };
+    }
+    throw new Error('模型返回为空');
+  }
   return { content, usage: tokenUsageFromRunResult(current) };
 }
 

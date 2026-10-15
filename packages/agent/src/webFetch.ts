@@ -6,7 +6,7 @@
  * Transport (DNS pin, hop-by-hop redirect, body limit) lives in `ssrfHttp.ts`
  * so GitHub assistant import can reuse the same pipeline.
  */
-import type { WebFetchSettings } from '@okbot/shared';
+import { redactSensitiveText, type WebFetchSettings } from '@okbot/shared';
 import {
   assertUrlAllowed,
   isBlockedHostnameLiteral,
@@ -146,7 +146,11 @@ export async function webFetch(
   }
 
   if (!hop.ok) {
-    throw new Error(`拉取失败（HTTP ${hop.status}）${text ? `：${text.slice(0, 200)}` : ''}`);
+    throw new Error(
+      redactSensitiveText(
+        `拉取失败（HTTP ${hop.status}）${text ? `：${text.slice(0, 200)}` : ''}`,
+      ),
+    );
   }
 
   return {

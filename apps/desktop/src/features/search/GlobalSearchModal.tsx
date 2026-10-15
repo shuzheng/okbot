@@ -9,7 +9,7 @@ import {
 import { t, type UiLang } from '../../i18n';
 import type { SettingsTab } from '../settings/types';
 import { SETTINGS_SEARCH_ITEMS, SETTINGS_TAB_LABEL_KEYS, isAdvancedSettingsItem } from '../settings/settingsSearch';
-import { FlatAvatar, SquadAvatar } from '../../components/ui/avatars';
+import { FlatAvatar, SquadAvatar, type SquadAvatarMember } from '../../components/ui/avatars';
 
 export type GlobalSearchSelect =
   | { kind: 'bot'; id: string }
@@ -45,13 +45,18 @@ function matchText(hay: string, q: string): boolean {
 function squadMemberAvatars(
   squad: Pick<Squad, 'members'> | undefined,
   bots: Bot[],
-): Array<{ emoji: string; color: string }> {
+): SquadAvatarMember[] {
   const byId = new Map(bots.map((b) => [b.id, b] as const));
   const members = squad?.members ?? [];
   const cells = members
     .map((m) => byId.get(m.botId))
     .filter((b): b is Bot => Boolean(b))
-    .map((b) => ({ emoji: b.emoji, color: b.color }));
+    .map((b) => ({
+      emoji: b.emoji,
+      color: b.color,
+      avatarKind: b.avatarKind,
+      botAvatarType: b.botAvatarType,
+    }));
   return cells.length > 0 ? cells : [{ emoji: '👥', color: '#6366F1' }];
 }
 
@@ -195,6 +200,7 @@ export function GlobalSearchModal({ lang, bots, squads, developerMode = false, s
                       color={item.bot.color}
                       avatarKind={item.bot.avatarKind}
                       botAvatarType={item.bot.botAvatarType}
+                      paused
                     />
                     <span className="global-search-row-main">
                       <span className="global-search-row-title">{item.bot.name}</span>
@@ -252,6 +258,7 @@ export function GlobalSearchModal({ lang, bots, squads, developerMode = false, s
                       color={item.bot.color}
                       avatarKind={item.bot.avatarKind}
                       botAvatarType={item.bot.botAvatarType}
+                      paused
                     />
                     <span className="global-search-row-main">
                       <span className="global-search-row-title">{item.bot.name}</span>
@@ -341,6 +348,7 @@ export function GlobalSearchModal({ lang, bots, squads, developerMode = false, s
                       color={hit.botColor}
                       avatarKind={hit.botAvatarKind}
                       botAvatarType={hit.botAvatarType}
+                      paused
                     />
                   )}
                   <span className="global-search-row-main">

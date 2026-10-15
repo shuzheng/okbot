@@ -34,5 +34,12 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      - name: Lint
+        run: pnpm lint
+
       - name: Test
         run: pnpm test
+
+      # sandbox-agent tests are local HTTP + temp dirs only (no GPU / Docker).
+      - name: Test sandbox-agent
+        run: pnpm test:sandbox-agent

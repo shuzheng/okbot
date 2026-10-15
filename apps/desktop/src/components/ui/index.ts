@@ -1,4 +1,4 @@
-export { FlatAvatar, SquadAvatar } from './avatars';
+export { FlatAvatar, SquadAvatar, type SquadAvatarMember } from './avatars';
 export {
   ThemeModeIcon,
   CopyIcon,
@@ -22,7 +22,6 @@ export {
   DownloadUpdateIcon,
   AboutIcon,
   CopyRequestUrlIcon,
-  RunTraceIcon,
   TurnTraceIcon,
   ImmersiveChatIcon,
   ChevronsRightIcon,
@@ -32,6 +31,7 @@ export {
   ImageAttachIcon,
   FileAttachIcon,
   FolderAttachIcon,
+  UsageStackIcon,
 } from './icons';
 export { toast, ToastHost, type ToastKind } from './toast';
 export {

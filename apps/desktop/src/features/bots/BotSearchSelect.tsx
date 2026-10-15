@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Bot } from '@okbot/shared';
 import { FlatAvatar } from '../../components/ui/avatars';
-import { SearchIcon } from '../../components/ui/icons';
 import { t } from '../../i18n';
 
 export function BotSearchSelect({
@@ -99,6 +98,7 @@ export function BotSearchSelect({
                   avatarKind={b.avatarKind}
                   botAvatarType={b.botAvatarType}
                   className="bot-picker-chip-avatar"
+                  paused
                 />
                 <span>{b.name}</span>
                 <span
@@ -123,6 +123,7 @@ export function BotSearchSelect({
               avatarKind={selectedBots[0]!.avatarKind}
               botAvatarType={selectedBots[0]!.botAvatarType}
               className="bot-picker-chip-avatar"
+              paused
             />
             <span>{selectedBots[0]!.name}</span>
           </span>
@@ -167,6 +168,7 @@ export function BotSearchSelect({
                   avatarKind={b.avatarKind}
                   botAvatarType={b.botAvatarType}
                   className="bot-picker-chip-avatar"
+                  paused
                 />
                     <span className="bot-picker-option-name">{b.name}</span>
                     {on ? <span className="bot-picker-check">✓</span> : null}

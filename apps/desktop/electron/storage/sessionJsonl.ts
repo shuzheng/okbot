@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { createId, normalizeMessageTrace, normalizeTokenUsage, type ChatMessage, type MessagesPage } from '@okbot/shared';
+import { createId, normalizeMeshExchange, normalizeMessageTrace, normalizeTokenUsage, stripLeadingCommittedInterim, type ChatMessage, type MessagesPage } from '@okbot/shared';
 import { ensureDir } from './fs';
 import type { SessionRecordV2 } from './types';
 
@@ -60,6 +60,8 @@ export function legacyMessageToRecord(msg: ChatMessage): SessionRecordV2 {
     typeof msg.speakerBotId === 'string' && msg.speakerBotId.trim()
       ? msg.speakerBotId.trim()
       : undefined;
+  const meshExchange = normalizeMeshExchange(msg.meshExchange);
+  const meshInterim = msg.meshInterim === true;
   const quoteMessageId =
     typeof msg.quoteMessageId === 'string' && msg.quoteMessageId.trim()
       ? msg.quoteMessageId.trim()
@@ -83,6 +85,8 @@ export function legacyMessageToRecord(msg: ChatMessage): SessionRecordV2 {
     meta: {
       ...(uiRole ? { uiRole } : {}),
       ...(speakerBotId ? { speakerBotId } : {}),
+      ...(meshExchange ? { meshExchange } : {}),
+      ...(meshInterim ? { meshInterim: true } : {}),
       ...(quoteMessageId ? { quoteMessageId } : {}),
       ...(quotePreview ? { quotePreview } : {}),
       ...(attachments ? { attachments } : {}),
@@ -176,6 +180,8 @@ export function recordToUiMessage(rec: SessionRecordV2): ChatMessage | null {
     typeof rec.meta?.speakerBotId === 'string' && rec.meta.speakerBotId.trim()
       ? rec.meta.speakerBotId.trim()
       : undefined;
+  const meshExchange = normalizeMeshExchange(rec.meta?.meshExchange);
+  const meshInterim = rec.meta?.meshInterim === true;
   const quoteMessageId =
     typeof rec.meta?.quoteMessageId === 'string' && rec.meta.quoteMessageId.trim()
       ? rec.meta.quoteMessageId.trim()
@@ -193,6 +199,8 @@ export function recordToUiMessage(rec: SessionRecordV2): ChatMessage | null {
     content: extractItemText(item),
     createdAt: rec.createdAt,
     ...(speakerBotId ? { speakerBotId } : {}),
+    ...(meshExchange ? { meshExchange } : {}),
+    ...(meshInterim ? { meshInterim: true } : {}),
     ...(quoteMessageId ? { quoteMessageId } : {}),
     ...(quotePreview ? { quotePreview } : {}),
     ...(attachments ? { attachments } : {}),
@@ -335,4 +343,120 @@ export function readJsonlPage(
   } finally {
     fs.closeSync(fd);
   }
+}
+
+
+/**
+ * UI-only rows that must not enter the SDK/model session window.
+ * meshExchange = status chip; meshInterim = sealed ask_assistant message A.
+ * Feeding A back as a tool-less assistant turn teaches the model to stop after
+ * 「好的…」 without calling ask_assistant on the next user turn.
+ */
+export function isUiOnlyMeshSessionRecord(rec: SessionRecordV2): boolean {
+  return rec.meta?.meshExchange != null || rec.meta?.meshInterim === true;
+}
+
+/** Plain UI assistant upsert (legacyMessageToRecord): string content, no SDK status. */
+export function isPlainUiAssistantItem(item: Record<string, unknown>): boolean {
+  if (item.role !== 'assistant') return false;
+  if (typeof item.content !== 'string') return false;
+  if (item.status != null) return false;
+  const t = item.type;
+  if (t != null && t !== 'message') return false;
+  return true;
+}
+
+export function isAssistantMessageItem(item: Record<string, unknown>): boolean {
+  if (item.role !== 'assistant') return false;
+  const t = item.type;
+  if (t != null && t !== 'message') return false;
+  return true;
+}
+
+/**
+ * Drop UI-only mesh rows and legacy untagged interim twins (plain assistant T
+ * immediately before another assistant with the same text T) from the model view.
+ */
+export function filterRecordsForModelSession(records: SessionRecordV2[]): SessionRecordV2[] {
+  const base = records.filter((r) => !isUiOnlyMeshSessionRecord(r));
+  const out: SessionRecordV2[] = [];
+  for (let i = 0; i < base.length; i++) {
+    const rec = base[i]!;
+    const next = base[i + 1];
+    if (
+      next &&
+      isPlainUiAssistantItem(rec.item) &&
+      isAssistantMessageItem(next.item)
+    ) {
+      const a = extractItemText(rec.item).trim();
+      const b = extractItemText(next.item).trim();
+      if (a && a === b) {
+        // Legacy 42ef35d orphan: sealed A without meshInterim flag before SDK twin.
+        continue;
+      }
+    }
+    out.push(rec);
+  }
+  return out;
+}
+
+/**
+ * After ask_assistant commit, the SDK still appends its own assistant row with the
+ * same interim text. Drop those exact duplicates so reload matches live A → chip → B.
+ * Also handles legacy rows (no meshInterim flag): assistant(T) → mesh chip → assistant(T).
+ */
+export function dedupeMeshInterimMessages(messages: ChatMessage[]): ChatMessage[] {
+  if (messages.length < 2) return messages;
+  const interimTexts = new Set<string>();
+  const out: ChatMessage[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i]!;
+    if (m.role === 'assistant' && m.meshInterim === true) {
+      const key = (m.content || '').trim();
+      if (key) interimTexts.add(key);
+      out.push(m);
+      continue;
+    }
+    const text = (m.content || '').trim();
+    if (m.role === 'assistant' && !m.meshExchange && text && interimTexts.has(text)) {
+      // Exact duplicate of a sealed mesh interim — SDK echo, hide from UI.
+      continue;
+    }
+    // Legacy: … → interim A → mesh status → SDK echo of A → …
+    if (
+      m.role === 'assistant' &&
+      !m.meshExchange &&
+      !m.meshInterim &&
+      text
+    ) {
+      const prev = out[out.length - 1];
+      const prev2 = out[out.length - 2];
+      if (
+        prev?.meshExchange &&
+        prev2?.role === 'assistant' &&
+        !prev2.meshExchange &&
+        (prev2.content || '').trim() === text
+      ) {
+        continue;
+      }
+    }
+    out.push(m);
+  }
+
+  // Strip repeated interim prefix from follow-up B (A → chip → B).
+  for (let i = 0; i < out.length; i++) {
+    const chip = out[i]!;
+    if (!chip.meshExchange) continue;
+    const prev = out[i - 1];
+    const next = out[i + 1];
+    if (!prev || prev.role !== 'assistant' || prev.meshExchange) continue;
+    if (!next || next.role !== 'assistant' || next.meshExchange || next.meshInterim) continue;
+    const interim = prev.content || '';
+    if (!interim.trim()) continue;
+    const stripped = stripLeadingCommittedInterim(next.content || '', interim);
+    if (stripped !== next.content) {
+      out[i + 1] = { ...next, content: stripped };
+    }
+  }
+  return out;
 }

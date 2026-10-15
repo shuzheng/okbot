@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { dedupeMemoryFacts, extractDurableFacts } from './durableFacts';
+import { dedupeMemoryFacts, extractDurableFacts, isAcceptableMemoryFact } from './durableFacts';
 
 const summary = `目标：
 做压缩
@@ -34,6 +34,17 @@ const summary = `目标：
   assert.deepEqual(extractDurableFacts('## 约定\n- 用中文\n## 目标\n做别的\n'), ['用中文']);
   assert.deepEqual(extractDurableFacts('约定：A、B\n'), ['A', 'B']);
   assert.deepEqual(extractDurableFacts('## 决定：继续用 pnpm\n'), ['继续用 pnpm']);
+}
+
+{
+  // Quality gate via dedupe: junk crumbs never upsert
+  assert.deepEqual(dedupeMemoryFacts(['删除', '定时任务', '用中文'], []), []);
+  assert.deepEqual(
+    dedupeMemoryFacts(['用户偏好中文回复', '删除', 'web_search'], []),
+    ['用户偏好中文回复'],
+  );
+  assert.equal(isAcceptableMemoryFact('用户偏好中文回复'), true);
+  assert.equal(isAcceptableMemoryFact('删除'), false);
 }
 
 console.log('durableFacts.test.ts: ok');

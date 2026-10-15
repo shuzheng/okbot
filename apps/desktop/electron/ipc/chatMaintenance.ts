@@ -1,8 +1,9 @@
 /**
  * Apply post-turn / compress-time memory upserts and decide silent refresh gates.
+ * Public entry: `electron/contextMaterials` (single scheduling touchpoint).
  */
 import { createId, type ChatMessage, type MemoryEntry, type ResolvedModelConfig } from '@okbot/shared';
-import { refreshAgentsMd, refreshBotSkills, refreshMemories } from '@okbot/agent';
+import { refreshAgentsMd, refreshBotSkills, refreshMemories, refreshOwnerDescription } from '@okbot/agent';
 import type { FileStorage } from '../storage/FileStorage';
 import { dedupeMemoryFacts, extractDurableFacts } from '../storage/durableFacts';
 import {
@@ -117,6 +118,21 @@ export async function runThrottledPostTurnMaintenance(input: {
       signal: input.signal,
     });
     if (nextMd) input.storage.writeAgentsMd(input.botId, nextMd);
+
+    // Same cadence as AGENTS.md: evolve roster description (max 200 chars).
+    const bot = input.storage.listBots().find((b) => b.id === input.botId);
+    const descResult = await refreshOwnerDescription({
+      model: input.model,
+      ownerKind: 'bot',
+      ownerName: input.botName,
+      currentDescription: bot?.description || '',
+      recentMessages: recent,
+      recentMessageLimit: agentsLimit,
+      signal: input.signal,
+    });
+    if (descResult.action === 'upsert') {
+      input.storage.updateBot(input.botId, { description: descResult.description });
+    }
   }
 
   if (plan.runSkills) {
@@ -149,5 +165,45 @@ export async function runThrottledPostTurnMaintenance(input: {
     if (memResult.action === 'upsert') {
       upsertBotMemoriesFromEntries(input.storage, input.botId, memResult.entries);
     }
+  }
+}
+
+/**
+ * Squad post-turn: only roster description (agents cadence). No AGENTS/skills/memory.
+ */
+export async function runThrottledPostTurnSquadDescriptionRefresh(input: {
+  storage: FileStorage;
+  squadId: string;
+  squadName: string;
+  currentDescription: string;
+  model: ResolvedModelConfig;
+  userText: string;
+  signal?: AbortSignal;
+}): Promise<void> {
+  if (input.signal?.aborted) return;
+  const settings = input.storage.getSettings();
+  const plan = planPostTurnMaintenance({
+    settings: settings.maintenance,
+    counters: getMaintenanceCounters(input.squadId),
+    userText: input.userText,
+  });
+  // Reuse AGENTS throttle for squad description evolution.
+  if (!plan.runAgents) return;
+
+  const agentsLimit = settings.instructions.agentsMdRecentMessageLimit;
+  const recent = input.storage.getMessagesPage(input.squadId, {
+    limit: agentsLimit,
+  }).messages;
+  const descResult = await refreshOwnerDescription({
+    model: input.model,
+    ownerKind: 'squad',
+    ownerName: input.squadName,
+    currentDescription: input.currentDescription,
+    recentMessages: recent,
+    recentMessageLimit: agentsLimit,
+    signal: input.signal,
+  });
+  if (descResult.action === 'upsert') {
+    input.storage.updateSquad(input.squadId, { description: descResult.description });
   }
 }

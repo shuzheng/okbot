@@ -7,8 +7,11 @@ import { wrapToolExecute, type ToolRunBudget } from './toolRunBudget.js';
 import {
   formatGenerateImageToolOutput,
   generateImage,
-  inferImageCapability,
+  GENERATE_IMAGE_UNSUPPORTED_MESSAGE,
   IMAGE_ASPECT_RATIOS,
+  inferImageCapability,
+  OPENAI_DEFAULT_IMAGE_MODELS,
+  MINIMAX_IMAGE_MODELS,
   type ImageApiCredentials,
   type ImageCapability,
 } from './generateImage.js';
@@ -89,13 +92,13 @@ export type BuildToolsOptions = {
   scheduleManage?: ScheduleManage;
   /**
    * Credentials for `generate_image` (same provider baseURL/apiKey as chat).
-   * When omitted, the tool reports a config error if invoked.
-   * Capability is auto-inferred from OpenAI host / OpenAI-style catalog models.
+   * When omitted/unsupported, the tool reports a clear error if invoked.
+   * Capability is auto-inferred: MiniMax host/name/image-01, or OpenAI/Azure / dall-e·gpt-image.
    */
   imageApi?: ImageApiCredentials;
   /**
    * Where to save generated images: bot/squad `resources/` dir + owner id for
-   * `okbot-asset:<ownerId>/resources/…` markdown.
+   * `/v1/media/<ownerId>/resources/…` markdown.
    */
   imageAssets?: { ownerId: string; resourcesDir: string };
   /**
@@ -115,6 +118,24 @@ export type BuildToolsOptions = {
    */
   web?: WebSettings;
 };
+
+
+/**
+ * Whether the chat provider looks like MiniMax or OpenAI-compatible Images API.
+ * `buildTools` still registers `generate_image` when prefs enable it; this
+ * result is used for model defaults and execute-time support checks.
+ */
+export function resolveImageCapability(
+  imageApi?: ImageApiCredentials | null,
+): ImageCapability | null {
+  const baseURL = imageApi?.baseURL?.trim();
+  if (!baseURL) return null;
+  return inferImageCapability({
+    baseURL,
+    catalogModelIds: imageApi?.catalogModelIds,
+    providerName: imageApi?.providerName,
+  });
+}
 
 export function buildTools(
   prefs: ToolPreferences,
@@ -144,13 +165,19 @@ export function buildTools(
     return resolveExecutionBackend({ computerId: picked.id, computers: route.computers });
   }
 
+  const shellHint = route
+    ? '按目标电脑系统选择 shell（Windows：PowerShell Core / cmd；macOS/Linux：系统 shell）'
+    : process.platform === 'win32'
+      ? 'Windows 优先 PowerShell Core，找不到时用 cmd'
+      : '系统 shell（如 zsh / bash）';
+
   if (prefs.run_shell.enabled) {
     list.push(
       tool({
         name: 'run_shell',
         description: route
-          ? `在电脑上执行一条命令（默认「${where}」；Windows 优先 PowerShell Core，找不到时用 cmd）。用户点名电脑时传 computer（id 或名称）；点了多台时每次都要传。危险命令会先请求批准。`
-          : `在「${where}」通过系统命令行执行一条命令（Windows 优先 PowerShell Core，找不到时使用 cmd）。仅在用户明确需要时使用；危险命令会先请求用户批准。`,
+          ? `在电脑上执行一条命令（默认「${where}」；${shellHint}）。用户点名电脑时传 computer（id 或名称）；点了多台时每次都要传。危险命令会先请求批准。`
+          : `在「${where}」通过系统命令行执行一条命令（${shellHint}）。仅在用户明确需要时使用；危险命令会先请求用户批准。`,
         parameters: z.object({
           command: z.string().describe('要执行的命令'),
           cwd: z.string().optional().describe('可选工作目录，支持 ~'),
@@ -404,35 +431,42 @@ export function buildTools(
     );
   }
 
-  // Gate: prefs switch AND provider inferred to support OpenAI-compatible images API.
+  // Gate: prefs only (lockstep with listEnabledToolIds). Capability is checked at
+  // execute time — same pattern as web_search when search is unconfigured.
   // Image gen always runs on the desktop host (not ExecutionBackend).
-  const imageCapability: ImageCapability | null = options?.imageApi?.baseURL?.trim()
-    ? inferImageCapability({
-        baseURL: options.imageApi.baseURL,
-        catalogModelIds: options.imageApi.catalogModelIds,
-        providerName: options.imageApi.providerName,
-      })
-    : null;
-
-  if (prefs.generate_image.enabled && imageCapability) {
-    const modelHint = imageCapability.models.join(' / ');
+  // Uses the current chat provider only (no cross-provider fallback / private model switch).
+  if (prefs.generate_image.enabled) {
+    const imageCapability = resolveImageCapability(options?.imageApi);
+    const models = imageCapability?.models?.length
+      ? imageCapability.models
+      : [...OPENAI_DEFAULT_IMAGE_MODELS, ...MINIMAX_IMAGE_MODELS];
+    const defaultModel = imageCapability?.defaultModel || models[0]!;
+    const modelHint = models.join(' / ');
+    const protocolHint =
+      imageCapability?.protocol === 'minimax'
+        ? `MiniMax 原生 POST {baseURL}/image_generation（模型默认 ${defaultModel}）`
+        : imageCapability?.protocol === 'openai_images'
+          ? `OpenAI 兼容 POST {baseURL}/images/generations（模型默认 ${defaultModel}）`
+          : `自动选择当前对话供应商的 MiniMax /image_generation 或 OpenAI /images/generations（不支持则返回错误，不会改用其它供应商）`;
+    const promptMax =
+      imageCapability?.protocol === 'minimax' ? '最长 1500 字符' : '最长 4000 字符';
     list.push(
       tool({
         name: 'generate_image',
         description:
-          `当用户要求画图/生成图片时调用。使用当前模型供应商的 baseURL + API Key，调用 OpenAI 兼容 POST {baseURL}/images/generations（模型默认 ${imageCapability.defaultModel}）。可选模型：${modelHint}。图片保存到当前助手/小队目录的 resources/；工具结果含一行 okbot-asset: markdown，你必须原样写入回复以便气泡内嵌显示。`,
+          `当用户要求画图/生成图片时必须调用本工具（不要用 SVG、ASCII、write_file 手绘或 data:image 代替）。${protocolHint}。可选模型：${modelHint}。图片保存到当前助手/小队目录的 resources/；工具结果含一行绝对网关路径 markdown（/v1/media/<ownerId>/resources/…），你必须原样写入回复以便气泡内嵌显示。失败时只如实转述本工具错误，禁止改用 data:、file://、外链 https 或手绘冒充。`,
         parameters: z.object({
           prompt: z
             .string()
-            .describe('图片的详细文本描述（最长 4000 字符）'),
+            .describe(`图片的详细文本描述（${promptMax}）`),
           aspect_ratio: z
             .enum(IMAGE_ASPECT_RATIOS)
             .optional()
-            .describe('宽高比，默认 1:1（映射为 OpenAI Images size）'),
+            .describe('宽高比，默认 1:1（OpenAI 兼容接口会映射为 size）'),
           model: z
             .string()
             .optional()
-            .describe(`图像模型，默认 ${imageCapability.defaultModel}；可选：${modelHint}`),
+            .describe(`图像模型，默认 ${defaultModel}；可选：${modelHint}`),
         }),
         needsApproval: prefs.generate_image.approval === 'ask',
         ...guardrailOpts,
@@ -450,7 +484,10 @@ export function buildTools(
           }) => {
             const creds = options?.imageApi;
             if (!creds?.baseURL?.trim() || !creds?.apiKey?.trim()) {
-              return '错误：未配置模型供应商 baseURL/API Key，无法生成图片。请先在设置 → 模型接入中填写。';
+              return '错误：未配置模型供应商 baseURL/API Key，无法生成图片。请先在设置 → 模型接入中填写。不要用 SVG 或 data:image 冒充。';
+            }
+            if (!imageCapability) {
+              return `错误：${GENERATE_IMAGE_UNSUPPORTED_MESSAGE}`;
             }
             const assets = options?.imageAssets;
             if (!assets?.ownerId?.trim() || !assets?.resourcesDir?.trim()) {
@@ -474,7 +511,7 @@ export function buildTools(
               return formatGenerateImageToolOutput(result);
             } catch (err) {
               const msg = err instanceof Error ? err.message : String(err);
-              return `错误：图片生成失败 — ${msg}`;
+              return `错误：图片生成失败 — ${msg}。不要用 SVG、ASCII 画、write_file 或 data:image 冒充文生图。`;
             }
           },
         ),
@@ -563,7 +600,7 @@ export const TOOL_BLURBS: Record<string, string> = {
   read_skill: '加载技能正文',
   write_file: '新建/整文件覆盖写入',
   edit_file: '精确单处替换',
-  generate_image: '文生图（OpenAI 兼容 /images/generations）',
+  generate_image: '文生图（MiniMax /image_generation 或 OpenAI /images/generations）',
   search_history: '检索本会话历史',
   manage_schedule: '管理定时任务',
   web_fetch: '拉取网页正文',

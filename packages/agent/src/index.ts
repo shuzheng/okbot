@@ -39,13 +39,37 @@ export {
   type SquadMemberAgentSpec,
   type RunSquadChatInput,
 } from './squad.js';
+
+export {
+  MESH_ASK_TOOL_NAME,
+  MESH_USER_FACING_REPLY_RULE,
+  formatPeerRosterSection,
+  resolveMeshPeer,
+  canAskMeshPeer,
+  meshAskToolAllowed,
+  buildMeshCalleeInstructions,
+  buildAskAssistantTool,
+  defaultMeshSettings,
+  type MeshPeerRosterEntry,
+  type MeshPeerSpec,
+  type MeshCallBudget,
+  type MeshRuntimeContext,
+  type MeshExchangeInfo,
+} from './mesh.js';
+export {
+  stripLeadingCommittedInterim,
+  createMeshFollowUpStripper,
+} from './meshCommit.js';
+
 export { runChat } from './runChat.js';
 export {
   refreshAgentsMd,
   refreshBotSkills,
   refreshMemories,
+  refreshOwnerDescription,
   type SkillRefreshResult,
   type MemoryRefreshResult,
+  type OwnerDescriptionRefreshResult,
 } from './refresh.js';
 export {
   compressSessionHistory,
@@ -74,6 +98,12 @@ export {
   type AgentsMdSectionPatch,
 } from './agentsMdPatch.js';
 export { detectTopicChange } from './detectTopicChange.js';
+export {
+  classifyBusyIntent,
+  classifyBusyIntentHeuristic,
+  classifyBusyIntentFallback,
+  type BusyIntent,
+} from './classifyBusyIntent.js';
 export { quoteSessionInputCallback } from './quoteContext.js';
 export {
   buildMultimodalUserContent,
@@ -99,6 +129,7 @@ export {
 } from './toolRunBudget.js';
 export {
   buildTools,
+  resolveImageCapability,
   TOOL_BLURBS,
   type HistorySearch,
   type SkillLookup,
@@ -134,16 +165,28 @@ export {
 
 export {
   generateImage,
+  generateImageWithMinimax,
+  generateImageWithOpenAI,
   inferImageCapability,
+  isMinimaxImageHost,
   isOpenAIImageHost,
+  minimaxImageGenerationUrl,
   openAIImageGenerationsUrl,
   aspectRatioToOpenAISize,
+  parseMinimaxImageResponse,
   parseOpenAIImagesResponse,
   okbotAssetMarkdownSrc,
+  mediaGatewayPathname,
+  parseOwnerResourceMarkdownSrc,
+  normalizeMediaMarkdownSrc,
+  normalizeReplyMediaMarkdown,
   ownerResourceAssetRel,
   ownerResourcesDir,
+  GENERATE_IMAGE_UNSUPPORTED_MESSAGE,
   OKBOT_ASSET_SCHEME,
+  GATEWAY_MEDIA_PATH_PREFIX,
   IMAGE_ASPECT_RATIOS,
+  MINIMAX_IMAGE_MODELS,
   OPENAI_DEFAULT_IMAGE_MODELS,
   type ImageApiCredentials,
   type ImageCapability,
@@ -164,9 +207,11 @@ export {
   buildSkillCatalogEntries,
   watchSkillDirs,
   createSkillHotReloadHub,
+  upgradeSkillFormat,
   type SkillCatalogEntry,
   type SkillHotReloadChange,
   type SkillHotReloadOptions,
+  type SkillFormatUpgrade,
 } from './skills/index.js';
 
 export {
@@ -223,3 +268,9 @@ export {
   type SsrfFetchResult,
   type ResolvedAddress,
 } from './ssrfHttp.js';
+
+export type {
+  ContextMaterial,
+  ContextMaterialCadence,
+  ContextMaterialKind,
+} from './contextMaterials/index.js';

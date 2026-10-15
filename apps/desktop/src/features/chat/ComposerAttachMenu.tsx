@@ -177,7 +177,6 @@ export function ComposerAttachMenu({ lang, disabled, onPick }: ComposerAttachMen
           className="composer-attach-item"
           style={{ position: 'absolute', left: itemLeft, bottom: 0 }}
         >
-          <QuickTip text={open ? t(lang, 'attachMenuClose') : t(lang, 'attachMenuOpen')}>
           <button
             type="button"
             className={`composer-attach-btn composer-attach-toggle${open ? ' open' : ''}`}
@@ -191,11 +190,9 @@ export function ComposerAttachMenu({ lang, disabled, onPick }: ComposerAttachMen
           >
             <PlusIcon />
           </button>
-          </QuickTip>
         </Liquid.Item>
       </Liquid>
       ) : (
-        <QuickTip text={t(lang, 'attachMenuOpen')}>
         <button
           type="button"
           className="composer-attach-btn composer-attach-toggle"
@@ -210,7 +207,6 @@ export function ComposerAttachMenu({ lang, disabled, onPick }: ComposerAttachMen
         >
           <PlusIcon />
         </button>
-        </QuickTip>
       )}
     </div>
   );

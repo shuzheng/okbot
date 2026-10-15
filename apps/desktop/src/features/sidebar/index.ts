@@ -17,3 +17,4 @@ export {
   saveImmersiveChat,
 } from './sidebarPersistence';
 export { useSessionListFlip } from './useSessionListFlip';
+export { usePinStripFlip, sessionPinId } from './usePinStripFlip';

@@ -4,7 +4,7 @@ import { t, type UiLang } from '../../i18n';
 import { MemoryEntriesList } from '../settings/MemoryEntriesList';
 import { SchedulesList } from '../settings/SchedulesList';
 import { SettingsToggle } from '../settings/SettingsToggle';
-import { updateScrollFade } from '../../utils/scrollFade';
+import { resolveWheelPassOuter, updateScrollFade } from '../../utils/scrollFade';
 import { formatSystemError } from '../../utils/formatSystemError';
 import { toast } from '../../components/ui';
 
@@ -50,9 +50,8 @@ function useWheelPassThrough(depKey: string | number) {
       const atTop = scrollTop <= 0;
       const atBottom = scrollTop + clientHeight >= scrollHeight - 1;
       if (!(atTop && e.deltaY < 0) && !(atBottom && e.deltaY > 0)) return;
-      const outer =
-        el.closest('.form-drawer-body') || el.closest('.modal');
-      if (!(outer instanceof HTMLElement)) return;
+      const outer = resolveWheelPassOuter(el, '.form-drawer-body');
+      if (!outer || outer === el) return;
       outer.scrollTop += e.deltaY;
       updateScrollFade(outer);
       e.preventDefault();
@@ -280,7 +279,7 @@ export function BotAdvancedSection({
                 entries={memories}
                 emptyLabel={t(lang, 'botMemoriesEmpty')}
                 placeholder={t(lang, 'botMemoryPlaceholder')}
-                scrollOuterSelector=".modal"
+                scrollOuterSelector=".form-drawer-body"
                 newBotId={botId}
                 onCommit={commitMemory}
                 onDelete={deleteMemory}
@@ -390,7 +389,6 @@ export function BotAdvancedSection({
 
           <div className="field">
             <label>{t(lang, 'scheduledJobsList')}</label>
-            <p className="bot-form-model-hint">{t(lang, 'scheduledJobsOwnerHint')}</p>
             <SchedulesList lang={lang} active={Boolean(botId)} ownerId={botId} compact />
           </div>
 

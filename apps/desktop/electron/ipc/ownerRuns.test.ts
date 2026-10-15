@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict';
 import {
   abortAllOwnerRuns,
+  abortOwnerRun,
   acquireParallelGate,
   cancelQueuedOwnerRuns,
   DEFAULT_MAX_PARALLEL_RUNS,
+  listOwnerRunIds,
   ownerHasRuns,
   registerOwnerRun,
   resetOwnerRunQueuesForTests,
   unregisterOwnerRun,
+  waitOwnerRunUnregistered,
   type AbortControllerMap,
 } from './ownerRuns';
 
@@ -65,6 +68,32 @@ resetOwnerRunQueuesForTests();
   assert.equal(ctrl.signal.aborted, true);
   assert.equal(ownerHasRuns(map, 'bot_q'), false);
   g1.release();
+}
+
+
+{
+  resetOwnerRunQueuesForTests();
+  const map: AbortControllerMap = new Map();
+  const g1 = await acquireParallelGate('bot_s', { maxParallel: 2 });
+  const g2 = await acquireParallelGate('bot_s', { maxParallel: 2 });
+  const c1 = new AbortController();
+  const c2 = new AbortController();
+  registerOwnerRun(map, 'bot_s', g1.runId, c1);
+  registerOwnerRun(map, 'bot_s', g2.runId, c2);
+  assert.deepEqual(listOwnerRunIds(map, 'bot_s'), [g1.runId, g2.runId]);
+
+  assert.equal(abortOwnerRun(map, 'bot_s', g1.runId), true);
+  assert.equal(c1.signal.aborted, true);
+  assert.equal(c2.signal.aborted, false, 'abortOwnerRun must not abort peers');
+
+  unregisterOwnerRun(map, 'bot_s', g1.runId, c1);
+  const gone = await waitOwnerRunUnregistered(map, 'bot_s', g1.runId, 500);
+  assert.equal(gone, true);
+  assert.deepEqual(listOwnerRunIds(map, 'bot_s'), [g2.runId]);
+
+  g1.release();
+  g2.release();
+  unregisterOwnerRun(map, 'bot_s', g2.runId, c2);
 }
 
 assert.ok(DEFAULT_MAX_PARALLEL_RUNS >= 2);

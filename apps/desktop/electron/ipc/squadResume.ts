@@ -99,7 +99,6 @@ export async function resumeSquadAfterRestart(
     modelId: squad.modelId,
   });
   const guards = createRunGuards({
-    ownerDir: ctx.storage.ownerDir(squad.id),
     toolRun: settings.toolRun,
     controller,
   });
@@ -199,7 +198,7 @@ export async function resumeSquadAfterRestart(
         const exchangeMsg: ChatMessage = {
           id: createId('msg'),
           role: 'assistant',
-          content: kind === 'ask' ? `呼叫「${memberName}」：\n${content}` : content,
+          content: kind === 'ask' ? `呼叫 @${memberName}：\n${content}` : content,
           createdAt: new Date().toISOString(),
           speakerBotId: kind === 'ask' ? SQUAD_CAPTAIN_SPEAKER_ID : memberBotId,
           ...(kind === 'reply' && usage ? { usage } : {}),
