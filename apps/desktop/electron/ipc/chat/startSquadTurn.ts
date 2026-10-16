@@ -38,6 +38,7 @@ import { mcpToolsForRun } from '../../mcpRuntime';
 import { buildSquadMemberSpecs, computerRouteFor, skillLookupFor } from '../chatTurnHelpers';
 import { historySearchForOwner } from '../historySearchTool';
 import { scheduleManageForOwner } from '../scheduleTool';
+import { taskProgressManageForOwner } from '../taskProgressTool';
 import {
   createTurnEmitter,
   persistAssistantContent,
@@ -111,7 +112,6 @@ export async function startSquadTurn(
       const settings = ctx.storage.getSettings();
       const modelConfig = resolveModelConfig(settings.model, { providerId: squad.providerId, modelId: squad.modelId });
       const guards = createRunGuards({
-        toolRun: settings.toolRun,
         controller,
       });
 
@@ -228,6 +228,20 @@ export async function startSquadTurn(
           sessionSummary: sessionSummary || undefined,
           historySearch: historySearchForOwner(ctx.storage, squad.id),
           scheduleManage: scheduleManageForOwner(ctx.storage, squad.id),
+          taskProgressManage: async (input) => {
+            const result = await taskProgressManageForOwner(ctx.storage, squad.id)(input);
+            try {
+              ctx.sendRuntimeEvent({
+                type: 'tasks_changed',
+                botId: squad.id,
+                tasks: ctx.storage.loadOpenTasks(squad.id),
+              });
+            } catch (err) {
+              console.error('[okbot] tasks_changed emit failed', err);
+            }
+            return result;
+          },
+          taskProgressText: ctx.storage.formatTaskProgressForPrompt(squad.id) || undefined,
           web: settings.web,
           model: modelConfig,
           tools: settings.tools,
@@ -244,22 +258,13 @@ export async function startSquadTurn(
           userText: text,
           signal: controller.signal,
           onClearLiveText: () => {
+            // Discard pre-tool buffer; do not emit an empty assistant row.
             if (!assistantMsg.content) return;
             assistantMsg.content = '';
-            emitTurn({
-              type: 'assistant_message',
-              botId: squad.id,
-              message: { ...assistantMsg },
-            });
           },
           onDelta: (delta) => {
             assistantMsg.content += delta;
-            emitTurn({
-              type: 'delta',
-              botId: squad.id,
-              messageId: assistantId,
-              delta,
-            });
+            // Non-streaming UI: buffer until done; do not emit token deltas.
           },
           ...attachTraceHooks(guards),
           onToolApprovalRequest: createApprovalWaiter(ctx, {
@@ -287,6 +292,21 @@ export async function startSquadTurn(
               approved,
               output,
             });
+          },
+          onRunCheckpoint: ({ serializedRunState }) => {
+            try {
+              ctx.storage.saveRunCheckpoint(squad.id, {
+                kind: 'squad',
+                runId: turnRunId,
+                messageId: assistantId,
+                serializedRunState,
+                createdAt: new Date().toISOString(),
+                computerId: payload.computerId,
+                userText: text,
+              });
+            } catch (err) {
+              console.error('[okbot] save squad run checkpoint failed', err);
+            }
           },
           onSquadExchange: async ({ kind, memberBotId, memberName, content, usage }) => {
             // Keep pre-tool / between-tool captain narration where it first appeared;
@@ -368,13 +388,9 @@ export async function startSquadTurn(
             console.error('[okbot] record squad usage failed', err);
           }
         }
-        guards.throwIfBroken();
         const squadTrace = sealMessageTrace(
           guards,
-          resolveRunFinishStatus({
-            aborted: controller.signal.aborted,
-            breakReason: guards.budget.getBreakReason(),
-          }),
+          resolveRunFinishStatus({ aborted: controller.signal.aborted }),
         );
         if (squadTrace) {
           if (assistantMsg.content.trim()) {
@@ -431,14 +447,12 @@ export async function startSquadTurn(
         return { userMessage: userMsg, assistantMessage: assistantMsg };
       } catch (err) {
         if (
-          !guards.budget.getBreakReason() &&
           (controller.signal.aborted || isAbortLikeError(err))
         ) {
           const abortTrace = sealMessageTrace(
             guards,
             resolveRunFinishStatus({
               aborted: true,
-              breakReason: null,
             }),
           );
           if (abortTrace) {
@@ -494,6 +508,11 @@ export async function startSquadTurn(
         unregisterOwnerRun(ctx.abortControllers, squad.id, parallelGate.runId, controller);
         // Only this run's approvals: peer parallel turns keep their own waiters.
         releaseRunApprovals(ctx, squad.id, parkedRequestIds, '已结束');
+        try {
+          ctx.storage.clearRunCheckpoint(squad.id);
+        } catch (err) {
+          console.error('[okbot] clear squad run checkpoint failed', err);
+        }
       }
       } finally {
         parallelGate.release();

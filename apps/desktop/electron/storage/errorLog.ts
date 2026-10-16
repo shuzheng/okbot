@@ -3,7 +3,7 @@ import path from 'node:path';
 import { redactSensitiveText } from '@okbot/shared';
 import { ensureDir } from './fs';
 
-export type ErrorLogPhase = 'chatStart' | 'resumeHitl' | 'squadChat';
+export type ErrorLogPhase = 'chatStart' | 'resumeHitl' | 'resumeCheckpoint' | 'squadChat';
 
 export type ErrorLogEntry = {
   ts: string;

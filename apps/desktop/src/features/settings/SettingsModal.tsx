@@ -9,7 +9,6 @@ import {
   normalizeInstructionsSettings,
   normalizeMemorySettings,
   normalizeMaintenanceSettings,
-  normalizeToolRunSettings,
   normalizeMeshSettings,
   normalizeLocalHttpApiSettings,
   normalizeComputers,
@@ -185,9 +184,6 @@ export function SettingsModal({
   const [tools, setTools] = useState(
     settings.tools ?? DEFAULT_TOOL_PREFERENCES,
   );
-  const initialToolRun = normalizeToolRunSettings(settings.toolRun);
-  const [maxToolCalls, setMaxToolCalls] = useState(String(initialToolRun.maxToolCalls));
-  const [maxDurationSec, setMaxDurationSec] = useState(String(initialToolRun.maxDurationSec));
   const initialSecurity = normalizeSecuritySettings(settings.security);
   const [securityEnabled, setSecurityEnabled] = useState(initialSecurity.enabled);
   const [restrictToHome, setRestrictToHome] = useState(initialSecurity.restrictToHome);
@@ -457,10 +453,6 @@ export function SettingsModal({
         autoApprovalEnabled,
         autoApprovalRules,
         tools,
-        toolRun: normalizeToolRunSettings({
-          maxToolCalls: keptNumber(maxToolCalls, normalizeToolRunSettings(settings.toolRun).maxToolCalls),
-          maxDurationSec: keptNumber(maxDurationSec, normalizeToolRunSettings(settings.toolRun).maxDurationSec),
-        }),
         mesh: normalizeMeshSettings(settings.mesh),
         security,
         model: normalizeModelSettings(modelSettings),
@@ -540,8 +532,6 @@ export function SettingsModal({
     autoApprovalEnabled,
     autoApprovalRules,
     tools,
-    maxToolCalls,
-    maxDurationSec,
     securityEnabled,
     restrictToHome,
     allowedPathsText,
@@ -838,19 +828,13 @@ export function SettingsModal({
             ) : tab === 'tools' ? (
               <ToolsSettingsPanel
                 gatewayClient={gatewayClient}
-                advancedVisible={advancedVisible}
-                settings={settings}
                 lang={lang}
                 aarAddRequest={aarAddRequest}
                 autoApprovalEnabled={autoApprovalEnabled}
                 autoApprovalRules={autoApprovalRules}
-                maxDurationSec={maxDurationSec}
-                maxToolCalls={maxToolCalls}
                 setAarAddRequest={setAarAddRequest}
                 setAutoApprovalEnabled={setAutoApprovalEnabled}
                 setAutoApprovalRules={setAutoApprovalRules}
-                setMaxDurationSec={setMaxDurationSec}
-                setMaxToolCalls={setMaxToolCalls}
                 setShowWebSearchKey={setShowWebSearchKey}
                 setTools={setTools}
                 setWebDraft={setWebDraft}

@@ -79,8 +79,8 @@ async function fireJob(
   const text = formatScheduledTurnText(job);
   const ownerId = job.ownerId;
   const payload = isSquadOwnerId(ownerId)
-    ? { squadId: ownerId, text }
-    : { botId: ownerId, text };
+    ? { squadId: ownerId, text, origin: 'schedule' as const }
+    : { botId: ownerId, text, origin: 'schedule' as const };
   let claimed = false;
   try {
     const claim = deps.storage.claimScheduledJobDue(ownerId, job.id);

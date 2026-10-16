@@ -5,6 +5,7 @@ import {
   type Bot,
   type ChatMessage,
   type Squad,
+  type TaskRecord,
 } from '@okbot/shared';
 import { toast } from '../../../components/ui';
 import { t, type UiLang } from '../../../i18n';
@@ -19,6 +20,12 @@ import {
 } from '../ParallelTasksStrip';
 import type { Selection, ToolCard, TurnPhase } from '../../../types';
 import { SQUAD_CAPTAIN_SPEAKER_ID } from '@okbot/shared';
+
+
+/** True when assistant content has user-visible answer text (think-only counts as empty). */
+function hasVisibleAssistantText(content: string | undefined): boolean {
+  return Boolean(stripThinkContent(content || '').trim());
+}
 
 export type ChatEventsDeps = {
   lang: UiLang;
@@ -39,6 +46,7 @@ export type ChatEventsDeps = {
   setBusyByBot: Dispatch<SetStateAction<Record<string, boolean>>>;
   setTurnPhaseByBot: Dispatch<SetStateAction<Record<string, TurnPhase>>>;
   setParallelTasksByOwner: Dispatch<SetStateAction<Record<string, ParallelTask[]>>>;
+  setOpenTasksByOwner: Dispatch<SetStateAction<Record<string, TaskRecord[]>>>;
 };
 
 /**
@@ -63,6 +71,7 @@ export function useChatEvents(deps: ChatEventsDeps): void {
     setBusyByBot,
     setTurnPhaseByBot,
     setParallelTasksByOwner,
+    setOpenTasksByOwner,
   } = deps;
 
   useEffect(() => {
@@ -215,9 +224,20 @@ export function useChatEvents(deps: ChatEventsDeps): void {
       return;
     }
 
+    if (event.type === 'tasks_changed') {
+      setOpenTasksByOwner((prev) => ({ ...prev, [event.botId]: event.tasks || [] }));
+      return;
+    }
+
     if (event.type === 'turn_started') {
       const clientTurnId = (event.clientTurnId || '').trim();
       const runId = (event.runId || '').trim();
+      // Soft-steer restart: mark busy before deltas so aborted peer done cannot
+      // leave the owner idle while the replacement turn is already registered.
+      setBusyByBot((prev) => (prev[event.botId] ? prev : { ...prev, [event.botId]: true }));
+      setTurnPhaseByBot((prev) =>
+        prev[event.botId] ? prev : { ...prev, [event.botId]: 'thinking' },
+      );
       setParallelTasksByOwner((prev) => {
         const list = prev[event.botId] ?? [];
         const existing =
@@ -309,11 +329,12 @@ export function useChatEvents(deps: ChatEventsDeps): void {
     }
 
     if (event.type === 'assistant_message') {
-      // Full replace (incl. mesh onClearLiveText → empty): drop coalesced deltas so
-      // a pending rAF flush cannot re-append pre-tool think-aloud / ask narration.
+      // Full replace: drop coalesced deltas so a pending rAF flush cannot re-append
+      // pre-tool think-aloud / ask narration. Never insert blank / think-only rows.
       delete pending.messageDeltas[event.message.id];
       const replaced = event.message.content || '';
-      if (replaced.trim()) {
+      const visible = hasVisibleAssistantText(replaced);
+      if (visible) {
         streamingPreviewRef.current[event.message.id] = replaced;
       } else {
         delete streamingPreviewRef.current[event.message.id];
@@ -322,6 +343,13 @@ export function useChatEvents(deps: ChatEventsDeps): void {
       if (isActive) {
         setMessages((prev) => {
           const byId = prev.findIndex((m) => m.id === event.message.id);
+          if (!visible) {
+            // Empty / think-only: remove any prior row for this id; do not append.
+            if (byId < 0) return prev;
+            const next = [...prev];
+            next.splice(byId, 1);
+            return next;
+          }
           if (byId >= 0) {
             const next = [...prev];
             next[byId] = event.message;
@@ -424,8 +452,15 @@ export function useChatEvents(deps: ChatEventsDeps): void {
         }));
       }
       const inFlight = sendsInFlightRef.current[event.botId] || 0;
-      // Parallel: one turn's done must not clear busy while other sends still await.
-      if (inFlight === 0) {
+      const isAbortedDone = event.type === 'done' && !!event.aborted;
+      // Soft-steer / Stop abort: never clear busy here. Stop clears explicitly;
+      // soft-steer replacement keeps sendsInFlight / user_message busy; only a
+      // real (non-aborted) finish or handleSend finally may go idle. Prevents
+      // idle flash when aborted done races ahead of the restart turn_started.
+      if (isAbortedDone) {
+        // leave busy + phase alone
+      } else if (inFlight === 0) {
+        // Parallel: one turn's done must not clear busy while other sends still await.
         setBusyByBot((prev) => ({ ...prev, [event.botId]: false }));
         setTurnPhaseByBot((prev) => {
           if (!(event.botId in prev)) return prev;
@@ -437,10 +472,9 @@ export function useChatEvents(deps: ChatEventsDeps): void {
         // Final content is on screen but chatStart IPC is still wrapping up
         // (persist, AGENTS/skills/memory refresh). Keep busy via sendsInFlight;
         // show wrapping_up instead of lingering on replying.
-        // Skip aborted done / inFlight>1 so a finished sibling does not clobber
-        // another in-flight turn's thinking/replying phase.
-        const isAbortedDone = event.type === 'done' && !!event.aborted;
-        if (!isAbortedDone && inFlight === 1) {
+        // Skip inFlight>1 so a finished sibling does not clobber another
+        // in-flight turn's thinking/replying phase.
+        if (inFlight === 1) {
           setTurnPhaseByBot((prev) => ({ ...prev, [event.botId]: 'wrapping_up' }));
         }
       }
@@ -462,14 +496,13 @@ export function useChatEvents(deps: ChatEventsDeps): void {
     }
 
     if (event.type === 'delta') {
+      // Non-streaming product: do not paint token-by-token bubbles. Still track
+      // sidebar preview + replying phase if a host emits deltas (legacy / tests).
       const soFar = (streamingPreviewRef.current[event.messageId] || '') + event.delta;
       streamingPreviewRef.current[event.messageId] = soFar;
       pending.previewByBot[event.botId] = soFar;
       pending.replyPhaseBots.add(event.botId);
-      if (isActive) {
-        pending.messageDeltas[event.messageId] =
-          (pending.messageDeltas[event.messageId] || '') + event.delta;
-      }
+      // Intentionally skip pending.messageDeltas — bubble appears on done / assistant_message.
       scheduleStreamFlush();
       return;
     } else if (event.type === 'done') {
@@ -498,13 +531,51 @@ export function useChatEvents(deps: ChatEventsDeps): void {
     setMessages((prev) => {
       const idx = prev.findIndex((m) => m.id === event.messageId);
       if (event.type === 'done' || event.type === 'error') {
-        if (idx < 0) return prev;
+        // Non-streaming: bubbles appear on done / send_message (no token deltas),
+        // so insert when this messageId was never seeded by a delta.
+        if (idx < 0) {
+          if (event.type === 'error') {
+            return [
+              ...prev,
+              {
+                id: event.messageId,
+                role: 'assistant' as const,
+                content: `${t(lang, 'errorPrefix')}${event.error}`,
+                createdAt: new Date().toISOString(),
+              },
+            ];
+          }
+          const content = event.content || '';
+          // Skip blank and think-only (incomplete <think> abort → empty gray bubble).
+          if (!hasVisibleAssistantText(content)) return prev;
+          return [
+            ...prev,
+            {
+              id: event.messageId,
+              role: 'assistant' as const,
+              content,
+              createdAt: new Date().toISOString(),
+              ...(event.usage ? { usage: event.usage } : {}),
+              ...(event.trace ? { trace: event.trace } : {}),
+            },
+          ];
+        }
         const next = [...prev];
         const prevContent = next[idx].content || '';
         let nextContent =
           event.type === 'done' ? event.content || '' : prevContent || `${t(lang, 'errorPrefix')}${event.error}`;
+        // Done with no visible answer: drop the row (aborted mid-think / cleared).
+        if (event.type === 'done' && !hasVisibleAssistantText(nextContent)) {
+          // Keep prior visible content if we already showed a fuller bubble.
+          if (hasVisibleAssistantText(prevContent)) {
+            nextContent = prevContent;
+          } else {
+            next.splice(idx, 1);
+            return next;
+          }
+        }
         // Stable display: never flash to a shorter "final-only" string while live text
-        // already shows the full streamed reply (reload used to fight this too).
+        // already shows the full reply (reload used to fight this too).
         if (
           event.type === 'done' &&
           prevContent.trim() &&

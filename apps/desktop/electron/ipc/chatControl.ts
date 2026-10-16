@@ -1,5 +1,6 @@
 import type { IpcContext } from './context';
 import { abortAllOwnerRuns } from './ownerRuns';
+import { cancelAutoContinues } from './autoContinueGate';
 import { cancelSoftSteers } from './softSteerGate';
 
 /**
@@ -14,6 +15,7 @@ export function abortChatOwner(
   const id = (ownerId || '').trim();
   if (!id) return false;
   cancelSoftSteers(id);
+  cancelAutoContinues(id);
   const had = abortAllOwnerRuns(ctx.abortControllers, id);
   ctx.rejectPendingApprovalsForBot(id, '已取消');
   return had;

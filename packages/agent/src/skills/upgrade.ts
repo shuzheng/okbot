@@ -157,6 +157,11 @@ export function upgradeSkillFormat(input: BotSkill): SkillFormatUpgrade {
     if (kept.length === 1 && STEPS_HEADING_RE.test(kept[0]!.heading.replace(/^#{1,6}\s+/, ''))) {
       body = kept[0]!.text;
     }
+    // Body was only When section(s): keep when-text as body prose (description
+    // still gets the when enrichment). Never wipe a previously non-empty body.
+    if (!body && whenParts.length) {
+      body = whenParts.join('\n\n').trim();
+    }
   }
 
   if (whenParts.length) {

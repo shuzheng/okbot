@@ -86,8 +86,13 @@ export class SkillsStore {
         const parsed = this.parseSkillMarkdown(name, fs.readFileSync(file, 'utf8'));
         const upgraded = upgradeSkillFormat(parsed);
         if (upgraded.changed) {
-          // Persist Cursor-style description + body (no When section) once.
-          fs.writeFileSync(file, formatSkillMarkdown(upgraded.skill), 'utf8');
+          const prevBody = (parsed.body || '').trim();
+          const nextBody = (upgraded.skill.body || '').trim();
+          // Never persist an upgrade that empties a previously non-empty body.
+          if (!(prevBody && !nextBody)) {
+            // Persist Cursor-style description + body (no When section) once.
+            fs.writeFileSync(file, formatSkillMarkdown(upgraded.skill), 'utf8');
+          }
         }
         out.push(upgraded.skill);
       } catch {

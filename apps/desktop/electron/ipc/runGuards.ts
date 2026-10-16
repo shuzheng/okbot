@@ -3,14 +3,9 @@ import {
   isAbortLikeError,
   redactSensitiveText,
   type MessageTrace,
-  type ToolRunSettings,
 } from '@okbot/shared';
 export { isAbortLikeError };
-import {
-  CircuitBreakError,
-  ToolRunBudget,
-  isCircuitBreakError,
-} from '@okbot/agent';
+import { ToolRunBudget } from '@okbot/agent';
 import { RunTraceRecorder, type RunTraceStatus } from '../storage/runTrace';
 import { appendErrorLog, type ErrorLogPhase } from '../storage/errorLog';
 
@@ -19,19 +14,16 @@ export type RunGuards = {
   trace: RunTraceRecorder;
   runId: string;
   dispose: () => void;
-  /** After a run returns without throw: if duration breaker fired, throw CircuitBreakError. */
-  throwIfBroken: () => void;
-  /** Finalize message.trace + clear timer. Call from finally/catch paths. */
+  /** Finalize message.trace. Call from finally/catch paths. */
   finish: (status: Exclude<RunTraceStatus, 'running'>) => void;
 };
 
 export function createRunGuards(input: {
-  toolRun: ToolRunSettings;
   controller: AbortController;
 }): RunGuards {
   const runId = createId('run');
   const trace = new RunTraceRecorder(runId);
-  const budget = new ToolRunBudget(input.toolRun, input.controller, {
+  const budget = new ToolRunBudget(input.controller, {
     onToolRequest: (info) => {
       trace.beginTool(info.name, info.argsSummary);
     },
@@ -50,10 +42,6 @@ export function createRunGuards(input: {
     trace,
     runId,
     dispose: () => budget.dispose(),
-    throwIfBroken: () => {
-      const reason = budget.getBreakReason();
-      if (reason) throw new CircuitBreakError(reason);
-    },
     finish: (status) => {
       if (finished) return;
       finished = true;
@@ -97,9 +85,7 @@ export function sealMessageTrace(
 export function resolveRunFinishStatus(input: {
   err?: unknown;
   aborted: boolean;
-  breakReason: string | null;
 }): Exclude<RunTraceStatus, 'running'> {
-  if (input.breakReason || isCircuitBreakError(input.err)) return 'circuit_break';
   if (input.aborted || isAbortLikeError(input.err)) return 'aborted';
   if (input.err) return 'error';
   return 'done';
@@ -114,14 +100,8 @@ export function handleRunFailure(input: {
   err: unknown;
   guards: RunGuards;
 }): string {
-  const breakReason = input.guards.budget.getBreakReason();
-  const raw = isCircuitBreakError(input.err)
-    ? input.err.message
-    : breakReason
-      ? breakReason
-      : input.err instanceof Error
-        ? input.err.message
-        : String(input.err);
+  const raw =
+    input.err instanceof Error ? input.err.message : String(input.err);
   const message = redactSensitiveText(raw);
   appendErrorLog(input.root, {
     ownerId: input.ownerId,
@@ -129,6 +109,6 @@ export function handleRunFailure(input: {
     phase: input.phase,
     error: message,
   });
-  input.guards.finish(resolveRunFinishStatus({ err: input.err, aborted: false, breakReason }));
+  input.guards.finish(resolveRunFinishStatus({ err: input.err, aborted: false }));
   return message;
 }

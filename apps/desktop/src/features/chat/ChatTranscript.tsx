@@ -3,6 +3,7 @@ import { BorderBeam } from 'border-beam';
 import { ThinkingOrb, type OrbState } from 'thinking-orbs';
 import {
   SQUAD_CAPTAIN_SPEAKER_ID,
+  stripThinkContent,
   type Bot,
   type ChatMessage,
   type MessageAttachment,
@@ -33,6 +34,8 @@ import { AssistantContent } from './AssistantContent';
 import { MentionsText } from './MentionsText';
 import { ToolCardView } from './ToolCardView';
 import { ParallelTasksStrip, type ParallelTask } from './ParallelTasksStrip';
+import { OpenTasksPanel } from './OpenTasksPanel';
+import type { TaskRecord } from '@okbot/shared';
 import { TokenUsagePopover } from './TokenUsagePopover';
 import { BubbleSwipeRow } from './BubbleSwipeRow';
 import { MeshExchangeModal } from './MeshExchangeModal';
@@ -79,9 +82,11 @@ export type ChatTranscriptProps = {
   /** Unfinished parallel turns for this chat (strip only when length > 1). */
   parallelTasks: ParallelTask[];
   onJumpParallelTask: (task: ParallelTask) => void;
+  /** Open multi-task queue (pending/in_progress) above the composer. */
+  openTasks: TaskRecord[];
   immersiveChat: boolean;
   onToggleImmersiveChat: () => void;
-  /** Per resolved model: show `<think>` as collapsible (default true). */
+  /** Per resolved model: show `<think>` as collapsible (default false). */
   showThinking?: boolean;
   /** When false, hide view-context / usage / turn-trace bubble actions. */
   showAdvancedSettings?: boolean;
@@ -245,9 +250,10 @@ export const ChatTranscript = memo(function ChatTranscript({
   composerSlot,
   parallelTasks,
   onJumpParallelTask,
+  openTasks,
   immersiveChat,
   onToggleImmersiveChat,
-  showThinking = true,
+  showThinking = false,
   showAdvancedSettings = false,
 }: ChatTranscriptProps) {
   const [meshViewMessage, setMeshViewMessage] = useState<ChatMessage | null>(null);
@@ -275,7 +281,9 @@ export const ChatTranscript = memo(function ChatTranscript({
     <>
       <div className="messages-shell">
         <div
-          className={`messages scroll-fade${userBubbleAccent ? ' has-user-bubble-tint' : ''}`}
+          className={`messages scroll-fade${userBubbleAccent ? ' has-user-bubble-tint' : ''}${
+            busy ? ' has-turn-status' : ''
+          }`}
           style={userBubbleTint as CSSProperties | undefined}
           ref={messagesBoxRef}
         >
@@ -310,9 +318,13 @@ export const ChatTranscript = memo(function ChatTranscript({
           ) : null}
           {messages.map((m, index) => {
             const cardsForMsg = toolCards.filter(
-              (c) => c.messageId === m.id && c.toolName !== 'ask_assistant',
+              (c) => c.messageId === m.id && c.toolName !== 'ask_assistant' && c.toolName !== 'send_message',
             );
-            const hideEmptyAssistant = m.role === 'assistant' && !m.content && busy;
+            // Hide blank shells and think-only rows (showThinking off → no visible answer).
+            const hideEmptyAssistant =
+              m.role === 'assistant' &&
+              !stripThinkContent(m.content || '').trim() &&
+              !(showThinking && (m.content || '').includes('<think'));
             const showCtx = m.role === 'user';
             const isSquadAssistant = !!(selectedSquad && m.role === 'assistant');
             // 1:1 mesh exchanges also tag speakerBotId (ask/reply trail).
@@ -582,7 +594,7 @@ export const ChatTranscript = memo(function ChatTranscript({
           {toolCards
             .filter(
               (c) =>
-                c.toolName !== 'ask_assistant' &&
+                c.toolName !== 'ask_assistant' && c.toolName !== 'send_message' &&
                 !messages.some((m) => m.id === c.messageId),
             )
             .map((card) => renderToolCard(card))}
@@ -611,19 +623,20 @@ export const ChatTranscript = memo(function ChatTranscript({
           <ImmersiveChatIcon immersive={immersiveChat} />
         </button>
         </QuickTip>
+        {busy ? (
+          <div className="chat-turn-status" aria-live="polite" aria-label={turnStatusText}>
+            <ThinkingOrb
+              state={turnPhaseOrbState[turnPhase]}
+              size={20}
+              theme={resolvedOrbTheme()}
+              aria-hidden
+            />
+            <span className="chat-turn-status-text">{turnStatusText}</span>
+          </div>
+        ) : null}
       </div>
+      <OpenTasksPanel lang={lang} tasks={openTasks} />
       <ParallelTasksStrip lang={lang} tasks={parallelTasks} onJump={onJumpParallelTask} />
-      {busy ? (
-        <div className="chat-turn-status" aria-live="polite" aria-label={turnStatusText}>
-          <ThinkingOrb
-            state={turnPhaseOrbState[turnPhase]}
-            size={20}
-            theme={resolvedOrbTheme()}
-            aria-hidden
-          />
-          <span className="chat-turn-status-text">{turnStatusText}</span>
-        </div>
-      ) : null}
       {error ? (
         <div className="hint" style={{ padding: '0 18px', color: 'var(--danger)' }}>
           {error}

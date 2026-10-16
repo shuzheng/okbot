@@ -13,3 +13,5 @@ export type { ToolCardViewProps } from './ToolCardView';
 export { TurnTraceModal } from './TurnTraceModal';
 export { TokenUsagePopover, deriveRoundUsage, formatTokCount } from './TokenUsagePopover';
 export { MeshExchangeModal } from './MeshExchangeModal';
+export { OpenTasksPanel } from './OpenTasksPanel';
+export type { OpenTasksPanelProps } from './OpenTasksPanel';

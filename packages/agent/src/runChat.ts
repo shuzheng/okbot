@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import { REPLY_STYLE_INSTRUCTION } from './instructions.js';
+import { REPLY_STYLE_INSTRUCTION, USER_FACING_PRODUCT_LANGUAGE_RULE } from './instructions.js';
 import { assertModel } from './model.js';
 import type { RunChatInput, RunChatResult } from './types.js';
 
@@ -18,6 +18,7 @@ export async function runChat(input: RunChatInput): Promise<RunChatResult> {
     `你是「${input.botName}」，一个桌面个人助手。`,
     input.botDescription?.trim() ? `简介：${input.botDescription.trim()}` : '',
     REPLY_STYLE_INSTRUCTION,
+    USER_FACING_PRODUCT_LANGUAGE_RULE,
     '不要编造你没有的工具能力。',
   ]
     .filter(Boolean)

@@ -78,6 +78,58 @@ assert(
   instr.indexOf('不要编造') < instr.indexOf('## 记忆'),
   'buildAgentInstructions: tools/style before memory (prefix-cache friendly)',
 );
+assert(
+  instr.includes('不要问') && instr.includes('自动推进'),
+  'buildAgentInstructions: task progress must auto-proceed without asking to continue',
+);
+assert(
+  !instr.includes('强制（未完成任务）'),
+  'buildAgentInstructions: unfinished sync only when queue has pending/in_progress',
+);
+
+const unfinished = buildAgentInstructions(
+  '001',
+  '',
+  [],
+  prefs,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  ['## 当前任务（持久；请先对照再行动；按添加顺序串行推进）', '', '### 任务 (task_1) 调研 [进行中]', '', '- [已完成] (1) A', '- [待做] (2) B'].join('\n'),
+);
+assert(
+  unfinished.includes('强制（未完成任务）') && unfinished.includes('禁止只调研'),
+  'buildAgentInstructions: unfinished queue must force update sync on continue',
+);
+assert(
+  unfinished.includes('中途插问') &&
+    unfinished.includes('同一轮继续推进') &&
+    unfinished.includes('要继续推进吗') &&
+    unfinished.includes('本轮不得因插问而结束'),
+  'buildAgentInstructions: unfinished sync must forbid stop-and-ask after mid-run interrupt',
+);
+assert(
+  instr.includes('一两句自然语言回应打断') &&
+    instr.includes('同一轮立刻继续未完成计划') &&
+    instr.includes('禁止只文字确认') &&
+    instr.includes('0 次工具调用') &&
+    instr.includes('要继续推进吗') &&
+    instr.includes('不得停下来等用户确认') &&
+    instr.includes('不要把每条新消息拆成'),
+  'buildAgentInstructions: mid-run user input must ack then continue same turn without asking',
+);
+assert(
+  unfinished.includes('一两句自然语言回应打断') && unfinished.includes('同一轮立刻继续未完成计划'),
+  'buildAgentInstructions: soft-steer unfinished plan still gets mid-run continue rules',
+);
 
 const full = formatSessionPromptContext({
   instructions: instr,

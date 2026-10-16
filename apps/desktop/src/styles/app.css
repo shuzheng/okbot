@@ -18,7 +18,7 @@
   /* Expanded pin strip avatar size (collapsed rail keeps --rail-avatar). */
   --pin-avatar: 56px;
   /* Expanded pin item hover/active bg inset (narrow uses --rail-row-pad). */
-  --pin-item-pad: 10px;
+  --pin-item-pad: 12px;
   /* Expanded pin hover wash: wider left/right than vertical. */
   --pin-item-pad-x: 16px;
   --bubble-user: #18181b;
@@ -46,8 +46,11 @@
   /* Left safe area when sidebar is gone (trafficLightPosition x:14 + 3 lights + gap). */
   --traffic-lights-inset: 76px;
   /* Chat column caps readable width on ultrawide panes. Bubbles use 100% of
-     that column (minus FAB rail on assistant); no extra classic 960/1000 cap. */
+     that column (minus FAB rail on assistant); no extra classic 960/1000 cap.
+     --chat-gutter-x is the horizontal inset shared by .messages / .composer
+     padding and by panels/status that must match the composer input edge. */
   --chat-column-max: 1280px;
+  --chat-gutter-x: 18px;
   --bubble-max: 100%;
   --bubble-row-max: 100%;
   --bubble-side-gutter: 48px;
@@ -317,6 +320,7 @@ input, textarea { user-select: text; }
 .session-pane {
   flex: 1 1 0;
   min-height: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -333,6 +337,7 @@ input, textarea { user-select: text; }
   margin: 0;
   scrollbar-gutter: auto;
   min-height: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -349,7 +354,7 @@ input, textarea { user-select: text; }
   /* Match session-item-wrap horizontal inset (14px). Top pad must clear
      bot-avatars 1.5× overscan + rise bias (~0.35×--pin-avatar ≈ 20px) so
      busy hops aren't clipped by .session-pane { overflow: hidden }. */
-  padding: 16px 14px 12px;
+  padding: 24px 14px 12px;
   flex-shrink: 0;
   overflow: visible;
   position: relative;
@@ -457,6 +462,10 @@ input, textarea { user-select: text; }
 .session-hidden-group {
   margin-top: auto;
   flex-shrink: 0;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   /* Top pad lives on the sticky shell's siblings / list; avoid inset that
      would leave a seam when the hidden header sticks to the scrollport top. */
   padding: 0 0 4px;
@@ -470,8 +479,10 @@ input, textarea { user-select: text; }
   gap: 6px;
   /* Stretch so label flexes and count sits at the far right. */
   width: calc(100% - 28px);
+  max-width: calc(100% - 28px);
   margin-inline: 14px;
   box-sizing: border-box;
+  min-width: 0;
   min-height: 24px;
   padding: 4px 10px;
   border: none;
@@ -615,6 +626,11 @@ input, textarea { user-select: text; }
   top: 0;
   z-index: 3;
   flex-shrink: 0;
+  /* Definite width so group header % / ellipsis resolve; no content-driven grow. */
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   background: var(--panel);
   /* Cancel list flex gap so stuck header has no hairline seam above. */
   margin-top: -2px;
@@ -627,20 +643,36 @@ input, textarea { user-select: text; }
   flex-direction: column;
   gap: 2px;
   flex-shrink: 0;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 
-/* Smooth expand/collapse for group member lists (0fr → 1fr; sticky headers stay outside). */
+/* Smooth expand/collapse for group member lists (0fr → 1fr; sticky headers stay outside).
+   Implicit grid column defaults to auto (= content min-width). With open fold-inner
+   overflow visible for avatar hops, long nowrap titles inflated that column and the
+   flex item (min-width:auto) — sidebar content spilled past the splitter. Pin the
+   column with minmax(0,1fr) and min-width:0; clip only the X axis when open. */
 .session-group-fold {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: 0fr;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   transition: grid-template-rows 0.28s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .session-group-fold.is-open {
   grid-template-rows: 1fr;
 }
 .session-group-fold-inner {
+  /* Closed: clip for 0fr collapse. Open: clip X only — see below. */
   overflow: hidden;
   min-height: 0;
+  min-width: 0;
+  max-width: 100%;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -649,6 +681,11 @@ input, textarea { user-select: text; }
   /* Match session-list gap; keep FLIP targets measurable when open. */
 }
 .session-group-fold.is-open > .session-group-fold-inner {
+  /* clip (not hidden) on X so overflow-y can stay visible for bot-avatar hops
+     without the classic hidden+visible → auto pairing, and without letting
+     min-content widen the rail. */
+  overflow-x: clip;
+  overflow-y: visible;
   opacity: 1;
   transition-delay: 0.02s;
 }
@@ -667,8 +704,10 @@ input, textarea { user-select: text; }
   align-items: center;
   gap: 6px;
   width: calc(100% - 28px);
+  max-width: calc(100% - 28px);
   margin-inline: 14px;
   box-sizing: border-box;
+  min-width: 0;
   /* 4+4 pad + 16px trailing — hover must not grow the row. */
   min-height: 24px;
   padding: 4px 10px;
@@ -739,10 +778,13 @@ input, textarea { user-select: text; }
 }
 .session-owner-group-label-edit {
   position: relative;
-  flex: 1;
+  flex: 1 1 0;
   min-width: 0;
+  max-width: 100%;
   display: block;
   height: 1.25em;
+  /* Clip abspos rename input intrinsic min-width so long titles cannot widen the rail. */
+  overflow: hidden;
 }
 .session-owner-group-label {
   display: block;
@@ -785,7 +827,10 @@ input, textarea { user-select: text; }
   inset: 0;
   box-sizing: border-box;
   width: 100%;
+  max-width: 100%;
   height: 100%;
+  /* Kill Chromium <input> size=20 intrinsic min-width (~20ch). */
+  min-width: 0;
   margin: 0;
   padding: 0;
   border: 0;
@@ -862,7 +907,8 @@ input, textarea { user-select: text; }
   background: var(--accent-soft) !important;
 }
 .app.narrow .session-owner-group-header.renaming {
-  width: auto;
+  /* Keep rail width stable while renaming — never shrink-to-fit long input text. */
+  width: calc(100% - 8px);
   max-width: calc(100% - 8px);
   height: auto;
   min-height: 28px;
@@ -912,19 +958,36 @@ input, textarea { user-select: text; }
   margin-inline: 22px;
   margin-block: 8px;
   padding: 8px 10px;
+  max-width: calc(100% - 44px);
+  min-width: 0;
+  min-height: 36px;
   border-radius: var(--rail-row-radius);
   color: var(--muted);
   font-size: 11px;
   font-weight: 500;
   opacity: 0.75;
-  text-align: left;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
   border: 1px dashed color-mix(in srgb, var(--text) 22%, var(--border));
   box-sizing: border-box;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: border-color 0.12s ease, opacity 0.12s ease, color 0.12s ease;
 }
-.session-owner-group.is-drag-over > .session-group-sticky .session-owner-group-header,
-.session-owner-group.is-drag-over > .session-group-drop-hint {
+.session-owner-group.is-drag-over > .session-group-sticky .session-owner-group-header {
   background: var(--accent-soft);
   border-color: color-mix(in srgb, var(--text) 25%, var(--border));
+}
+/* Descendant (not >): hint sits under fold → fold-inner; also class on hint itself.
+   Drag-over: brighten dashed border (+ opacity/text) only — no background fill. */
+.session-owner-group.is-drag-over .session-group-drop-hint,
+.session-group-drop-hint.is-drag-over {
+  opacity: 1;
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent, #6366f1) 55%, var(--border));
 }
 .session-item-wrap.is-dragging {
   opacity: 0.45;
@@ -941,7 +1004,7 @@ input, textarea { user-select: text; }
 .session-list > .session-owner-group:first-child,
 .session-list > .session-item-wrap:first-child,
 .session-list > .empty-side:first-child {
-  margin-top: 12px;
+  margin-top: 16px;
 }
 /* Pin strip is fixed above the scrollport — no top air when pins are present. */
 .session-pane:has(> .session-pin-strip) .session-list > .session-owner-group:first-child,
@@ -1008,6 +1071,9 @@ input, textarea { user-select: text; }
   align-items: center;
   gap: 10px;
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   text-align: left;
   padding: var(--rail-row-pad);
   border-radius: var(--rail-row-radius);
@@ -1249,7 +1315,11 @@ input, textarea { user-select: text; }
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 14px;
+  /* Top air so preview hop isn't clipped by form-drawer-body scrollport. */
+  margin: 10px 0 14px;
+  overflow: visible;
+  position: relative;
+  z-index: 1;
 }
 .avatar-preview-hit {
   position: relative;
@@ -1260,7 +1330,8 @@ input, textarea { user-select: text; }
   padding: 0;
   border-radius: 10px;
   line-height: 0;
-  overflow: hidden;
+  /* bot-avatars 1.5× overscan hop must paint outside the 36px box. */
+  overflow: visible;
 }
 .avatar-preview-mask {
   position: absolute;
@@ -1362,8 +1433,12 @@ input, textarea { user-select: text; }
 .session-item-wrap {
   cursor: pointer;
   /* Horizontal 14px matches .sidebar-footer; width auto + stretch so margins
-     inset the row without pushing past the flush scrollbar edge. */
+     inset the row without pushing past the flush scrollbar edge.
+     max-width accounts for margins so long titles cannot inflate past the pane. */
   width: auto;
+  max-width: calc(100% - 28px);
+  min-width: 0;
+  box-sizing: border-box;
   margin-inline: 14px;
   border-radius: var(--rail-row-radius);
   transition: background 0.12s ease;
@@ -1451,9 +1526,11 @@ input, textarea { user-select: text; }
 .session-name-edit {
   position: relative;
   display: block;
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-width: 0;
+  max-width: 100%;
   height: 1.25em;
+  overflow: hidden;
 }
 .session-name {
   display: block;
@@ -1501,7 +1578,9 @@ input, textarea { user-select: text; }
   display: block;
   box-sizing: border-box;
   width: 100%;
+  max-width: 100%;
   height: 100%;
+  min-width: 0;
   margin: 0;
   padding: 0;
   border: 0;
@@ -2248,6 +2327,7 @@ input, textarea { user-select: text; }
   min-height: 0;
   display: flex;
   flex-direction: column;
+  --chat-turn-status-space: 48px;
 }
 .messages-shell .messages {
   flex: 1 1 0;
@@ -2306,11 +2386,15 @@ input, textarea { user-select: text; }
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 8px 18px 18px;
+  padding: 8px var(--chat-gutter-x) 18px;
   display: flex;
   flex-direction: column;
   gap: 12px;
   user-select: text;
+}
+/* Safe area under sticky turn-status overlay so the last bubble stays readable. */
+.messages.has-turn-status {
+  padding-bottom: var(--chat-turn-status-space, 48px);
 }
 .bubble-row {
   display: flex;
@@ -2994,13 +3078,187 @@ input, textarea { user-select: text; }
   max-width: 100%;
   border-radius: 8px;
 }
+
+/* Open multi-task dump above the composer — same width as .composer-inner
+   (chat column max minus shared --chat-gutter-x on each side). */
+.open-tasks-panel {
+  width: calc(100% - 2 * var(--chat-gutter-x));
+  max-width: calc(var(--chat-column-max) - 2 * var(--chat-gutter-x));
+  margin: 0 auto 8px;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: var(--panel-2);
+  border: var(--hairline) solid var(--border);
+  color: var(--text);
+}
+.open-tasks-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  padding: 0 2px;
+}
+.open-tasks-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.open-tasks-count {
+  font-size: 11px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.open-tasks-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 200px;
+  overflow: auto;
+  /* scrollbar via .scroll-fade (same as chat .messages) */
+}
+.open-tasks-list.scroll-fade {
+  --scroll-fade: var(--panel-2);
+}
+.open-task-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+.open-task-row:hover {
+  background: var(--accent-soft);
+}
+.open-task-status {
+  flex: 0 0 auto;
+  width: 1.1em;
+  text-align: center;
+  opacity: 0.85;
+  font-size: 13px;
+}
+.open-task-item.status-in_progress > .open-task-row .open-task-status,
+.open-task-step.status-in_progress .open-task-status {
+  color: var(--accent);
+}
+.open-task-item.status-pending > .open-task-row .open-task-status,
+.open-task-step.status-pending .open-task-status {
+  color: var(--muted);
+}
+.open-task-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.open-task-meta {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+/* Same ChevronDownIcon + session-owner-group-chevron as sidebar group fold;
+   always visible here (no count/chevron swap). Closed −90°, open 0°. */
+.open-task-row .session-owner-group-chevron {
+  opacity: 0.8;
+  visibility: visible;
+  color: var(--muted);
+}
+.open-task-row.expanded .session-owner-group-chevron {
+  transform: rotate(0deg);
+}
+/* Smooth expand/collapse for per-task steps (same 0fr→1fr as session-group-fold). */
+.open-task-fold {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 0fr;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  transition: grid-template-rows 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.open-task-fold.is-open {
+  grid-template-rows: 1fr;
+}
+.open-task-fold-inner {
+  overflow: hidden;
+  min-height: 0;
+  min-width: 0;
+  opacity: 0;
+  transition: opacity 0.16s ease;
+}
+.open-task-fold.is-open > .open-task-fold-inner {
+  opacity: 1;
+  transition-delay: 0.02s;
+}
+.open-task-fold:not(.is-open) > .open-task-fold-inner {
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .open-task-fold,
+  .open-task-fold-inner {
+    transition: none;
+  }
+}
+.open-task-steps {
+  list-style: none;
+  margin: 0 0 4px;
+  padding: 0 8px 4px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.open-task-step {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.open-task-step.status-in_progress {
+  color: var(--text);
+}
+.open-task-step-title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.open-task-step-note {
+  flex: 0 1 auto;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.75;
+  font-size: 11px;
+}
+
 .composer {
   flex-shrink: 0;
   width: 100%;
   max-width: var(--chat-column-max);
   margin-inline: auto;
   box-sizing: border-box;
-  padding: 10px 18px 14px;
+  padding: 10px var(--chat-gutter-x) 14px;
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -4153,22 +4411,39 @@ input, textarea { user-select: text; }
   line-height: 0;
 }
 
-/* Bottom turn status (orb + shimmer text) above composer while agent busy */
+/* Sticky turn status overlays the transcript bottom while agent busy (「正在进化」etc.).
+   Full-bleed gradient; content inset matches composer-inner left edge at all widths:
+   max(gutter, (pane − column-max)/2 + gutter). */
 .chat-turn-status {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
   width: 100%;
-  max-width: var(--chat-column-max);
-  margin-inline: auto;
+  max-width: none;
+  margin: 0;
   box-sizing: border-box;
-  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 2px 18px 10px;
-  max-width: none;
-  width: 100%;
-  box-sizing: border-box;
+  padding: 18px max(var(--chat-gutter-x), calc((100% - var(--chat-column-max)) / 2 + var(--chat-gutter-x))) 10px;
   pointer-events: none;
   user-select: none;
+  /* Fade into chat bg so last bubble isn't hard-clipped under the banner. */
+  background: linear-gradient(
+    to top,
+    var(--chat-bg, var(--panel, #1c1c1e)) 0%,
+    var(--chat-bg, var(--panel, #1c1c1e)) 42%,
+    color-mix(in srgb, var(--chat-bg, var(--panel, #1c1c1e)) 55%, transparent) 78%,
+    transparent 100%
+  );
+}
+.messages-shell:has(.chat-turn-status) .scroll-to-bottom-btn {
+  bottom: calc(12px + var(--chat-turn-status-space, 48px));
+}
+.messages-shell:has(.chat-turn-status) .immersive-chat-fab {
+  bottom: calc(16px + var(--chat-turn-status-space, 48px));
 }
 .chat-turn-status-text {
   font-size: 13px;
@@ -5163,6 +5438,16 @@ input, textarea { user-select: text; }
 
 
 /* Reveal message clock (HH:MM): user rows translate left → time from right; assistant fixed. */
+@keyframes okbot-bubble-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scaleY(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scaleY(1);
+  }
+}
 .bubble-swipe-host {
   position: relative;
   align-self: stretch;
@@ -5172,6 +5457,13 @@ input, textarea { user-select: text; }
   touch-action: pan-y;
   /* No overflow:hidden — that would become a scrollport and break sticky actions. */
   cursor: default;
+  transform-origin: center bottom;
+  animation: okbot-bubble-in 0.2s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .bubble-swipe-host {
+    animation: none;
+  }
 }
 .bubble-swipe-time {
   position: absolute;
@@ -8284,10 +8576,11 @@ input, textarea { user-select: text; }
 }
 
 
-/* Parallel in-flight tasks (shown only when >1 unfinished turn) */
+/* Parallel in-flight tasks (shown only when >1 unfinished turn) —
+   same width as open-tasks / composer-inner. */
 .parallel-tasks-strip {
-  width: 100%;
-  max-width: var(--chat-column-max);
+  width: calc(100% - 2 * var(--chat-gutter-x));
+  max-width: calc(var(--chat-column-max) - 2 * var(--chat-gutter-x));
   margin: 0 auto 8px;
   box-sizing: border-box;
   padding: 8px 10px;

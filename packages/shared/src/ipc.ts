@@ -4,6 +4,7 @@ import type { Bot, Squad, AppSettings } from './settings.js';
 import type { ChatMessage } from './chat.js';
 import type { TokenUsage } from './usage.js';
 import type { MessageTrace } from './trace.js';
+import type { TaskRecord } from './tasks.js';
 
 export const IpcChannels = {
   getBootstrap: 'okbot:get-bootstrap',
@@ -26,6 +27,8 @@ export const IpcChannels = {
   testModelConnection: 'okbot:test-model-connection',
   probeComputer: 'okbot:probe-computer',
   getMessages: 'okbot:get-messages',
+  /** Open (pending/in_progress) tasks for the chat UI above the composer. */
+  getTasks: 'okbot:get-tasks',
   getMessagesPage: 'okbot:get-messages-page',
   searchMessages: 'okbot:search-messages',
   getPromptContext: 'okbot:get-prompt-context',
@@ -171,6 +174,13 @@ export type RuntimeEvent =
       type: 'sessions_changed';
       botId: string;
       reason: SessionsChangedReason;
+    }
+  | {
+      /** Multi-task queue changed on disk; UI refreshes open tasks above composer. */
+      type: 'tasks_changed';
+      botId: string;
+      /** Open tasks snapshot (pending/in_progress). */
+      tasks: TaskRecord[];
     };
 
 /** About dialog / clipboard blob. */

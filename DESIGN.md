@@ -51,7 +51,7 @@ localHttpApi          网关 HTTP。不是独立服务
 
 网关 HTTP 在进程内直接调 `startChatTurn`，不再绕一圈 IPC。
 
-1:1 忙碌发送经 `orchestrateBotTurn`（`electron/ipc/chat/orchestrateBotTurn.ts`）：轻量路由 `classifyBusyIntent`（`packages/agent`）区分补充 vs 新任务；补充经 `softSteerGate` 软改向最近在途回合，新任务走既有并行门闩 / 任务条。小队仍直接 `startSquadTurn`。
+1:1 忙碌发送经 `orchestrateBotTurn`（`electron/ipc/chat/orchestrateBotTurn.ts`）：composer（含看似空闲）经 `softSteerGate` 取消 auto-continue 并 abort 该 owner 全部在途回合后重启（把新用户消息并入同一活跃上下文；不按意图分叉并行 composer 回合）。schedule/api 忙碌时不软改向，走既有并行门闩。干净 `done` 后若 `task-progress` 仍有 pending/in_progress，主机静默 auto-continue（无可见用户气泡、不限次数；Stop/abort/composer 软改向/硬错误则停；进度指纹连续两次未变则停，中间一次加严提示）。助手气泡非流式：主机不推送 token `delta`；`send_message` / 自动允许与 HITL 工具边界可见旁白（`onBeforeToolExecute`→`clearLiveAssistantForTools`）/ `done` 时整条显示；同轮开场「收到」去重（含短确认后的长 bullet 开场）；禁止插入空白或仅 `<think>` 行。小队仍直接 `startSquadTurn`。
 
 助手、小队、记忆、技能、助手市场（含 GitHub URL 导入）、模型探测这些操作写在 `electron/entityOps.ts`（`createEntityOps(ctx)`），不带传输层。`registerEntity.ts` 的 IPC 和网关 `POST /v1/rpc/:op` 都调它，两边行为一致。模型探测的实现在 `electron/modelProbe.ts`。
 
@@ -143,7 +143,7 @@ localHttpApi          网关 HTTP。不是独立服务
 
 ## 网关可写的设置
 
-`gatewaySettingsWrite.ts` 的 `GATEWAY_SETTINGS_PATCH_KEYS`：主题、语言、麦克风、硬件加速、自动更新、侧栏缩放、开发者模式、压缩、`maxTurns`、instructions、memory、maintenance、squad、`toolRun`、`notifications`、`showAdvancedSettings`、`assistantMarketplace`。`autoApprovalEnabled` 和 `autoApprovalRules` 另走 `checkGatewayApprovalWrite`。`closeAction` 与备份一样仅桌面 IPC，网关不可写。
+`gatewaySettingsWrite.ts` 的 `GATEWAY_SETTINGS_PATCH_KEYS`：主题、语言、麦克风、硬件加速、自动更新、侧栏缩放、开发者模式、压缩、`maxTurns`、instructions、memory、maintenance、squad、`notifications`、`showAdvancedSettings`、`assistantMarketplace`。`autoApprovalEnabled` 和 `autoApprovalRules` 另走 `checkGatewayApprovalWrite`。`closeAction` 与备份一样仅桌面 IPC，网关不可写。
 
 网关对自动审批只能做两类改动。一是只会多问的改动：加「询问」规则、删「允许」规则、关掉自动审批。二是工具卡上的「总是允许」：新增或改成「允许」的规则，内容必须正好是一个内置工具名（如 `read_file`）。内置工具名规则只和工具名比较，不和参数比较。宽泛的关键词「允许」规则（比如只写 `a`）、改桌面端规则的说明或内容，都只能在桌面端做；不合规则的写入整体返回 409 `settings_not_allowed`。设置页的规则列表在网关页只读。
 

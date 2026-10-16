@@ -388,6 +388,7 @@ export const SessionSidebar = memo(function SessionSidebar({
     <input
       spellCheck={false}
       className="session-rename-input"
+      size={1}
       value={renameValue}
       autoFocus
       onFocus={(e) => e.currentTarget.select()}
@@ -473,6 +474,7 @@ export const SessionSidebar = memo(function SessionSidebar({
               <input
                 spellCheck={false}
                 className="session-owner-group-rename"
+                size={1}
                 value={renameValue}
                 autoFocus
                 onFocus={(e) => e.currentTarget.select()}
@@ -624,7 +626,7 @@ export const SessionSidebar = memo(function SessionSidebar({
                       theme={resolvedOrbTheme()}
                       colorVariant="ocean"
                       strength={0.9}
-                      borderRadius={12}
+                      borderRadius={7}
                       duration={2.2}
                     >
                       {row}
@@ -746,7 +748,7 @@ export const SessionSidebar = memo(function SessionSidebar({
                     theme={resolvedOrbTheme()}
                     colorVariant="ocean"
                     strength={0.9}
-                    borderRadius={12}
+                    borderRadius={7}
                     duration={2.2}
                   >
                     {squadRow}
@@ -905,8 +907,9 @@ export const SessionSidebar = memo(function SessionSidebar({
                     {section.items.map((item) => renderSessionItem(item))}
                     {section.items.length === 0 ? (
                       <div
-                        className="session-group-drop-hint"
+                        className={`session-group-drop-hint${dragOverGroupId === section.groupId ? ' is-drag-over' : ''}`}
                         onDragOver={(e) => onGroupDragOver(e, section.groupId)}
+                        onDragLeave={(e) => onGroupDragLeave(e, section.groupId)}
                         onDrop={(e) => onGroupDrop(e, section.groupId)}
                       >
                         {t(lang, 'groupDropHere')}

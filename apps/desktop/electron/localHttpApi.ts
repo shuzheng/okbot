@@ -735,6 +735,25 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
         return;
       }
 
+      // GET /v1/bots/:id/tasks | GET /v1/squads/:id/tasks — open multi-task queue
+      if (
+        method === 'GET' &&
+        parts.length === 4 &&
+        parts[0] === 'v1' &&
+        (parts[1] === 'bots' || parts[1] === 'squads') &&
+        parts[3] === 'tasks'
+      ) {
+        const id = parts[2] || '';
+        try {
+          const tasks = deps.ctx.storage.loadOpenTasks(id);
+          sendJson(res, 200, { ok: true, tasks });
+        } catch (err) {
+          console.error('[okbot] http getTasks failed', err);
+          sendJson(res, 500, { ok: false, error: 'tasks_failed' });
+        }
+        return;
+      }
+
       // GET /v1/computers
       if (method === 'GET' && parts.length === 2 && parts[0] === 'v1' && parts[1] === 'computers') {
         const settings = deps.ctx.storage.getSettings();
@@ -911,6 +930,7 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
               botId: id,
               text,
               computerId,
+              origin: 'api' as const,
               ...(clientTurnId ? { clientTurnId } : {}),
               ...(quoteMessageId ? { quoteMessageId } : {}),
               ...(attachments ? { attachments } : {}),
@@ -919,6 +939,7 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
               squadId: id,
               text,
               computerId,
+              origin: 'api' as const,
               ...(clientTurnId ? { clientTurnId } : {}),
               ...(quoteMessageId ? { quoteMessageId } : {}),
               ...(attachments ? { attachments } : {}),

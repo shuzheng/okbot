@@ -1,4 +1,4 @@
-import { createId, resolveModelConfig, type ChatMessage } from '@okbot/shared';
+import { createId, resolveModelConfig } from '@okbot/shared';
 import {
   resumeAgentChatAfterHitl,
   createOkbotFileSession,
@@ -24,7 +24,15 @@ import { mcpToolsForRun } from '../../mcpRuntime';
 import { buildMeshPeerSpecs, computerRouteFor, createMeshExchangeHandler, skillLookupFor } from '../chatTurnHelpers';
 import { historySearchForOwner } from '../historySearchTool';
 import { scheduleManageForOwner } from '../scheduleTool';
-import { persistAssistantContent, type TurnContext } from './turnContext';
+import { taskProgressManageForOwner } from '../taskProgressTool';
+import {
+  clearLiveAssistantForTools,
+  commitLiveAssistantBubble,
+  emitAssistantMessageBubble,
+  persistAssistantContent,
+  type LiveAssistantState,
+  type TurnContext,
+} from './turnContext';
 type DiskPending = ReturnType<TurnContext['storage']['listAllPendingHitl']>[number];
 
 /** Cold-restore a 1:1 bot HITL after process restart. */
@@ -45,12 +53,14 @@ export async function resumeBotAfterRestart(
         return { ok: false, error: '该助手已有进行中的任务' };
       }
 
-      let assistantId = disk.messageId;
-      let assistantMsg: ChatMessage = {
-        id: assistantId,
-        role: 'assistant',
-        content: '',
-        createdAt: new Date().toISOString(),
+      const live: LiveAssistantState = {
+        assistantId: disk.messageId,
+        assistantMsg: {
+          id: disk.messageId,
+          role: 'assistant',
+          content: '',
+          createdAt: new Date().toISOString(),
+        },
       };
       const meshFollowUp = createMeshFollowUpStripper();
       const controller = new AbortController();
@@ -64,7 +74,6 @@ export async function resumeBotAfterRestart(
       const settings = ctx.storage.getSettings();
       const modelConfig = resolveModelConfig(settings.model, { providerId: bot.providerId, modelId: bot.modelId });
       const guards = createRunGuards({
-        toolRun: settings.toolRun,
         controller,
       });
       try {
@@ -90,9 +99,23 @@ export async function resumeBotAfterRestart(
           skillLookup,
           historySearch: historySearchForOwner(ctx.storage, bot.id),
           scheduleManage: scheduleManageForOwner(ctx.storage, bot.id),
+          taskProgressManage: async (input) => {
+            const result = await taskProgressManageForOwner(ctx.storage, bot.id)(input);
+            try {
+              ctx.sendRuntimeEvent({
+                type: 'tasks_changed',
+                botId: bot.id,
+                tasks: ctx.storage.loadOpenTasks(bot.id),
+              });
+            } catch (err) {
+              console.error('[okbot] tasks_changed emit failed', err);
+            }
+            return result;
+          },
           web: settings.web,
           memoriesText,
           sessionSummary: sessionSummary || undefined,
+          taskProgressText: ctx.storage.formatTaskProgressForPrompt(bot.id) || undefined,
           assistantRoleTemplate: settings.instructions?.assistantRoleTemplate,
           isDefaultAssistant: settings.defaultAssistantId === bot.id,
           model: modelConfig,
@@ -116,56 +139,41 @@ export async function resumeBotAfterRestart(
           requestId: disk.requestId,
           toolName: disk.toolName,
           decision,
-          onClearLiveText: () => {
-            if (!assistantMsg.content) return;
-            assistantMsg.content = '';
-            ctx.sendRuntimeEvent({
-              type: 'assistant_message',
-              botId: bot.id,
-              message: { ...assistantMsg },
+          onClearLiveText: async () => {
+            await clearLiveAssistantForTools(live, {
+              ownerId: bot.id,
+              runId: resumeRunId,
+              showThinking: modelConfig.showThinking,
+              storage: ctx.storage,
+              emit: (event) => ctx.sendRuntimeEvent(event),
+              noteCommitted: (t) => meshFollowUp.noteCommitted(t),
             });
           },
           onCommitLiveAssistant: async () => {
-            const raw = assistantMsg.content || '';
-            if (!raw.trim()) return;
-            const sealed = persistAssistantContent(raw, modelConfig.showThinking);
-            assistantMsg = {
-              ...assistantMsg,
-              content: sealed,
-              meshInterim: true,
-            };
-            try {
-              await ctx.storage.upsertAssistantMessage(bot.id, { ...assistantMsg }, {
-                allowRebind: false,
-                runId: resumeRunId,
-              });
-            } catch (err) {
-              console.error('[okbot] commit mesh interim assistant failed', err);
-            }
-            ctx.sendRuntimeEvent({
-              type: 'assistant_message',
-              botId: bot.id,
-              message: { ...assistantMsg },
+            await commitLiveAssistantBubble(live, {
+              ownerId: bot.id,
+              runId: resumeRunId,
+              showThinking: modelConfig.showThinking,
+              storage: ctx.storage,
+              emit: (event) => ctx.sendRuntimeEvent(event),
+              noteCommitted: (t) => meshFollowUp.noteCommitted(t),
+            }, { meshInterim: true, logLabel: 'commit mesh interim assistant' });
+          },
+          emitAssistantMessage: async (content) => {
+            await emitAssistantMessageBubble(live, content, {
+              ownerId: bot.id,
+              runId: resumeRunId,
+              showThinking: modelConfig.showThinking,
+              storage: ctx.storage,
+              emit: (event) => ctx.sendRuntimeEvent(event),
+              noteCommitted: (t) => meshFollowUp.noteCommitted(t),
             });
-            meshFollowUp.noteCommitted(sealed);
-            assistantId = createId('msg');
-            assistantMsg = {
-              id: assistantId,
-              role: 'assistant',
-              content: '',
-              createdAt: new Date().toISOString(),
-            };
           },
           onDelta: (delta) => {
             const piece = meshFollowUp.acceptDelta(delta);
             if (piece == null || !piece) return;
-            assistantMsg.content += piece;
-            ctx.sendRuntimeEvent({
-              type: 'delta',
-              botId: bot.id,
-              messageId: assistantId,
-              delta: piece,
-            });
+            live.assistantMsg.content += piece;
+        // Non-streaming UI: buffer until done; do not emit token deltas.
           },
           ...attachTraceHooks(guards),
           onMeshExchange: createMeshExchangeHandler({
@@ -174,7 +182,7 @@ export async function resumeBotAfterRestart(
           }),
           onToolApprovalRequest: createApprovalWaiter(ctx, {
             ownerId: bot.id,
-            messageId: () => assistantId,
+            messageId: () => live.assistantId,
             settings,
             signal: controller.signal,
             computerId: disk.computerId,
@@ -189,7 +197,7 @@ export async function resumeBotAfterRestart(
             ctx.sendRuntimeEvent({
               type: 'tool_result',
               botId: bot.id,
-              messageId: assistantId,
+              messageId: live.assistantId,
               requestId,
               toolName,
               approved,
@@ -197,45 +205,55 @@ export async function resumeBotAfterRestart(
               runId: resumeRunId,
             });
           },
+          onRunCheckpoint: ({ serializedRunState }) => {
+            try {
+              ctx.storage.saveRunCheckpoint(bot.id, {
+                kind: 'bot',
+                runId: resumeRunId,
+                messageId: live.assistantId,
+                serializedRunState,
+                createdAt: new Date().toISOString(),
+                computerId: disk.computerId,
+                userText: disk.userText,
+              });
+            } catch (err) {
+              console.error('[okbot] save run checkpoint failed', err);
+            }
+          },
         });
-
-        guards.throwIfBroken();
 
         // result.content prefers live stream (cleared at tools → formal only). Never shrink
         // an already-visible bubble if the agent returned a shorter finalOutput fallback.
         const interim = meshFollowUp.getCommitted();
         let finalized = (result.content || '').trim()
           ? result.content
-          : assistantMsg.content;
+          : live.assistantMsg.content;
         finalized = meshFollowUp.finalize(finalized || '');
         if (interim) {
           finalized = stripLeadingCommittedInterim(finalized, interim);
-          assistantMsg.content = stripLeadingCommittedInterim(assistantMsg.content, interim);
+          live.assistantMsg.content = stripLeadingCommittedInterim(live.assistantMsg.content, interim);
         }
         if (
           finalized &&
-          (!assistantMsg.content.trim() || finalized.length >= assistantMsg.content.length)
+          (!live.assistantMsg.content.trim() || finalized.length >= live.assistantMsg.content.length)
         ) {
-          assistantMsg.content = finalized;
+          live.assistantMsg.content = finalized;
         }
-        assistantMsg.content = persistAssistantContent(
-          assistantMsg.content,
+        live.assistantMsg.content = persistAssistantContent(
+          live.assistantMsg.content,
           modelConfig.showThinking,
         );
-        if (result.usage) assistantMsg.usage = result.usage;
+        if (result.usage) live.assistantMsg.usage = result.usage;
         const botTrace = sealMessageTrace(
           guards,
-          resolveRunFinishStatus({
-            aborted: controller.signal.aborted,
-            breakReason: guards.budget.getBreakReason(),
-          }),
+          resolveRunFinishStatus({ aborted: controller.signal.aborted }),
         );
-        if (botTrace) assistantMsg.trace = botTrace;
+        if (botTrace) live.assistantMsg.trace = botTrace;
         // Empty + no session row for this streaming id: skip upsert. Abort during
         // HITL clears streamed text; unconditional upsert used to rebind/wipe the
         // previous assistant turn (see FileStorage.upsertAssistantMessage).
-        if ((assistantMsg.content || '').trim()) {
-          await ctx.storage.upsertAssistantMessage(bot.id, assistantMsg, { runId: resumeRunId });
+        if ((live.assistantMsg.content || '').trim()) {
+          await ctx.storage.upsertAssistantMessage(bot.id, live.assistantMsg, { runId: resumeRunId });
         }
         if (result.usage && (result.usage.input || result.usage.output || result.usage.cache)) {
           try {
@@ -247,31 +265,28 @@ export async function resumeBotAfterRestart(
         ctx.sendRuntimeEvent({
           type: 'done',
           botId: bot.id,
-          messageId: assistantId,
-          content: assistantMsg.content,
+          messageId: live.assistantId,
+          content: live.assistantMsg.content,
           usage: result.usage,
           ...(botTrace ? { trace: botTrace } : {}),
           ...(controller.signal.aborted ? { aborted: true } : {}),
         });
         return { ok: true, resumed: true };
       } catch (err) {
-        // Circuit-breaker aborts the same controller; surface getBreakReason() first
-        // so the user sees the limit message instead of a silent stop.
+        // Stop / abort: settle quietly.
         if (
-          !guards.budget.getBreakReason() &&
           (controller.signal.aborted || isAbortLikeError(err))
         ) {
           const abortTrace = sealMessageTrace(
             guards,
             resolveRunFinishStatus({
               aborted: true,
-              breakReason: null,
             }),
           );
-          if (abortTrace && (assistantMsg.content || '').trim()) {
-            assistantMsg.trace = abortTrace;
+          if (abortTrace && (live.assistantMsg.content || '').trim()) {
+            live.assistantMsg.trace = abortTrace;
             try {
-              await ctx.storage.upsertAssistantMessage(bot.id, assistantMsg, { runId: resumeRunId });
+              await ctx.storage.upsertAssistantMessage(bot.id, live.assistantMsg, { runId: resumeRunId });
             } catch (err) {
               console.error('[okbot] upsert aborted bot trace failed', err);
             }
@@ -279,8 +294,8 @@ export async function resumeBotAfterRestart(
           ctx.sendRuntimeEvent({
             type: 'done',
             botId: bot.id,
-            messageId: assistantId,
-            content: assistantMsg.content,
+            messageId: live.assistantId,
+            content: live.assistantMsg.content,
             ...(abortTrace ? { trace: abortTrace } : {}),
             aborted: true,
           });
@@ -289,22 +304,22 @@ export async function resumeBotAfterRestart(
         const message = handleRunFailure({
           root: ctx.storage.root,
           ownerId: bot.id,
-          messageId: assistantId,
+          messageId: live.assistantId,
           phase: 'resumeHitl',
           err,
           guards,
         });
         console.error('[okbot] resumeHitl failed', err);
-        if (!assistantMsg.content) {
-          assistantMsg.content = `错误：${message}`;
+        if (!live.assistantMsg.content) {
+          live.assistantMsg.content = `错误：${message}`;
           const errTrace = guards.trace.getMessageTrace();
-          if (errTrace) assistantMsg.trace = errTrace;
-          await ctx.storage.upsertAssistantMessage(bot.id, assistantMsg, { allowRebind: false, runId: resumeRunId });
+          if (errTrace) live.assistantMsg.trace = errTrace;
+          await ctx.storage.upsertAssistantMessage(bot.id, live.assistantMsg, { allowRebind: false, runId: resumeRunId });
         }
         ctx.sendRuntimeEvent({
           type: 'error',
           botId: bot.id,
-          messageId: assistantId,
+          messageId: live.assistantId,
           error: message,
         });
         return { ok: false, error: message };
@@ -313,6 +328,11 @@ export async function resumeBotAfterRestart(
         unregisterOwnerRun(ctx.abortControllers, bot.id, resumeRunId, controller);
         // Align with squad resume / live turns: only this run's parked cards.
         releaseRunApprovals(ctx, bot.id, parkedRequestIds, '已结束');
+        try {
+          ctx.storage.clearRunCheckpoint(bot.id);
+        } catch (err) {
+          console.error('[okbot] clear run checkpoint failed', err);
+        }
         runSlot.release();
       }
 }

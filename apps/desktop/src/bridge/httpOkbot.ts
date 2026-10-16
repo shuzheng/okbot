@@ -205,7 +205,7 @@ export function fillGatewayModel(model: unknown) {
           contextWindow: x?.contextWindow,
           maxTokens: x?.maxTokens,
           enabled: x?.enabled !== false,
-          ...(x?.showThinking === false ? { showThinking: false as const } : {}),
+          ...(x?.showThinking === true ? { showThinking: true as const } : {}),
         })),
       };
     }),
@@ -271,7 +271,6 @@ export function fillGatewaySettings(settings: unknown) {
     instructions: s.instructions && typeof s.instructions === 'object' ? s.instructions : {},
     memory: s.memory && typeof s.memory === 'object' ? s.memory : {},
     squad: s.squad && typeof s.squad === 'object' ? s.squad : {},
-    toolRun: s.toolRun && typeof s.toolRun === 'object' ? s.toolRun : {},
     mesh: s.mesh && typeof s.mesh === 'object' ? s.mesh : {},
   };
 }
@@ -343,6 +342,24 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
       } catch {
         return await api('GET', `/v1/squads/${encodeURIComponent(ownerId)}/messages?${q}`);
       }
+    },
+    getTasks: async (ownerId: string) => {
+      const id = (ownerId || '').trim();
+      if (!id) return [];
+      try {
+        const res = await api<any>('GET', `/v1/bots/${encodeURIComponent(id)}/tasks`);
+        if (Array.isArray(res)) return res;
+        if (res && Array.isArray(res.tasks)) return res.tasks;
+      } catch {
+        try {
+          const res = await api<any>('GET', `/v1/squads/${encodeURIComponent(id)}/tasks`);
+          if (Array.isArray(res)) return res;
+          if (res && Array.isArray(res.tasks)) return res.tasks;
+        } catch {
+          /* endpoint optional — UI stays empty */
+        }
+      }
+      return [];
     },
     getMessages: async (botId: string, opts?: { limit?: number }) => {
       const raw = opts?.limit;

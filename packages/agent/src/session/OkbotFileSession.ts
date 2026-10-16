@@ -1,5 +1,9 @@
 import type { AgentInputItem, Session } from '@openai/agents';
-import { sanitizeNullsInToolCallArguments, stripThinkFromAgentInputItem } from '@okbot/shared';
+import {
+  normalizeAgentInputItemForRunState,
+  sanitizeNullsInToolCallArguments,
+  stripThinkFromAgentInputItem,
+} from '@okbot/shared';
 
 /**
  * Persistence adapter for OkbotFileSession.
@@ -27,11 +31,14 @@ export class OkbotFileSession implements Session {
 
   async getItems(limit?: number): Promise<AgentInputItem[]> {
     const items = await this.store.readItems(limit);
-    // Model context: strip `<think>` and drop nulls inside tool-call arguments
-    // (strict gateways e.g. MiniMax 400/2013 reject `"job_id":null` in history).
+    // Model context: strip `<think>`, coerce UI/legacy item shapes to Responses
+    // ModelItem forms (RunState checkpoint serialization), and drop nulls inside
+    // tool-call arguments (strict gateways e.g. MiniMax 400/2013 reject
+    // `"job_id":null` in history).
     return (items as AgentInputItem[]).map((item) => {
       const stripped = stripThinkFromAgentInputItem(item as Record<string, unknown>);
-      return sanitizeNullsInToolCallArguments(stripped) as AgentInputItem;
+      const normalized = normalizeAgentInputItemForRunState(stripped);
+      return sanitizeNullsInToolCallArguments(normalized) as AgentInputItem;
     });
   }
 

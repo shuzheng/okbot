@@ -69,6 +69,7 @@ export const GATEWAY_BRIDGE_METHOD_NAMES = [
   'testModelConnection',
   'probeComputer',
   'getMessages',
+  'getTasks',
   'getMessagesPage',
   'searchMessages',
   'getPromptContext',
@@ -252,7 +253,7 @@ export function gatewayBootJs(): string {
           maxTokens:x.maxTokens,
           enabled:x.enabled!==false
         };
-        if(x.showThinking===false) row.showThinking=false;
+        if(x.showThinking===true) row.showThinking=true;
         ms.push(row);
       }
       next.push({
@@ -315,7 +316,6 @@ export function gatewayBootJs(): string {
     if(!out.instructions||typeof out.instructions!=='object') out.instructions={};
     if(!out.memory||typeof out.memory!=='object') out.memory={};
     if(!out.squad||typeof out.squad!=='object') out.squad={};
-    if(!out.toolRun||typeof out.toolRun!=='object') out.toolRun={};
     return out;
   }
   function createBridge(){
@@ -385,6 +385,17 @@ export function gatewayBootJs(): string {
         var suffix=q.toString()?('?'+q.toString()):'';
         return api('GET','/v1/bots/'+encodeURIComponent(ownerId)+'/messages'+suffix).catch(function(){
           return api('GET','/v1/squads/'+encodeURIComponent(ownerId)+'/messages'+suffix);
+        });
+      },
+      getTasks:function(ownerId){
+        return api('GET','/v1/bots/'+encodeURIComponent(ownerId)+'/tasks').then(function(res){
+          if (Array.isArray(res)) return res;
+          return (res && res.tasks) || [];
+        }).catch(function(){
+          return api('GET','/v1/squads/'+encodeURIComponent(ownerId)+'/tasks').then(function(res){
+            if (Array.isArray(res)) return res;
+            return (res && res.tasks) || [];
+          }).catch(function(){ return []; });
         });
       },
       getMessages:function(botId, opts){

@@ -70,13 +70,49 @@ export type HistorySearch = (
 /** Manage timed wakeups for the current bot/squad (scoped by the desktop host). */
 export type ScheduleManage = (input: {
   action: 'create' | 'list' | 'pause' | 'resume' | 'delete';
-  prompt?: string;
-  title?: string;
-  schedule?: string;
-  timezone?: string;
-  job_id?: string;
-  once?: boolean;
+  prompt?: string | null;
+  title?: string | null;
+  schedule?: string | null;
+  timezone?: string | null;
+  job_id?: string | null;
+  once?: boolean | null;
 }) => Promise<string> | string;
+
+
+/**
+ * Models often send checklist ids as numbers (`1`) or omit them; schema must coerce.
+ * Inner type is `.nullable().optional()` so OpenAI strict JSON Schema conversion succeeds
+ * (bare `.optional()` throws UserError: all fields must be required).
+ */
+const optionalToolId = z.preprocess((v) => {
+  if (v == null || v === '') return undefined;
+  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return String(v);
+  return v;
+}, z.string().nullable().optional());
+
+/** Manage durable multi-task list for the current bot/squad (scoped by the desktop host). */
+export type TaskProgressManage = (input: {
+  action: 'add' | 'update' | 'list';
+  id?: string | null;
+  title?: string | null;
+  note?: string | null;
+  status?: 'pending' | 'in_progress' | 'done' | 'cancelled' | 'failed' | null;
+  steps?: Array<{
+    id?: string | null;
+    title: string;
+    status?: 'pending' | 'in_progress' | 'done' | 'cancelled' | 'failed' | null;
+    note?: string | null;
+  }> | null;
+  step_id?: string | null;
+  step_title?: string | null;
+  step_status?: 'pending' | 'in_progress' | 'done' | 'cancelled' | 'failed' | null;
+  step_note?: string | null;
+  step_new_title?: string | null;
+  include_done?: boolean | null;
+}) => Promise<string> | string;
+
+/** Emit a standalone assistant chat bubble mid-run (host seals/rotates live id). */
+export type EmitAssistantMessage = (content: string) => Promise<void> | void;
 
 export type BuildToolsOptions = {
   /** Required for `read_skill` to return bodies; omit when no skill catalog is bound. */
@@ -90,6 +126,21 @@ export type BuildToolsOptions = {
    * Required for `manage_schedule`. Host must scope to the current bot/squad only.
    */
   scheduleManage?: ScheduleManage;
+  /**
+   * Required for `manage_task_progress`. Host must scope to the current bot/squad only.
+   */
+  taskProgressManage?: TaskProgressManage;
+  /**
+   * Required for `send_message` to create a UI bubble. 1:1 hosts bind this;
+   * omit on squad (execute returns a clear error).
+   */
+  emitAssistantMessage?: EmitAssistantMessage;
+  /**
+   * Fired at the start of each auto-allow / post-HITL tool execute (except
+   * send_message / ask_assistant). Host seals visible live narration so
+   * mid-run progress appears without waiting for done/abort.
+   */
+  onBeforeToolExecute?: () => void | Promise<void>;
   /**
    * Credentials for `generate_image` (same provider baseURL/apiKey as chat).
    * When omitted/unsupported, the tool reports a clear error if invoked.
@@ -149,8 +200,18 @@ export function buildTools(
   const route = options?.computerRoute;
   const backend = options?.backend ?? createLocalExecutionBackend();
   const where = route ? defaultComputerLabel(route) : backend.label || '本机';
+  const onBeforeToolExecute = options?.onBeforeToolExecute;
+  /** Local wrap: always attach tool-boundary seal hook when provided. */
+  function wrapExec<TArgs, TResult>(
+    name: string,
+    execute: (args: TArgs) => Promise<TResult> | TResult,
+  ): (args: TArgs) => Promise<TResult> {
+    return wrapToolExecute(name, budget, execute, onBeforeToolExecute);
+  }
+  // OpenAI strict tool schemas: optional params need `.nullable()` (not bare `.optional()`).
   const computerParam = z
     .string()
+    .nullable()
     .optional()
     .describe('目标电脑的 id 或名称。省略时：用户只点了一台就用那台，否则用默认电脑。用户点了多台时必填。');
 
@@ -180,18 +241,17 @@ export function buildTools(
           : `在「${where}」通过系统命令行执行一条命令（${shellHint}）。仅在用户明确需要时使用；危险命令会先请求用户批准。`,
         parameters: z.object({
           command: z.string().describe('要执行的命令'),
-          cwd: z.string().optional().describe('可选工作目录，支持 ~'),
+          cwd: z.string().nullable().optional().describe('可选工作目录，支持 ~'),
           computer: computerParam,
         }),
         needsApproval: prefs.run_shell.approval === 'ask',
         ...guardrailOpts,
-        execute: wrapToolExecute(
+        execute: wrapExec(
           'run_shell',
-          budget,
-          async ({ command, cwd, computer }: { command: string; cwd?: string; computer?: string }) => {
-            const target = backendFor(computer);
+          async ({ command, cwd, computer }: { command: string; cwd?: string | null; computer?: string | null }) => {
+            const target = backendFor(computer ?? undefined);
             if (typeof target === 'string') return target;
-            return target.runShell(command, cwd, budget?.signal);
+            return target.runShell(command, cwd ?? undefined, budget?.signal);
           },
         ),
       }),
@@ -211,11 +271,10 @@ export function buildTools(
         }),
         needsApproval: prefs.read_file.approval === 'ask',
         ...guardrailOpts,
-        execute: wrapToolExecute(
+        execute: wrapExec(
           'read_file',
-          budget,
-          async ({ path: filePath, computer }: { path: string; computer?: string }) => {
-            const target = backendFor(computer);
+          async ({ path: filePath, computer }: { path: string; computer?: string | null }) => {
+            const target = backendFor(computer ?? undefined);
             if (typeof target === 'string') return target;
             return target.readFile(filePath);
           },
@@ -235,9 +294,8 @@ export function buildTools(
         }),
         needsApproval: prefs.read_skill.approval === 'ask',
         ...guardrailOpts,
-        execute: wrapToolExecute(
+        execute: wrapExec(
           'read_skill',
-          budget,
           async ({ slug }: { slug: string }) => {
             const key = slug.trim();
             if (!key) return '错误：slug 不能为空';
@@ -280,15 +338,15 @@ export function buildTools(
             .int()
             .min(1)
             .max(20)
+            .nullable()
             .optional()
             .describe('最多返回几条（默认 8，上限 20）'),
         }),
         needsApproval: prefs.search_history.approval === 'ask',
         ...guardrailOpts,
-        execute: wrapToolExecute(
+        execute: wrapExec(
           'search_history',
-          budget,
-          async ({ query, limit }: { query: string; limit?: number }) => {
+          async ({ query, limit }: { query: string; limit?: number | null }) => {
             const q = (query || '').trim();
             if (!q) return '错误：query 不能为空';
             const search = options?.historySearch;
@@ -317,15 +375,16 @@ export function buildTools(
           action: z
             .enum(['create', 'list', 'pause', 'resume', 'delete'])
             .describe('create / list / pause / resume / delete'),
-          prompt: z.string().optional().describe('create：到点后发给本会话的提示词'),
-          title: z.string().optional().describe('可选标题；pause/resume/delete 也可用来匹配唯一任务'),
+          prompt: z.string().nullable().optional().describe('create：到点后发给本会话的提示词'),
+          title: z.string().nullable().optional().describe('可选标题；pause/resume/delete 也可用来匹配唯一任务'),
           schedule: z
             .string()
+            .nullable()
             .optional()
             .describe('create：daily 09:00 / 每天 09:00 / hourly / every 15m / cron 0 9 * * 1-5'),
-          timezone: z.string().optional().describe('可选 IANA 时区，如 Asia/Shanghai'),
-          job_id: z.string().optional().describe('pause/resume/delete：任务 id'),
-          once: z.boolean().optional().describe('create：只触发一次后自动停用'),
+          timezone: z.string().nullable().optional().describe('可选 IANA 时区，如 Asia/Shanghai'),
+          job_id: z.string().nullable().optional().describe('pause/resume/delete：任务 id'),
+          once: z.boolean().nullable().optional().describe('create：只触发一次后自动停用'),
         }),
         // create/delete always HITL (persistent self-wake / injection). Other actions follow pref.
         needsApproval: async (_ctx, input) => {
@@ -339,17 +398,16 @@ export function buildTools(
           return prefs.manage_schedule.approval === 'ask';
         },
         ...guardrailOpts,
-        execute: wrapToolExecute(
+        execute: wrapExec(
           'manage_schedule',
-          budget,
           async (args: {
             action: 'create' | 'list' | 'pause' | 'resume' | 'delete';
-            prompt?: string;
-            title?: string;
-            schedule?: string;
-            timezone?: string;
-            job_id?: string;
-            once?: boolean;
+            prompt?: string | null;
+            title?: string | null;
+            schedule?: string | null;
+            timezone?: string | null;
+            job_id?: string | null;
+            once?: boolean | null;
           }) => {
             const manage = options?.scheduleManage;
             if (!manage) {
@@ -359,6 +417,124 @@ export function buildTools(
               return truncate(await manage(args));
             } catch (err) {
               return `错误：定时任务操作失败 — ${err instanceof Error ? err.message : String(err)}`;
+            }
+          },
+        ),
+      }),
+    );
+  }
+
+  if (prefs.manage_task_progress.enabled) {
+    list.push(
+      tool({
+        name: 'manage_task_progress',
+        description:
+          '管理当前助手/小队的多任务（持久 tasks.jsonl：一行一任务；add 追加；update 按任务 id 原地改写该行；list 查看）。主机不判断新任务/更新/取消——由你用本工具维护。status=pending|in_progress|done|cancelled|failed。任一步 in_progress ⇒ 任务 in_progress；全部步骤 done ⇒ 任务 done。按添加顺序串行推进，不要并行开多个任务。新任务 add（可带 steps；任务 id 由主机生成 ULID，add 可不传 id）；推进用 update（id + step_id/step_status，或替换 steps）。软接管/中断后磁盘保留未完成任务：先 list/对照系统提示「当前任务」，再继续。有未完成任务时自动继续，不要问要不要继续。未用到的可选字段请省略，不要传 null。向用户汇报进度时只用产品语言（任务/未完成任务），不要说「队列」，不要在回复里写出本工具名或 tasks.jsonl。',
+        parameters: z.object({
+          action: z.enum(['add', 'update', 'list']).describe('add / update / list'),
+          id: optionalToolId.describe('update：任务 id（ULID）；add：可选，须为 ULID，否则主机自动生成'),
+          title: z.string().nullable().optional().describe('任务标题（add/update）'),
+          note: z.string().nullable().optional().describe('任务备注（空字符串清除）'),
+          status: z
+            .enum(['pending', 'in_progress', 'done', 'cancelled', 'failed'])
+            .nullable()
+            .optional()
+            .describe('任务状态；通常由步骤自动推导，cancelled/failed 可显式设置'),
+          steps: z
+            .array(
+              z.object({
+                id: optionalToolId.describe('可选步骤 id；省略时主机生成 ULID'),
+                title: z.string().describe('步骤标题'),
+                status: z
+                  .enum(['pending', 'in_progress', 'done', 'cancelled', 'failed'])
+                  .nullable()
+                  .optional()
+                  .describe('默认 pending'),
+                note: z.string().nullable().optional().describe('可选备注'),
+              }),
+            )
+            .nullable()
+            .optional()
+            .describe('add：初始步骤；update：传入则整表替换步骤'),
+          step_id: optionalToolId.describe('update：按步骤 id 单条更新'),
+          step_title: z.string().nullable().optional().describe('update：按唯一步骤标题定位'),
+          step_status: z
+            .enum(['pending', 'in_progress', 'done', 'cancelled', 'failed'])
+            .nullable()
+            .optional()
+            .describe('update：步骤新状态'),
+          step_note: z.string().nullable().optional().describe('update：步骤备注（空字符串清除）'),
+          step_new_title: z.string().nullable().optional().describe('update：重命名步骤'),
+          include_done: z
+            .boolean()
+            .nullable()
+            .optional()
+            .describe('list：true 时含已完成/取消/失败历史；默认仅未完成'),
+        }),
+        needsApproval: prefs.manage_task_progress.approval === 'ask',
+        ...guardrailOpts,
+        execute: wrapExec(
+          'manage_task_progress',
+          async (args: {
+            action: 'add' | 'update' | 'list';
+            id?: string | null;
+            title?: string | null;
+            note?: string | null;
+            status?: 'pending' | 'in_progress' | 'done' | 'cancelled' | 'failed' | null;
+            steps?: Array<{
+              id?: string | null;
+              title: string;
+              status?: 'pending' | 'in_progress' | 'done' | 'cancelled' | 'failed' | null;
+              note?: string | null;
+            }> | null;
+            step_id?: string | null;
+            step_title?: string | null;
+            step_status?: 'pending' | 'in_progress' | 'done' | 'cancelled' | 'failed' | null;
+            step_note?: string | null;
+            step_new_title?: string | null;
+            include_done?: boolean | null;
+          }) => {
+            const manage = options?.taskProgressManage;
+            if (!manage) {
+              return '错误：当前会话未绑定任务进度管理。';
+            }
+            try {
+              return truncate(await manage(args));
+            } catch (err) {
+              return `错误：任务进度操作失败 — ${err instanceof Error ? err.message : String(err)}`;
+            }
+          },
+        ),
+      }),
+    );
+  }
+
+  if (prefs.send_message.enabled) {
+    list.push(
+      tool({
+        name: 'send_message',
+        description:
+          '向用户界面回复一条独立消息（markdown）。用于多条进度/确认：先 ack、再干活、再汇报，而不是把整段挤进同一条流式回复。content 即消息正文；调用后继续工具与最终回复。不要把同一段文字既写入本工具又在最终流式回复里重复。未用到的可选字段请省略，不要传 null。',
+        parameters: z.object({
+          content: z.string().describe('消息正文（markdown）'),
+        }),
+        // Never HITL: emitting a bubble must not park an approval card.
+        needsApproval: false,
+        ...guardrailOpts,
+        execute: wrapExec(
+          'send_message',
+          async (args: { content: string }) => {
+            const emit = options?.emitAssistantMessage;
+            if (!emit) {
+              return '错误：当前会话未绑定 send_message（仅 1:1 助手支持）。';
+            }
+            const content = String(args?.content ?? '').trim();
+            if (!content) return '错误：content 不能为空';
+            try {
+              await emit(content);
+              return '已回复消息。';
+            } catch (err) {
+              return `错误：回复消息失败 — ${err instanceof Error ? err.message : String(err)}`;
             }
           },
         ),
@@ -380,11 +556,10 @@ export function buildTools(
         }),
         needsApproval: prefs.write_file.approval === 'ask',
         ...guardrailOpts,
-        execute: wrapToolExecute(
+        execute: wrapExec(
           'write_file',
-          budget,
-          async ({ path: filePath, content, computer }: { path: string; content: string; computer?: string }) => {
-            const target = backendFor(computer);
+          async ({ path: filePath, content, computer }: { path: string; content: string; computer?: string | null }) => {
+            const target = backendFor(computer ?? undefined);
             if (typeof target === 'string') return target;
             return target.writeFile(filePath, content);
           },
@@ -408,9 +583,8 @@ export function buildTools(
         }),
         needsApproval: prefs.edit_file.approval === 'ask',
         ...guardrailOpts,
-        execute: wrapToolExecute(
+        execute: wrapExec(
           'edit_file',
-          budget,
           async ({
             path: filePath,
             old_text,
@@ -420,9 +594,9 @@ export function buildTools(
             path: string;
             old_text: string;
             new_text: string;
-            computer?: string;
+            computer?: string | null;
           }) => {
-            const target = backendFor(computer);
+            const target = backendFor(computer ?? undefined);
             if (typeof target === 'string') return target;
             return target.editFile(filePath, old_text, new_text);
           },
@@ -461,26 +635,27 @@ export function buildTools(
             .describe(`图片的详细文本描述（${promptMax}）`),
           aspect_ratio: z
             .enum(IMAGE_ASPECT_RATIOS)
+            .nullable()
             .optional()
             .describe('宽高比，默认 1:1（OpenAI 兼容接口会映射为 size）'),
           model: z
             .string()
+            .nullable()
             .optional()
             .describe(`图像模型，默认 ${defaultModel}；可选：${modelHint}`),
         }),
         needsApproval: prefs.generate_image.approval === 'ask',
         ...guardrailOpts,
-        execute: wrapToolExecute(
+        execute: wrapExec(
           'generate_image',
-          budget,
           async ({
             prompt,
             aspect_ratio,
             model,
           }: {
             prompt: string;
-            aspect_ratio?: (typeof IMAGE_ASPECT_RATIOS)[number];
-            model?: string;
+            aspect_ratio?: (typeof IMAGE_ASPECT_RATIOS)[number] | null;
+            model?: string | null;
           }) => {
             const creds = options?.imageApi;
             if (!creds?.baseURL?.trim() || !creds?.apiKey?.trim()) {
@@ -498,8 +673,8 @@ export function buildTools(
                 creds,
                 {
                   prompt,
-                  aspectRatio: aspect_ratio,
-                  model,
+                  aspectRatio: aspect_ratio ?? undefined,
+                  model: model ?? undefined,
                 },
                 {
                   ownerId: assets.ownerId,
@@ -530,9 +705,8 @@ export function buildTools(
         }),
         needsApproval: prefs.web_fetch.approval === 'ask',
         ...guardrailOpts,
-        execute: wrapToolExecute(
+        execute: wrapExec(
           'web_fetch',
-          budget,
           async ({ url }: { url: string }) => {
             try {
               const result = await webFetch(url, options?.web?.fetch, {
@@ -561,15 +735,15 @@ export function buildTools(
             .int()
             .min(1)
             .max(10)
+            .nullable()
             .optional()
             .describe('最多返回几条（默认 5，上限 10）'),
         }),
         needsApproval: prefs.web_search.approval === 'ask',
         ...guardrailOpts,
-        execute: wrapToolExecute(
+        execute: wrapExec(
           'web_search',
-          budget,
-          async ({ query, limit }: { query: string; limit?: number }) => {
+          async ({ query, limit }: { query: string; limit?: number | null }) => {
             const q = (query || '').trim();
             if (!q) return '错误：query 不能为空';
             const searchCfg = options?.web?.search;
@@ -578,7 +752,7 @@ export function buildTools(
             }
             try {
               const result = await webSearch(searchCfg, q, {
-                limit,
+                limit: limit ?? undefined,
                 signal: budget?.signal,
               });
               return truncate(formatWebSearchToolOutput(result));
@@ -603,6 +777,8 @@ export const TOOL_BLURBS: Record<string, string> = {
   generate_image: '文生图（MiniMax /image_generation 或 OpenAI /images/generations）',
   search_history: '检索本会话历史',
   manage_schedule: '管理定时任务',
+  manage_task_progress: '管理多任务（tasks.jsonl）',
+  send_message: '回复消息',
   web_fetch: '拉取网页正文',
   web_search: '第三方网页搜索',
 };

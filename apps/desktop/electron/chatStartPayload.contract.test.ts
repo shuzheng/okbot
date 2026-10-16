@@ -36,8 +36,16 @@ const body = buildChatStartBody('hi', opts);
 for (const key of CHAT_START_BODY_KEYS) {
   assert.ok(key in body, `buildChatStartBody missing ${key}`);
 }
+assert.deepEqual(
+  Object.keys(body).sort(),
+  [...CHAT_START_BODY_KEYS].sort(),
+  'buildChatStartBody keys must equal CHAT_START_BODY_KEYS (dropping attachments fails here)',
+);
 assert.equal(body.text, 'hi');
 assert.equal(body.clientTurnId, 'turn_1');
+assert.deepEqual(body.attachments, opts.attachments);
+assert.equal(body.quoteMessageId, 'm1');
+assert.equal(body.computerId, 'local');
 
 const ipcBot = buildChatStartPayload({ botId: 'b1' }, 'hi', opts);
 const ipcSquad = buildChatStartPayload({ squadId: 's1' }, 'hi', opts);
@@ -47,7 +55,24 @@ for (const key of ['text', 'quoteMessageId', 'attachments', 'computerId', 'clien
 }
 assert.equal(ipcBot.botId, 'b1');
 assert.equal(ipcSquad.squadId, 's1');
+assert.deepEqual(ipcBot.attachments, opts.attachments);
+assert.deepEqual(ipcSquad.attachments, opts.attachments);
 assert.deepEqual(pickChatStartFields(opts).clientTurnId, 'turn_1');
+assert.deepEqual(pickChatStartFields(opts).attachments, opts.attachments);
+
+// Runtime: pickChatStartFields must keep attachments when provided (not source-regex).
+{
+  const picked = pickChatStartFields({
+    attachments: [{ kind: 'image', path: '/a.png', name: 'a.png' }],
+    quoteMessageId: 'q',
+  });
+  assert.ok(picked.attachments);
+  assert.equal(picked.attachments!.length, 1);
+  assert.equal(picked.attachments![0]!.kind, 'image');
+  const body2 = buildChatStartBody('x', picked);
+  assert.ok('attachments' in body2);
+  assert.deepEqual(body2.attachments, picked.attachments);
+}
 
 // preload must call buildChatStartPayload (single source for IPC keys).
 const preload = readFileSync(join(root, 'electron/preload.ts'), 'utf8');

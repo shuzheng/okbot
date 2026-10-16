@@ -28,9 +28,12 @@ import {
   resolveRunFinishStatus,
   sealMessageTrace,
 } from '../runGuards';
+import { isAutoContinueCancelled } from '../autoContinueGate';
 import {
   acquireParallelGate,
+  ownerHasRuns,
   registerOwnerRun,
+  releaseOwnerBusyHold,
   unregisterOwnerRun,
   withOwnerMaintenanceLock,
 } from '../ownerRuns';
@@ -39,12 +42,17 @@ import { mcpToolsForRun } from '../../mcpRuntime';
 import { buildMeshPeerSpecs, computerRouteFor, createMeshExchangeHandler, skillLookupFor } from '../chatTurnHelpers';
 import { historySearchForOwner } from '../historySearchTool';
 import { scheduleManageForOwner } from '../scheduleTool';
+import { taskProgressManageForOwner } from '../taskProgressTool';
 import {
+  clearLiveAssistantForTools,
+  commitLiveAssistantBubble,
   createTurnEmitter,
+  emitAssistantMessageBubble,
   persistAssistantContent,
   resolveQuoteFields,
   type ChatStartPayload,
   type ChatStartResult,
+  type LiveAssistantState,
   type TurnContext,
 } from './turnContext';
 
@@ -60,6 +68,7 @@ export async function startBotTurn(
 
       const quote = resolveQuoteFields(ctx.storage, bot.id, payload.quoteMessageId, text);
       const attachments = normalizeMessageAttachments(payload.attachments);
+      const isAutoContinue = payload.origin === 'auto_continue';
       const userMsg: ChatMessage = {
         id: createId('msg'),
         role: 'user',
@@ -67,27 +76,47 @@ export async function startBotTurn(
         createdAt: new Date().toISOString(),
         ...quote.userMsgExtra,
         ...(attachments ? { attachments } : {}),
+        ...(isAutoContinue ? { autoContinue: true } : {}),
       };
       // Persist immediately so parallel turns and the UI see the new task.
+      // Auto-continue rows stay in the model session but are hidden from the UI.
       ctx.storage.appendMessage(bot.id, userMsg);
       ctx.storage.touchBot(bot.id);
 
       const parallelGate = await acquireParallelGate(bot.id);
       try {
         if (!parallelGate.proceed) {
+          // Soft-steer may have left a busy hold; no registerOwnerRun will clear it.
+          releaseOwnerBusyHold(bot.id);
           // Still notify UI of the persisted user bubble (no run to bind).
-          ctx.sendRuntimeEvent({ type: 'user_message', botId: bot.id, message: userMsg });
+          // Auto-continue stays quiet (no visible user bubble).
+          if (!isAutoContinue) {
+            ctx.sendRuntimeEvent({ type: 'user_message', botId: bot.id, message: userMsg });
+          }
           return { userMessage: userMsg, superseded: true };
         }
 
-      let assistantId = createId('msg');
-      let assistantMsg: ChatMessage = {
-        id: assistantId,
-        role: 'assistant',
-        content: '',
-        createdAt: new Date().toISOString(),
+        // Auto-continue: re-check after the gate wait. Composer soft-steer may have
+        // cancelled the chain or registered a user turn while we awaited a slot.
+        if (
+          isAutoContinue &&
+          (isAutoContinueCancelled(bot.id) || ownerHasRuns(ctx.abortControllers, bot.id))
+        ) {
+          releaseOwnerBusyHold(bot.id);
+          return { userMessage: userMsg, superseded: true };
+        }
+
+      const live: LiveAssistantState = {
+        assistantId: createId('msg'),
+        assistantMsg: {
+          id: '',
+          role: 'assistant',
+          content: '',
+          createdAt: new Date().toISOString(),
+        },
       };
-      /** After ask_assistant commit: strip repeated interim from follow-up B. */
+      live.assistantMsg.id = live.assistantId;
+      /** After ask_assistant / send_message: strip repeated interim from follow-up. */
       const meshFollowUp = createMeshFollowUpStripper();
       // Do not persist empty assistant placeholder — Runner/Session writes the
       // real assistant (+ tool) items; UI streams against this ephemeral id.
@@ -105,15 +134,17 @@ export async function startBotTurn(
         botId: bot.id,
         runId: turnRunId,
         userMessageId: userMsg.id,
-        assistantMessageId: assistantId,
+        assistantMessageId: live.assistantId,
         ...(clientTurnId ? { clientTurnId } : {}),
       });
-      emitTurn({ type: 'user_message', botId: bot.id, message: userMsg });
+      // Auto-continue: no visible user bubble (row still in session for the model).
+      if (!isAutoContinue) {
+        emitTurn({ type: 'user_message', botId: bot.id, message: userMsg });
+      }
 
       const settings = ctx.storage.getSettings();
       const modelConfig = resolveModelConfig(settings.model, { providerId: bot.providerId, modelId: bot.modelId });
       const guards = createRunGuards({
-        toolRun: settings.toolRun,
         controller,
       });
       try {
@@ -125,7 +156,7 @@ export async function startBotTurn(
         // All prior turns (exclude the empty streaming assistant placeholder).
         const allMessages = ctx.storage
           .getMessages(bot.id)
-          .filter((m) => m.id !== assistantId)
+          .filter((m) => m.id !== live.assistantId)
           .filter((m) => m.role === 'user' || m.role === 'assistant')
           .filter((m) => !m.meshExchange && !m.meshInterim)
           .filter((m) => (m.id === userMsg.id ? true : Boolean(m.content?.trim())));
@@ -211,9 +242,23 @@ export async function startBotTurn(
           skillLookup,
           historySearch: historySearchForOwner(ctx.storage, bot.id),
           scheduleManage: scheduleManageForOwner(ctx.storage, bot.id),
+          taskProgressManage: async (input) => {
+            const result = await taskProgressManageForOwner(ctx.storage, bot.id)(input);
+            try {
+              ctx.sendRuntimeEvent({
+                type: 'tasks_changed',
+                botId: bot.id,
+                tasks: ctx.storage.loadOpenTasks(bot.id),
+              });
+            } catch (err) {
+              console.error('[okbot] tasks_changed emit failed', err);
+            }
+            return result;
+          },
           web: settings.web,
           memoriesText,
           sessionSummary: sessionSummary || undefined,
+          taskProgressText: ctx.storage.formatTaskProgressForPrompt(bot.id) || undefined,
           assistantRoleTemplate: settings.instructions?.assistantRoleTemplate,
           isDefaultAssistant: settings.defaultAssistantId === bot.id,
           model: modelConfig,
@@ -237,58 +282,42 @@ export async function startBotTurn(
           meshMemberMaxTurns: settings.squad?.memberMaxTurns,
           userText: text,
           signal: controller.signal,
-          onClearLiveText: () => {
-            if (!assistantMsg.content) return;
-            assistantMsg.content = '';
-            emitTurn({
-              type: 'assistant_message',
-              botId: bot.id,
-              message: { ...assistantMsg },
+          onClearLiveText: async () => {
+            await clearLiveAssistantForTools(live, {
+              ownerId: bot.id,
+              runId: parallelGate.runId,
+              showThinking: modelConfig.showThinking,
+              storage: ctx.storage,
+              emit: emitTurn,
+              noteCommitted: (t) => meshFollowUp.noteCommitted(t),
             });
           },
           onCommitLiveAssistant: async () => {
-            const raw = assistantMsg.content || '';
-            if (!raw.trim()) return;
-            const sealed = persistAssistantContent(raw, modelConfig.showThinking);
-            assistantMsg = {
-              ...assistantMsg,
-              content: sealed,
-              meshInterim: true,
-            };
-            try {
-              await ctx.storage.upsertAssistantMessage(bot.id, { ...assistantMsg }, {
-                allowRebind: false,
-                runId: parallelGate.runId,
-              });
-            } catch (err) {
-              console.error('[okbot] commit mesh interim assistant failed', err);
-            }
-            emitTurn({
-              type: 'assistant_message',
-              botId: bot.id,
-              message: { ...assistantMsg },
+            await commitLiveAssistantBubble(live, {
+              ownerId: bot.id,
+              runId: parallelGate.runId,
+              showThinking: modelConfig.showThinking,
+              storage: ctx.storage,
+              emit: emitTurn,
+              noteCommitted: (t) => meshFollowUp.noteCommitted(t),
+            }, { meshInterim: true, logLabel: 'commit mesh interim assistant' });
+          },
+          emitAssistantMessage: async (content) => {
+            await emitAssistantMessageBubble(live, content, {
+              ownerId: bot.id,
+              runId: parallelGate.runId,
+              showThinking: modelConfig.showThinking,
+              storage: ctx.storage,
+              emit: emitTurn,
+              noteCommitted: (t) => meshFollowUp.noteCommitted(t),
             });
-            meshFollowUp.noteCommitted(sealed);
-            // Rotate: post-peer follow-up streams into a new bubble (never append into interim).
-            assistantId = createId('msg');
-            assistantMsg = {
-              id: assistantId,
-              role: 'assistant',
-              content: '',
-              createdAt: new Date().toISOString(),
-            };
           },
           onDelta: (delta) => {
             const piece = meshFollowUp.acceptDelta(delta);
             if (piece == null) return; // still matching repeated interim prefix
             if (!piece) return;
-            assistantMsg.content += piece;
-            emitTurn({
-              type: 'delta',
-              botId: bot.id,
-              messageId: assistantId,
-              delta: piece,
-            });
+            live.assistantMsg.content += piece;
+            // Non-streaming UI: buffer until done / send_message; do not emit token deltas.
           },
           ...attachTraceHooks(guards),
           onMeshExchange: createMeshExchangeHandler({
@@ -297,7 +326,7 @@ export async function startBotTurn(
           }),
           onToolApprovalRequest: createApprovalWaiter(ctx, {
             ownerId: bot.id,
-            messageId: () => assistantId,
+            messageId: () => live.assistantId,
             settings,
             signal: controller.signal,
             computerId: payload.computerId,
@@ -313,51 +342,62 @@ export async function startBotTurn(
             emitTurn({
               type: 'tool_result',
               botId: bot.id,
-              messageId: assistantId,
+              messageId: live.assistantId,
               requestId,
               toolName,
               approved,
               output,
             });
           },
+          onRunCheckpoint: ({ serializedRunState }) => {
+            try {
+              ctx.storage.saveRunCheckpoint(bot.id, {
+                kind: 'bot',
+                runId: turnRunId,
+                messageId: live.assistantId,
+                serializedRunState,
+                createdAt: new Date().toISOString(),
+                computerId: payload.computerId,
+                userText: text,
+              });
+            } catch (err) {
+              console.error('[okbot] save run checkpoint failed', err);
+            }
+          },
         });
-        guards.throwIfBroken();
         // result.content prefers live stream (cleared at tools → formal only). Never shrink
         // an already-visible bubble if the agent returned a shorter finalOutput fallback.
         // Mesh: strip sealed interim A if the model repeated it into follow-up B.
         const interim = meshFollowUp.getCommitted();
         let finalized = (result.content || '').trim()
           ? result.content
-          : assistantMsg.content;
+          : live.assistantMsg.content;
         finalized = meshFollowUp.finalize(finalized || '');
         if (interim) {
           finalized = stripLeadingCommittedInterim(finalized, interim);
-          assistantMsg.content = stripLeadingCommittedInterim(assistantMsg.content, interim);
+          live.assistantMsg.content = stripLeadingCommittedInterim(live.assistantMsg.content, interim);
         }
         if (
           finalized &&
-          (!assistantMsg.content.trim() || finalized.length >= assistantMsg.content.length)
+          (!live.assistantMsg.content.trim() || finalized.length >= live.assistantMsg.content.length)
         ) {
-          assistantMsg.content = finalized;
+          live.assistantMsg.content = finalized;
         }
-        assistantMsg.content = persistAssistantContent(
-          assistantMsg.content,
+        live.assistantMsg.content = persistAssistantContent(
+          live.assistantMsg.content,
           modelConfig.showThinking,
         );
-        if (result.usage) assistantMsg.usage = result.usage;
+        if (result.usage) live.assistantMsg.usage = result.usage;
         const botTrace = sealMessageTrace(
           guards,
-          resolveRunFinishStatus({
-            aborted: controller.signal.aborted,
-            breakReason: guards.budget.getBreakReason(),
-          }),
+          resolveRunFinishStatus({ aborted: controller.signal.aborted }),
         );
-        if (botTrace) assistantMsg.trace = botTrace;
+        if (botTrace) live.assistantMsg.trace = botTrace;
         // Empty + no session row for this streaming id: skip upsert. Abort during
         // HITL clears streamed text; unconditional upsert used to rebind/wipe the
         // previous assistant turn (see FileStorage.upsertAssistantMessage).
-        if ((assistantMsg.content || '').trim()) {
-          await ctx.storage.upsertAssistantMessage(bot.id, assistantMsg, { runId: parallelGate.runId });
+        if ((live.assistantMsg.content || '').trim()) {
+          await ctx.storage.upsertAssistantMessage(bot.id, live.assistantMsg, { runId: parallelGate.runId });
         }
         if (result.usage && (result.usage.input || result.usage.output || result.usage.cache)) {
           try {
@@ -369,8 +409,8 @@ export async function startBotTurn(
         emitTurn({
           type: 'done',
           botId: bot.id,
-          messageId: assistantId,
-          content: assistantMsg.content,
+          messageId: live.assistantId,
+          content: live.assistantMsg.content,
           usage: result.usage,
           ...(botTrace ? { trace: botTrace } : {}),
           ...(controller.signal.aborted ? { aborted: true } : {}),
@@ -402,25 +442,22 @@ export async function startBotTurn(
         } catch (err) {
           console.error('[okbot] AGENTS.md/skills/memory refresh failed', err);
         }
-        return { userMessage: userMsg, assistantMessage: assistantMsg };
+        return { userMessage: userMsg, assistantMessage: live.assistantMsg };
       } catch (err) {
-        // Stop (or peer-unrelated abort): settle quietly. Circuit-breaker sets getBreakReason()
-        // before aborting — surface that to the user instead of a silent done.
+        // Stop (or peer-unrelated abort): settle quietly.
         if (
-          !guards.budget.getBreakReason() &&
           (controller.signal.aborted || isAbortLikeError(err))
         ) {
           const abortTrace = sealMessageTrace(
             guards,
             resolveRunFinishStatus({
               aborted: true,
-              breakReason: null,
             }),
           );
-          if (abortTrace && (assistantMsg.content || '').trim()) {
-            assistantMsg.trace = abortTrace;
+          if (abortTrace && (live.assistantMsg.content || '').trim()) {
+            live.assistantMsg.trace = abortTrace;
             try {
-              await ctx.storage.upsertAssistantMessage(bot.id, assistantMsg, { runId: parallelGate.runId });
+              await ctx.storage.upsertAssistantMessage(bot.id, live.assistantMsg, { runId: parallelGate.runId });
             } catch (err) {
               console.error('[okbot] upsert aborted bot trace failed', err);
             }
@@ -428,32 +465,32 @@ export async function startBotTurn(
           emitTurn({
             type: 'done',
             botId: bot.id,
-            messageId: assistantId,
-            content: assistantMsg.content,
+            messageId: live.assistantId,
+            content: live.assistantMsg.content,
             ...(abortTrace ? { trace: abortTrace } : {}),
             aborted: true,
           });
-          return { userMessage: userMsg, assistantMessage: assistantMsg, aborted: true };
+          return { userMessage: userMsg, assistantMessage: live.assistantMsg, aborted: true };
         }
         const message = handleRunFailure({
           root: ctx.storage.root,
           ownerId: bot.id,
-          messageId: assistantId,
+          messageId: live.assistantId,
           phase: 'chatStart',
           err,
           guards,
         });
         console.error('[okbot] chatStart failed', err);
-        if (!assistantMsg.content) {
-          assistantMsg.content = `错误：${message}`;
+        if (!live.assistantMsg.content) {
+          live.assistantMsg.content = `错误：${message}`;
           const errTrace = guards.trace.getMessageTrace();
-          if (errTrace) assistantMsg.trace = errTrace;
-          await ctx.storage.upsertAssistantMessage(bot.id, assistantMsg, { allowRebind: false, runId: parallelGate.runId });
+          if (errTrace) live.assistantMsg.trace = errTrace;
+          await ctx.storage.upsertAssistantMessage(bot.id, live.assistantMsg, { allowRebind: false, runId: parallelGate.runId });
         }
         emitTurn({
           type: 'error',
           botId: bot.id,
-          messageId: assistantId,
+          messageId: live.assistantId,
           error: message,
         });
         throw err;
@@ -461,6 +498,13 @@ export async function startBotTurn(
         guards.dispose();
         unregisterOwnerRun(ctx.abortControllers, bot.id, parallelGate.runId, controller);
         releaseRunApprovals(ctx, bot.id, parkedRequestIds, '已结束');
+        // Clear mid-run checkpoint on success, Stop, or soft-steer abort.
+        // Crash leaves the file for cold resume on next start.
+        try {
+          ctx.storage.clearRunCheckpoint(bot.id);
+        } catch (err) {
+          console.error('[okbot] clear run checkpoint failed', err);
+        }
       }
       } finally {
         parallelGate.release();

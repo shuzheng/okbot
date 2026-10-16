@@ -26,7 +26,7 @@ import type { AssistantPackageContents } from '@okbot/agent';
 import { ensureDir, writeJson } from './fs';
 import { loadUsageStats, recordTokenUsage } from './usageStore';
 import { assertSafeOwnerSegment } from './ids';
-import type { SessionRecordV2, PendingHitlRecord } from './types';
+import type { SessionRecordV2, PendingHitlRecord, TaskProgressRecord, RunCheckpointRecord, TaskRecord } from './types';
 import type { ScheduledJob } from './schedules';
 import { OwnerLifecycle } from './ownerLifecycle';
 import { SettingsStore } from './SettingsStore';
@@ -35,10 +35,17 @@ import { SkillsStore } from './SkillsStore';
 import { SessionStore } from './SessionStore';
 import { ScheduleStore } from './ScheduleStore';
 import { PendingHitlStore } from './PendingHitlStore';
+import {
+  TaskProgressStore,
+  formatTasksForPrompt,
+  hasUnfinishedTasks,
+  fingerprintTasks,
+} from './TaskProgressStore';
+import { RunCheckpointStore } from './RunCheckpointStore';
 import { RosterStore } from './RosterStore';
 import { AssistantPackageStore } from './AssistantPackageStore';
 
-export type { SessionRecordV2, PendingHitlRecord } from './types';
+export type { SessionRecordV2, PendingHitlRecord, TaskProgressRecord, RunCheckpointRecord, TaskRecord } from './types';
 
 /**
  * Thin facade over domain stores. Owns shared root paths, constructs stores,
@@ -63,6 +70,8 @@ export class FileStorage {
   private readonly sessionStore: SessionStore;
   private readonly scheduleStore: ScheduleStore;
   private readonly pendingHitlStore: PendingHitlStore;
+  private readonly taskProgressStore: TaskProgressStore;
+  private readonly runCheckpointStore: RunCheckpointStore;
   private readonly rosterStore: RosterStore;
   private readonly assistantPackageStore: AssistantPackageStore;
 
@@ -146,6 +155,17 @@ export class FileStorage {
       listSquads: () => this.rosterStore.listSquads(),
     });
 
+    this.taskProgressStore = new TaskProgressStore(this.life, {
+      botDir: (id) => this.botDir(id),
+      ensureBotLayout: (id) => this.rosterStore.ensureBotLayout(id),
+    });
+
+    this.runCheckpointStore = new RunCheckpointStore(this.life, {
+      botDir: (id) => this.botDir(id),
+      ensureBotLayout: (id) => this.rosterStore.ensureBotLayout(id),
+      listRoster: () => this.rosterStore.listRoster(),
+      listSquads: () => this.rosterStore.listSquads(),
+    });
 
     this.assistantPackageStore = new AssistantPackageStore(this.life, {
       assertKnownBotId: (id) => this.rosterStore.assertKnownBotId(id),
@@ -635,6 +655,124 @@ export class FileStorage {
 
   listAllPendingHitl(): Array<PendingHitlRecord & { botId: string }> {
     return this.pendingHitlStore.listAllPendingHitl();
+  }
+
+  // ── multi-task queue (tasks.jsonl) ───────────────────────────
+
+  loadTasks(ownerId: string): TaskRecord[] {
+    return this.taskProgressStore.loadAll(ownerId);
+  }
+
+  loadOpenTasks(ownerId: string): TaskRecord[] {
+    return this.taskProgressStore.loadOpen(ownerId);
+  }
+
+  /** @deprecated Prefer loadTasks — returns a legacy single-plan view. */
+  loadTaskProgress(ownerId: string): TaskProgressRecord {
+    return this.taskProgressStore.load(ownerId);
+  }
+
+  formatTaskProgressForPrompt(ownerId: string): string {
+    return formatTasksForPrompt(this.taskProgressStore.loadAll(ownerId));
+  }
+
+  hasUnfinishedTasks(ownerId: string): boolean {
+    return hasUnfinishedTasks(this.taskProgressStore.loadAll(ownerId));
+  }
+
+  fingerprintTasks(ownerId: string): string {
+    return fingerprintTasks(this.taskProgressStore.loadAll(ownerId));
+  }
+
+  addTask(
+    ownerId: string,
+    input: {
+      id?: string;
+      title?: string;
+      note?: string;
+      status?: import('@okbot/shared').TaskStatus;
+      steps?: Array<{
+        id?: string;
+        title: string;
+        status?: import('@okbot/shared').TaskStatus;
+        note?: string;
+      }>;
+    },
+  ): TaskRecord {
+    return this.taskProgressStore.addTask(ownerId, input);
+  }
+
+  updateTask(
+    ownerId: string,
+    input: {
+      id: string;
+      title?: string;
+      note?: string;
+      status?: import('@okbot/shared').TaskStatus;
+      steps?: Array<{
+        id?: string;
+        title: string;
+        status?: import('@okbot/shared').TaskStatus;
+        note?: string;
+      }>;
+      step_id?: string;
+      step_title?: string;
+      step_status?: import('@okbot/shared').TaskStatus;
+      step_note?: string;
+      step_new_title?: string;
+    },
+  ): TaskRecord {
+    return this.taskProgressStore.updateTask(ownerId, input);
+  }
+
+  /** @deprecated Legacy set_plan → addTask. */
+  setTaskProgressPlan(
+    ownerId: string,
+    input: {
+      title?: string;
+      items: Array<{ id?: string; title: string; status?: import('./types').TaskProgressItemStatus; note?: string }>;
+    },
+  ): TaskProgressRecord {
+    return this.taskProgressStore.setPlan(ownerId, input);
+  }
+
+  /** @deprecated Legacy update_item. */
+  updateTaskProgressItem(
+    ownerId: string,
+    input: {
+      id?: string;
+      title?: string;
+      status?: import('./types').TaskProgressItemStatus;
+      note?: string;
+      new_title?: string;
+    },
+  ): TaskProgressRecord {
+    return this.taskProgressStore.updateItem(ownerId, input);
+  }
+
+  clearTaskProgress(ownerId: string): void {
+    this.taskProgressStore.clear(ownerId);
+  }
+
+  // ── run checkpoint ──────────────────────────────────────────
+
+  saveRunCheckpoint(
+    ownerId: string,
+    data: Omit<RunCheckpointRecord, 'v' | 'ownerId' | 'updatedAt'> & { updatedAt?: string },
+  ): void {
+    this.runCheckpointStore.save(ownerId, data);
+  }
+
+  loadRunCheckpoint(ownerId: string): RunCheckpointRecord | null {
+    return this.runCheckpointStore.load(ownerId);
+  }
+
+  clearRunCheckpoint(ownerId: string): void {
+    this.runCheckpointStore.clear(ownerId);
+  }
+
+  listAllRunCheckpoints(): RunCheckpointRecord[] {
+    return this.runCheckpointStore.listAll();
   }
 
   // ── packages ────────────────────────────────────────────────

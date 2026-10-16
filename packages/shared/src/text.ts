@@ -37,36 +37,76 @@ export type ThinkParseResult = {
 };
 
 /**
+ * Longest proper prefix of THINK_OPEN / THINK_CLOSE at the end of `text`.
+ * Used while streaming so partial tags (`<think`, `</th`, …) never paint into the
+ * visible answer (or thinking body) before the tag completes — that flash-then-vanish
+ * was the reply-bubble bug.
+ */
+export function trailingThinkTagPrefix(text: string): string {
+  if (!text) return '';
+  const max = Math.max(THINK_OPEN.length, THINK_CLOSE.length) - 1;
+  const limit = Math.min(text.length, max);
+  for (let len = limit; len >= 1; len--) {
+    const suf = text.slice(-len);
+    if (
+      (THINK_OPEN.startsWith(suf) && suf !== THINK_OPEN) ||
+      (THINK_CLOSE.startsWith(suf) && suf !== THINK_CLOSE)
+    ) {
+      return suf;
+    }
+  }
+  return '';
+}
+
+function holdTrailingThinkTagPrefix(text: string): { visible: string; held: string } {
+  const held = trailingThinkTagPrefix(text);
+  if (!held) return { visible: text, held: '' };
+  return { visible: text.slice(0, -held.length), held };
+}
+
+/**
  * Best-effort parse of `<think>…</think>` spans (multiple + unfinished open while streaming).
  * Skips fenced code blocks (``` / ~~~) so literal tags in examples stay in the answer.
- * Unclosed open tags only consume the rest when the tag sits on its own line (or file start);
- * otherwise the literal is left in the answer to avoid irreversible truncation.
+ * Unclosed open tags always consume the rest as thinking (stream + finalize) so raw tags
+ * never flash in the main reply bubble; incomplete tag suffixes are held back until the
+ * tag completes.
  * Nested/malformed tags are not specially handled; never throws.
  */
 export function parseThinkContent(text: string): ThinkParseResult {
-  if (!text || !text.includes(THINK_OPEN)) {
-    return { thinking: [], answer: text || '', hasThinking: false };
+  if (!text) {
+    return { thinking: [], answer: '', hasThinking: false };
+  }
+
+  // Hold incomplete `<think` / `</think` suffixes before any other work so a mid-stream
+  // prefix cannot land in the answer channel (includes(THINK_OPEN) is false for `<think`).
+  const { visible: rawVisible } = holdTrailingThinkTagPrefix(text);
+  if (!rawVisible) {
+    return { thinking: [], answer: '', hasThinking: false };
+  }
+
+  if (!rawVisible.includes(THINK_OPEN)) {
+    return { thinking: [], answer: rawVisible, hasThinking: false };
   }
 
   // Mask fenced regions so indexOf never matches tags inside ``` / ~~~ blocks.
-  const masked = text.split('');
-  const n = text.length;
+  const masked = rawVisible.split('');
+  const n = rawVisible.length;
   let p = 0;
   while (p < n) {
-    const fence = text.startsWith('```', p) ? '```' : text.startsWith('~~~', p) ? '~~~' : null;
+    const fence = rawVisible.startsWith('```', p) ? '```' : rawVisible.startsWith('~~~', p) ? '~~~' : null;
     if (!fence) {
       p += 1;
       continue;
     }
-    const openEnd = text.indexOf('\n', p);
+    const openEnd = rawVisible.indexOf('\n', p);
     const contentStart = openEnd < 0 ? n : openEnd + 1;
     let close = -1;
     let q = contentStart;
     while (q < n) {
       const lineStart = q;
-      const lineEnd = text.indexOf('\n', q);
+      const lineEnd = rawVisible.indexOf('\n', q);
       const end = lineEnd < 0 ? n : lineEnd;
-      const line = text.slice(lineStart, end);
+      const line = rawVisible.slice(lineStart, end);
       if (line.trimStart().startsWith(fence)) {
         close = lineStart;
         break;
@@ -83,32 +123,25 @@ export function parseThinkContent(text: string): ThinkParseResult {
   let answer = '';
   let i = 0;
   let hasThinking = false;
-  while (i < text.length) {
+  while (i < rawVisible.length) {
     const openIdx = scan.indexOf(THINK_OPEN, i);
     if (openIdx < 0) {
-      answer += text.slice(i);
+      answer += rawVisible.slice(i);
       break;
     }
-    answer += text.slice(i, openIdx);
+    answer += rawVisible.slice(i, openIdx);
     const contentStart = openIdx + THINK_OPEN.length;
     const closeIdx = scan.indexOf(THINK_CLOSE, contentStart);
     if (closeIdx < 0) {
-      // Only treat as open thinking when `<think>` is alone on a line (streaming mid-think).
-      const before = text.slice(0, openIdx);
-      const lineStart = before.lastIndexOf('\n') + 1;
-      const prefix = text.slice(lineStart, openIdx);
-      const standalone = prefix.trim() === '';
-      if (standalone) {
-        hasThinking = true;
-        const partial = text.slice(contentStart).trim();
-        if (partial) thinking.push(partial);
-      } else {
-        answer += text.slice(openIdx);
-      }
+      // Unclosed `<think>`: always treat remainder as thinking so the raw open tag and
+      // body never paint into the main bubble (stream or truncated finalize).
+      hasThinking = true;
+      const partial = holdTrailingThinkTagPrefix(rawVisible.slice(contentStart)).visible.trim();
+      if (partial) thinking.push(partial);
       break;
     }
     hasThinking = true;
-    const segment = text.slice(contentStart, closeIdx).trim();
+    const segment = rawVisible.slice(contentStart, closeIdx).trim();
     if (segment) thinking.push(segment);
     i = closeIdx + THINK_CLOSE.length;
   }
@@ -259,6 +292,96 @@ export function stripThinkFromAgentInputItem<T extends Record<string, unknown>>(
     if (!changed) return item;
     return { ...item, content: next };
   }
+  return item;
+}
+
+function contentPartsToPlainText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  const chunks: string[] = [];
+  for (const part of content) {
+    if (typeof part === 'string') {
+      chunks.push(part);
+      continue;
+    }
+    if (!part || typeof part !== 'object') continue;
+    const p = part as Record<string, unknown>;
+    if (typeof p.text === 'string') chunks.push(p.text);
+    else if (typeof p.refusal === 'string') chunks.push(p.refusal);
+  }
+  return chunks.join('');
+}
+
+/**
+ * Coerce session / UI AgentInputItem shapes into the Responses-style ModelItem
+ * forms that `RunState.toJSON` / `toString` validate (checkpoint + HITL resume).
+ *
+ * Plain UI assistants (`legacyMessageToRecord`, send_message bubbles) store
+ * `content` as a string with no `status`. When Session history is folded into
+ * `originalInput`, those items fail SDK serialization (`invalid_union` on
+ * originalInput). Soft-steer restart and quote/vision sessionInputCallbacks
+ * amplify this by returning the full history as prepared input.
+ *
+ * Does not mutate `item`; returns the same reference when nothing changes.
+ * Disk / UI heuristics (`isPlainUiAssistantItem`) keep the raw string form.
+ */
+export function normalizeAgentInputItemForRunState<T extends Record<string, unknown>>(item: T): T {
+  const role = typeof item.role === 'string' ? item.role : '';
+  const typ = typeof item.type === 'string' ? item.type : '';
+  const isMessage = typ === '' || typ === 'message';
+
+  if (role === 'assistant' && isMessage) {
+    let next: Record<string, unknown> = item;
+    let changed = false;
+    const content = next.content;
+    if (typeof content === 'string') {
+      next = { ...next, content: [{ type: 'output_text', text: content }] };
+      changed = true;
+    } else if (Array.isArray(content)) {
+      let partsChanged = false;
+      const parts = content.map((part) => {
+        if (typeof part === 'string') {
+          partsChanged = true;
+          return { type: 'output_text', text: part };
+        }
+        return part;
+      });
+      if (partsChanged) {
+        next = changed ? { ...next, content: parts } : { ...item, content: parts };
+        changed = true;
+      }
+    }
+    const status = next.status;
+    if (status !== 'in_progress' && status !== 'completed' && status !== 'incomplete') {
+      next = changed ? { ...next, status: 'completed' } : { ...item, status: 'completed' };
+      changed = true;
+    }
+    return changed ? (next as T) : item;
+  }
+
+  if (typ === 'reasoning') {
+    const content = item.content;
+    if (typeof content === 'string') {
+      return { ...item, content: [{ type: 'input_text', text: content }] } as T;
+    }
+    if (Array.isArray(content)) {
+      let partsChanged = false;
+      const parts = content.map((part) => {
+        if (typeof part === 'string') {
+          partsChanged = true;
+          return { type: 'input_text', text: part };
+        }
+        return part;
+      });
+      if (partsChanged) return { ...item, content: parts } as T;
+    }
+    return item;
+  }
+
+  if (role === 'system' && isMessage && Array.isArray(item.content)) {
+    return { ...item, content: contentPartsToPlainText(item.content) } as T;
+  }
+
   return item;
 }
 

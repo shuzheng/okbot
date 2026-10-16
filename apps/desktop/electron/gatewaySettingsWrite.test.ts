@@ -174,3 +174,25 @@ console.log('gatewaySettingsWrite.test.ts: ok');
   changed.servers[0].args[1] = 'evil';
   assert.equal(resolveGatewaySettingsWrite(withArgs, { mcp: changed }).ok, false);
 }
+
+{
+  // Sidebar pin/hide/groups + default assistant are gateway-writable UI prefs.
+  const decision = resolveGatewaySettingsWrite(current, {
+    pinnedOwnerIds: ['bot_a'],
+    hiddenOwnerIds: ['bot_b'],
+    ownerGroups: [{ id: 'g1', name: 'Work' }],
+    ownerGroupOrder: ['ungrouped', 'g1'],
+    ownerGroupMembership: { bot_a: 'g1' },
+    defaultAssistantId: 'bot_a',
+  });
+  assert.equal(decision.ok, true);
+  if (decision.ok) {
+    assert.deepEqual(decision.next.pinnedOwnerIds, ['bot_a']);
+    assert.deepEqual(decision.next.hiddenOwnerIds, ['bot_b']);
+    assert.deepEqual(decision.next.ownerGroups, [{ id: 'g1', name: 'Work' }]);
+    assert.deepEqual(decision.next.ownerGroupOrder, ['ungrouped', 'g1']);
+    assert.deepEqual(decision.next.ownerGroupMembership, { bot_a: 'g1' });
+    assert.equal(decision.next.defaultAssistantId, 'bot_a');
+  }
+}
+

@@ -25,11 +25,17 @@ export const GATEWAY_SETTINGS_PATCH_KEYS = [
   'memory',
   'maintenance',
   'squad',
-  'toolRun',
   'mesh',
   'notifications',
   'showAdvancedSettings',
   'assistantMarketplace',
+  // Sidebar / default assistant (gateway attach UI mirrors desktop settings).
+  'pinnedOwnerIds',
+  'hiddenOwnerIds',
+  'ownerGroups',
+  'ownerGroupOrder',
+  'ownerGroupMembership',
+  'defaultAssistantId',
 ] as const;
 
 const SECRET_FIELD = new Set(['token', 'apiKey']);

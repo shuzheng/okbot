@@ -4,6 +4,7 @@ import {
   listEnabledToolIds,
   MESH_USER_FACING_REPLY_RULE,
   REPLY_STYLE_INSTRUCTION,
+  USER_FACING_PRODUCT_LANGUAGE_RULE,
   type MeshPeerRosterEntry,
 } from './instructions.js';
 import { normalizeMarkdownHeadings } from './promptContext.js';
@@ -142,6 +143,7 @@ export function buildMeshCalleeInstructions(input: {
         ? `## Skills（目录；须先加载再遵循）\n\n下方为技能目录。匹配时须先调用 read_skill（传入 slug）加载完整正文再执行；有匹配技能时不要另起炉灶。\n\n${input.skillsText.trim()}`
         : '',
       REPLY_STYLE_INSTRUCTION,
+      USER_FACING_PRODUCT_LANGUAGE_RULE,
       askLine,
       userFacing,
       roster,

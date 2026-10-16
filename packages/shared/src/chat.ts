@@ -114,6 +114,11 @@ export interface ChatMessage {
    * new id; reload hides SDK rows that exactly duplicate this text.
    */
   meshInterim?: boolean;
+  /**
+   * Host auto-continue of an unfinished task-progress checklist.
+   * Persisted for the model session; UI transcript hides these user rows.
+   */
+  autoContinue?: boolean;
   /** When set, this user message quotes another transcript message (UI strip; not `>` in content). */
   quoteMessageId?: string;
   /** Short plain snapshot of the quoted message for the quote strip / composer preview. */

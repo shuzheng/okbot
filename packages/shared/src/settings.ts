@@ -54,8 +54,9 @@ export interface CatalogModel {
   /** When false, hidden from bot picker and cannot be default. Default true. */
   enabled: boolean;
   /**
-   * When true (default if missing), render `<think>…</think>` as a collapsible block.
-   * When false, strip think spans from display and from persisted assistant content.
+   * When true, render `<think>…</think>` as a collapsible block.
+   * When false / missing (default), strip think spans from display (and from
+   * persisted assistant content when that path still strips).
    */
   showThinking?: boolean;
 }
@@ -100,7 +101,7 @@ export interface ResolvedModelConfig {
   contextWindow: number;
   /** Max output tokens → Agent modelSettings.maxTokens; null = omit (provider default). */
   maxTokens: number | null;
-  /** Resolved showThinking (`!== false` → true). */
+  /** Resolved showThinking (`=== true` → true; missing/false → false). */
   showThinking: boolean;
   /** All model ids on the resolved provider (for image-gen capability inference). */
   providerModelIds?: string[];
@@ -213,8 +214,8 @@ export function normalizeCatalogModel(raw: unknown): CatalogModel | null {
     contextWindow: normalizeContextWindow(src.contextWindow),
     maxTokens: normalizeMaxTokens(src.maxTokens),
     enabled: src.enabled !== false,
-    // Default true when missing; only persist false when explicitly off.
-    showThinking: src.showThinking === false ? false : undefined,
+    // Default false when missing; only persist true when explicitly on.
+    showThinking: src.showThinking === true ? true : undefined,
   };
 }
 
@@ -488,7 +489,7 @@ export function resolveModelConfig(
     model: pick?.id ?? '',
     contextWindow: pick ? pick.contextWindow : 128_000,
     maxTokens: pick ? pick.maxTokens : null,
-    showThinking: pick?.showThinking !== false,
+    showThinking: pick?.showThinking === true,
     providerModelIds: provider ? provider.models.map((m) => m.id) : [],
     providerName: provider?.name ?? '',
   };
@@ -588,51 +589,6 @@ export function normalizeMaxTurns(raw: unknown, fallback: number = DEFAULT_MAX_T
   let n = typeof raw === 'number' ? raw : Number(raw);
   if (!Number.isFinite(n)) n = fallback;
   return Math.min(100, Math.max(1, Math.floor(n)));
-}
-
-/**
- * Per-run tool circuit breakers (`settings.json` root key `toolRun`).
- * 0 = unlimited for maxToolCalls / maxDurationSec. Missing → defaults. No dual-format shims.
- */
-export interface ToolRunSettings {
-  /** Max tool executions per single chat run (1:1 or squad outer run). 0 = unlimited. */
-  maxToolCalls: number;
-  /** Max wall-clock seconds per single chat run. 0 = unlimited. */
-  maxDurationSec: number;
-}
-
-export const DEFAULT_TOOL_RUN: ToolRunSettings = {
-  maxToolCalls: 50,
-  maxDurationSec: 600,
-};
-
-/** Clamp 0–500; null/empty/missing/invalid → DEFAULT_TOOL_RUN.maxToolCalls (not 0=unlimited). */
-export function normalizeToolRunMaxToolCalls(raw: unknown): number {
-  if (raw == null || raw === '') return DEFAULT_TOOL_RUN.maxToolCalls;
-  if (typeof raw === 'string' && !raw.trim()) return DEFAULT_TOOL_RUN.maxToolCalls;
-  let n = typeof raw === 'number' ? raw : Number(raw);
-  if (!Number.isFinite(n)) n = DEFAULT_TOOL_RUN.maxToolCalls;
-  return Math.min(500, Math.max(0, Math.floor(n)));
-}
-
-/** Clamp 0–86400; null/empty/missing/invalid → DEFAULT_TOOL_RUN.maxDurationSec (not 0=unlimited). */
-export function normalizeToolRunMaxDurationSec(raw: unknown): number {
-  if (raw == null || raw === '') return DEFAULT_TOOL_RUN.maxDurationSec;
-  if (typeof raw === 'string' && !raw.trim()) return DEFAULT_TOOL_RUN.maxDurationSec;
-  let n = typeof raw === 'number' ? raw : Number(raw);
-  if (!Number.isFinite(n)) n = DEFAULT_TOOL_RUN.maxDurationSec;
-  return Math.min(86400, Math.max(0, Math.floor(n)));
-}
-
-export function normalizeToolRunSettings(raw: unknown): ToolRunSettings {
-  const src =
-    raw && typeof raw === 'object'
-      ? (raw as Partial<Record<keyof ToolRunSettings, unknown>>)
-      : {};
-  return {
-    maxToolCalls: normalizeToolRunMaxToolCalls(src.maxToolCalls),
-    maxDurationSec: normalizeToolRunMaxDurationSec(src.maxDurationSec),
-  };
 }
 
 /**
@@ -1753,8 +1709,6 @@ export interface AppSettings {
   maintenance: MaintenanceSettings;
   /** Built-in squad captain defaults (persona / playbook / maxTurns). */
   squad: SquadSettings;
-  /** Per-run tool call / duration circuit breakers + trajectory recording. */
-  toolRun: ToolRunSettings;
   /** 1:1 peer mesh bag (no caps; reserved). Squads ignore this. */
   mesh: MeshSettings;
   /** Local / LAN HTTP API + optional desktop gateway UI (default OFF). */
@@ -2130,6 +2084,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
     generate_image: { ...DEFAULT_TOOL_PREFERENCES.generate_image },
     search_history: { ...DEFAULT_TOOL_PREFERENCES.search_history },
     manage_schedule: { ...DEFAULT_TOOL_PREFERENCES.manage_schedule },
+    manage_task_progress: { ...DEFAULT_TOOL_PREFERENCES.manage_task_progress },
+    send_message: { ...DEFAULT_TOOL_PREFERENCES.send_message },
     web_fetch: { ...DEFAULT_TOOL_PREFERENCES.web_fetch },
     web_search: { ...DEFAULT_TOOL_PREFERENCES.web_search },
   },
@@ -2145,7 +2101,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   memory: { ...DEFAULT_MEMORY_SETTINGS },
   maintenance: { ...DEFAULT_MAINTENANCE_SETTINGS },
   squad: { ...DEFAULT_SQUAD_SETTINGS },
-  toolRun: { ...DEFAULT_TOOL_RUN },
   mesh: { ...DEFAULT_MESH_SETTINGS },
   localHttpApi: { ...DEFAULT_LOCAL_HTTP_API, token: '' },
   computers: [],

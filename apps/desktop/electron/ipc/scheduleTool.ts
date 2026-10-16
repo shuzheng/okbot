@@ -4,12 +4,12 @@ export type ScheduleManageAction = 'create' | 'list' | 'pause' | 'resume' | 'del
 
 export type ScheduleManageInput = {
   action: ScheduleManageAction;
-  prompt?: string;
-  title?: string;
-  schedule?: string;
-  timezone?: string;
-  job_id?: string;
-  once?: boolean;
+  prompt?: string | null;
+  title?: string | null;
+  schedule?: string | null;
+  timezone?: string | null;
+  job_id?: string | null;
+  once?: boolean | null;
 };
 
 /** Bound `manage_schedule` execute helper for one owner (bot or squad). */
@@ -18,12 +18,12 @@ export function scheduleManageForOwner(storage: FileStorage, ownerId: string) {
     try {
       return storage.manageScheduledJobs(ownerId, {
         action: input.action,
-        prompt: input.prompt,
-        title: input.title,
-        schedule: input.schedule,
-        timezone: input.timezone,
-        jobId: input.job_id,
-        once: input.once,
+        prompt: input.prompt ?? undefined,
+        title: input.title ?? undefined,
+        schedule: input.schedule ?? undefined,
+        timezone: input.timezone ?? undefined,
+        jobId: input.job_id ?? undefined,
+        once: input.once ?? undefined,
       });
     } catch (err) {
       return `错误：${err instanceof Error ? err.message : String(err)}`;

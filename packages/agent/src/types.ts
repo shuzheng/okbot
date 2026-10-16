@@ -8,7 +8,7 @@ import type {
 } from '@okbot/shared';
 import type { Session, SessionInputCallback, Tool } from '@openai/agents';
 import type { ToolRunBudget } from './toolRunBudget.js';
-import type { HistorySearch, ScheduleManage, SkillLookup } from './tools.js';
+import type { EmitAssistantMessage, HistorySearch, ScheduleManage, SkillLookup, TaskProgressManage } from './tools.js';
 import type { ExecutionBackend } from './executionBackend.js';
 import type { ComputerRoute } from './computerSelection.js';
 
@@ -25,12 +25,23 @@ export interface RunChatInput {
   historySearch?: HistorySearch;
   /** Manage timed wakeups for this chat (`manage_schedule`). */
   scheduleManage?: ScheduleManage;
+  /** Durable long-task checklist (`manage_task_progress`). */
+  taskProgressManage?: TaskProgressManage;
+  /** Emit a standalone assistant bubble mid-run (`send_message`). */
+  emitAssistantMessage?: EmitAssistantMessage;
+  /**
+   * Internal: seal live narration at auto-allow tool starts (wired in runAgentChat).
+   * Hosts use onClearLiveText; do not set this from desktop.
+   */
+  onBeforeToolExecute?: () => void | Promise<void>;
   /** Built-in web_fetch / web_search (`settings.web`). */
   web?: WebSettings;
   /** Formatted global + bot memories for the system prompt. */
   memoriesText?: string;
   /** Rolling summary of older turns (when context was compressed). */
   sessionSummary?: string;
+  /** Formatted durable task checklist for the system prompt. */
+  taskProgressText?: string;
   /** settings.instructions.assistantRoleTemplate (`{name}` → botName). */
   assistantRoleTemplate?: string;
   /** User-chosen default assistant (identity hint in system prompt). */
@@ -133,16 +144,19 @@ export interface RunAgentChatInput extends RunChatInput {
     output?: string;
   }) => void;
   /** Clear pre-tool narration from the live assistant bubble when tools interrupt. */
-  onClearLiveText?: () => void;
+  onClearLiveText?: () => void | Promise<void>;
   /**
    * Mesh ask_assistant: commit interim live text as message A and start message B
    * for the post-peer reply (see HitlLoopHooks.onCommitLiveAssistant).
    */
   onCommitLiveAssistant?: () => void | Promise<void>;
+  /** 1:1 send_message host hook (see HitlLoopHooks.emitAssistantMessage). */
+  emitAssistantMessage?: EmitAssistantMessage;
   onModelTurnStart?: () => void | string;
   onModelTurnEnd?: (info: { ok: boolean; error?: string; spanId?: string }) => void;
   onApprovalWaitStart?: (toolName: string) => void | string;
   onApprovalWaitEnd?: (info: { toolName: string; approved: boolean; spanId?: string }) => void;
+  onRunCheckpoint?: (info: { serializedRunState: string }) => void;
 }
 
 export interface ResumeAgentChatAfterHitlInput {
@@ -153,10 +167,19 @@ export interface ResumeAgentChatAfterHitlInput {
   skillLookup?: SkillLookup;
   historySearch?: HistorySearch;
   scheduleManage?: ScheduleManage;
+  taskProgressManage?: TaskProgressManage;
+  /** Emit a standalone assistant bubble mid-run (`send_message`). */
+  emitAssistantMessage?: EmitAssistantMessage;
+  /**
+   * Internal: seal live narration at auto-allow tool starts (wired in runAgentChat).
+   * Hosts use onClearLiveText; do not set this from desktop.
+   */
+  onBeforeToolExecute?: () => void | Promise<void>;
   /** Built-in web_fetch / web_search (`settings.web`). */
   web?: WebSettings;
   memoriesText?: string;
   sessionSummary?: string;
+  taskProgressText?: string;
   assistantRoleTemplate?: string;
   /** User-chosen default assistant (identity hint in system prompt). */
   isDefaultAssistant?: boolean;
@@ -205,12 +228,13 @@ export interface ResumeAgentChatAfterHitlInput {
     approved: boolean;
     output?: string;
   }) => void;
-  onClearLiveText?: () => void;
+  onClearLiveText?: () => void | Promise<void>;
   onCommitLiveAssistant?: () => void | Promise<void>;
   onModelTurnStart?: () => void | string;
   onModelTurnEnd?: (info: { ok: boolean; error?: string; spanId?: string }) => void;
   onApprovalWaitStart?: (toolName: string) => void | string;
   onApprovalWaitEnd?: (info: { toolName: string; approved: boolean; spanId?: string }) => void;
+  onRunCheckpoint?: (info: { serializedRunState: string }) => void;
   /** Persisted `RunState.toString()` from the interrupted run. */
   serializedRunState: string;
   /** requestId of the pending approval being decided now. */
@@ -224,16 +248,24 @@ export type HitlLoopHooks = {
   signal?: AbortSignal;
   onDelta?: (delta: string) => void;
   /**
-   * Fired when the run hits tool interruptions: discard pre-tool think-aloud from the
-   * live bubble so only the post-tool formal reply remains visible.
+   * Fired at tool boundaries: HITL interruptions and each auto-allow / post-HITL
+   * tool start (via onBeforeToolExecute; skipped for send_message / ask_assistant).
+   * Hosts should seal any user-visible pre-tool narration as its own bubble, or
+   * discard think-only/empty without emitting a blank row; then reset the live
+   * buffer so only the post-tool formal reply remains.
    */
-  onClearLiveText?: () => void;
+  onClearLiveText?: () => void | Promise<void>;
   /**
    * 1:1 mesh ask_assistant: finalize the current live assistant text as its own
    * persisted bubble, then rotate to a fresh streaming message id for the
    * post-peer follow-up (do not append into the interim bubble).
    */
   onCommitLiveAssistant?: () => void | Promise<void>;
+  /**
+   * 1:1 send_message: create a persisted assistant bubble from tool content,
+   * then rotate the live streaming id (host also seals any prior live text).
+   */
+  emitAssistantMessage?: EmitAssistantMessage;
   /** When set, duration budget pauses while waiting for tool approval (HITL). */
   toolRunBudget?: ToolRunBudget;
   /** Optional turn-span hooks (desktop RunTraceRecorder → message.trace waterfall). */
@@ -248,6 +280,11 @@ export type HitlLoopHooks = {
     approved: boolean;
     output?: string;
   }) => void;
+  /**
+   * Safe tool-boundary checkpoint: serialized RunState after a model+tools segment
+   * (and at HITL interruptions). Host persists for crash recovery; clear on complete/Stop.
+   */
+  onRunCheckpoint?: (info: { serializedRunState: string }) => void;
   /** Squad only: surface captain↔member exchanges in the UI transcript. */
   onSquadExchange?: (info: {
     kind: 'ask' | 'reply';
@@ -269,3 +306,9 @@ export type HitlLoopHooks = {
     usage?: TokenUsage;
   }) => void | Promise<void>;
 };
+
+/** Cold resume from a mid-run checkpoint (no pending HITL decision). */
+export interface ResumeAgentChatFromCheckpointInput extends Omit<
+  ResumeAgentChatAfterHitlInput,
+  'requestId' | 'toolName' | 'decision'
+> {}

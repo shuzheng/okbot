@@ -23,6 +23,41 @@ type OwnerQueue = {
 
 const queues = new Map<string, OwnerQueue>();
 
+/**
+ * Soft-steer (and similar) busy holds: keep the owner in {@link listBusyOwnerIds}
+ * across abort → unregister → replacement register so UI/gateway never flash idle.
+ */
+const busyHolds = new Map<string, number>();
+
+/** Hold busy for an owner (refcount). Pair with {@link releaseOwnerBusyHold}. */
+export function holdOwnerBusy(ownerId: string): void {
+  const id = (ownerId || '').trim();
+  if (!id) return;
+  busyHolds.set(id, (busyHolds.get(id) ?? 0) + 1);
+}
+
+/** Drop one busy hold (no-op at zero). */
+export function releaseOwnerBusyHold(ownerId: string): void {
+  const id = (ownerId || '').trim();
+  if (!id) return;
+  const n = busyHolds.get(id) ?? 0;
+  if (n <= 1) busyHolds.delete(id);
+  else busyHolds.set(id, n - 1);
+}
+
+/** Clear all busy holds for an owner (Stop / abort-all). */
+export function clearOwnerBusyHolds(ownerId: string): void {
+  const id = (ownerId || '').trim();
+  if (!id) return;
+  busyHolds.delete(id);
+}
+
+export function ownerHasBusyHold(ownerId: string): boolean {
+  const id = (ownerId || '').trim();
+  if (!id) return false;
+  return (busyHolds.get(id) ?? 0) > 0;
+}
+
 function queueFor(ownerId: string): OwnerQueue {
   let q = queues.get(ownerId);
   if (!q) {
@@ -116,6 +151,8 @@ export function registerOwnerRun(
     map.set(id, inner);
   }
   inner.set(runId, controller);
+  // Replacement turn after soft-steer: drop the abort→restart busy hold.
+  releaseOwnerBusyHold(id);
 }
 
 export function unregisterOwnerRun(
@@ -138,6 +175,7 @@ export function unregisterOwnerRun(
 export function abortAllOwnerRuns(map: AbortControllerMap, ownerId: string): boolean {
   const id = (ownerId || '').trim();
   if (!id) return false;
+  clearOwnerBusyHolds(id);
   const q = queues.get(id);
   const hadQueued = Boolean(q && q.waiters.length > 0);
   cancelQueuedOwnerRuns(id);
@@ -218,7 +256,14 @@ export async function waitOwnerRunUnregistered(
 }
 
 export function listBusyOwnerIds(map: AbortControllerMap): string[] {
-  return [...map.keys()].filter((id) => (map.get(id)?.size ?? 0) > 0);
+  const ids = new Set<string>();
+  for (const id of map.keys()) {
+    if ((map.get(id)?.size ?? 0) > 0) ids.add(id);
+  }
+  for (const id of busyHolds.keys()) {
+    if ((busyHolds.get(id) ?? 0) > 0) ids.add(id);
+  }
+  return [...ids];
 }
 
 /**
@@ -306,6 +351,7 @@ export async function withOwnerSessionWriteLock<T>(
 /** Test helper: reset in-memory queues (not abort maps). */
 export function resetOwnerRunQueuesForTests(): void {
   queues.clear();
+  busyHolds.clear();
   exclusiveChains.clear();
   maintenanceChains.clear();
   sessionWriteChains.clear();

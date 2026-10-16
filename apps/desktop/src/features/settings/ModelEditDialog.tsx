@@ -44,7 +44,7 @@ export function ModelEditDialog({
       ? String(initial.maxTokens)
       : '',
   );
-  const [showThinking, setShowThinking] = useState(initial.showThinking !== false);
+  const [showThinking, setShowThinking] = useState(initial.showThinking === true);
 
   const nextId = id.trim();
   const effectiveName = (name.trim() || nextId);
@@ -82,7 +82,7 @@ export function ModelEditDialog({
       contextWindow: Number.isFinite(cw) && cw >= 1000 ? Math.floor(cw) : 128_000,
       maxTokens: parseMaxTokensInput(maxTokens),
       enabled: initial.enabled !== false,
-      ...(showThinking ? {} : { showThinking: false }),
+      ...(showThinking ? { showThinking: true } : {}),
     });
   }
 

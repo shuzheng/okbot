@@ -22,10 +22,11 @@ export type {
   ToolApprovalDecision,
   RunAgentChatInput,
   ResumeAgentChatAfterHitlInput,
+  ResumeAgentChatFromCheckpointInput,
 } from './types.js';
 
 export { buildAgentInstructions } from './instructions.js';
-export { runAgentChat, resumeAgentChatAfterHitl } from './runAgentChat.js';
+export { runAgentChat, resumeAgentChatAfterHitl, resumeAgentChatFromCheckpoint } from './runAgentChat.js';
 export {
   runSquadChat,
   resumeSquadChatAfterHitl,
@@ -98,12 +99,6 @@ export {
   type AgentsMdSectionPatch,
 } from './agentsMdPatch.js';
 export { detectTopicChange } from './detectTopicChange.js';
-export {
-  classifyBusyIntent,
-  classifyBusyIntentHeuristic,
-  classifyBusyIntentFallback,
-  type BusyIntent,
-} from './classifyBusyIntent.js';
 export { quoteSessionInputCallback } from './quoteContext.js';
 export {
   buildMultimodalUserContent,
@@ -121,8 +116,6 @@ export {
 export { tokenUsageFromRunResult, tokenUsageFromSdkUsage } from './usage.js';
 export {
   ToolRunBudget,
-  CircuitBreakError,
-  isCircuitBreakError,
   summarizeForTrace,
   wrapToolExecute,
   type ToolRunTraceHooks,
@@ -136,6 +129,8 @@ export {
   type SkillLookupResult,
   type BuildToolsOptions,
   type ScheduleManage,
+  type TaskProgressManage,
+  type EmitAssistantMessage,
 } from './tools.js';
 export {
   createLocalExecutionBackend,

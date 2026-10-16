@@ -108,8 +108,13 @@ export function createAgentAndRunner(input: {
   skillLookup?: SkillLookup;
   historySearch?: import('./tools.js').HistorySearch;
   scheduleManage?: import('./tools.js').ScheduleManage;
+  taskProgressManage?: import('./tools.js').TaskProgressManage;
+  emitAssistantMessage?: import('./tools.js').EmitAssistantMessage;
+  /** Seal live narration at auto-allow tool boundaries (see BuildToolsOptions). */
+  onBeforeToolExecute?: () => void | Promise<void>;
   memoriesText?: string;
   sessionSummary?: string;
+  taskProgressText?: string;
   /** settings.instructions.assistantRoleTemplate */
   assistantRoleTemplate?: string;
   /** User-chosen default assistant (identity hint in system prompt). */
@@ -193,6 +198,7 @@ export function createAgentAndRunner(input: {
       input.meshPeers != null ? peerRoster : undefined,
       askEnabled,
       input.isDefaultAssistant === true,
+      input.taskProgressText,
     ),
     model: input.model.model,
     ...(typeof input.model.maxTokens === 'number' && input.model.maxTokens >= 1
@@ -203,6 +209,9 @@ export function createAgentAndRunner(input: {
       skillLookup: input.skillLookup,
       historySearch: input.historySearch,
       scheduleManage: input.scheduleManage,
+      taskProgressManage: input.taskProgressManage,
+      emitAssistantMessage: input.emitAssistantMessage,
+      onBeforeToolExecute: input.onBeforeToolExecute,
       imageApi,
       imageAssets:
         input.ownerId && input.resourcesDir
@@ -303,6 +312,20 @@ export async function runModelSegment(
   }
 }
 
+
+function emitRunCheckpoint(hooks: HitlLoopHooks, state: { toString: (options?: { includeTracingApiKey?: boolean }) => string }): void {
+  if (!hooks.onRunCheckpoint) return;
+  try {
+    const serializedRunState = state.toString();
+    if (serializedRunState) hooks.onRunCheckpoint({ serializedRunState });
+  } catch (err) {
+    // Soft-fail: skip this checkpoint write; the live run must continue.
+    // Prefer fixing item shapes (normalizeAgentInputItemForRunState in Session.getItems)
+    // so originalInput validates — do not silence permanently without that fix.
+    console.error('[okbot] RunState.toString failed for checkpoint; skipping', err);
+  }
+}
+
 export async function runHitlStreamLoop(
   agent: Agent<any, any>,
   runner: Runner,
@@ -314,15 +337,18 @@ export async function runHitlStreamLoop(
 ): Promise<RunChatResult> {
   let streamed = streamedIn;
   let current = result;
+  // Persist mid-run state at each safe model+tools boundary (crash recovery).
+  emitRunCheckpoint(hooks, current.state);
 
   while (current.interruptions?.length) {
     if (hooks.signal?.aborted) {
       return { content: streamed, usage: tokenUsageFromRunResult(current) };
     }
 
-    // Drop pre-tool / between-tool think-aloud; keep only post-tool formal reply.
+    // Reset live buffer at HITL tool boundary. Host seals visible narration (or
+    // drops think-only). Auto-allow tools seal via onBeforeToolExecute instead.
     streamed = '';
-    hooks.onClearLiveText?.();
+    await Promise.resolve(hooks.onClearLiveText?.());
 
     for (const interruption of current.interruptions) {
       if (hooks.signal?.aborted) {
@@ -404,6 +430,7 @@ export async function runHitlStreamLoop(
     });
     current = resumed.result;
     streamed += resumed.streamed;
+    emitRunCheckpoint(hooks, current.state);
   }
 
   if (hooks.signal?.aborted) {

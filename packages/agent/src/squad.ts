@@ -20,6 +20,10 @@ import {
   formatSessionSummarySection,
   listEnabledToolIds,
   REPLY_STYLE_INSTRUCTION,
+  USER_FACING_PRODUCT_LANGUAGE_RULE,
+  TASK_PROGRESS_INSTRUCTION,
+  TASK_PROGRESS_UNFINISHED_SYNC,
+  MID_RUN_USER_INPUT_INSTRUCTION,
 } from './instructions.js';
 import { VISION_TURN_INSTRUCTION } from './visionInput.js';
 import {
@@ -62,6 +66,10 @@ export interface RunSquadChatInput extends HitlLoopHooks {
   historySearch?: import('./tools.js').HistorySearch;
   /** Manage timed wakeups for this squad (`manage_schedule`). */
   scheduleManage?: import('./tools.js').ScheduleManage;
+  /** Durable long-task checklist (`manage_task_progress`). */
+  taskProgressManage?: import('./tools.js').TaskProgressManage;
+  /** Formatted durable task checklist for captain system prompt. */
+  taskProgressText?: string;
   /** Built-in web_fetch / web_search (`settings.web`). */
   web?: WebSettings;
   model: ResolvedModelConfig;
@@ -151,6 +159,8 @@ function buildMemberSquadInstructions(
         ? `## Skills（目录；须先加载再遵循）\n\n下方为技能目录。匹配时须先调用 read_skill（传入 slug）加载完整正文再执行；有匹配技能时不要另起炉灶。\n\n${member.skillsText.trim()}`
         : '',
       REPLY_STYLE_INSTRUCTION,
+      USER_FACING_PRODUCT_LANGUAGE_RULE,
+      TASK_PROGRESS_INSTRUCTION,
       '只处理队长通过工具传入的任务。完成后把结论返回给队长。',
       computerRouting?.trim() || '',
       (() => {
@@ -180,6 +190,7 @@ export function buildCaptainSquadInstructions(input: {
   computerRouting?: string;
   /** Must match buildTools generate_image gate for this provider. */
   imageCapable?: boolean;
+  taskProgressText?: string;
 }): string {
   const roster = input.members
     .map((m) => {
@@ -209,6 +220,15 @@ export function buildCaptainSquadInstructions(input: {
       input.hasVisionInput ? VISION_TURN_INSTRUCTION : '',
       input.computerRouting?.trim() || '',
       REPLY_STYLE_INSTRUCTION,
+      USER_FACING_PRODUCT_LANGUAGE_RULE,
+      input.taskProgressText?.trim() || '',
+      enabled.includes('manage_task_progress') ? TASK_PROGRESS_INSTRUCTION : '',
+      input.taskProgressText?.trim() &&
+      enabled.includes('manage_task_progress') &&
+      (input.taskProgressText.includes('[待做]') || input.taskProgressText.includes('[进行中]'))
+        ? TASK_PROGRESS_UNFINISHED_SYNC
+        : '',
+      MID_RUN_USER_INPUT_INSTRUCTION,
       '整合队员结果后，向用户给出最终答复。',
       formatHistoryBlock(input.history),
     ]
@@ -298,6 +318,7 @@ function createSquadRuntime(input: RunSquadChatInput & { resumeNote?: string }) 
         skillLookup: member.skillLookup,
         historySearch: input.historySearch,
         scheduleManage: input.scheduleManage,
+        taskProgressManage: input.taskProgressManage,
         imageApi,
         imageAssets: { ownerId: input.ownerId, resourcesDir: input.resourcesDir },
         backend: memberRoute ? undefined : input.executionBackend,
@@ -337,6 +358,7 @@ function createSquadRuntime(input: RunSquadChatInput & { resumeNote?: string }) 
       onModelTurnEnd: input.onModelTurnEnd,
       onApprovalWaitStart: input.onApprovalWaitStart,
       onApprovalWaitEnd: input.onApprovalWaitEnd,
+      onRunCheckpoint: input.onRunCheckpoint,
       onToolApprovalRequest: (req) =>
         input.onToolApprovalRequest({
           ...req,
@@ -430,6 +452,7 @@ function createSquadRuntime(input: RunSquadChatInput & { resumeNote?: string }) 
         hasVisionInput: input.hasVisionInput === true,
         computerRouting: shellFsRoutingSection(input.computerRoute, toolPrefs, { imageCapable }),
         imageCapable,
+        taskProgressText: input.taskProgressText,
       }),
       input.resumeNote?.trim() || '',
     ]
@@ -447,6 +470,7 @@ function createSquadRuntime(input: RunSquadChatInput & { resumeNote?: string }) 
       ...buildTools(toolPrefs, security, input.toolRunBudget, {
         historySearch: input.historySearch,
         scheduleManage: input.scheduleManage,
+        taskProgressManage: input.taskProgressManage,
         imageApi,
         imageAssets: { ownerId: input.ownerId, resourcesDir: input.resourcesDir },
         backend: input.computerRoute ? undefined : input.executionBackend,

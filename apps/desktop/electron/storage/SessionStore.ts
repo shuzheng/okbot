@@ -288,7 +288,8 @@ export class SessionStore {
   getMessages(botId: string): ChatMessage[] {
     const all = this.readSessionRecords(botId)
       .map(recordToUiMessage)
-      .filter((m): m is ChatMessage => m != null);
+      .filter((m): m is ChatMessage => m != null)
+      .filter((m) => m.autoContinue !== true);
     return this.toSquadUiMessages(botId, dedupeMeshInterimMessages(all));
   }
 
@@ -308,7 +309,9 @@ export class SessionStore {
       const page = readJsonlPage(file, limit, opts?.beforeMessageId);
       return {
         ...page,
-        messages: dedupeMeshInterimMessages(page.messages),
+        messages: dedupeMeshInterimMessages(
+          page.messages.filter((m) => m.autoContinue !== true),
+        ),
       };
     }
     // Over-fetch raw rows so filtering SDK plumbing still fills a UI page.
@@ -317,7 +320,10 @@ export class SessionStore {
     const fetchLimit = Math.min(Math.max(limit * 5, limit), 250);
     const page = readJsonlPage(file, fetchLimit, opts?.beforeMessageId);
     return {
-      messages: this.toSquadUiMessages(botId, dedupeMeshInterimMessages(page.messages)),
+      messages: this.toSquadUiMessages(
+        botId,
+        dedupeMeshInterimMessages(page.messages.filter((m) => m.autoContinue !== true)),
+      ),
       hasMore: page.hasMore,
       nextBeforeMessageId: page.nextBeforeMessageId,
     };

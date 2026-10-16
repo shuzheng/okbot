@@ -50,6 +50,8 @@ const BARE_UI_OR_TOOL_LABELS = new Set([
   '系统指令',
   '上下文压缩',
   'manage_schedule',
+  'manage_task_progress',
+  'send_message',
   'web_search',
   'web_fetch',
   'read_skill',

@@ -2,10 +2,6 @@ import {
   TOOL_IDS,
   WEB_SEARCH_COMPAT_IDS,
   WEB_SEARCH_PROVIDER_IDS,
-  normalizeToolRunMaxToolCalls,
-  normalizeToolRunMaxDurationSec,
-  normalizeToolRunSettings,
-  type AppSettings,
   type WebSearchCompatId,
   type WebSearchProviderId,
 } from '@okbot/shared';
@@ -13,8 +9,6 @@ import {
 import { AutoApprovalRulesList } from './AutoApprovalRulesList';
 import { SettingsHelpTip } from './SettingsHelpTip';
 import { SettingsToggle } from './SettingsToggle';
-import { keptNumber } from './settingsHelpers';
-
 import { EyeIcon, EyeOffIcon } from '../../components/ui/icons';
 import { t, type UiLang } from '../../i18n';
 
@@ -23,13 +17,9 @@ export function ToolsSettingsPanel({
   aarAddRequest,
   autoApprovalEnabled,
   autoApprovalRules,
-  maxDurationSec,
-  maxToolCalls,
   setAarAddRequest,
   setAutoApprovalEnabled,
   setAutoApprovalRules,
-  setMaxDurationSec,
-  setMaxToolCalls,
   setShowWebSearchKey,
   setTools,
   setWebDraft,
@@ -37,23 +27,15 @@ export function ToolsSettingsPanel({
   tools,
   webDraft,
   gatewayClient,
-  advancedVisible,
-  settings,
 }: {
-  settings: AppSettings;
-  advancedVisible: boolean;
   gatewayClient: boolean;
   lang: UiLang;
   aarAddRequest: any;
   autoApprovalEnabled: any;
   autoApprovalRules: any;
-  maxDurationSec: any;
-  maxToolCalls: any;
   setAarAddRequest: React.Dispatch<React.SetStateAction<any>>;
   setAutoApprovalEnabled: React.Dispatch<React.SetStateAction<any>>;
   setAutoApprovalRules: React.Dispatch<React.SetStateAction<any>>;
-  setMaxDurationSec: React.Dispatch<React.SetStateAction<any>>;
-  setMaxToolCalls: React.Dispatch<React.SetStateAction<any>>;
   setShowWebSearchKey: React.Dispatch<React.SetStateAction<any>>;
   setTools: React.Dispatch<React.SetStateAction<any>>;
   setWebDraft: React.Dispatch<React.SetStateAction<any>>;
@@ -81,6 +63,8 @@ export function ToolsSettingsPanel({
                 generate_image: 'toolGenerateImage',
                 search_history: 'toolSearchHistory',
                 manage_schedule: 'toolManageSchedule',
+                manage_task_progress: 'toolManageTaskProgress',
+                send_message: 'toolSendMessage',
                 web_fetch: 'toolWebFetch',
                 web_search: 'toolWebSearch',
               } as const
@@ -282,55 +266,6 @@ export function ToolsSettingsPanel({
       </div>
 
 
-      {advancedVisible ? (<>
-      <div className="settings-section-label" style={{ marginTop: 16 }} data-settings-id="toolRunLimits">
-        {t(lang, 'toolRunLimits')}
-      </div>
-      <div className="settings-card">
-        <div className="settings-row" data-settings-id="toolRunMaxToolCalls">
-          <span className="settings-row-label">
-            <span className="settings-row-label-text">{t(lang, 'toolRunMaxToolCalls')}</span>
-            <SettingsHelpTip text={t(lang, 'toolRunMaxToolCallsHint')} />
-          </span>
-          <input
-            spellCheck={false}
-            className="wide"
-            type="number"
-            min={0}
-            max={500}
-            step={1}
-            placeholder={t(lang, 'toolRunUnlimited')}
-            value={maxToolCalls}
-            onChange={(e) => setMaxToolCalls(e.target.value)}
-            onBlur={() => {
-              setMaxToolCalls(String(normalizeToolRunMaxToolCalls(keptNumber(maxToolCalls, normalizeToolRunSettings(settings.toolRun).maxToolCalls))));
-            }}
-          />
-        </div>
-        <div className="settings-row" data-settings-id="toolRunMaxDurationSec">
-          <span className="settings-row-label">
-            <span className="settings-row-label-text">{t(lang, 'toolRunMaxDurationSec')}</span>
-            <SettingsHelpTip text={t(lang, 'toolRunMaxDurationSecHint')} />
-          </span>
-          <input
-            spellCheck={false}
-            className="wide"
-            type="number"
-            min={0}
-            max={86400}
-            step={1}
-            placeholder={t(lang, 'toolRunUnlimited')}
-            value={maxDurationSec}
-            onChange={(e) => setMaxDurationSec(e.target.value)}
-            onBlur={() => {
-              setMaxDurationSec(
-                String(normalizeToolRunMaxDurationSec(keptNumber(maxDurationSec, normalizeToolRunSettings(settings.toolRun).maxDurationSec))),
-              );
-            }}
-          />
-        </div>
-      </div>
-      </>) : null}
 
     </div>
   );

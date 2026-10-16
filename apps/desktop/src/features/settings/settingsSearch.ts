@@ -170,6 +170,8 @@ export const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
   { id: 'toolGenerateImage', tab: 'tools', labelKey: 'toolGenerateImage', keywords: ['image', 'generate', 'openai', 'dall-e', 'gpt-image', 'minimax', 'image-01', '画图', '生图', '文生图'] },
   { id: 'toolSearchHistory', tab: 'tools', labelKey: 'toolSearchHistory', keywords: ['history', 'search_history', '会话', '历史'] },
   { id: 'toolManageSchedule', tab: 'tools', labelKey: 'toolManageSchedule', keywords: ['schedule', 'cron', '定时'] },
+  { id: 'toolManageTaskProgress', tab: 'tools', labelKey: 'toolManageTaskProgress', keywords: ['task', 'progress', 'checklist', 'queue', '进度', '清单', '队列', '任务进度', 'manage_task_progress'] },
+  { id: 'toolSendMessage', tab: 'tools', labelKey: 'toolSendMessage', keywords: ['send', 'message', 'bubble', '气泡', 'reply', '回复消息', '回复', 'send_message', '多气泡'] },
   { id: 'toolWebFetch', tab: 'tools', labelKey: 'toolWebFetch', keywords: ['fetch', 'url', 'html', '网页', '拉取'] },
   { id: 'toolWebSearch', tab: 'tools', labelKey: 'toolWebSearch', keywords: ['search', 'tavily', 'brave', 'serper', '搜索'] },
   { id: 'webTools', tab: 'tools', labelKey: 'webTools', keywords: ['web', 'tavily', 'brave', 'serper', 'api key', '网页搜索'] },
@@ -183,24 +185,6 @@ export const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
     tab: 'tools',
     labelKey: 'autoApproval',
     keywords: ['审批', '规则', 'HITL', 'approval'],
-  },
-  {
-    id: 'toolRunLimits',
-    tab: 'tools',
-    labelKey: 'toolRunLimits',
-    keywords: ['熔断', 'circuit', 'maxToolCalls', '时长', 'duration', '运行限制'],
-  },
-  {
-    id: 'toolRunMaxToolCalls',
-    tab: 'tools',
-    labelKey: 'toolRunMaxToolCalls',
-    keywords: ['工具次数', 'max tool', '上限'],
-  },
-  {
-    id: 'toolRunMaxDurationSec',
-    tab: 'tools',
-    labelKey: 'toolRunMaxDurationSec',
-    keywords: ['超时', 'timeout', 'duration', '秒'],
   },
   {
     id: 'securityMaster',
@@ -394,7 +378,6 @@ const ADVANCED_TABS: ReadonlySet<SettingsTab> = new Set<SettingsTab>([
 
 /** Rows inside common tabs that are hidden until 「显示高级设置」 is on. */
 const ADVANCED_ITEM_IDS: ReadonlySet<string> = new Set([
-  'toolRunLimits',
   'contextCompression',
   'autoTopicCompress',
   'maxTurns',
@@ -408,7 +391,6 @@ export function isAdvancedSettingsItem(item: SettingsSearchItem): boolean {
   return (
     ADVANCED_TABS.has(item.tab) ||
     ADVANCED_ITEM_IDS.has(item.id) ||
-    item.id.startsWith('toolRun') ||
     item.id.startsWith('compress')
   );
 }

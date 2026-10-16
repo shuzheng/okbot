@@ -66,4 +66,15 @@ export function registerChatIpc(ctx: IpcContext): void {
   ipcMain.handle(IpcChannels.compressSessionNow, (_e, payload) =>
     compressSessionNow(ctx, payload),
   );
+
+  ipcMain.handle(IpcChannels.getTasks, (_e, ownerId: string) => {
+    const id = (ownerId || '').trim();
+    if (!id) return [];
+    try {
+      return ctx.storage.loadOpenTasks(id);
+    } catch (err) {
+      console.error('[okbot] getTasks failed', err);
+      return [];
+    }
+  });
 }

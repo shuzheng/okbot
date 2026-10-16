@@ -2,7 +2,7 @@
 
 import type { AutoApprovalAction } from './approval.js';
 
-export const TOOL_IDS = ['read_file', 'read_skill', 'write_file', 'edit_file', 'run_shell', 'generate_image', 'search_history', 'manage_schedule', 'web_fetch', 'web_search'] as const;
+export const TOOL_IDS = ['read_file', 'read_skill', 'write_file', 'edit_file', 'run_shell', 'generate_image', 'search_history', 'manage_schedule', 'manage_task_progress', 'send_message', 'web_fetch', 'web_search'] as const;
 export type ToolId = (typeof TOOL_IDS)[number];
 
 export interface ToolPreference {
@@ -29,6 +29,16 @@ export const DEFAULT_TOOL_PREFERENCES: ToolPreferences = {
    * needsApproval + resolveToolApproval (AAR cannot bypass).
    */
   manage_schedule: { enabled: true, approval: 'allow' },
+  /**
+   * Durable checklist for long-running tasks (per owner under ~/.okbot/<owner>/).
+   * Default allow so the model can plan/update without HITL; create/clear still light.
+   */
+  manage_task_progress: { enabled: true, approval: 'allow' },
+  /**
+   * Emit a standalone assistant chat bubble mid-run (1:1). Never HITL.
+   * Default allow so the model can ack/progress without approval cards.
+   */
+  send_message: { enabled: true, approval: 'allow' },
   /** Fetch a public URL as readable text; default allow (SSRF guards still apply). */
   web_fetch: { enabled: true, approval: 'allow' },
   /** Third-party web search; needs settings.web.search API key. */
@@ -45,6 +55,8 @@ export function normalizeToolPreferences(raw: unknown): ToolPreferences {
     generate_image: { ...DEFAULT_TOOL_PREFERENCES.generate_image },
     search_history: { ...DEFAULT_TOOL_PREFERENCES.search_history },
     manage_schedule: { ...DEFAULT_TOOL_PREFERENCES.manage_schedule },
+    manage_task_progress: { ...DEFAULT_TOOL_PREFERENCES.manage_task_progress },
+    send_message: { ...DEFAULT_TOOL_PREFERENCES.send_message },
     web_fetch: { ...DEFAULT_TOOL_PREFERENCES.web_fetch },
     web_search: { ...DEFAULT_TOOL_PREFERENCES.web_search },
   };

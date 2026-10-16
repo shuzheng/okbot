@@ -62,6 +62,7 @@ export function legacyMessageToRecord(msg: ChatMessage): SessionRecordV2 {
       : undefined;
   const meshExchange = normalizeMeshExchange(msg.meshExchange);
   const meshInterim = msg.meshInterim === true;
+  const autoContinue = msg.autoContinue === true;
   const quoteMessageId =
     typeof msg.quoteMessageId === 'string' && msg.quoteMessageId.trim()
       ? msg.quoteMessageId.trim()
@@ -87,6 +88,7 @@ export function legacyMessageToRecord(msg: ChatMessage): SessionRecordV2 {
       ...(speakerBotId ? { speakerBotId } : {}),
       ...(meshExchange ? { meshExchange } : {}),
       ...(meshInterim ? { meshInterim: true } : {}),
+      ...(autoContinue ? { autoContinue: true } : {}),
       ...(quoteMessageId ? { quoteMessageId } : {}),
       ...(quotePreview ? { quotePreview } : {}),
       ...(attachments ? { attachments } : {}),
@@ -182,6 +184,7 @@ export function recordToUiMessage(rec: SessionRecordV2): ChatMessage | null {
       : undefined;
   const meshExchange = normalizeMeshExchange(rec.meta?.meshExchange);
   const meshInterim = rec.meta?.meshInterim === true;
+  const autoContinue = rec.meta?.autoContinue === true;
   const quoteMessageId =
     typeof rec.meta?.quoteMessageId === 'string' && rec.meta.quoteMessageId.trim()
       ? rec.meta.quoteMessageId.trim()
@@ -201,6 +204,7 @@ export function recordToUiMessage(rec: SessionRecordV2): ChatMessage | null {
     ...(speakerBotId ? { speakerBotId } : {}),
     ...(meshExchange ? { meshExchange } : {}),
     ...(meshInterim ? { meshInterim: true } : {}),
+    ...(autoContinue ? { autoContinue: true } : {}),
     ...(quoteMessageId ? { quoteMessageId } : {}),
     ...(quotePreview ? { quotePreview } : {}),
     ...(attachments ? { attachments } : {}),

@@ -13,6 +13,8 @@ export type SessionRecordV2 = {
     meshExchange?: import('@okbot/shared').MeshExchangeMeta;
     /** Sealed ask_assistant interim (message A); UI hides later SDK dups of this text. */
     meshInterim?: boolean;
+    /** Host auto-continue synthetic user row; model sees it, UI transcript hides it. */
+    autoContinue?: boolean;
     /** User message quotes another bubble by id (UI only; content stays body-only). */
     quoteMessageId?: string;
     /** Short preview snapshot of the quoted message. */
@@ -47,4 +49,36 @@ export type PendingHitlRecord = {
   /** Squad only: stable id of the user turn (bubble ids rotate between captain segments). */
   turnId?: string;
   createdAt: string;
+};
+
+/** @deprecated Use TaskStatus from @okbot/shared (multi-task tasks.jsonl). */
+export type TaskProgressItemStatus = import('@okbot/shared').TaskStatus;
+/** @deprecated Use TaskStep from @okbot/shared. */
+export type TaskProgressItem = import('@okbot/shared').TaskStep;
+/**
+ * @deprecated Legacy single-plan shape (task-progress.json). Prefer TaskRecord.
+ * Kept for one-shot migration into tasks.jsonl.
+ */
+export type TaskProgressRecord = {
+  v: 1;
+  title?: string;
+  items: import('@okbot/shared').TaskStep[];
+  updatedAt: string;
+};
+
+export type { TaskStatus, TaskStep, TaskRecord } from '@okbot/shared';
+
+/** Mid-run SDK RunState checkpoint for crash recovery (not HITL-only). */
+export type RunCheckpointRecord = {
+  v: 1;
+  ownerId: string;
+  /** bot = 1:1; squad = captain run (auto-resume currently bots only). */
+  kind: 'bot' | 'squad';
+  runId: string;
+  messageId: string;
+  serializedRunState: string;
+  computerId?: string;
+  userText?: string;
+  createdAt: string;
+  updatedAt: string;
 };

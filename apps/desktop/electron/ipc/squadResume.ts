@@ -35,6 +35,7 @@ import { mcpToolsForRun } from '../mcpRuntime';
 import { buildSquadMemberSpecs, computerRouteFor } from './chatTurnHelpers';
 import { historySearchForOwner } from './historySearchTool';
 import { scheduleManageForOwner } from './scheduleTool';
+import { taskProgressManageForOwner } from './taskProgressTool';
 
 type ResumeResult = { ok: boolean; error?: string; resumed?: boolean; aborted?: boolean };
 
@@ -99,7 +100,6 @@ export async function resumeSquadAfterRestart(
     modelId: squad.modelId,
   });
   const guards = createRunGuards({
-    toolRun: settings.toolRun,
     controller,
   });
 
@@ -147,6 +147,20 @@ export async function resumeSquadAfterRestart(
       sessionSummary: sessionSummary || undefined,
       historySearch: historySearchForOwner(ctx.storage, squad.id),
       scheduleManage: scheduleManageForOwner(ctx.storage, squad.id),
+      taskProgressManage: async (input) => {
+        const result = await taskProgressManageForOwner(ctx.storage, squad.id)(input);
+        try {
+          ctx.sendRuntimeEvent({
+            type: 'tasks_changed',
+            botId: squad.id,
+            tasks: ctx.storage.loadOpenTasks(squad.id),
+          });
+        } catch (err) {
+          console.error('[okbot] tasks_changed emit failed', err);
+        }
+        return result;
+      },
+      taskProgressText: ctx.storage.formatTaskProgressForPrompt(squad.id) || undefined,
       web: settings.web,
       model: modelConfig,
       tools: settings.tools,
@@ -167,7 +181,7 @@ export async function resumeSquadAfterRestart(
       },
       onDelta: (delta) => {
         assistantMsg.content += delta;
-        ctx.sendRuntimeEvent({ type: 'delta', botId: squad.id, messageId: assistantId, delta });
+        // Non-streaming UI: buffer until done; do not emit token deltas.
       },
       onToolApprovalRequest: createApprovalWaiter(ctx, {
         ownerId: squad.id,
@@ -192,6 +206,21 @@ export async function resumeSquadAfterRestart(
           output,
           runId,
         });
+      },
+      onRunCheckpoint: ({ serializedRunState }) => {
+        try {
+          ctx.storage.saveRunCheckpoint(squad.id, {
+            kind: 'squad',
+            runId,
+            messageId: assistantId,
+            serializedRunState,
+            createdAt: new Date().toISOString(),
+            computerId: disk.computerId,
+            userText,
+          });
+        } catch (err) {
+          console.error('[okbot] save squad run checkpoint failed', err);
+        }
       },
       onSquadExchange: async ({ kind, memberBotId, memberName, content, usage }) => {
         await sealCaptainSegment();
@@ -257,7 +286,7 @@ export async function resumeSquadAfterRestart(
         // Other cards of this turn still wait. Keep the reply for the continuation.
         ctx.storage.writeSquadResumeReplies(squad.id, turnId, replies);
         if (hasUsage(usage)) ctx.storage.recordUsage(squad.id, usage);
-        guards.finish(resolveRunFinishStatus({ aborted: false, breakReason: null }));
+        guards.finish(resolveRunFinishStatus({ aborted: false }));
         ctx.sendRuntimeEvent({ type: 'done', botId: squad.id, messageId: assistantId, content: '' });
         return { ok: true, resumed: true };
       }
@@ -271,8 +300,6 @@ export async function resumeSquadAfterRestart(
       content = cont.content;
       usage = usage && cont.usage ? addTokenUsage(usage, cont.usage) : cont.usage ?? usage;
     }
-
-    guards.throwIfBroken();
     if (!assistantMsg.content.trim() && content.trim()) assistantMsg.content = content;
     if (usage) assistantMsg.usage = usage;
     if (assistantMsg.content.trim()) {
@@ -295,15 +322,12 @@ export async function resumeSquadAfterRestart(
       ...(controller.signal.aborted ? { aborted: true } : {}),
     });
     guards.finish(
-      resolveRunFinishStatus({
-        aborted: controller.signal.aborted,
-        breakReason: guards.budget.getBreakReason(),
-      }),
+      resolveRunFinishStatus({ aborted: controller.signal.aborted }),
     );
     return { ok: true, resumed: true };
   } catch (err) {
-    if (!guards.budget.getBreakReason() && (controller.signal.aborted || isAbortLikeError(err))) {
-      guards.finish(resolveRunFinishStatus({ aborted: true, breakReason: null }));
+    if ((controller.signal.aborted || isAbortLikeError(err))) {
+      guards.finish(resolveRunFinishStatus({ aborted: true }));
       ctx.sendRuntimeEvent({
         type: 'done',
         botId: squad.id,
@@ -334,6 +358,11 @@ export async function resumeSquadAfterRestart(
     // Not rejectPendingApprovalsForBot: that clears every pending file of the squad,
     // including other members' cold approvals and the collected replies of this turn.
     releaseRunApprovals(ctx, squad.id, parkedRequestIds, '已结束');
+    try {
+      ctx.storage.clearRunCheckpoint(squad.id);
+    } catch (err) {
+      console.error('[okbot] clear squad run checkpoint failed', err);
+    }
     runSlot.release();
   }
 }

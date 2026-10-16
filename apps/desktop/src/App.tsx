@@ -10,8 +10,6 @@ import {
   CheckIcon,
   EditIcon,
   TrashIcon,
-  PersonIcon,
-  SquadNavIcon,
   ExportAssistantIcon,
   DefaultAssistantIcon,
   PinIcon,
@@ -84,7 +82,9 @@ import {
   formatMessageWithAttachments,
   resolveMessageAttachments,
 } from './utils/messageAttachments';
-import { isAbortLikeError, isMcpToolName } from '@okbot/shared';
+import { isAbortLikeError, isMcpToolName ,
+  type TaskRecord,
+} from '@okbot/shared';
 import { toast, ToastHost, requestConfirm, ConfirmHost } from './components/ui';
 import type {
   Selection,
@@ -159,6 +159,8 @@ export function App() {
     setParallelTasksByOwner,
     sendsInFlightRef,
   } = useParallelTasks();
+
+  const [openTasksByOwner, setOpenTasksByOwner] = useState<Record<string, TaskRecord[]>>({});
 
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [dataDir, setDataDir] = useState('');
@@ -559,7 +561,7 @@ export function App() {
     updateAttachments([]);
   }, [chatOwnerId]);
 
-  /** Active bot/squad resolved model → collapsible `<think>` (default on). */
+  /** Active bot/squad resolved model → collapsible `<think>` (default off). */
   const showThinking = useMemo(() => {
     const modelSettings = normalizeModelSettings(settings?.model);
     const override = selectedBot
@@ -895,6 +897,7 @@ export function App() {
     setBusyByBot,
     setTurnPhaseByBot,
     setParallelTasksByOwner,
+    setOpenTasksByOwner,
   });
 
 
@@ -931,10 +934,16 @@ export function App() {
       return;
     }
     // Shared for 1:1 and squad: follow only while pinned near bottom.
-    if (stickToBottomRef.current) {
-      pinMessagesToBottom();
-    }
-  }, [messages, busy, selection, toolCards, pinMessagesToBottom]);
+    // Re-pin on messages / busy / turnPhase / toolCards so new assistant bubbles,
+    // wrapping_up chrome, and turn-end layout settle still stick when allowed.
+    if (!stickToBottomRef.current) return;
+    pinMessagesToBottom();
+    // Bubble enter (~200ms) + markdown/images can grow after the first paint.
+    const t = window.setTimeout(() => {
+      if (stickToBottomRef.current) pinMessagesToBottom();
+    }, 220);
+    return () => window.clearTimeout(t);
+  }, [messages, busy, turnPhase, selection, toolCards, pinMessagesToBottom]);
 
   useEffect(() => {
     const el = messagesBoxRef.current;
@@ -982,7 +991,8 @@ export function App() {
 
     el.addEventListener('scroll', syncStickFromUserScroll, { passive: true });
 
-    // Streaming deltas / tool cards / markdown layout shift height after React commit.
+    // Child growth (bubbles/markdown) + scrollport resize (turn-status overlay /
+    // composer height) must both re-pin while sticky.
     const ro =
       typeof ResizeObserver !== 'undefined'
         ? new ResizeObserver(() => {
@@ -992,6 +1002,10 @@ export function App() {
     const observed = new Set<Element>();
     const observeTree = () => {
       if (!ro) return;
+      if (!observed.has(el)) {
+        observed.add(el);
+        ro.observe(el);
+      }
       for (const child of el.children) {
         if (observed.has(child)) continue;
         observed.add(child);
@@ -1028,6 +1042,27 @@ export function App() {
     });
     return () => window.cancelAnimationFrame(id);
   }, [chatOwnerId, selectedBot?.onboardingComplete, createTarget, profileBot]);
+
+  // Load open multi-task queue for the active chat (UI above composer).
+  useEffect(() => {
+    const owner = chatOwnerId;
+    if (!owner || typeof window.okbot.getTasks !== 'function') {
+      return;
+    }
+    let cancelled = false;
+    window.okbot
+      .getTasks(owner)
+      .then((tasks) => {
+        if (cancelled) return;
+        setOpenTasksByOwner((prev) => ({ ...prev, [owner]: tasks || [] }));
+      })
+      .catch((err) => {
+        console.error('[okbot] getTasks failed', err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [chatOwnerId]);
 
   // Restore per-session draft (and clear quote) when switching chats.
   // After the controlled value commits, place caret at end so typing continues.
@@ -3017,6 +3052,7 @@ async function handleSend(retry?: {
               onApproveToolForever={onApproveToolForever}
               composerSlot={composerSlot}
               parallelTasks={chatOwnerId ? parallelTasksByOwner[chatOwnerId] ?? [] : []}
+              openTasks={chatOwnerId ? openTasksByOwner[chatOwnerId] ?? [] : []}
               onJumpParallelTask={jumpToParallelTask}
               immersiveChat={immersiveChat}
               onToggleImmersiveChat={onToggleImmersiveChat}
@@ -3140,18 +3176,6 @@ async function handleSend(retry?: {
                   <span className="menu-item-icon"><EditIcon /></span>
                   <span>{t(lang, 'rename')}</span>
                 </button>,
-                (settings?.hiddenOwnerIds ?? []).includes(menu.bot.id) ? null : (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setProfileBot(menu.bot);
-                      setMenu(null);
-                    }}
-                  >
-                    <span className="menu-item-icon"><PersonIcon /></span>
-                    <span>{t(lang, 'profile')}</span>
-                  </button>
-                ),
                 (settings?.hiddenOwnerIds ?? []).includes(menu.bot.id) ? null : (
                   <button
                     type="button"
@@ -3392,18 +3416,6 @@ async function handleSend(retry?: {
                   <span className="menu-item-icon"><EditIcon /></span>
                   <span>{t(lang, 'rename')}</span>
                 </button>,
-                (settings?.hiddenOwnerIds ?? []).includes(menu.squad.id) ? null : (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      openSquadEditor(menu.squad);
-                      setMenu(null);
-                    }}
-                  >
-                    <span className="menu-item-icon"><SquadNavIcon /></span>
-                    <span>{t(lang, 'squadProfile')}</span>
-                  </button>
-                ),
               ],
               [
                 settings?.showAdvancedSettings === true ? (

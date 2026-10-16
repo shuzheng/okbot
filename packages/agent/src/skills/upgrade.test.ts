@@ -100,4 +100,19 @@ import { parseSkillMarkdown, formatSkillMarkdown } from './parse.js';
   assert.equal(again.changed, false);
 }
 
+
+// Body was only ## When — keep when-text in body (still enrich description)
+{
+  const r = upgradeSkillFormat({
+    slug: 'okbot-when-only',
+    name: 'okbot-when-only',
+    description: 'Runs a pack.',
+    body: '## When\nnew body',
+  });
+  assert.equal(r.movedWhenFromBody, true);
+  assert.match(r.skill.body, /new body/);
+  assert.doesNotMatch(r.skill.body, /^## When/m);
+  assert.match(r.skill.description, /Use when|何时使用|new body/i);
+}
+
 console.log('upgrade.test.ts: ok');

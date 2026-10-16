@@ -7,7 +7,7 @@ import { MarkdownContent } from './MarkdownContent';
 export type AssistantContentProps = {
   lang: UiLang;
   content: string;
-  /** Per-model flag; default true (`!== false`). */
+  /** Per-model flag; default false (`=== true` to show). */
   showThinking?: boolean;
   /** Roster for `@助手` mention chips inside markdown. */
   bots?: readonly MentionBotRef[];
@@ -17,11 +17,14 @@ export type AssistantContentProps = {
  * Renders assistant markdown, optionally surfacing `<think>…</think>` as a
  * collapsible block (collapsed by default). When showThinking is false, think
  * spans are stripped from the display path.
+ *
+ * Always projects through parseThinkContent (including incomplete-tag hold-back)
+ * so streaming never paints raw `<think` / think bodies into the main bubble.
  */
 export const AssistantContent = memo(function AssistantContent({
   lang,
   content,
-  showThinking = true,
+  showThinking = false,
   bots = [],
 }: AssistantContentProps) {
   const parsed = useMemo(() => parseThinkContent(content || ''), [content]);
@@ -36,10 +39,11 @@ export const AssistantContent = memo(function AssistantContent({
   }
 
   if (!parsed.hasThinking) {
-    if (!content) return null;
+    // Use parsed.answer (not raw content) so mid-stream `<think` prefixes stay held.
+    if (!parsed.answer) return null;
     return (
       <MarkdownContent lang={lang} bots={bots}>
-        {content}
+        {parsed.answer}
       </MarkdownContent>
     );
   }

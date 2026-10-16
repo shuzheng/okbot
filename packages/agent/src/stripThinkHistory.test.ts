@@ -1,7 +1,7 @@
 /**
  * Model-facing history must drop assistant `<think>` spans while UI storage may keep them.
  */
-import { stripThinkFromAgentInputItem } from '@okbot/shared';
+import { normalizeAgentInputItemForRunState, stripThinkFromAgentInputItem } from '@okbot/shared';
 import { formatHistoryBlock } from './instructions.ts';
 import { formatAgentInputItem } from './promptContext.ts';
 import { OkbotFileSession, type OkbotSessionStore } from './session/OkbotFileSession.ts';
@@ -69,10 +69,53 @@ const store: OkbotSessionStore = {
 const session = new OkbotFileSession(store);
 const items = await session.getItems();
 assert(items.length === 2, 'getItems returns both');
-assert((items[1] as { content: string }).content === 'visible answer', 'session getItems strips');
+const modelAssistant = items[1] as {
+  content: Array<{ type?: string; text?: string }>;
+  status?: string;
+};
+assert(Array.isArray(modelAssistant.content), 'getItems normalizes assistant content to array');
+assert(modelAssistant.content[0]?.text === 'visible answer', 'session getItems strips');
+assert(modelAssistant.status === 'completed', 'getItems sets assistant status for RunState');
 assert(
   (store.readItems()[1] as { content: string }).content === THINK,
   'store still has raw think for UI',
 );
+
+// normalizeAgentInputItemForRunState — plain UI assistant + reasoning + system
+const plain = normalizeAgentInputItemForRunState({
+  type: 'message',
+  role: 'assistant',
+  content: 'hello',
+});
+assert(Array.isArray(plain.content), 'plain UI assistant → array content');
+assert(
+  (plain.content as Array<{ type: string; text: string }>)[0]?.type === 'output_text',
+  'plain UI assistant → output_text',
+);
+assert(plain.status === 'completed', 'plain UI assistant → status completed');
+
+const reasoning = normalizeAgentInputItemForRunState({
+  type: 'reasoning',
+  content: 'why',
+});
+assert(Array.isArray(reasoning.content), 'reasoning string → array');
+assert(
+  (reasoning.content as Array<{ type: string; text: string }>)[0]?.type === 'input_text',
+  'reasoning → input_text',
+);
+
+const system = normalizeAgentInputItemForRunState({
+  type: 'message',
+  role: 'system',
+  content: [{ type: 'input_text', text: 'sys' }],
+});
+assert(system.content === 'sys', 'system array → string');
+
+const userLeft = normalizeAgentInputItemForRunState({
+  type: 'message',
+  role: 'user',
+  content: 'hi',
+});
+assert(userLeft.content === 'hi', 'user string left alone');
 
 console.log('stripThinkHistory.test.ts: ok');

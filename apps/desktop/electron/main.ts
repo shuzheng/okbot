@@ -14,7 +14,8 @@ import { createLocalHttpApi } from './localHttpApi';
 import { closeMcp } from './mcpRuntime';
 import { ensureGatewayToken, resolveGatewayUiRoot, startSkillWatch } from './gatewayRuntime';
 import { startScheduleTicker } from './scheduleTicker';
-import { abortAllOwnerRuns } from './ipc/ownerRuns';
+import { resumeAllSafeCheckpoints } from './ipc/chat/coldRestoreCheckpoint';
+import { abortAllOwnerRuns, listBusyOwnerIds } from './ipc/ownerRuns';
 import {
   acquireServerLock,
   inspectRunningServer,
@@ -197,7 +198,7 @@ function snapshotActiveRuns() {
       arguments: p.arguments,
     }));
   const busyBotIds = new Set<string>([
-    ...abortControllers.keys(),
+    ...listBusyOwnerIds(abortControllers),
     ...memoryPending.map((p) => p.botId),
     ...diskPending.map((p) => p.botId),
   ]);
@@ -215,6 +216,12 @@ function rejectPendingApprovalsForBot(botId: string, message = '已取消') {
     pending.resolve({ approved: false, message });
   }
   storage.clearPendingHitl(botId);
+  // Intentional Stop / cancel: drop mid-run checkpoints (same tone as pending-hitl).
+  try {
+    storage.clearRunCheckpoint(botId);
+  } catch (err) {
+    console.error('[okbot] clear run checkpoint on reject failed', err);
+  }
 }
 
 function applyTheme(theme: AppSettings['theme']) {
@@ -528,6 +535,10 @@ app.whenReady().then(async () => {
     stopSkillWatch = startSkillWatch(storage, sendRuntimeEvent);
     stopScheduleTicker = startScheduleTicker({ storage, ctx: ipcCtx });
     initAutoUpdater(() => storage.getSettings());
+    // Crash recovery: mid-run checkpoints (pending-hitl still wins when both exist).
+    void resumeAllSafeCheckpoints(ipcCtx).catch((err) => {
+      console.error('[okbot] resume checkpoints on start failed', err);
+    });
   }
   }
   }
@@ -595,6 +606,9 @@ app.on('before-quit', (e) => {
     for (const p of storage.listAllPendingHitl()) {
       storage.clearPendingHitl(p.botId);
     }
+    for (const c of storage.listAllRunCheckpoints()) {
+      storage.clearRunCheckpoint(c.ownerId);
+    }
     return;
   }
 
@@ -661,6 +675,9 @@ app.on('before-quit', (e) => {
       // Disk-only pending (cold-start cards with no live Promise) must also go.
       for (const p of storage.listAllPendingHitl()) {
         storage.clearPendingHitl(p.botId);
+      }
+      for (const c of storage.listAllRunCheckpoints()) {
+        storage.clearRunCheckpoint(c.ownerId);
       }
       app.quit();
     });

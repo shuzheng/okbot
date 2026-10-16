@@ -14,6 +14,8 @@ import {
 } from './serverPresence';
 import { ensureGatewayToken, resolveGatewayUiRoot, startSkillWatch } from './gatewayRuntime';
 import { startScheduleTicker } from './scheduleTicker';
+import { resumeAllSafeCheckpoints } from './ipc/chat/coldRestoreCheckpoint';
+import { listBusyOwnerIds } from './ipc/ownerRuns';
 import { readDesktopAppVersion } from './appVersion';
 
 const abortControllers = new Map<string, Map<string, AbortController>>();
@@ -27,6 +29,11 @@ function rejectPendingApprovalsForBot(storage: FileStorage, botId: string, messa
     pending.resolve({ approved: false, message });
   }
   storage.clearPendingHitl(botId);
+  try {
+    storage.clearRunCheckpoint(botId);
+  } catch (err) {
+    console.error('[okbot] clear run checkpoint on reject failed', err);
+  }
 }
 
 async function serve(): Promise<number> {
@@ -90,7 +97,7 @@ async function serve(): Promise<number> {
           arguments: p.arguments,
         }));
       const busyBotIds = new Set<string>([
-        ...abortControllers.keys(),
+        ...listBusyOwnerIds(abortControllers),
         ...memoryPending.map((p) => p.botId),
         ...diskPending.map((p) => p.botId),
       ]);
@@ -160,6 +167,9 @@ async function serve(): Promise<number> {
 
   stopSkills = startSkillWatch(storage, sendRuntimeEvent);
   stopScheduleTicker = startScheduleTicker({ storage, ctx });
+  void resumeAllSafeCheckpoints(ctx).catch((err) => {
+    console.error('[okbot] resume checkpoints on start failed', err);
+  });
 
   const base = publicBase(api.port);
   const bind = api.bindLan ? '0.0.0.0' : '127.0.0.1';

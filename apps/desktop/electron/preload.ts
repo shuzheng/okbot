@@ -148,6 +148,8 @@ const api = {
       { ok: true } | { ok: false; error: string }
     >,
   getMessages: (botId: string) => ipcRenderer.invoke(IpcChannels.getMessages, botId),
+  getTasks: (ownerId: string) =>
+    ipcRenderer.invoke(IpcChannels.getTasks, ownerId) as Promise<import('@okbot/shared').TaskRecord[]>,
   getMessagesPage: (botId: string, opts?: { limit?: number; beforeMessageId?: string | null }) =>
     ipcRenderer.invoke(IpcChannels.getMessagesPage, {
       botId,

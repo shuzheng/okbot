@@ -26,12 +26,18 @@ function normalizeSources(settings: AppSettings | null | undefined): string[] {
 }
 
 function isNameExistsError(msg: string): { name: string } | null {
-  const m = msg.trim();
-  if (m.startsWith('assistant_name_exists:')) {
-    return { name: m.slice('assistant_name_exists:'.length).trim() || '' };
+  const m = String(msg || '');
+  // IPC may wrap as `Error invoking remote method …: Error: assistant_name_exists:Name`.
+  if (!m.includes('assistant_name_exists')) return null;
+  const marker = 'assistant_name_exists:';
+  const idx = m.indexOf(marker);
+  if (idx >= 0) {
+    const rest = m.slice(idx + marker.length).trim();
+    // Take the name token; strip trailing quote / punctuation from wrappers.
+    const name = rest.split(/[\s'"]/)[0]?.replace(/[.,;:]+$/, '') || '';
+    return { name };
   }
-  if (m === 'assistant_name_exists') return { name: '' };
-  return null;
+  return { name: '' };
 }
 
 function isAbortError(msg: string): boolean {
