@@ -164,8 +164,10 @@ jobs:
           )
 
           if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            # Existing release: upload assets only. Do not replace notes
+            # (manual Changelog / Keep a Changelog body must survive CI).
             gh release upload "$TAG" upload/* --repo "${{ github.repository }}" --clobber
-            gh release edit "$TAG" --repo "${{ github.repository }}" --notes "$NOTES" --latest
+            gh release edit "$TAG" --repo "${{ github.repository }}" --latest
           else
             gh release create "$TAG" upload/* \
               --repo "${{ github.repository }}" \
