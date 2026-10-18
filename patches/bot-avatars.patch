@@ -13,3 +13,13 @@
        fo(), So && So.disconnect();
      };
    }, [sn]);
+@@ -3331,8 +3332,7 @@
+     marginTop: rs(xs + X0),
+     marginBottom: rs(xs - X0),
+     flex: "none",
+-    opacity: _n ? 1 : 0,
+-    transition: "opacity 0.3s ease-out",
++    opacity: 1,
+     ...Mn
+   }, y0 = (kt) => {
+     var _t, Nt;

@@ -20,7 +20,7 @@ export type SessionRecordV2 = {
     /** Short preview snapshot of the quoted message. */
     quotePreview?: string;
     /** User attachments for chip UI (content may still carry `[Attached]` for the model). */
-    attachments?: Array<{ kind: 'image' | 'file' | 'folder'; path: string; name: string }>;
+    attachments?: Array<{ kind: 'image' | 'file' | 'folder'; path: string; name: string; size?: number }>;
     /** Assistant turn token usage. */
     usage?: { input: number; output: number; cache: number };
     /** Assistant turn waterfall timeline (model / tools / approval). */
@@ -56,8 +56,7 @@ export type TaskProgressItemStatus = import('@okbot/shared').TaskStatus;
 /** @deprecated Use TaskStep from @okbot/shared. */
 export type TaskProgressItem = import('@okbot/shared').TaskStep;
 /**
- * @deprecated Legacy single-plan shape (task-progress.json). Prefer TaskRecord.
- * Kept for one-shot migration into tasks.jsonl.
+ * @deprecated Legacy single-plan view shape. Prefer TaskRecord / tasks.jsonl.
  */
 export type TaskProgressRecord = {
   v: 1;

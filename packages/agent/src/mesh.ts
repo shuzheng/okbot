@@ -177,7 +177,7 @@ export function buildAskAssistantTool(input: BuildAskAssistantToolInput): Tool |
             calleeName: peer.name,
             calleeDescription: peer.description,
             callerName: input.callerName,
-            agentsMd: peer.agentsMd,
+            soulMd: peer.soulMd,
             skillsText: peer.skillsText,
             memoriesText: peer.memoriesText,
             prefs: toolPrefs,
@@ -199,7 +199,7 @@ export function buildAskAssistantTool(input: BuildAskAssistantToolInput): Tool |
           useResponses: input.model.apiFormat === 'responses',
         });
         const runner = new Runner({ modelProvider: provider, model: input.model.model });
-        const runOpts: { stream: true; signal?: AbortSignal; maxTurns?: number } = {
+        const runOpts: { stream: true; signal?: AbortSignal; maxTurns: number } = {
           stream: true,
           signal: input.signal,
           maxTurns: memberMaxTurns,

@@ -3,24 +3,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { listTrayIconCandidates, trayResourcesDir } from './appTrayPaths';
+import { buildTrayMenuTemplate, type AppTrayCallbacks } from './appTrayMenu';
+
+export type { AppTrayLabels, AppTrayCallbacks } from './appTrayMenu';
+export { buildTrayMenuTemplate, collectTraySessions } from './appTrayMenu';
+export { listTrayIconCandidates, pickTrayIconPath, trayResourcesDir } from './appTrayPaths';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 let tray: Tray | null = null;
-
-export type AppTrayLabels = {
-  show: string;
-  quit: string;
-  tooltip: string;
-};
-
-export type AppTrayCallbacks = {
-  showWindow: () => void;
-  quitApp: () => void;
-  labels: AppTrayLabels;
-};
-
-export { listTrayIconCandidates, pickTrayIconPath, trayResourcesDir } from './appTrayPaths';
 
 function resolveTrayIcon(): Electron.NativeImage {
   const resourcesDir = trayResourcesDir(__dirname);
@@ -49,11 +40,7 @@ function resolveTrayIcon(): Electron.NativeImage {
 }
 
 function buildTrayMenu(cb: AppTrayCallbacks): Menu {
-  return Menu.buildFromTemplate([
-    { label: cb.labels.show, click: () => cb.showWindow() },
-    { type: 'separator' },
-    { label: cb.labels.quit, click: () => cb.quitApp() },
-  ]);
+  return Menu.buildFromTemplate(buildTrayMenuTemplate(cb));
 }
 
 /** Create or refresh the system tray / macOS menu bar icon. Returns false if unsupported. */

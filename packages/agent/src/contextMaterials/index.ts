@@ -6,7 +6,7 @@ export type {
 
 /** Refresh implementations (LLM extract / patch). */
 export {
-  refreshAgentsMd,
+  refreshSoulMd,
   refreshBotSkills,
   refreshMemories,
   type SkillRefreshResult,

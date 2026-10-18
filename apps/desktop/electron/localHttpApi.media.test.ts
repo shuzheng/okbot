@@ -66,6 +66,49 @@ try {
     `${base}/v1/media/${ownerId}/resources/${encodeURIComponent('..settings.json')}?token=${encodeURIComponent(TOKEN)}`,
   );
   assert.equal(traversalDots.status, 400);
+
+  // POST uploads → ~/.okbot/<owner>/uploads/ then GET /v1/media/…/uploads/…
+  const bot = storage.createBot({ name: 'UploadBot' });
+  const uploadPng = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64',
+  );
+  const uploadRes = await fetch(`${base}/v1/bots/${encodeURIComponent(bot.id)}/uploads`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${TOKEN}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      name: 'clip.png',
+      mime: 'image/png',
+      dataBase64: uploadPng.toString('base64'),
+    }),
+  });
+  const uploadRaw = await uploadRes.text();
+  assert.equal(uploadRes.status, 200, uploadRaw);
+  const uploadJson = JSON.parse(uploadRaw) as {
+    ok: boolean;
+    attachment: { kind: string; path: string; name: string; size: number; mediaPath: string; assetRel: string };
+  };
+  assert.equal(uploadJson.ok, true);
+  assert.equal(uploadJson.attachment.kind, 'image');
+  assert.equal(uploadJson.attachment.name, 'clip.png');
+  assert.equal(uploadJson.attachment.size, uploadPng.length);
+  assert.match(uploadJson.attachment.mediaPath, /\/v1\/media\/.+\/uploads\//);
+  assert.equal(fs.existsSync(uploadJson.attachment.path), true);
+  assert.match(uploadJson.attachment.path.replace(/\\/g, '/'), /\/uploads\//);
+
+  const uploadGet = await fetch(
+    `${base}${uploadJson.attachment.mediaPath}?token=${encodeURIComponent(TOKEN)}`,
+  );
+  assert.equal(uploadGet.status, 200);
+  assert.equal(uploadGet.headers.get('content-type'), 'image/png');
+  const uploadBody = Buffer.from(await uploadGet.arrayBuffer());
+  assert.equal(uploadBody.equals(uploadPng), true);
+
+  const uploadUnauth = await fetch(`${base}${uploadJson.attachment.mediaPath}`);
+  assert.equal(uploadUnauth.status, 401);
 } finally {
   api.stop();
   fs.rmSync(root, { recursive: true, force: true });

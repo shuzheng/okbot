@@ -234,7 +234,7 @@ export function AutoApprovalRulesList({ lang, rules, onChange, requestAdd = 0, r
   const showEmpty = rules.length === 0 && editingId !== 'new';
 
   return (
-    <div className="settings-aar-inline">
+    <div className="settings-aar-inline list-card">
       <div ref={listScrollRef} className="aar-list-scroll scroll-fade">
         {showEmpty ? <div className="aar-empty">{t(lang, 'autoApprovalEmpty')}</div> : null}
         {rules.map((rule) =>

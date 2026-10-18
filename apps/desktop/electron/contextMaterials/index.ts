@@ -2,7 +2,9 @@
  * Context materials module (desktop).
  *
  * Owns the lifecycle boundary for:
- * - AGENTS.md / skills / memories / roster description silent refresh (throttled)
+ * - SOUL.md / skills / memories / roster description silent refresh (throttled)
+ * - post-onboarding roster description seed (immediate, no turn throttle)
+ * - post-rename roster description refresh (immediate, no turn throttle)
  * - session summary durable-fact extraction
  * - memory prompt capping
  *
@@ -33,6 +35,13 @@ export {
   extractMemoriesFromFoldedHistory,
   runThrottledPostTurnMaintenance,
   runThrottledPostTurnSquadDescriptionRefresh,
+  seedBotDescriptionAfterOnboarding,
+  didOwnerNameChange,
+  refreshOwnerDescriptionAfterRename,
+  markPendingDescriptionAfterOnboardingSkip,
+  hasPendingDescriptionAfterOnboardingSkip,
+  clearPendingDescriptionAfterOnboardingSkip,
+  resetPendingDescriptionAfterOnboardingSkipForTests,
   dedupeMemoryFacts,
   extractDurableFacts,
   formatCappedMemoriesForPrompt,

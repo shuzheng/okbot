@@ -8,7 +8,7 @@ import {
   type Tool,
 } from '@openai/agents';
 import type { ChatMessage, ResolvedModelConfig, SecuritySettings, ToolPreferences, WebSettings } from '@okbot/shared';
-import { createId, DEFAULT_SECURITY, DEFAULT_TOOL_PREFERENCES } from '@okbot/shared';
+import { createId, DEFAULT_RUNNER_MAX_TURNS, DEFAULT_SECURITY, DEFAULT_TOOL_PREFERENCES } from '@okbot/shared';
 import { buildAgentInstructions } from './instructions.js';
 import { shellFsRoutingSection, type ComputerRoute } from './computerSelection.js';
 import { buildTools, resolveImageCapability, type SkillLookup } from './tools.js';
@@ -103,7 +103,7 @@ export type AgentRunStreamResult = Awaited<ReturnType<Runner['run']>> & {
 export function createAgentAndRunner(input: {
   botName: string;
   botDescription: string;
-  agentsMd?: string;
+  soulMd?: string;
   skillsText?: string;
   skillLookup?: SkillLookup;
   historySearch?: import('./tools.js').HistorySearch;
@@ -186,7 +186,7 @@ export function createAgentAndRunner(input: {
       input.botDescription,
       historyForInstructions,
       toolPrefs,
-      input.agentsMd,
+      input.soulMd,
       input.skillsText,
       input.memoriesText,
       input.sessionSummary,
@@ -236,7 +236,7 @@ export function buildRunOpts(input: {
   signal?: AbortSignal;
   session?: Session;
   sessionInputCallback?: SessionInputCallback;
-  /** When set, passed to runner.run (avoids SDK DEFAULT_MAX_TURNS=10). */
+  /** Override hardcoded DEFAULT_RUNNER_MAX_TURNS (avoids SDK DEFAULT_MAX_TURNS=10). */
   maxTurns?: number;
 }) {
   const runOpts: {
@@ -244,11 +244,13 @@ export function buildRunOpts(input: {
     signal?: AbortSignal;
     session?: Session;
     sessionInputCallback?: SessionInputCallback;
-    maxTurns?: number;
-  } = { stream: true, signal: input.signal };
-  if (input.maxTurns != null) {
-    runOpts.maxTurns = input.maxTurns;
-  }
+    maxTurns: number;
+  } = {
+    stream: true,
+    signal: input.signal,
+    // Always pass a finite cap — SDK falls back to 10 when omitted.
+    maxTurns: input.maxTurns ?? DEFAULT_RUNNER_MAX_TURNS,
+  };
   if (input.session) {
     runOpts.session = input.session;
     runOpts.sessionInputCallback =

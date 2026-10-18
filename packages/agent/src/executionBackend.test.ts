@@ -123,3 +123,27 @@ assert.doesNotMatch(refused, /should-not-run/);
 
 await new Promise<void>((resolve) => server.close(() => resolve()));
 console.log('executionBackend.test.ts: ok');
+
+
+{
+  const fs = await import('node:fs/promises');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'okbot-res-'));
+  const resourcesDir = path.join(root, 'resources');
+  await fs.mkdir(resourcesDir, { recursive: true });
+  const backend = createLocalExecutionBackend({ resourcesDir });
+  const out = await backend.writeFile('hello.txt', 'hi-from-resources');
+  assert.match(out, /hello\.txt/);
+  const abs = path.join(resourcesDir, 'hello.txt');
+  const body = await fs.readFile(abs, 'utf8');
+  assert.equal(body, 'hi-from-resources');
+  const read = await backend.readFile('hello.txt');
+  assert.match(read, /hi-from-resources/);
+  // Absolute path still respected
+  const other = path.join(root, 'outside.txt');
+  await backend.writeFile(other, 'outside');
+  assert.equal(await fs.readFile(other, 'utf8'), 'outside');
+  await fs.rm(root, { recursive: true, force: true });
+  console.log('executionBackend resourcesDir relative: ok');
+}

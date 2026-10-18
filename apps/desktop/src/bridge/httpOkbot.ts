@@ -361,6 +361,42 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
       }
       return [];
     },
+    listOwnerTasks: async (ownerId: string) => {
+      const id = (ownerId || '').trim();
+      if (!id) return [];
+      try {
+        const res = await api<any>('GET', `/v1/bots/${encodeURIComponent(id)}/tasks?all=1`);
+        if (Array.isArray(res)) return res;
+        if (res && Array.isArray(res.tasks)) return res.tasks;
+      } catch {
+        try {
+          const res = await api<any>('GET', `/v1/squads/${encodeURIComponent(id)}/tasks?all=1`);
+          if (Array.isArray(res)) return res;
+          if (res && Array.isArray(res.tasks)) return res.tasks;
+        } catch {
+          /* optional */
+        }
+      }
+      return [];
+    },
+    listOwnerResources: async (ownerId: string) => {
+      const id = (ownerId || '').trim();
+      if (!id) return [];
+      try {
+        const res = await api<any>('GET', `/v1/bots/${encodeURIComponent(id)}/resources`);
+        if (Array.isArray(res)) return res;
+        if (res && Array.isArray(res.resources)) return res.resources;
+      } catch {
+        try {
+          const res = await api<any>('GET', `/v1/squads/${encodeURIComponent(id)}/resources`);
+          if (Array.isArray(res)) return res;
+          if (res && Array.isArray(res.resources)) return res.resources;
+        } catch {
+          /* optional */
+        }
+      }
+      return [];
+    },
     getMessages: async (botId: string, opts?: { limit?: number }) => {
       const raw = opts?.limit;
       const limit =
@@ -476,6 +512,8 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
       runtimeListeners.add(cb);
       return () => runtimeListeners.delete(cb);
     },
+    /** Desktop tray / hotkey navigation — no-op on pure gateway web. */
+    onShellNavigate: (_cb: (payload: unknown) => void) => () => {},
     copyText: async (text: string) => {
       try {
         await navigator.clipboard.writeText(text);
@@ -572,6 +610,49 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
         return '';
       }
     },
+    uploadOwnerAttachment: async (payload: {
+      ownerId: string;
+      name?: string;
+      localPath?: string;
+      dataBase64?: string;
+      mime?: string;
+    }) => {
+      const ownerId = (payload?.ownerId || '').trim();
+      if (!ownerId) return { ok: false as const, error: 'missing_owner' };
+      const dataBase64 = typeof payload?.dataBase64 === 'string' ? payload.dataBase64.trim() : '';
+      const name = typeof payload?.name === 'string' ? payload.name.trim() : '';
+      const mime = typeof payload?.mime === 'string' ? payload.mime.trim() : '';
+      // Gateway clients cannot stream a client-local path; require bytes.
+      if (!dataBase64) {
+        return { ok: false as const, error: 'missing_data' };
+      }
+      const kindPrefix = ownerId.startsWith('squad_') ? 'squads' : 'bots';
+      try {
+        const res = await api<{
+          ok?: boolean;
+          attachment?: {
+            kind: 'image' | 'file';
+            path: string;
+            name: string;
+            size: number;
+            mediaPath: string;
+            assetRel: string;
+          };
+          error?: string;
+        }>('POST', `/v1/${kindPrefix}/${encodeURIComponent(ownerId)}/uploads`, {
+          name: name || 'file',
+          dataBase64,
+          ...(mime ? { mime } : {}),
+        });
+        if (!res?.ok || !res.attachment) {
+          return { ok: false as const, error: res?.error || 'upload_failed' };
+        }
+        return { ok: true as const, attachment: res.attachment };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { ok: false as const, error: msg };
+      }
+    },
     readGeneratedAssetDataUrl: async (assetRel: string) => {
       const rel = String(assetRel || '')
         .replace(/^okbot-asset:/i, '')
@@ -579,13 +660,19 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
         .replace(/^\/+/, '')
         .replace(/\\/g, '/');
       const parts = rel.split('/');
-      if (parts.length !== 3 || parts[1] !== 'resources' || !parts[0] || !parts[2]) {
-        return { ok: false as const, error: 'asset must be <ownerId>/resources/<file>' };
+      const subdir = parts[1];
+      if (
+        parts.length !== 3 ||
+        (subdir !== 'resources' && subdir !== 'uploads') ||
+        !parts[0] ||
+        !parts[2]
+      ) {
+        return { ok: false as const, error: 'asset must be <ownerId>/{resources|uploads}/<file>' };
       }
       if (rel.includes('..')) {
         return { ok: false as const, error: 'invalid asset path' };
       }
-      const path = `/v1/media/${encodeURIComponent(parts[0])}/resources/${encodeURIComponent(parts[2])}`;
+      const path = `/v1/media/${encodeURIComponent(parts[0])}/${subdir}/${encodeURIComponent(parts[2])}`;
       try {
         const token = gatewayToken();
         const res = await fetch(endpoint(path), {
@@ -634,7 +721,7 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
     }) => rpc('manageScheduledJob', payload ?? {}),
     listBotSkills: (botId: string) => rpc('listBotSkills', { botId }),
     listGlobalAgentsSkills: () => rpc('listGlobalAgentsSkills'),
-    readAgentsMd: (botId: string) => rpc<string>('readAgentsMd', { botId }),
+    readSoulMd: (botId: string) => rpc<string>('readSoulMd', { botId }),
     createBot: (input: Record<string, unknown>) => rpc('createBot', input ?? {}),
     createSquad: (input: Record<string, unknown>) => rpc('createSquad', input ?? {}),
     updateBot: (id: string, patch: Record<string, unknown>) => rpc('updateBot', { id, patch }),
@@ -643,7 +730,7 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
     deleteBot: (id: string) => rpc<boolean>('deleteBot', { id }),
     updateSquad: (id: string, patch: Record<string, unknown>) => rpc('updateSquad', { id, patch }),
     deleteSquad: (id: string) => rpc<boolean>('deleteSquad', { id }),
-    writeAgentsMd: (botId: string, content: string) => rpc<boolean>('writeAgentsMd', { botId, content }),
+    writeSoulMd: (botId: string, content: string) => rpc<boolean>('writeSoulMd', { botId, content }),
     upsertBotMemory: (entry: Record<string, unknown>) => rpc<boolean>('upsertBotMemory', { entry }),
     deleteBotMemory: (botId: string, memoryId: string) =>
       rpc<boolean>('deleteBotMemory', { botId, memoryId }),

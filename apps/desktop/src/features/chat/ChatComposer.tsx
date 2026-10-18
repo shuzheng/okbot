@@ -12,6 +12,7 @@ import {
   MicStopIcon,
 } from '../../components/ui/icons';
 import { ComposerAttachMenu, type AttachKind } from './ComposerAttachMenu';
+import { formatBytes } from '../../utils/ownerUpload';
 
 export type ComposerQuoteDraft = {
   messageId: string;
@@ -21,8 +22,14 @@ export type ComposerQuoteDraft = {
 export type ComposerAttachment = {
   id: string;
   kind: AttachKind;
+  /** Absolute path on the gateway host (uploads/ or folder path). */
   path: string;
   name: string;
+  size?: number;
+  /** Gateway media pathname `/v1/media/<owner>/uploads/<file>`. */
+  mediaPath?: string;
+  /** Local blob: URL for pending image thumbs (revoked on remove). */
+  previewUrl?: string;
 };
 
 export type ChatComposerProps = {
@@ -41,6 +48,8 @@ export type ChatComposerProps = {
   onClearQuote: () => void;
   onRemoveAttachment: (id: string) => void;
   onPickAttach: (kind: AttachKind) => void;
+  /** Return true when clipboard files were consumed (skip text paste). */
+  onPasteFiles?: (clipboardData: DataTransfer | null) => boolean | Promise<boolean>;
   onSend: () => void;
   onStop: () => void;
   onToggleVoice: () => void;
@@ -72,6 +81,7 @@ export const ChatComposer = memo(function ChatComposer({
   onClearQuote,
   onRemoveAttachment,
   onPickAttach,
+  onPasteFiles,
   onSend,
   onStop,
   onToggleVoice,
@@ -191,7 +201,7 @@ export const ChatComposer = memo(function ChatComposer({
     el.style.overflowY = atCap ? 'auto' : 'hidden';
 
     setIsMultiline((prev) => (prev === nextMultiline ? prev : nextMultiline));
-  }, [draft, listening, composerRef]);
+  }, [draft, listening, composerRef, attachments.length]);
 
   const hasDraft = Boolean(draft.trim());
   const hasAttachments = attachments.length > 0;
@@ -203,7 +213,68 @@ export const ChatComposer = memo(function ChatComposer({
   const showSend = !listening && (canSend || !showStop);
 
   const inner = (
-    <div className={`composer-inner${listening ? ' listening' : ''}${isMultiline ? ' is-multiline' : ''}`}>
+    <div className={`composer-inner${listening ? ' listening' : ''}${isMultiline ? ' is-multiline' : ''}${hasAttachments ? ' has-attachments' : ''}`}>
+      {hasAttachments ? (
+        <div
+          className="composer-attachments"
+          role="list"
+          aria-label={t(lang, 'attachPending')}
+        >
+          {attachments.map((a) =>
+            a.kind === 'image' ? (
+              <div
+                key={a.id}
+                className="composer-attach-thumb"
+                role="listitem"
+                title={a.name}
+              >
+                {a.previewUrl ? (
+                  <img src={a.previewUrl} alt={a.name} draggable={false} />
+                ) : (
+                  <span className="composer-attach-thumb-fallback" aria-hidden>
+                    <ImageAttachIcon />
+                  </span>
+                )}
+                <button
+                  type="button"
+                  className="composer-attach-thumb-x"
+                  title={t(lang, 'attachRemove')}
+                  aria-label={t(lang, 'attachRemove')}
+                  onClick={() => onRemoveAttachment(a.id)}
+                >
+                  <CloseIcon />
+                </button>
+              </div>
+            ) : (
+              <div
+                key={a.id}
+                className="composer-attach-chip"
+                role="listitem"
+                title={a.path}
+              >
+                <span className="composer-attach-chip-icon" aria-hidden>
+                  <AttachKindIcon kind={a.kind} />
+                </span>
+                <span className="composer-attach-chip-meta">
+                  <span className="composer-attach-chip-name">{a.name}</span>
+                  {a.size != null && a.size >= 0 ? (
+                    <span className="composer-attach-chip-size">{formatBytes(a.size)}</span>
+                  ) : null}
+                </span>
+                <button
+                  type="button"
+                  className="composer-attach-chip-x"
+                  title={t(lang, 'attachRemove')}
+                  aria-label={t(lang, 'attachRemove')}
+                  onClick={() => onRemoveAttachment(a.id)}
+                >
+                  <CloseIcon />
+                </button>
+              </div>
+            ),
+          )}
+        </div>
+      ) : null}
       {listening ? (
         <ThinkingOrb
           className="composer-orb"
@@ -223,6 +294,19 @@ export const ChatComposer = memo(function ChatComposer({
         value={draft}
         rows={1}
         onChange={listening ? () => undefined : (e) => onDraftChange(e.target.value)}
+        onPaste={(e) => {
+          if (listening || !onPasteFiles) return;
+          const dt = e.clipboardData;
+          // Peek synchronously; if files present, prevent text paste and upload.
+          const types = Array.from(dt?.types ?? []);
+          const maybeFiles =
+            types.includes('Files') ||
+            types.some((t) => /^image\//i.test(t)) ||
+            (dt?.files?.length ?? 0) > 0;
+          if (!maybeFiles) return;
+          e.preventDefault();
+          void onPasteFiles(dt);
+        }}
         onKeyDown={(e) => {
           if (listening) {
             e.preventDefault();
@@ -288,31 +372,6 @@ export const ChatComposer = memo(function ChatComposer({
           >
             <CloseIcon />
           </button>
-        </div>
-      ) : null}
-      {hasAttachments ? (
-        <div
-          className="composer-attachments"
-          role="list"
-          aria-label={t(lang, 'attachPending')}
-        >
-          {attachments.map((a) => (
-            <div key={a.id} className="composer-attach-chip" role="listitem" title={a.path}>
-              <span className="composer-attach-chip-icon" aria-hidden>
-                <AttachKindIcon kind={a.kind} />
-              </span>
-              <span className="composer-attach-chip-name">{a.name}</span>
-              <button
-                type="button"
-                className="composer-attach-chip-x"
-                title={t(lang, 'attachRemove')}
-                aria-label={t(lang, 'attachRemove')}
-                onClick={() => onRemoveAttachment(a.id)}
-              >
-                <CloseIcon />
-              </button>
-            </div>
-          ))}
         </div>
       ) : null}
       <div className="composer-row">

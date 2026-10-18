@@ -24,8 +24,8 @@ fs.mkdirSync(leftover);
 const bot3 = s.createBot({ name: '测3' });
 if (bot3.id !== `bot_${today}_011`) throw new Error(`expected id after leftover dir bot_${today}_011 got ${bot3.id}`);
 if (!fs.existsSync(path.join(root, bot.id, 'session.jsonl'))) throw new Error('no session file');
-if (!fs.existsSync(path.join(root, bot.id, 'AGENTS.md'))) throw new Error('no AGENTS.md');
-if (!s.readAgentsMd(bot.id).includes('角色与目标')) throw new Error('bad AGENTS.md');
+if (!fs.existsSync(path.join(root, bot.id, 'SOUL.md'))) throw new Error('no SOUL.md');
+if (!s.readSoulMd(bot.id).includes('个性与边界')) throw new Error('bad SOUL.md');
 s.appendMessage(bot.id, {
   id: '1',
   role: 'user',

@@ -1,6 +1,6 @@
 {
   "name": "@okbot/desktop",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "private": true,
   "description": "OkBot desktop shell",
   "main": "./out/main/index.js",
@@ -9,9 +9,9 @@
     "okbot": "./bin/okbot.mjs"
   },
   "scripts": {
-    "dev": "node ./scripts/sync-gallery.mjs && node ./scripts/ensure-mic-plist.mjs && electron-vite dev",
+    "dev": "pnpm --filter @okbot/shared build && pnpm --filter @okbot/agent build && node ./scripts/sync-gallery.mjs && node ./scripts/ensure-mic-plist.mjs && electron-vite dev",
     "ensure-mic": "node ./scripts/ensure-mic-plist.mjs",
-    "build": "pnpm --filter @okbot/agent build && node ./scripts/sync-gallery.mjs && electron-vite build",
+    "build": "pnpm --filter @okbot/shared build && pnpm --filter @okbot/agent build && node ./scripts/sync-gallery.mjs && electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dist": "pnpm build && electron-builder --config electron-builder.yml",

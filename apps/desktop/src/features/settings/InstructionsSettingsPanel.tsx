@@ -11,8 +11,8 @@ import { t, type UiLang } from '../../i18n';
 
 export function InstructionsSettingsPanel({
   lang,
-  agentsMdRecentMessageLimit,
-  agentsMdRefreshSystemPrompt,
+  soulMdRecentMessageLimit,
+  soulMdRefreshSystemPrompt,
   assistantRoleTemplate,
   captainMaxTurns,
   captainPersona,
@@ -20,8 +20,8 @@ export function InstructionsSettingsPanel({
   memberMaxTurns,
   memoryRecentMessageLimit,
   scopeInstruction,
-  setAgentsMdRecentMessageLimit,
-  setAgentsMdRefreshSystemPrompt,
+  setSoulMdRecentMessageLimit,
+  setSoulMdRefreshSystemPrompt,
   setAssistantRoleTemplate,
   setCaptainMaxTurns,
   setCaptainPersona,
@@ -40,8 +40,8 @@ export function InstructionsSettingsPanel({
 }: {
   settings: AppSettings;
   lang: UiLang;
-  agentsMdRecentMessageLimit: any;
-  agentsMdRefreshSystemPrompt: any;
+  soulMdRecentMessageLimit: any;
+  soulMdRefreshSystemPrompt: any;
   assistantRoleTemplate: any;
   captainMaxTurns: any;
   captainPersona: any;
@@ -49,8 +49,8 @@ export function InstructionsSettingsPanel({
   memberMaxTurns: any;
   memoryRecentMessageLimit: any;
   scopeInstruction: any;
-  setAgentsMdRecentMessageLimit: React.Dispatch<React.SetStateAction<any>>;
-  setAgentsMdRefreshSystemPrompt: React.Dispatch<React.SetStateAction<any>>;
+  setSoulMdRecentMessageLimit: React.Dispatch<React.SetStateAction<any>>;
+  setSoulMdRefreshSystemPrompt: React.Dispatch<React.SetStateAction<any>>;
   setAssistantRoleTemplate: React.Dispatch<React.SetStateAction<any>>;
   setCaptainMaxTurns: React.Dispatch<React.SetStateAction<any>>;
   setCaptainPersona: React.Dispatch<React.SetStateAction<any>>;
@@ -95,9 +95,9 @@ export function InstructionsSettingsPanel({
         <button
           type="button"
           role="tab"
-          aria-selected={instructionsSubTab === 'agents'}
-          className={instructionsSubTab === 'agents' ? 'active' : ''}
-          onClick={() => setInstructionsSubTab('agents')}
+          aria-selected={instructionsSubTab === 'soul'}
+          className={instructionsSubTab === 'soul' ? 'active' : ''}
+          onClick={() => setInstructionsSubTab('soul')}
         >
           {t(lang, 'instructionsAgents')}
         </button>
@@ -146,8 +146,8 @@ export function InstructionsSettingsPanel({
                 onBlur={() => {
                   const s = normalizeInstructionsSettings({
                     assistantRoleTemplate,
-                    agentsMdRefreshSystemPrompt,
-                    agentsMdRecentMessageLimit: keptNumber(agentsMdRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).agentsMdRecentMessageLimit),
+                    soulMdRefreshSystemPrompt,
+                    soulMdRecentMessageLimit: keptNumber(soulMdRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).soulMdRecentMessageLimit),
                     skillsCreateUpdateInstruction,
                     skillsRecentMessageLimit: keptNumber(skillsRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).skillsRecentMessageLimit),
                   });
@@ -269,49 +269,49 @@ export function InstructionsSettingsPanel({
             </div>
           </div>
         </>
-      ) : instructionsSubTab === 'agents' ? (
+      ) : instructionsSubTab === 'soul' ? (
         <>
           <div
             className="settings-section-label"
-            data-settings-id="agentsMdRefreshSystemPrompt"
+            data-settings-id="soulMdRefreshSystemPrompt"
           >
             {t(lang, 'instructionsAgents')}
           </div>
           <div className="settings-card settings-card-squad">
             <div
               className="settings-row settings-row-stack"
-              data-settings-id="agentsMdRefreshSystemPrompt"
+              data-settings-id="soulMdRefreshSystemPrompt"
             >
               <span className="settings-row-label">
                 <span className="settings-row-label-text">
-                  {t(lang, 'agentsMdRefreshSystemPrompt')}
+                  {t(lang, 'soulMdRefreshSystemPrompt')}
                 </span>
-                <SettingsHelpTip text={t(lang, 'agentsMdRefreshSystemPromptHint')} />
+                <SettingsHelpTip text={t(lang, 'soulMdRefreshSystemPromptHint')} />
               </span>
               <textarea
                 className="settings-paths-textarea"
                 spellCheck={false}
                 rows={8}
-                value={agentsMdRefreshSystemPrompt}
-                onChange={(e) => setAgentsMdRefreshSystemPrompt(e.target.value)}
+                value={soulMdRefreshSystemPrompt}
+                onChange={(e) => setSoulMdRefreshSystemPrompt(e.target.value)}
                 onBlur={() => {
                   const s = normalizeInstructionsSettings({
                     assistantRoleTemplate,
-                    agentsMdRefreshSystemPrompt,
-                    agentsMdRecentMessageLimit: keptNumber(agentsMdRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).agentsMdRecentMessageLimit),
+                    soulMdRefreshSystemPrompt,
+                    soulMdRecentMessageLimit: keptNumber(soulMdRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).soulMdRecentMessageLimit),
                     skillsCreateUpdateInstruction,
                     skillsRecentMessageLimit: keptNumber(skillsRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).skillsRecentMessageLimit),
                   });
-                  setAgentsMdRefreshSystemPrompt(s.agentsMdRefreshSystemPrompt);
+                  setSoulMdRefreshSystemPrompt(s.soulMdRefreshSystemPrompt);
                 }}
               />
             </div>
-            <div className="settings-row" data-settings-id="agentsMdRecentMessageLimit">
+            <div className="settings-row" data-settings-id="soulMdRecentMessageLimit">
               <span className="settings-row-label">
                 <span className="settings-row-label-text">
-                  {t(lang, 'agentsMdRecentMessageLimit')}
+                  {t(lang, 'soulMdRecentMessageLimit')}
                 </span>
-                <SettingsHelpTip text={t(lang, 'agentsMdRecentMessageLimitHint')} />
+                <SettingsHelpTip text={t(lang, 'soulMdRecentMessageLimitHint')} />
               </span>
               <input
                 spellCheck={false}
@@ -320,17 +320,17 @@ export function InstructionsSettingsPanel({
                 min={1}
                 max={100}
                 step={1}
-                value={agentsMdRecentMessageLimit}
-                onChange={(e) => setAgentsMdRecentMessageLimit(e.target.value)}
+                value={soulMdRecentMessageLimit}
+                onChange={(e) => setSoulMdRecentMessageLimit(e.target.value)}
                 onBlur={() => {
                   const s = normalizeInstructionsSettings({
                     assistantRoleTemplate,
-                    agentsMdRefreshSystemPrompt,
-                    agentsMdRecentMessageLimit: keptNumber(agentsMdRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).agentsMdRecentMessageLimit),
+                    soulMdRefreshSystemPrompt,
+                    soulMdRecentMessageLimit: keptNumber(soulMdRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).soulMdRecentMessageLimit),
                     skillsCreateUpdateInstruction,
                     skillsRecentMessageLimit: keptNumber(skillsRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).skillsRecentMessageLimit),
                   });
-                  setAgentsMdRecentMessageLimit(String(s.agentsMdRecentMessageLimit));
+                  setSoulMdRecentMessageLimit(String(s.soulMdRecentMessageLimit));
                 }}
               />
             </div>
@@ -422,8 +422,8 @@ export function InstructionsSettingsPanel({
                 onBlur={() => {
                   const s = normalizeInstructionsSettings({
                     assistantRoleTemplate,
-                    agentsMdRefreshSystemPrompt,
-                    agentsMdRecentMessageLimit: keptNumber(agentsMdRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).agentsMdRecentMessageLimit),
+                    soulMdRefreshSystemPrompt,
+                    soulMdRecentMessageLimit: keptNumber(soulMdRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).soulMdRecentMessageLimit),
                     skillsCreateUpdateInstruction,
                     skillsRecentMessageLimit: keptNumber(skillsRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).skillsRecentMessageLimit),
                   });
@@ -450,8 +450,8 @@ export function InstructionsSettingsPanel({
                 onBlur={() => {
                   const s = normalizeInstructionsSettings({
                     assistantRoleTemplate,
-                    agentsMdRefreshSystemPrompt,
-                    agentsMdRecentMessageLimit: keptNumber(agentsMdRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).agentsMdRecentMessageLimit),
+                    soulMdRefreshSystemPrompt,
+                    soulMdRecentMessageLimit: keptNumber(soulMdRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).soulMdRecentMessageLimit),
                     skillsCreateUpdateInstruction,
                     skillsRecentMessageLimit: keptNumber(skillsRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).skillsRecentMessageLimit),
                   });

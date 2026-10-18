@@ -1,7 +1,8 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Bot, Squad } from '@okbot/shared';
 import type { Selection, SessionItem } from '../../../types';
 import { saveLastSelection } from '../../sidebar';
+import { SESSION_AVATAR_IDLE_MS } from '../../../utils/sessionAvatarMotion';
 
 /**
  * Roster + selection + unread helpers.
@@ -11,6 +12,25 @@ export function useSessions() {
   const [bots, setBots] = useState<Bot[]>([]);
   const [squads, setSquads] = useState<Squad[]>([]);
   const [selection, setSelection] = useState<Selection>(null);
+  /** ownerId → last open/interact timestamp (ms). Drives sidebar 3D avatar 闲/静止. */
+  const [sessionInteractedAt, setSessionInteractedAt] = useState<Record<string, number>>({});
+  /** Coarse clock so 1-minute idle → 静止 without per-row timers. */
+  const [avatarMotionNow, setAvatarMotionNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const id = window.setInterval(() => setAvatarMotionNow(Date.now()), 30_000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const touchSessionInteraction = useCallback((ownerId: string) => {
+    if (!ownerId) return;
+    const t = Date.now();
+    setSessionInteractedAt((prev) => {
+      if (prev[ownerId] === t) return prev;
+      return { ...prev, [ownerId]: t };
+    });
+    setAvatarMotionNow(t);
+  }, []);
 
   const markSessionUnread = (ownerId: string, hasUnread: boolean) => {
     if (!ownerId) return;
@@ -47,7 +67,10 @@ export function useSessions() {
 
   const selectSession = (next: Selection) => {
     setSelection(next);
-    if (next) clearUnreadForSelection(next);
+    if (next) {
+      clearUnreadForSelection(next);
+      touchSessionInteraction(next.id);
+    }
   };
 
   const sessionHasUnread = useCallback(
@@ -74,6 +97,7 @@ export function useSessions() {
   const persistSelection = (sel: Selection) => {
     setSelection(sel);
     saveLastSelection(sel);
+    if (sel) touchSessionInteraction(sel.id);
   };
 
   return {
@@ -89,5 +113,10 @@ export function useSessions() {
     sessionHasUnread,
     sessions,
     persistSelection,
+    sessionInteractedAt,
+    avatarMotionNow,
+    touchSessionInteraction,
+    /** Exported for tests / docs — idle threshold for 静止. */
+    sessionAvatarIdleMs: SESSION_AVATAR_IDLE_MS,
   };
 }

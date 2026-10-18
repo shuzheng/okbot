@@ -60,39 +60,10 @@ function PeerBubble(props: {
   );
 }
 
-/** Caller + callee: same `.header-identity` / `.header-avatar` / `h1` as private-chat header. */
-function HeaderIdentity({
-  bot,
-  name,
-  primary = false,
-}: {
-  bot: MentionBotRef;
-  name: string;
-  primary?: boolean;
-}) {
-  return (
-    <div
-      className={`header-identity ${
-        primary ? 'mesh-exchange-header-primary' : 'mesh-exchange-header-peer'
-      }`}
-    >
-      <FlatAvatar
-        className="header-avatar"
-        emoji={bot.emoji || '🤖'}
-        color={bot.color || ''}
-        avatarKind={bot.avatarKind}
-        botAvatarType={bot.botAvatarType}
-        title={name}
-        paused
-      />
-      <h1>{name}</h1>
-    </div>
-  );
-}
-
 /**
  * Full chat-area peer transcript (not a floating dialog): same bubble chrome as
- * main chat; header = private-chat identity slot + → peer; top-right X close.
+ * main chat; floating A → B member pill (like `.chat-member-pill`); bottom-centered
+ * floating close control.
  */
 export function MeshExchangeModal(props: {
   lang: UiLang;
@@ -106,6 +77,7 @@ export function MeshExchangeModal(props: {
 
   const caller = resolveBot(bots, meta.callerBotId, meta.callerName);
   const peer = resolveBot(bots, meta.peerBotId, meta.peerName);
+  const title = `${caller.name} → ${peer.name}`;
 
   return (
     <div
@@ -114,42 +86,66 @@ export function MeshExchangeModal(props: {
       aria-modal="true"
       aria-label={t(lang, 'meshExchangeTitle')}
     >
-      <div className="mesh-exchange-panel-header">
-        <HeaderIdentity bot={caller.ref} name={caller.name} primary />
-        <span className="mesh-exchange-header-arrow" aria-hidden>
+      <div
+        className="chat-member-pill mesh-exchange-member-pill"
+        title={title}
+        aria-label={title}
+      >
+        <FlatAvatar
+          className="header-avatar"
+          emoji={caller.ref.emoji || '🤖'}
+          color={caller.ref.color || ''}
+          avatarKind={caller.ref.avatarKind}
+          botAvatarType={caller.ref.botAvatarType}
+          title={caller.name}
+          paused
+        />
+        <span className="chat-member-pill-name">{caller.name}</span>
+        <span className="mesh-exchange-pill-arrow" aria-hidden>
           →
         </span>
-        <HeaderIdentity bot={peer.ref} name={peer.name} />
-        <button
-          type="button"
-          className="mesh-exchange-header-close"
-          onClick={onClose}
-          aria-label={t(lang, 'close')}
-          title={t(lang, 'close')}
-        >
-          <CloseIcon />
-        </button>
+        <FlatAvatar
+          className="header-avatar"
+          emoji={peer.ref.emoji || '🤖'}
+          color={peer.ref.color || ''}
+          avatarKind={peer.ref.avatarKind}
+          botAvatarType={peer.ref.botAvatarType}
+          title={peer.name}
+          paused
+        />
+        <span className="chat-member-pill-name">{peer.name}</span>
       </div>
       <div className="messages scroll-fade mesh-exchange-panel-thread" role="log" aria-live="polite">
-        <PeerBubble
-          lang={lang}
-          bots={bots}
-          botId={meta.callerBotId}
-          fallbackName={meta.callerName}
-          body={meta.ask}
-        />
-        {meta.reply != null && meta.reply !== '' ? (
+        <div className="messages-content">
           <PeerBubble
             lang={lang}
             bots={bots}
-            botId={meta.peerBotId}
-            fallbackName={meta.peerName}
-            body={meta.reply}
+            botId={meta.callerBotId}
+            fallbackName={meta.callerName}
+            body={meta.ask}
           />
-        ) : (
-          <div className="mesh-exchange-pending">{t(lang, 'meshExchangeWaiting')}</div>
-        )}
+          {meta.reply != null && meta.reply !== '' ? (
+            <PeerBubble
+              lang={lang}
+              bots={bots}
+              botId={meta.peerBotId}
+              fallbackName={meta.peerName}
+              body={meta.reply}
+            />
+          ) : (
+            <div className="mesh-exchange-pending">{t(lang, 'meshExchangeWaiting')}</div>
+          )}
+        </div>
       </div>
+      <button
+        type="button"
+        className="mesh-exchange-close"
+        onClick={onClose}
+        aria-label={t(lang, 'close')}
+        title={t(lang, 'close')}
+      >
+        <CloseIcon />
+      </button>
     </div>
   );
 }

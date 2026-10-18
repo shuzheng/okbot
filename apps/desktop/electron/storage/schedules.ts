@@ -1,9 +1,16 @@
 /**
- * Per-owner scheduled jobs (`~/.okbot/<ownerId>/schedules.json`).
- * Presets + simple 5-field cron; next-run uses IANA timezone via Intl (empty = host local).
+ * Per-owner scheduled jobs (`~/.okbot/<ownerId>/schedules.jsonl`).
+ * One job per line (JSONL). Presets + simple 5-field cron; next-run uses IANA
+ * timezone via Intl (empty = settings.timezone, else host local).
+ *
+ * Job ids: **new creates use ULID** (`createUlid`). On migrate from legacy
+ * `schedules.json`, existing ids are kept as-is (even non-ULID `sched_*`) so
+ * pause/resume/delete refs stay valid.
  */
-import { createId } from '@okbot/shared';
-import { readJson, writeJson } from './fs';
+import fs from 'node:fs';
+import path from 'node:path';
+import { createUlid } from '@okbot/shared';
+import { assertWritable, ensureDir, readJson } from './fs';
 
 export const SCHEDULES_FILE_VERSION = 1 as const;
 
@@ -257,17 +264,31 @@ const WEEKDAY_MAP: Record<string, number> = {
   Sat: 6,
 };
 
-export function resolveScheduleTimezone(tz: string | undefined | null): string {
-  const t = (tz || '').trim();
-  if (t) {
+/**
+ * Resolve IANA tz for schedule math.
+ * Prefer job `tz`; if empty/invalid, try `appTimezone` (settings.timezone);
+ * otherwise host local.
+ */
+export function resolveScheduleTimezone(
+  tz: string | undefined | null,
+  appTimezone?: string | null,
+): string {
+  const tryTz = (raw: string | undefined | null): string | null => {
+    const t = (raw || '').trim();
+    if (!t) return null;
     try {
       Intl.DateTimeFormat('en-US', { timeZone: t }).format(new Date());
       return t;
     } catch {
-      /* fall through */
+      return null;
     }
-  }
-  return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  };
+  return (
+    tryTz(tz) ||
+    tryTz(appTimezone) ||
+    Intl.DateTimeFormat().resolvedOptions().timeZone ||
+    'UTC'
+  );
 }
 
 export function getZonedParts(date: Date, timeZone: string): ZonedParts {
@@ -389,8 +410,9 @@ export function computeNextRunAt(
   schedule: ScheduleSpec,
   timezone: string,
   after: Date = new Date(),
+  appTimezone?: string | null,
 ): Date | null {
-  const tz = resolveScheduleTimezone(timezone);
+  const tz = resolveScheduleTimezone(timezone, appTimezone);
   if (schedule.kind === 'daily') {
     const parts = getZonedParts(after, tz);
     const candidate = zonedWallTimeToUtc(
@@ -534,9 +556,13 @@ function nextCron(cron: CronParsed, tz: string, after: Date): Date | null {
   return null;
 }
 
-export function refreshJobNextRun(job: ScheduledJob, after: Date = new Date()): ScheduledJob {
+export function refreshJobNextRun(
+  job: ScheduledJob,
+  after: Date = new Date(),
+  appTimezone?: string | null,
+): ScheduledJob {
   if (!job.enabled) return { ...job, nextRunAt: null };
-  const next = computeNextRunAt(job.schedule, job.timezone, after);
+  const next = computeNextRunAt(job.schedule, job.timezone, after, appTimezone);
   return { ...job, nextRunAt: next ? next.toISOString() : null };
 }
 
@@ -546,13 +572,15 @@ export function createScheduledJob(input: {
   title?: string;
   schedule: ScheduleSpec;
   timezone?: string;
+  /** settings.timezone when job omits timezone (empty = follow app / host). */
+  appTimezone?: string;
   once?: boolean;
   now?: Date;
 }): ScheduledJob {
   const now = input.now ?? new Date();
   const iso = now.toISOString();
   const base: ScheduledJob = {
-    id: createId('sched'),
+    id: createUlid(),
     ownerId: (input.ownerId || '').trim(),
     title: (input.title || '').trim(),
     prompt: input.prompt.trim(),
@@ -566,15 +594,91 @@ export function createScheduledJob(input: {
     createdAt: iso,
     updatedAt: iso,
   };
-  return refreshJobNextRun(base, now);
+  return refreshJobNextRun(base, now, input.appTimezone);
 }
 
+/** Atomic rewrite of schedules.jsonl (one ScheduledJob JSON object per line). */
+function writeSchedulesJsonlAtomic(filePath: string, jobs: ScheduledJob[]): void {
+  assertWritable(filePath);
+  ensureDir(path.dirname(filePath));
+  const tmp = `${filePath}.${process.pid}.tmp`;
+  const body = jobs.length ? `${jobs.map((j) => JSON.stringify(j)).join('\n')}\n` : '';
+  fs.writeFileSync(tmp, body, 'utf8');
+  fs.renameSync(tmp, filePath);
+}
+
+function legacyJsonPathFor(jsonlPath: string): string {
+  if (jsonlPath.endsWith('.jsonl')) return `${jsonlPath.slice(0, -'.jsonl'.length)}.json`;
+  return `${jsonlPath}.json`;
+}
+
+/**
+ * If legacy `schedules.json` exists and `schedules.jsonl` does not, convert then
+ * delete the JSON. Existing job ids are preserved (continuity for pause/resume).
+ * When both files exist, keep jsonl and remove the leftover JSON.
+ */
+export function migrateSchedulesJsonToJsonl(jsonlPath: string, ownerId: string): boolean {
+  const legacyPath = legacyJsonPathFor(jsonlPath);
+  if (!fs.existsSync(legacyPath)) return false;
+  const jsonlExists = fs.existsSync(jsonlPath);
+  if (jsonlExists) {
+    // Leftover JSON after a prior migrate — remove it.
+    try {
+      fs.unlinkSync(legacyPath);
+    } catch (err) {
+      console.error('[okbot] schedules: failed to remove leftover schedules.json', legacyPath, err);
+    }
+    return false;
+  }
+  const raw = readJson<unknown>(legacyPath, emptySchedulesFile());
+  const data = normalizeSchedulesFile(raw, ownerId);
+  writeSchedulesJsonlAtomic(jsonlPath, data.jobs);
+  try {
+    fs.unlinkSync(legacyPath);
+  } catch (err) {
+    console.error('[okbot] schedules: migrated to jsonl but failed to delete schedules.json', legacyPath, err);
+  }
+  return true;
+}
+
+function readSchedulesJsonl(filePath: string, ownerId: string): SchedulesFile {
+  const out = emptySchedulesFile();
+  if (!fs.existsSync(filePath)) return out;
+  let text: string;
+  try {
+    text = fs.readFileSync(filePath, 'utf8');
+  } catch {
+    return out;
+  }
+  const oid = (ownerId || '').trim();
+  const seen = new Set<string>();
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    const job = normalizeJob(parsed, oid);
+    if (!job) continue;
+    if (seen.has(job.id)) continue;
+    seen.add(job.id);
+    out.jobs.push(job);
+  }
+  return out;
+}
+
+/** Read `schedules.jsonl`, migrating from legacy `schedules.json` on load when needed. */
 export function readSchedulesFile(filePath: string, ownerId: string): SchedulesFile {
-  return normalizeSchedulesFile(readJson<unknown>(filePath, emptySchedulesFile()), ownerId);
+  migrateSchedulesJsonToJsonl(filePath, ownerId);
+  return readSchedulesJsonl(filePath, ownerId);
 }
 
+/** Write jobs as JSONL (one job per line). `filePath` should be `…/schedules.jsonl`. */
 export function writeSchedulesFile(filePath: string, data: SchedulesFile): void {
-  writeJson(filePath, { version: SCHEDULES_FILE_VERSION, jobs: data.jobs });
+  writeSchedulesJsonlAtomic(filePath, data.jobs);
 }
 
 export function formatJobSummary(job: ScheduledJob): string {

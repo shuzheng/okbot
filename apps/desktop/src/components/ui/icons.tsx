@@ -171,6 +171,59 @@ export function MoreIcon() {
   );
 }
 
+/** Horizontal ··· — bubble hover “更多” trigger. */
+export function MoreHorizontalIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden>
+      <circle cx="5" cy="12" r="1.6" />
+      <circle cx="12" cy="12" r="1.6" />
+      <circle cx="19" cy="12" r="1.6" />
+    </svg>
+  );
+}
+
+const QUOTE_MARKS_PATH =
+  'M7.2 18c1.9 0 3.3-1.5 3.3-3.4 0-1.8-1.3-3.1-3-3.1-.2 0-.5 0-.7.1.3-1.7 1.6-3.1 3.4-3.8L9.4 6C6.3 7.2 4 10 4 14.1 4 16.4 5.4 18 7.2 18zm9.3 0c1.9 0 3.3-1.5 3.3-3.4 0-1.8-1.3-3.1-3-3.1-.2 0-.5 0-.7.1.3-1.7 1.6-3.1 3.4-3.8L18.7 6C15.6 7.2 13.3 10 13.3 14.1c0 2.3 1.4 3.9 3.2 3.9z';
+
+/** Quote marks — user-sent message 引用. */
+export function QuoteMessageIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden>
+      <path d={QUOTE_MARKS_PATH} />
+    </svg>
+  );
+}
+
+/** Vertical + horizontal mirror of QuoteMessageIcon — assistant reply 引用. */
+export function QuoteReplyIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden>
+      <g transform="translate(24 24) scale(-1 -1)">
+        <path d={QUOTE_MARKS_PATH} />
+      </g>
+    </svg>
+  );
+}
+
+/** List lines — 查看上下文 (prompt context). */
+export function ViewPromptContextIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
+      <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
+    </svg>
+  );
+}
+
+/** Mini bar chart — 消耗统计 trigger. */
+export function TokenUsageBarsIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
+      <path d="M4 19V5M4 19h16" />
+      <path d="M8 15v-4M12 15V8M16 15v-7" />
+    </svg>
+  );
+}
+
 
 export function CheckIcon() {
   return (
@@ -245,11 +298,11 @@ export function EditIcon() {
   );
 }
 
+/** Matches Settings → 模型接入 provider delete glyph. */
 export function TrashIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden>
-      <path d="M5 7h14M10 4h4l1 3H9l1-3Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
-      <path d="m7 7 .8 13h8.4L17 7M10 11v5M14 11v5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+      <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />
     </svg>
   );
 }
@@ -465,52 +518,43 @@ export function UnpinIcon() {
   );
 }
 
-/** Envelope open / check — 标为已读. */
+/** Bell dome + clapper shared by read/unread mark icons. */
+function BellGlyph() {
+  return (
+    <>
+      <path
+        d="M6 9a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M10.3 21a1.94 1.94 0 0 0 3.4 0"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </>
+  );
+}
+
+/** Plain bell — 标为已读 (clear unread). Formerly the unread glyph. */
 export function MarkAsReadIcon() {
   return (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden>
-      <path
-        d="M4 7.5h16v10.2a1.3 1.3 0 0 1-1.3 1.3H5.3A1.3 1.3 0 0 1 4 17.7V7.5z"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinejoin="round"
-      />
-      <path
-        d="m4.4 8.2 7.6 5.2 7.6-5.2"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="m14.2 13.2 1.8 1.8 3.4-3.6"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+      <BellGlyph />
     </svg>
   );
 }
 
-/** Envelope with unread dot — 标为未读. */
+/** Bell + top-right unread dot — 标为未读. */
 export function MarkAsUnreadIcon() {
   return (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden>
-      <path
-        d="M4 7.5h16v10.2a1.3 1.3 0 0 1-1.3 1.3H5.3A1.3 1.3 0 0 1 4 17.7V7.5z"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinejoin="round"
-      />
-      <path
-        d="m4.4 8.2 7.6 5.2 7.6-5.2"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <circle cx="18.5" cy="6" r="2.2" fill="currentColor" />
+      <BellGlyph />
+      <circle cx="18.5" cy="5.5" r="3.5" fill="currentColor" />
     </svg>
   );
 }

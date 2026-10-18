@@ -164,28 +164,6 @@ export function normalizeTaskRecord(raw: unknown, index = 0): TaskRecord | null 
   return task;
 }
 
-/** Migrate legacy single-plan task-progress.json into one TaskRecord. */
-export function migrateLegacyTaskProgress(raw: unknown): TaskRecord | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const o = raw as Record<string, unknown>;
-  const items = Array.isArray(o.items) ? o.items : Array.isArray(o.steps) ? o.steps : [];
-  if (!items.length && !(typeof o.title === 'string' && o.title.trim())) return null;
-  return normalizeTaskRecord(
-    {
-      v: 1,
-      id: 'task_1',
-      title: o.title,
-      items,
-      status: o.status,
-      updatedAt: o.updatedAt,
-      startedAt: o.startedAt,
-      endedAt: o.endedAt,
-      note: o.note,
-    },
-    0,
-  );
-}
-
 /** @deprecated Legacy single-record normalize (tests / migration). */
 export function normalizeTaskProgressRecord(raw: unknown): TaskProgressRecord {
   const now = nowIso();
@@ -315,7 +293,6 @@ function writeJsonlAtomic(file: string, lines: string[]): void {
  * Per-owner durable multi-task queue at `~/.okbot/<owner>/tasks.jsonl`.
  * One JSON object per line = one task. APPEND new tasks; UPDATE rewrites that
  * line in place by task id. History (done/cancelled/failed) is kept.
- * Migrates legacy `task-progress.json` once when present.
  */
 export class TaskProgressStore {
   constructor(
@@ -327,13 +304,8 @@ export class TaskProgressStore {
     return path.join(this.deps.botDir(ownerId), 'tasks.jsonl');
   }
 
-  private legacyFile(ownerId: string): string {
-    return path.join(this.deps.botDir(ownerId), 'task-progress.json');
-  }
-
-  /** Load all tasks (including terminal history), migrating legacy file once. */
+  /** Load all tasks (including terminal history). */
   loadAll(ownerId: string): TaskRecord[] {
-    this.maybeMigrateLegacy(ownerId);
     const file = this.jsonl(ownerId);
     if (!fs.existsSync(file)) return [];
     let text: string;
@@ -383,53 +355,6 @@ export class TaskProgressStore {
       items: open.steps,
       updatedAt: open.updatedAt,
     };
-  }
-
-  private maybeMigrateLegacy(ownerId: string): void {
-    const legacy = this.legacyFile(ownerId);
-    if (!fs.existsSync(legacy)) return;
-    const jsonl = this.jsonl(ownerId);
-    // Only migrate when jsonl is missing or empty.
-    if (fs.existsSync(jsonl)) {
-      try {
-        const existing = fs.readFileSync(jsonl, 'utf8').trim();
-        if (existing) {
-          this.retireLegacy(legacy);
-          return;
-        }
-      } catch {
-        /* fall through to migrate */
-      }
-    }
-    let raw: unknown;
-    try {
-      raw = JSON.parse(fs.readFileSync(legacy, 'utf8'));
-    } catch {
-      this.retireLegacy(legacy);
-      return;
-    }
-    const task = migrateLegacyTaskProgress(raw);
-    this.deps.ensureBotLayout(ownerId);
-    if (task) {
-      writeJsonlAtomic(jsonl, [JSON.stringify(task)]);
-    } else {
-      writeJsonlAtomic(jsonl, []);
-    }
-    this.retireLegacy(legacy);
-  }
-
-  private retireLegacy(legacy: string): void {
-    try {
-      const dest = `${legacy}.migrated`;
-      if (fs.existsSync(dest)) fs.unlinkSync(legacy);
-      else fs.renameSync(legacy, dest);
-    } catch {
-      try {
-        fs.unlinkSync(legacy);
-      } catch {
-        /* ignore */
-      }
-    }
   }
 
   private persist(ownerId: string, tasks: TaskRecord[]): TaskRecord[] {
@@ -674,18 +599,6 @@ export class TaskProgressStore {
     const file = this.jsonl(ownerId);
     try {
       if (fs.existsSync(file)) fs.unlinkSync(file);
-    } catch {
-      /* ignore */
-    }
-    const legacy = this.legacyFile(ownerId);
-    try {
-      if (fs.existsSync(legacy)) fs.unlinkSync(legacy);
-    } catch {
-      /* ignore */
-    }
-    const migrated = `${legacy}.migrated`;
-    try {
-      if (fs.existsSync(migrated)) fs.unlinkSync(migrated);
     } catch {
       /* ignore */
     }

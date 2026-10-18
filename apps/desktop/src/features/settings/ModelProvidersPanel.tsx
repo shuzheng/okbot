@@ -18,7 +18,7 @@ import { ModelRefSelect } from './ModelRefSelect';
 import { requestConfirm, toast } from '../../components/ui';
 import { formatSystemError } from '../../utils/formatSystemError';
 import { isGatewayClient } from '../../utils/gatewayClient';
-import { EyeIcon, EyeOffIcon } from '../../components/ui/icons';
+import { ChevronDownIcon, EyeIcon, EyeOffIcon, TrashIcon } from '../../components/ui/icons';
 
 export type ModelProvidersPanelProps = {
   lang: UiLang;
@@ -50,6 +50,13 @@ export function ModelProvidersPanel({ lang, value, onChange }: ModelProvidersPan
   const [activeProviderId, setActiveProviderId] = useState(
     () => value.defaultProviderId || value.providers[0]?.id || '',
   );
+  /** Independent expand flags — not accordion. Add/delete must not open/close peers. */
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(
+    () => {
+      const id = value.defaultProviderId || value.providers[0]?.id;
+      return id ? new Set([id]) : new Set();
+    },
+  );
   const [showKey, setShowKey] = useState(false);
   const [discoverStatus, setDiscoverStatus] = useState<{
     kind: 'idle' | 'loading' | 'ok' | 'error';
@@ -73,12 +80,25 @@ export function ModelProvidersPanel({ lang, value, onChange }: ModelProvidersPan
   useEffect(() => {
     if (!providers.length) {
       if (activeProviderId) setActiveProviderId('');
+      setExpandedIds((prev) => (prev.size ? new Set() : prev));
       return;
     }
-    if (!providers.some((p) => p.id === activeProviderId)) {
-      setActiveProviderId(defaultProviderId || providers[0]!.id);
+    // Drop expand flags for deleted providers only — never auto-open another.
+    setExpandedIds((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (providers.some((p) => p.id === id)) next.add(id);
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+    // Clear active edit target if it was deleted; do not fall back to default
+    // (that was forcing the default provider to expand after delete).
+    if (activeProviderId && !providers.some((p) => p.id === activeProviderId)) {
+      setActiveProviderId('');
     }
-  }, [providers, activeProviderId, defaultProviderId]);
+  }, [providers, activeProviderId]);
 
   const active = providers.find((p) => p.id === activeProviderId) || null;
 
@@ -114,6 +134,13 @@ export function ModelProvidersPanel({ lang, value, onChange }: ModelProvidersPan
     });
   }
 
+  function updateProvider(providerId: string, patch: Partial<ModelProvider>) {
+    commit({
+      ...value,
+      providers: patchProvider(providers, providerId, patch),
+    });
+  }
+
   function addProvider() {
     const id = createId('prov');
     const n = providers.length + 1;
@@ -132,6 +159,12 @@ export function ModelProvidersPanel({ lang, value, onChange }: ModelProvidersPan
       defaultModelId: value.defaultModelId,
     });
     setActiveProviderId(id);
+    setExpandedIds((prev) => {
+      if (prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
     setRenamingId(id);
     discoverTriedRef.current = '';
     setDiscoverStatus({ kind: 'idle' });
@@ -164,8 +197,15 @@ export function ModelProvidersPanel({ lang, value, onChange }: ModelProvidersPan
           defaultProviderId: nextDefaultPid,
           defaultModelId: nextDefaultMid,
         });
+        setExpandedIds((prev) => {
+          if (!prev.has(id)) return prev;
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+        // Do not open another provider after delete (was: fall back to default).
         if (activeProviderId === id) {
-          setActiveProviderId(nextDefaultPid || providersNext[0]?.id || '');
+          setActiveProviderId('');
         }
         setConnTest({ providerId: null, modelId: null, kind: 'idle' });
         const res = await window.okbot.clearModelBindingsForProvider({ providerId: id });
@@ -207,20 +247,21 @@ export function ModelProvidersPanel({ lang, value, onChange }: ModelProvidersPan
     });
   }
 
-  function removeModel(modelId: string) {
-    if (!active) return;
-    const models = active.models.filter((m) => m.id !== modelId);
-    const providersNext = patchProvider(providers, active.id, { models });
+  function removeModel(providerId: string, modelId: string) {
+    const prov = providers.find((x) => x.id === providerId);
+    if (!prov) return;
+    const models = prov.models.filter((m) => m.id !== modelId);
+    const providersNext = patchProvider(providers, providerId, { models });
     let nextDefaultPid = defaultProviderId;
     let nextDefaultMid = defaultModelId;
-    if (defaultProviderId === active.id && defaultModelId === modelId) {
+    if (defaultProviderId === providerId && defaultModelId === modelId) {
       nextDefaultMid = models.find((m) => m.enabled)?.id || models[0]?.id || '';
       if (!nextDefaultMid) {
         const fallback =
-          providersNext.find((p) => p.id !== active.id && p.models.some((m) => m.enabled)) ||
-          providersNext.find((p) => p.id !== active.id) ||
+          providersNext.find((p) => p.id !== providerId && p.models.some((m) => m.enabled)) ||
+          providersNext.find((p) => p.id !== providerId) ||
           null;
-        nextDefaultPid = fallback?.id || active.id;
+        nextDefaultPid = fallback?.id || providerId;
         nextDefaultMid =
           fallback?.models.find((m) => m.enabled)?.id || fallback?.models[0]?.id || '';
       }
@@ -230,7 +271,6 @@ export function ModelProvidersPanel({ lang, value, onChange }: ModelProvidersPan
       defaultProviderId: nextDefaultPid,
       defaultModelId: nextDefaultMid,
     });
-    const providerId = active.id;
     void window.okbot
       .clearModelBindingsForProvider({ providerId, removedModelIds: [modelId] })
       .then((res) => {
@@ -241,20 +281,21 @@ export function ModelProvidersPanel({ lang, value, onChange }: ModelProvidersPan
       .catch((err) => toast.error(formatSystemError(err)));
   }
 
-  function setModelEnabled(modelId: string, enabled: boolean) {
-    if (!active) return;
-    const models = active.models.map((m) => (m.id === modelId ? { ...m, enabled } : m));
-    const providersNext = patchProvider(providers, active.id, { models });
+  function setModelEnabled(providerId: string, modelId: string, enabled: boolean) {
+    const prov = providers.find((x) => x.id === providerId);
+    if (!prov) return;
+    const models = prov.models.map((m) => (m.id === modelId ? { ...m, enabled } : m));
+    const providersNext = patchProvider(providers, providerId, { models });
     let nextDefaultPid = defaultProviderId;
     let nextDefaultMid = defaultModelId;
-    if (!enabled && defaultProviderId === active.id && defaultModelId === modelId) {
+    if (!enabled && defaultProviderId === providerId && defaultModelId === modelId) {
       nextDefaultMid = models.find((m) => m.id !== modelId && m.enabled)?.id || '';
       if (!nextDefaultMid) {
         nextDefaultPid = '';
         nextDefaultMid = '';
       }
     } else if (enabled && (!defaultProviderId || !defaultModelId)) {
-      nextDefaultPid = active.id;
+      nextDefaultPid = providerId;
       nextDefaultMid = modelId;
     }
     commit({
@@ -264,12 +305,13 @@ export function ModelProvidersPanel({ lang, value, onChange }: ModelProvidersPan
     });
   }
 
-  async function discover(opts: { soft: boolean }) {
-    if (!active) return;
-    const providerId = active.id;
-    const b = active.baseURL.trim();
-    const k = active.apiKey.trim();
-    const modelsSnapshot = active.models;
+  async function discover(opts: { soft: boolean; providerId?: string }) {
+    const providerId = opts.providerId || activeProviderId;
+    const prov = providers.find((x) => x.id === providerId) || null;
+    if (!prov) return;
+    const b = prov.baseURL.trim();
+    const k = prov.apiKey.trim();
+    const modelsSnapshot = prov.models;
     // Gateway clients see a blank key; the server uses the saved key for this provider.
     if (!b || (!k && !isGatewayClient())) {
       if (!opts.soft) {
@@ -336,11 +378,11 @@ export function ModelProvidersPanel({ lang, value, onChange }: ModelProvidersPan
     }
   }
 
-  async function testConnection(modelId: string) {
-    if (!active) return;
-    const providerId = active.id;
-    const b = active.baseURL.trim();
-    const k = active.apiKey.trim();
+  async function testConnection(providerId: string, modelId: string) {
+    const prov = providers.find((x) => x.id === providerId) || null;
+    if (!prov) return;
+    const b = prov.baseURL.trim();
+    const k = prov.apiKey.trim();
     if (!b || (!k && !isGatewayClient())) {
       setConnTest({
         providerId,
@@ -355,7 +397,7 @@ export function ModelProvidersPanel({ lang, value, onChange }: ModelProvidersPan
       const res = await window.okbot.testModelConnection({
         baseURL: b,
         apiKey: k,
-        apiFormat: active.apiFormat,
+        apiFormat: prov.apiFormat,
         modelId,
         providerId,
       });
@@ -396,7 +438,7 @@ export function ModelProvidersPanel({ lang, value, onChange }: ModelProvidersPan
     if (discoverTimerRef.current != null) window.clearTimeout(discoverTimerRef.current);
     discoverTimerRef.current = window.setTimeout(() => {
       discoverTimerRef.current = null;
-      void discover({ soft: true });
+      void discover({ soft: true, providerId: active.id });
     }, 500);
     return () => {
       if (discoverTimerRef.current != null) {
@@ -432,76 +474,92 @@ export function ModelProvidersPanel({ lang, value, onChange }: ModelProvidersPan
         ) : (
           <div className="provider-list">
             {providers.map((p) => {
-              const open = p.id === activeProviderId;
+              const open = expandedIds.has(p.id);
               const isDefaultProv = p.id === defaultProviderId;
+              const toggleOpen = () => {
+                setExpandedIds((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(p.id)) next.delete(p.id);
+                  else next.add(p.id);
+                  return next;
+                });
+                if (open) {
+                  // Collapsing this row only — leave peers alone.
+                  if (activeProviderId === p.id) setActiveProviderId('');
+                  return;
+                }
+                setActiveProviderId(p.id);
+                setDiscoverStatus({ kind: 'idle' });
+                setConnTest({ providerId: null, modelId: null, kind: 'idle' });
+                discoverTriedRef.current = '';
+                setShowKey(false);
+              };
               return (
                 <div
                   key={p.id}
                   className={`provider-item${open ? ' open' : ''}`}
                   data-settings-id={open ? 'model' : undefined}
                 >
-                  <div className="provider-item-head">
-                    <button
-                      type="button"
-                      className="provider-item-toggle"
-                      onClick={() => {
-                        setActiveProviderId(p.id);
-                        setDiscoverStatus({ kind: 'idle' });
-                        setConnTest({ providerId: null, modelId: null, kind: 'idle' });
-                        discoverTriedRef.current = '';
-                        setShowKey(false);
-                      }}
-                      aria-expanded={open}
-                    >
-                      <span className="provider-chevron" aria-hidden>
-                        {open ? '▼' : '▶'}
-                      </span>
-                      {renamingId === p.id ? (
-                        <input
-                          spellCheck={false}
-                          className="provider-rename-input"
-                          value={p.name}
-                          placeholder={t(lang, 'providerNamePlaceholder')}
-                          onClick={(e) => e.stopPropagation()}
-                          onChange={(e) => {
+                  <div
+                    className="provider-item-head provider-item-head-clickable"
+                    role="button"
+                    tabIndex={0}
+                    aria-expanded={open}
+                    onClick={toggleOpen}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        toggleOpen();
+                      }
+                    }}
+                  >
+                    {renamingId === p.id ? (
+                      <input
+                        spellCheck={false}
+                        className="provider-rename-input"
+                        value={p.name}
+                        placeholder={t(lang, 'providerNamePlaceholder')}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => {
+                          commit({
+                            ...value,
+                            providers: patchProvider(providers, p.id, {
+                              name: e.target.value,
+                            }),
+                          });
+                        }}
+                        onBlur={() => {
+                          const name = p.name.trim() || DEFAULT_PROVIDER_NAME;
+                          if (name !== p.name) {
                             commit({
                               ...value,
-                              providers: patchProvider(providers, p.id, {
-                                name: e.target.value,
-                              }),
+                              providers: patchProvider(providers, p.id, { name }),
                             });
-                          }}
-                          onBlur={() => {
-                            const name = p.name.trim() || DEFAULT_PROVIDER_NAME;
-                            if (name !== p.name) {
-                              commit({
-                                ...value,
-                                providers: patchProvider(providers, p.id, { name }),
-                              });
-                            }
-                            setRenamingId(null);
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-                          }}
-                          autoFocus
-                        />
-                      ) : (
-                        <span className="provider-item-name">
-                          {p.name.trim() || DEFAULT_PROVIDER_NAME}
-                          {isDefaultProv ? (
-                            <span className="model-badge default">{t(lang, 'modelDefaultBadge')}</span>
-                          ) : null}
-                        </span>
-                      )}
-                    </button>
+                          }
+                          setRenamingId(null);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                          e.stopPropagation();
+                        }}
+                        autoFocus
+                      />
+                    ) : (
+                      <span className="provider-item-name">
+                        {p.name.trim() || DEFAULT_PROVIDER_NAME}
+                        {isDefaultProv ? (
+                          <span className="model-badge default">{t(lang, 'modelDefaultBadge')}</span>
+                        ) : null}
+                      </span>
+                    )}
                     <div className="provider-item-actions">
                       <button
                         type="button"
                         className="model-icon-btn"
                         title={t(lang, 'providerName')}
                         aria-label={t(lang, 'providerName')}
-                        onClick={() => {
+                        onClick={(e) => {
+                          e.stopPropagation();
                           setActiveProviderId(p.id);
                           setRenamingId(p.id);
                         }}
@@ -515,222 +573,249 @@ export function ModelProvidersPanel({ lang, value, onChange }: ModelProvidersPan
                         className="model-icon-btn"
                         title={t(lang, 'providerDelete')}
                         aria-label={t(lang, 'providerDelete')}
-                        onClick={() => deleteProvider(p.id)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteProvider(p.id);
+                        }}
                       >
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                          <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />
-                        </svg>
+                        <TrashIcon />
+                      </button>
+                      <button
+                        type="button"
+                        className={`model-icon-btn aar-expand-btn${open ? ' expanded' : ''}`}
+                        title={open ? t(lang, 'avatarPickerCollapse') : t(lang, 'avatarPickerExpand')}
+                        aria-label={open ? t(lang, 'avatarPickerCollapse') : t(lang, 'avatarPickerExpand')}
+                        aria-expanded={open}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleOpen();
+                        }}
+                      >
+                        <ChevronDownIcon />
                       </button>
                     </div>
                   </div>
+                  {open ? (
+                    <div className="provider-item-body">
+                      <div className="settings-section-label" data-settings-id="baseURL">
+                        {t(lang, 'api')}
+                      </div>
+                      <div className="settings-card settings-card-model provider-nested-card">
+                        <div className="settings-row">
+                          <span className="settings-row-label">BaseURL</span>
+                          <input
+                            spellCheck={false}
+                            className="wide"
+                            placeholder="https://api.example.com/v1"
+                            value={p.baseURL}
+                            onChange={(e) => {
+                              discoverTriedRef.current = '';
+                              setActiveProviderId(p.id);
+                              updateProvider(p.id, { baseURL: e.target.value });
+                            }}
+                          />
+                        </div>
+                        <div className="settings-row" data-settings-id="apiFormat">
+                          <span className="settings-row-label">
+                            <span className="settings-row-label-text">{t(lang, 'apiFormat')}</span>
+                          </span>
+                          <select
+                            className="settings-row-select"
+                            value={p.apiFormat}
+                            onChange={(e) => {
+                              setActiveProviderId(p.id);
+                              updateProvider(p.id, { apiFormat: e.target.value as ApiFormat });
+                            }}
+                          >
+                            <option value="chat_completions">{t(lang, 'apiFormatChatCompletions')}</option>
+                            <option value="responses">{t(lang, 'apiFormatResponses')}</option>
+                          </select>
+                        </div>
+                        <div className="settings-row" data-settings-id="apiKey">
+                          <span className="settings-row-label">API Key</span>
+                          <div className="settings-secret">
+                            <input
+                              spellCheck={false}
+                              className="wide"
+                              type={showKey ? 'text' : 'password'}
+                              placeholder="sk-..."
+                              value={p.apiKey}
+                              onChange={(e) => {
+                                discoverTriedRef.current = '';
+                                setActiveProviderId(p.id);
+                                updateProvider(p.id, { apiKey: e.target.value });
+                              }}
+                              autoComplete="off"
+                            />
+                            <button
+                              type="button"
+                              className="settings-eye"
+                              aria-label={showKey ? 'Hide' : 'Show'}
+                              onClick={() => setShowKey((v) => !v)}
+                            >
+                              {showKey ? <EyeOffIcon /> : <EyeIcon />}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="settings-section-label" data-settings-id="modelList">
+                        {t(lang, 'modelList')}
+                      </div>
+                      <div className="settings-card settings-card-model model-list-card provider-nested-card">
+                        <div className="model-list-head">
+                          <span className="model-list-head-title">{t(lang, 'nameLabel')}</span>
+                          <div className="model-list-actions">
+                            <button
+                              type="button"
+                              className="model-list-btn"
+                              disabled={
+                                discoverStatus.kind === 'loading' ||
+                                !p.baseURL.trim() ||
+                                !p.apiKey.trim()
+                              }
+                              onClick={() => {
+                                setActiveProviderId(p.id);
+                                void discover({ soft: false, providerId: p.id });
+                              }}
+                            >
+                              {t(lang, 'modelDiscoverRetry')}
+                            </button>
+                            <button
+                              type="button"
+                              className="model-list-btn"
+                              onClick={() => { setActiveProviderId(p.id); setModelEditor({ mode: 'add' }); }}
+                            >
+                              + {t(lang, 'modelAdd')}
+                            </button>
+                          </div>
+                        </div>
+                        {activeProviderId === p.id && discoverStatus.kind !== 'idle' ? (
+                          <div
+                            className={`model-list-status${
+                              discoverStatus.kind === 'error'
+                                ? ' error'
+                                : discoverStatus.kind === 'ok'
+                                  ? ' ok'
+                                  : ''
+                            }`}
+                          >
+                            {discoverStatus.message}
+                          </div>
+                        ) : null}
+                        {connTest.kind !== 'idle' && connTest.modelId && connTest.providerId === p.id ? (
+                          <div
+                            className={`model-list-status${
+                              connTest.kind === 'error' ? ' error' : connTest.kind === 'ok' ? ' ok' : ''
+                            }`}
+                          >
+                            {connTest.message}
+                          </div>
+                        ) : null}
+                        <div ref={modelListScrollRef} className="model-list-scroll scroll-fade">
+                          {sortCatalogModels(p.models).length === 0 ? (
+                            <div className="model-list-empty">{t(lang, 'modelEmpty')}</div>
+                          ) : (
+                            sortCatalogModels(p.models).map((m) => {
+                              const isDefault =
+                                p.id === defaultProviderId && m.id === defaultModelId;
+                              return (
+                                <div key={m.id} className="model-row">
+                                  <div className="model-row-main">
+                                    <span className="model-row-name">{m.name || m.id}</span>
+                                    <span className="model-badge context">
+                                      {formatContextWindowBadge(m.contextWindow)}
+                                    </span>
+                                    {isDefault ? (
+                                      <span className="model-badge default">{t(lang, 'modelDefaultBadge')}</span>
+                                    ) : null}
+                                  </div>
+                                  <div className="model-row-trailing">
+                                    <button
+                                      type="button"
+                                      className={`model-icon-btn${
+                                        connTest.providerId === p.id && connTest.modelId === m.id && connTest.kind === 'ok'
+                                          ? ' active'
+                                          : ''
+                                      }`}
+                                      title={t(lang, 'modelTestConnection')}
+                                      aria-label={t(lang, 'modelTestConnection')}
+                                      disabled={
+                                        connTest.providerId === p.id && connTest.kind === 'loading' && connTest.modelId === m.id
+                                      }
+                                      onClick={() => {
+                                        setActiveProviderId(p.id);
+                                        void testConnection(p.id, m.id);
+                                      }}
+                                    >
+                                      {connTest.providerId === p.id && connTest.modelId === m.id && connTest.kind === 'loading' ? (
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                                          <path d="M12 3a9 9 0 109 9" />
+                                        </svg>
+                                      ) : (
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                                          <path d="M5 12h14M13 6l6 6-6 6" />
+                                          <path d="M5 7v10" />
+                                        </svg>
+                                      )}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="model-icon-btn"
+                                      title={t(lang, 'modelEdit')}
+                                      aria-label={t(lang, 'modelEdit')}
+                                      onClick={() => { setActiveProviderId(p.id); setModelEditor({ mode: 'edit', model: m }); }}
+                                    >
+                                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                                        <path d="M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4L16.5 3.5z" />
+                                      </svg>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="model-icon-btn"
+                                      title={t(lang, 'modelDelete')}
+                                      aria-label={t(lang, 'modelDelete')}
+                                      onClick={() => {
+                                        void (async () => {
+                                          const ok = await requestConfirm({
+                                            message: t(lang, 'modelDeleteConfirm'),
+                                            confirmLabel: t(lang, 'delete'),
+                                            cancelLabel: t(lang, 'cancel'),
+                                            danger: true,
+                                          });
+                                          if (ok) {
+                                            setActiveProviderId(p.id);
+                                            removeModel(p.id, m.id);
+                                          }
+                                        })();
+                                      }}
+                                    >
+                                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                                        <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />
+                                      </svg>
+                                    </button>
+                                    <SettingsToggle
+                                      checked={m.enabled}
+                                      onChange={() => {
+                                        setActiveProviderId(p.id);
+                                        setModelEnabled(p.id, m.id, !m.enabled);
+                                      }}
+                                    />
+                                  </div>
+                                </div>
+                              );
+                            })
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               );
             })}
           </div>
         )}
       </div>
-
-      {active ? (
-        <>
-          <div className="settings-section-label" style={{ marginTop: 16 }} data-settings-id="baseURL">
-            {t(lang, 'api')}
-            <span className="provider-section-sub">
-              · {active.name.trim() || DEFAULT_PROVIDER_NAME}
-            </span>
-          </div>
-          <div className="settings-card settings-card-model">
-            <div className="settings-row">
-              <span className="settings-row-label">BaseURL</span>
-              <input
-                spellCheck={false}
-                className="wide"
-                placeholder="https://api.example.com/v1"
-                value={active.baseURL}
-                onChange={(e) => {
-                  discoverTriedRef.current = '';
-                  updateActive({ baseURL: e.target.value });
-                }}
-              />
-            </div>
-            <div className="settings-row" data-settings-id="apiFormat">
-              <span className="settings-row-label">
-                <span className="settings-row-label-text">{t(lang, 'apiFormat')}</span>
-              </span>
-              <select
-                className="settings-row-select"
-                value={active.apiFormat}
-                onChange={(e) => updateActive({ apiFormat: e.target.value as ApiFormat })}
-              >
-                <option value="chat_completions">{t(lang, 'apiFormatChatCompletions')}</option>
-                <option value="responses">{t(lang, 'apiFormatResponses')}</option>
-              </select>
-            </div>
-            <div className="settings-row" data-settings-id="apiKey">
-              <span className="settings-row-label">API Key</span>
-              <div className="settings-secret">
-                <input
-                  spellCheck={false}
-                  className="wide"
-                  type={showKey ? 'text' : 'password'}
-                  placeholder="sk-..."
-                  value={active.apiKey}
-                  onChange={(e) => {
-                    discoverTriedRef.current = '';
-                    updateActive({ apiKey: e.target.value });
-                  }}
-                  autoComplete="off"
-                />
-                <button
-                  type="button"
-                  className="settings-eye"
-                  aria-label={showKey ? 'Hide' : 'Show'}
-                  onClick={() => setShowKey((v) => !v)}
-                >
-                  {showKey ? <EyeOffIcon /> : <EyeIcon />}
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div className="settings-section-label" style={{ marginTop: 16 }} data-settings-id="modelList">
-            {t(lang, 'modelList')}
-          </div>
-          <div className="settings-card settings-card-model model-list-card">
-            <div className="model-list-head">
-              <span className="model-list-head-title">{t(lang, 'modelList')}</span>
-              <div className="model-list-actions">
-                <button
-                  type="button"
-                  className="model-list-btn"
-                  disabled={
-                    discoverStatus.kind === 'loading' ||
-                    !active.baseURL.trim() ||
-                    !active.apiKey.trim()
-                  }
-                  onClick={() => void discover({ soft: false })}
-                >
-                  {t(lang, 'modelDiscoverRetry')}
-                </button>
-                <button
-                  type="button"
-                  className="model-list-btn"
-                  onClick={() => setModelEditor({ mode: 'add' })}
-                >
-                  + {t(lang, 'modelAdd')}
-                </button>
-              </div>
-            </div>
-            {discoverStatus.kind !== 'idle' ? (
-              <div
-                className={`model-list-status${
-                  discoverStatus.kind === 'error'
-                    ? ' error'
-                    : discoverStatus.kind === 'ok'
-                      ? ' ok'
-                      : ''
-                }`}
-              >
-                {discoverStatus.message}
-              </div>
-            ) : null}
-            {connTest.kind !== 'idle' && connTest.modelId && connTest.providerId === active?.id ? (
-              <div
-                className={`model-list-status${
-                  connTest.kind === 'error' ? ' error' : connTest.kind === 'ok' ? ' ok' : ''
-                }`}
-              >
-                {connTest.message}
-              </div>
-            ) : null}
-            <div ref={modelListScrollRef} className="model-list-scroll scroll-fade">
-              {displayModels.length === 0 ? (
-                <div className="model-list-empty">{t(lang, 'modelEmpty')}</div>
-              ) : (
-                displayModels.map((m) => {
-                  const isDefault =
-                    active.id === defaultProviderId && m.id === defaultModelId;
-                  return (
-                    <div key={m.id} className="model-row">
-                      <div className="model-row-main">
-                        <span className="model-row-name">{m.name || m.id}</span>
-                        <span className="model-badge context">
-                          {formatContextWindowBadge(m.contextWindow)}
-                        </span>
-                        {isDefault ? (
-                          <span className="model-badge default">{t(lang, 'modelDefaultBadge')}</span>
-                        ) : null}
-                      </div>
-                      <div className="model-row-trailing">
-                        <button
-                          type="button"
-                          className={`model-icon-btn${
-                            connTest.providerId === active?.id && connTest.modelId === m.id && connTest.kind === 'ok'
-                              ? ' active'
-                              : ''
-                          }`}
-                          title={t(lang, 'modelTestConnection')}
-                          aria-label={t(lang, 'modelTestConnection')}
-                          disabled={
-                            connTest.providerId === active?.id && connTest.kind === 'loading' && connTest.modelId === m.id
-                          }
-                          onClick={() => void testConnection(m.id)}
-                        >
-                          {connTest.providerId === active?.id && connTest.modelId === m.id && connTest.kind === 'loading' ? (
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                              <path d="M12 3a9 9 0 109 9" />
-                            </svg>
-                          ) : (
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                              <path d="M5 12h14M13 6l6 6-6 6" />
-                              <path d="M5 7v10" />
-                            </svg>
-                          )}
-                        </button>
-                        <button
-                          type="button"
-                          className="model-icon-btn"
-                          title={t(lang, 'modelEdit')}
-                          aria-label={t(lang, 'modelEdit')}
-                          onClick={() => setModelEditor({ mode: 'edit', model: m })}
-                        >
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                            <path d="M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4L16.5 3.5z" />
-                          </svg>
-                        </button>
-                        <button
-                          type="button"
-                          className="model-icon-btn"
-                          title={t(lang, 'modelDelete')}
-                          aria-label={t(lang, 'modelDelete')}
-                          onClick={() => {
-                            void (async () => {
-                              const ok = await requestConfirm({
-                                message: t(lang, 'modelDeleteConfirm'),
-                                confirmLabel: t(lang, 'delete'),
-                                cancelLabel: t(lang, 'cancel'),
-                                danger: true,
-                              });
-                              if (ok) removeModel(m.id);
-                            })();
-                          }}
-                        >
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                            <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />
-                          </svg>
-                        </button>
-                        <SettingsToggle
-                          checked={m.enabled}
-                          onChange={() => setModelEnabled(m.id, !m.enabled)}
-                        />
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-        </>
-      ) : null}
 
       <div className="settings-section-label" style={{ marginTop: 16 }} data-settings-id="defaultModel">
         {t(lang, 'defaultModelLabel')}

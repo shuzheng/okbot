@@ -1,14 +1,15 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Bot, ModelProvider } from '@okbot/shared';
 import { t } from '../../i18n';
 import { ChevronsRightIcon } from '../../components/ui/icons';
 import type { SquadWizardState } from '../../types';
-import { FlatAvatar } from '../../components/ui/avatars';
+import { FlatAvatar, SquadAvatar } from '../../components/ui/avatars';
 import { BotSearchSelect } from '../bots/BotSearchSelect';
 import { ModelRefSelect } from '../settings/ModelRefSelect';
 import { updateScrollFade } from '../../utils/scrollFade';
 import { useDrawerClose } from '../../utils/useDrawerClose';
-import { SquadAdvancedSection } from './SquadAdvancedSection';
+import { OwnerFormTabs, OwnerTasksPanel, OwnerResourcesPanel, type OwnerFormTab } from '../owner';
+import { SchedulesList } from '../settings/SchedulesList';
 
 export type SquadWizardModalProps = {
   lang: 'zh' | 'en';
@@ -17,7 +18,7 @@ export type SquadWizardModalProps = {
   providers: ModelProvider[];
   defaultProviderId: string;
   defaultModelId: string;
-  /** When false, hide description (read-only when shown) and Advanced (schedules). */
+  /** When false, hide Advanced (schedules). Description is always plain text. */
   showAdvancedSettings?: boolean;
   /** Edit flow: persist on change like BotFormModal (no Cancel/Save). */
   autoApply?: boolean;
@@ -38,7 +39,7 @@ export function SquadWizardModal({
   providers,
   defaultProviderId,
   defaultModelId,
-  showAdvancedSettings = false,
+  showAdvancedSettings: _showAdvancedSettings = false,
   autoApply = false,
   onChange: setSquadWizard,
   onClose,
@@ -62,6 +63,7 @@ export function SquadWizardModal({
   }, [requestClose]);
 
 
+  const [ownerFormTab, setOwnerFormTab] = useState<OwnerFormTab>('details');
   const squadNameRef = useRef<HTMLInputElement>(null);
   const squadDragIdRef = useRef<string | null>(null);
   const composingRef = useRef(false);
@@ -169,47 +171,61 @@ export function SquadWizardModal({
             }
           }}
         >
-        <div className="field">
-          <label htmlFor="okbot-squad-name">{t(lang, 'nameLabel')}</label>
-          <input
-            spellCheck={false}
-            id="okbot-squad-name"
-            ref={squadNameRef}
-            value={squadWizard.name}
-            onChange={(e) => patch({ name: e.target.value })}
-            onCompositionStart={onComposeStart}
-            onCompositionEnd={(e) => {
-              const v = (e.target as HTMLInputElement).value;
-              const next = { ...squadWizard, name: v };
-              setSquadWizard(next);
-              pendingEmitRef.current = next;
-              onComposeEnd();
-            }}
-            onBlur={() => flushEmit()}
-            onKeyDown={(e) => {
-              if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-              if (e.key !== 'Enter') return;
-              e.preventDefault();
-              flushEmit();
-              if (autoApply) requestClose();
-              else void onSubmit();
-            }}
-          />
-        </div>
-        {showAdvancedSettings ? (
-          <div className="field">
-            <label htmlFor="okbot-squad-desc">{t(lang, 'descriptionLabel')}</label>
-            <textarea
-              spellCheck={false}
-              id="okbot-squad-desc"
-              rows={2}
-              value={squadWizard.description}
-              readOnly
-              aria-readonly="true"
+        <div className="avatar-preview-stack">
+          <button
+            type="button"
+            className="avatar-preview-hit"
+            aria-label={t(lang, 'ownerFormTabDetails')}
+            onClick={() => setOwnerFormTab('details')}
+          >
+            <SquadAvatar
+              className="session-pin-avatar"
+              members={squadWizard.memberIds
+                .map((id) => bots.find((b) => b.id === id))
+                .filter((b): b is Bot => !!b)
+                .map((b) => ({
+                  emoji: b.emoji,
+                  color: b.color,
+                  avatarKind: b.avatarKind,
+                  botAvatarType: b.botAvatarType,
+                }))}
             />
-            <p className="bot-form-model-hint">{t(lang, 'descriptionAutoHint')}</p>
+          </button>
+          <div className="field field-name">
+            <input
+              spellCheck={false}
+              id="okbot-squad-name"
+              ref={squadNameRef}
+              value={squadWizard.name}
+              aria-label={t(lang, 'nameLabel')}
+              placeholder={t(lang, 'nameLabel')}
+              onChange={(e) => patch({ name: e.target.value })}
+              onCompositionStart={onComposeStart}
+              onCompositionEnd={(e) => {
+                const v = (e.target as HTMLInputElement).value;
+                const next = { ...squadWizard, name: v };
+                setSquadWizard(next);
+                pendingEmitRef.current = next;
+                onComposeEnd();
+              }}
+              onBlur={() => flushEmit()}
+              onKeyDown={(e) => {
+                if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+                if (e.key !== 'Enter') return;
+                e.preventDefault();
+                flushEmit();
+                if (autoApply) requestClose();
+                else void onSubmit();
+              }}
+            />
           </div>
-        ) : null}
+          {squadWizard.description.trim() ? (
+            <p className="bot-form-description-text">{squadWizard.description}</p>
+          ) : null}
+        </div>
+        <OwnerFormTabs lang={lang} value={ownerFormTab} onChange={setOwnerFormTab} />
+        {ownerFormTab === 'details' ? (
+        <>
         <div className="field bot-form-model-row">
           <label htmlFor="okbot-squad-model">{t(lang, 'squadModelLabel')}</label>
           <ModelRefSelect
@@ -360,8 +376,29 @@ export function SquadWizardModal({
             </div>
           )}
         </div>
-        {showAdvancedSettings ? (
-          <SquadAdvancedSection lang={lang} squadId={squadWizard.id || null} />
+        </>
+        ) : null}
+        {ownerFormTab === 'tasks' ? (
+          <OwnerTasksPanel
+            lang={lang}
+            ownerId={squadWizard.id || null}
+            active={ownerFormTab === 'tasks'}
+          />
+        ) : null}
+        {ownerFormTab === 'automation' ? (
+          <SchedulesList
+            lang={lang}
+            active={ownerFormTab === 'automation'}
+            ownerId={squadWizard.id || null}
+            compact
+          />
+        ) : null}
+        {ownerFormTab === 'resources' ? (
+          <OwnerResourcesPanel
+            lang={lang}
+            ownerId={squadWizard.id || null}
+            active={ownerFormTab === 'resources'}
+          />
         ) : null}
         {!autoApply && (
           <div className="modal-actions">

@@ -17,7 +17,7 @@ export { formatPeerRosterSection };
 export const MESH_ASK_TOOL_NAME = 'ask_assistant';
 
 export type MeshPeerSpec = MeshPeerRosterEntry & {
-  agentsMd?: string;
+  soulMd?: string;
   skillsText?: string;
   skillLookup?: SkillLookup;
   memoriesText?: string;
@@ -105,7 +105,7 @@ export function buildMeshCalleeInstructions(input: {
   calleeName: string;
   calleeDescription: string;
   callerName: string;
-  agentsMd?: string;
+  soulMd?: string;
   skillsText?: string;
   memoriesText?: string;
   prefs: ToolPreferences;
@@ -133,8 +133,8 @@ export function buildMeshCalleeInstructions(input: {
       `你是「${input.calleeName || 'OkBot'}」，本机个人助手。`,
       roleLine,
       input.calleeDescription?.trim() ? `对外简介：${input.calleeDescription.trim()}` : '',
-      input.agentsMd?.trim()
-        ? `以下是本助手的 AGENTS.md（系统提示，须遵守）：\n\n${input.agentsMd.trim()}`
+      input.soulMd?.trim()
+        ? `以下是本助手的 SOUL.md（系统提示，须遵守）：\n\n${input.soulMd.trim()}`
         : '',
       input.memoriesText?.trim()
         ? `## 记忆（须遵守；过期项已过滤）\n\n${input.memoriesText.trim()}`

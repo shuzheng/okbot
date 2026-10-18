@@ -1,13 +1,15 @@
 import OpenAI from 'openai';
 import {
-  DEFAULT_AGENTS_MD_RECENT_MESSAGE_LIMIT,
-  DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT,
+  DEFAULT_SOUL_MD_RECENT_MESSAGE_LIMIT,
+  DEFAULT_SOUL_MD_REFRESH_SYSTEM_PROMPT,
   DEFAULT_MEMORY_RECENT_MESSAGE_LIMIT,
   DEFAULT_MEMORY_SCOPE_INSTRUCTION,
   DEFAULT_SKILLS_CREATE_UPDATE_INSTRUCTION,
   DEFAULT_SKILLS_DESCRIPTION_FORMAT_INSTRUCTION,
   DEFAULT_SKILLS_RECENT_MESSAGE_LIMIT,
   clampOwnerDescription,
+  sanitizeOwnerDescriptionDuties,
+  clampSoulMd,
   isAcceptableMemoryFact,
   normalizeMaxTurns,
   normalizeSkillDescription,
@@ -18,20 +20,20 @@ import {
   type ResolvedModelConfig,
 } from '@okbot/shared';
 import { assertModel } from './model.js';
-import { mergeAgentsMdFromModel } from './agentsMdPatch.js';
+import { mergeSoulMdFromModel } from './soulMdPatch.js';
 import { ensureOkbotSkillName, normalizeSkillSlug } from './skills/parse.js';
 
 /**
- * Silently patch AGENTS.md from recent chat. Returns updated markdown, or null if unchanged.
+ * Silently patch SOUL.md from recent chat. Returns updated markdown, or null if unchanged.
  * Only changed sections are applied; a full-file rewrite is ignored.
  * Caller writes the file; next chat turn reloads from disk.
  */
-export async function refreshAgentsMd(input: {
+export async function refreshSoulMd(input: {
   model: ResolvedModelConfig;
   botName: string;
-  currentAgentsMd: string;
+  currentSoulMd: string;
   recentMessages: ChatMessage[];
-  /** Full system prompt; blank / missing → DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT. */
+  /** Full system prompt; blank / missing → DEFAULT_SOUL_MD_REFRESH_SYSTEM_PROMPT. */
   systemPrompt?: string;
   /** Recent user/assistant window; missing / invalid → 12; clamp 1–100. */
   recentMessageLimit?: number;
@@ -42,7 +44,7 @@ export async function refreshAgentsMd(input: {
 
   const limit = normalizeMaxTurns(
     input.recentMessageLimit,
-    DEFAULT_AGENTS_MD_RECENT_MESSAGE_LIMIT,
+    DEFAULT_SOUL_MD_RECENT_MESSAGE_LIMIT,
   );
   const dialogue = input.recentMessages
     .filter((m) => m.role === 'user' || m.role === 'assistant')
@@ -62,13 +64,13 @@ export async function refreshAgentsMd(input: {
   });
 
   const system =
-    (input.systemPrompt ?? '').trim() || DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT;
+    (input.systemPrompt ?? '').trim() || DEFAULT_SOUL_MD_REFRESH_SYSTEM_PROMPT;
 
   const user = [
     `助手名称：${input.botName}`,
     '',
-    '当前 AGENTS.md：',
-    input.currentAgentsMd.trim() || '（空）',
+    '当前 SOUL.md：',
+    input.currentSoulMd.trim() || '（空）',
     '',
     '最近对话：',
     dialogue,
@@ -90,11 +92,16 @@ export async function refreshAgentsMd(input: {
   // Truncated completions are unsafe to apply as section patches.
   if (choice?.finish_reason === 'length') return null;
 
-  // Model CoT (<think>…</think>) must never land in AGENTS.md.
+  // Model CoT (<think>…</think>) must never land in SOUL.md.
   const raw = stripThinkContent(choice?.message?.content ?? '').trim();
   if (!raw) return null;
-  return mergeAgentsMdFromModel(input.currentAgentsMd, raw);
+  const merged = mergeSoulMdFromModel(input.currentSoulMd, raw);
+  if (!merged) return null;
+  const clamped = clampSoulMd(merged);
+  if (clamped.trim() === input.currentSoulMd.trim()) return null;
+  return clamped;
 }
+
 
 export type SkillRefreshResult =
   | { action: 'none' }
@@ -347,16 +354,70 @@ export type OwnerDescriptionRefreshResult =
   | { action: 'none' }
   | { action: 'upsert'; description: string };
 
+/** Optional seed context when there is no chat yet (post-onboarding). */
+export type OwnerDescriptionSeed = {
+  scenarioLabel?: string;
+  howLabel?: string;
+  /** Fresh SOUL.md just written at onboarding (or current on disk). */
+  soulMd?: string;
+};
+
+/**
+ * System rules for roster description: duties / work boundaries for handoff only.
+ * Shared by post-turn refresh and post-onboarding seed.
+ */
+export function buildOwnerDescriptionSystemPrompt(kindLabel: string, opts?: { forceUpsert?: boolean }): string {
+  const lines = [
+    `你负责维护桌面${kindLabel}的对外简介（花名册 description）。`,
+    '写成一句或两句短介绍：职责与工作边界——这个助手/小队做什么、不做什么，方便其他助手判断是否应把任务转交给它。',
+    '只写职责与边界；不要写产品通用能力或安全套话。',
+    '禁止写入例如：也可查资料、读写本机文件、执行命令、设定时提醒、生成图片；涉及删除/覆盖/推送/安装等破坏性操作前先征得同意；不写、不传密钥和验证码等敏感信息。这些属于 SOUL.md（约束/安全），不属于 description。',
+    '不要写密钥、一次性任务细节、冗长列表或聊天记录摘要。',
+    '只输出 JSON，不要 markdown 围栏，不要解释。',
+  ];
+  if (opts?.forceUpsert) {
+    lines.push('当前简介为空或仅有引导信息：必须输出 upsert，根据名称与引导写一句职责边界简介。');
+    lines.push('需要写入：{"action":"upsert","description":"……"}');
+  } else {
+    lines.push('根据最近对话演进简介；若现有简介仍准确则不要改。');
+    lines.push('无更新：{"action":"none"}');
+    lines.push('需要更新：{"action":"upsert","description":"……"}');
+  }
+  lines.push('description 纯文本，最多 200 字（含标点），中文优先。');
+  return lines.join('\n');
+}
+
+function formatOwnerDescriptionSeedBlock(seed: OwnerDescriptionSeed): string {
+  const parts: string[] = [];
+  const scenario = (seed.scenarioLabel || '').trim();
+  const how = (seed.howLabel || '').trim();
+  if (scenario) parts.push(`引导场景：${scenario}`);
+  if (how) parts.push(`协作方式：${how}`);
+  const soul = (seed.soulMd || '').trim();
+  if (soul) {
+    // Cap so the seed call stays small; identity + first sections are enough.
+    const excerpt = soul.length > 1200 ? `${soul.slice(0, 1200)}…` : soul;
+    parts.push('SOUL.md（刚写入的个性与边界种子）：');
+    parts.push(excerpt);
+  }
+  return parts.join('\n');
+}
+
 /**
  * Silent roster blurb refresh (bot or squad description). Max 200 chars.
  * Caller writes bots.json / squads.json; next turn / UI reload picks it up.
+ *
+ * Pass `seed` (name already in ownerName) to allow a first fill with no chat yet
+ * (post-onboarding). With neither recent dialogue nor seed → none.
  */
 export async function refreshOwnerDescription(input: {
   model: ResolvedModelConfig;
   ownerKind: 'bot' | 'squad';
   ownerName: string;
   currentDescription: string;
-  recentMessages: ChatMessage[];
+  recentMessages?: ChatMessage[];
+  /** When set, allows refresh with empty chat (onboarding seed). */
+  seed?: OwnerDescriptionSeed;
   /** Recent user/assistant window; missing / invalid → 12; clamp 1–100. */
   recentMessageLimit?: number;
   signal?: AbortSignal;
@@ -366,9 +427,9 @@ export async function refreshOwnerDescription(input: {
 
   const limit = normalizeMaxTurns(
     input.recentMessageLimit,
-    DEFAULT_AGENTS_MD_RECENT_MESSAGE_LIMIT,
+    DEFAULT_SOUL_MD_RECENT_MESSAGE_LIMIT,
   );
-  const dialogue = input.recentMessages
+  const dialogue = (input.recentMessages || [])
     .filter((m) => m.role === 'user' || m.role === 'assistant')
     .slice(-limit)
     .map((m) => {
@@ -378,34 +439,32 @@ export async function refreshOwnerDescription(input: {
     })
     .filter((line) => line.length > 3)
     .join('\n\n');
-  if (!dialogue.trim()) return { action: 'none' };
+  const seedBlock = input.seed ? formatOwnerDescriptionSeedBlock(input.seed) : '';
+  if (!dialogue.trim() && !seedBlock.trim()) return { action: 'none' };
 
   const kindLabel = input.ownerKind === 'squad' ? '小队' : '助手';
+  const prev = sanitizeOwnerDescriptionDuties(input.currentDescription);
+  const forceUpsert = !prev && Boolean(seedBlock.trim());
   const client = new OpenAI({
     apiKey: input.model.apiKey,
     baseURL: input.model.baseURL.replace(/\/$/, ''),
   });
 
-  const system = [
-    `你负责维护桌面${kindLabel}的对外简介（花名册 description）。`,
-    '写成一句或两句短介绍：这个助手/小队擅长什么、适合帮用户做什么。',
-    '根据最近对话演进简介；若现有简介仍准确则不要改。',
-    '不要写密钥、一次性任务细节、冗长列表或聊天记录摘要。',
-    '只输出 JSON，不要 markdown 围栏，不要解释。',
-    '无更新：{"action":"none"}',
-    '需要更新：{"action":"upsert","description":"……"}',
-    'description 纯文本，最多 200 字（含标点），中文优先。',
-  ].join('\n');
+  const system = buildOwnerDescriptionSystemPrompt(kindLabel, { forceUpsert });
 
-  const user = [
+  const userParts = [
     `${kindLabel}名称：${input.ownerName}`,
     '',
     '当前简介：',
-    clampOwnerDescription(input.currentDescription) || '（空）',
-    '',
-    '最近对话：',
-    dialogue,
-  ].join('\n');
+    prev || '（空）',
+  ];
+  if (seedBlock.trim()) {
+    userParts.push('', '引导 / 种子：', seedBlock);
+  }
+  if (dialogue.trim()) {
+    userParts.push('', '最近对话：', dialogue);
+  }
+  const user = userParts.join('\n');
 
   const completion = await client.chat.completions.create(
     {
@@ -429,11 +488,10 @@ export async function refreshOwnerDescription(input: {
   try {
     const parsed = JSON.parse(raw) as { action?: string; description?: string };
     if (parsed.action !== 'upsert') return { action: 'none' };
-    const description = clampOwnerDescription(
+    const description = sanitizeOwnerDescriptionDuties(
       stripThinkContent(String(parsed.description || '')),
     );
     if (!description) return { action: 'none' };
-    const prev = clampOwnerDescription(input.currentDescription);
     if (description === prev) return { action: 'none' };
     return { action: 'upsert', description };
   } catch {

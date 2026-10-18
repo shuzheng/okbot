@@ -6,6 +6,8 @@ export {
   DANGEROUS_SHELL_PATTERNS,
   toolRootDir,
   expandHome,
+  isAbsoluteOrHomePath,
+  resolveOwnerWorkPath,
 } from './guardrails.js';
 export {
   formatSessionPromptContext,
@@ -64,13 +66,15 @@ export {
 
 export { runChat } from './runChat.js';
 export {
-  refreshAgentsMd,
+  refreshSoulMd,
   refreshBotSkills,
   refreshMemories,
   refreshOwnerDescription,
+  buildOwnerDescriptionSystemPrompt,
   type SkillRefreshResult,
   type MemoryRefreshResult,
   type OwnerDescriptionRefreshResult,
+  type OwnerDescriptionSeed,
 } from './refresh.js';
 export {
   compressSessionHistory,
@@ -91,13 +95,13 @@ export {
   type BudgetSessionRow,
 } from './contextBudget.js';
 export {
-  applyAgentsMdSectionPatches,
+  applySoulMdSectionPatches,
   isWholeFileReplacement,
-  mergeAgentsMdFromModel,
-  parseAgentsMdModelOutput,
+  mergeSoulMdFromModel,
+  parseSoulMdModelOutput,
   parseMarkdownSections,
-  type AgentsMdSectionPatch,
-} from './agentsMdPatch.js';
+  type SoulMdSectionPatch,
+} from './soulMdPatch.js';
 export { detectTopicChange } from './detectTopicChange.js';
 export { quoteSessionInputCallback } from './quoteContext.js';
 export {

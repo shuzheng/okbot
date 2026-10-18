@@ -128,16 +128,20 @@ function mediaMimeForExt(ext: string): string {
 }
 
 /**
- * Resolve ~/.okbot/<ownerId>/resources/<file> for the media gateway.
+ * Resolve ~/.okbot/<ownerId>/{resources|uploads}/<file> for the media gateway.
  * Same path rules as IPC readGeneratedAssetDataUrl.
  */
-function resolveOwnerResourceFile(
+function resolveOwnerMediaFile(
   okbotRootRaw: string,
   ownerId: string,
+  subdir: 'resources' | 'uploads',
   fileName: string,
 ): { ok: true; filePath: string } | { ok: false; error: string } {
   const id = (ownerId || '').trim();
   const name = (fileName || '').trim();
+  if (subdir !== 'resources' && subdir !== 'uploads') {
+    return { ok: false, error: 'invalid asset path' };
+  }
   if (!id || !name || id.includes('..') || name.includes('..')) {
     return { ok: false, error: 'invalid asset path' };
   }
@@ -148,15 +152,23 @@ function resolveOwnerResourceFile(
     return { ok: false, error: 'invalid asset path' };
   }
   const okbotRoot = path.resolve(okbotRootRaw);
-  const resourcesDir = path.resolve(okbotRoot, id, 'resources');
-  const filePath = path.resolve(resourcesDir, name);
-  if (filePath !== resourcesDir && !filePath.startsWith(resourcesDir + path.sep)) {
-    return { ok: false, error: 'path outside owner resources' };
+  const mediaDir = path.resolve(okbotRoot, id, subdir);
+  const filePath = path.resolve(mediaDir, name);
+  if (filePath !== mediaDir && !filePath.startsWith(mediaDir + path.sep)) {
+    return { ok: false, error: 'path outside owner media' };
   }
   if (filePath !== okbotRoot && !filePath.startsWith(okbotRoot + path.sep)) {
     return { ok: false, error: 'path outside okbot root' };
   }
   return { ok: true, filePath };
+}
+
+function resolveOwnerResourceFile(
+  okbotRootRaw: string,
+  ownerId: string,
+  fileName: string,
+): { ok: true; filePath: string } | { ok: false; error: string } {
+  return resolveOwnerMediaFile(okbotRootRaw, ownerId, 'resources', fileName);
 }
 
 function matchPath(url: string): { pathname: string; parts: string[] } {
@@ -525,14 +537,14 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
       }
     }
 
-    // GET /v1/media/:ownerId/resources/:file — chat markdown images from ~/.okbot/…/resources/.
+    // GET /v1/media/:ownerId/{resources|uploads}/:file — chat images/files from ~/.okbot/…/resources/.
     // Auth accepts Bearer / cookie / ?token= because <img> cannot set Authorization.
     if (
       method === 'GET' &&
       parts.length === 5 &&
       parts[0] === 'v1' &&
       parts[1] === 'media' &&
-      parts[3] === 'resources'
+      (parts[3] === 'resources' || parts[3] === 'uploads')
     ) {
       const mediaUrl = new URL(req.url || '/', 'http://127.0.0.1');
       if (!requestGatewayAuthed(req, mediaUrl, currentToken)) {
@@ -548,7 +560,8 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
         sendJson(res, 400, { ok: false, error: 'invalid asset path' });
         return;
       }
-      const resolved = resolveOwnerResourceFile(deps.ctx.storage.root, ownerId, fileName);
+      const subdir = parts[3] === 'uploads' ? 'uploads' as const : 'resources' as const;
+      const resolved = resolveOwnerMediaFile(deps.ctx.storage.root, ownerId, subdir, fileName);
       if (!resolved.ok) {
         sendJson(res, 400, { ok: false, error: resolved.error });
         return;
@@ -735,7 +748,7 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
         return;
       }
 
-      // GET /v1/bots/:id/tasks | GET /v1/squads/:id/tasks — open multi-task queue
+      // GET /v1/bots/:id/tasks | GET /v1/squads/:id/tasks — open multi-task queue (?all=1 → history too)
       if (
         method === 'GET' &&
         parts.length === 4 &&
@@ -744,12 +757,136 @@ export function createLocalHttpApi(deps: LocalHttpApiDeps): {
         parts[3] === 'tasks'
       ) {
         const id = parts[2] || '';
+        const url = new URL(req.url || '/', 'http://127.0.0.1');
+        const all = url.searchParams.get('all') === '1' || url.searchParams.get('all') === 'true';
         try {
-          const tasks = deps.ctx.storage.loadOpenTasks(id);
+          const tasks = all
+            ? [...deps.ctx.storage.loadTasks(id)].sort((a, b) => {
+                const at = a.startedAt || a.updatedAt || a.id;
+                const bt = b.startedAt || b.updatedAt || b.id;
+                return bt.localeCompare(at) || b.id.localeCompare(a.id);
+              })
+            : deps.ctx.storage.loadOpenTasks(id);
           sendJson(res, 200, { ok: true, tasks });
         } catch (err) {
           console.error('[okbot] http getTasks failed', err);
           sendJson(res, 500, { ok: false, error: 'tasks_failed' });
+        }
+        return;
+      }
+
+      // GET /v1/bots/:id/resources | GET /v1/squads/:id/resources
+      if (
+        method === 'GET' &&
+        parts.length === 4 &&
+        parts[0] === 'v1' &&
+        (parts[1] === 'bots' || parts[1] === 'squads') &&
+        parts[3] === 'resources'
+      ) {
+        const id = parts[2] || '';
+        try {
+          const resources = deps.ctx.storage.listOwnerResources(id);
+          sendJson(res, 200, { ok: true, resources });
+        } catch (err) {
+          console.error('[okbot] http listOwnerResources failed', err);
+          sendJson(res, 500, { ok: false, error: 'resources_failed' });
+        }
+        return;
+      }
+
+      // POST /v1/bots/:id/uploads | POST /v1/squads/:id/uploads
+      // Body: { name, dataBase64, mime? } → ~/.okbot/<ownerId>/uploads/ on the gateway host.
+      const isBotUpload =
+        method === 'POST' &&
+        parts.length === 4 &&
+        parts[0] === 'v1' &&
+        parts[1] === 'bots' &&
+        parts[3] === 'uploads';
+      const isSquadUpload =
+        method === 'POST' &&
+        parts.length === 4 &&
+        parts[0] === 'v1' &&
+        parts[1] === 'squads' &&
+        parts[3] === 'uploads';
+      if (isBotUpload || isSquadUpload) {
+        const id = parts[2] || '';
+        if (!id) {
+          sendJson(res, 400, { ok: false, error: 'missing_id' });
+          return;
+        }
+        if (isBotUpload) {
+          const bot = deps.ctx.storage.listBots().find((b) => b.id === id);
+          if (!bot) {
+            sendJson(res, 404, { ok: false, error: 'bot_not_found' });
+            return;
+          }
+        } else {
+          const squad = deps.ctx.storage.listSquads().find((s) => s.id === id);
+          if (!squad) {
+            sendJson(res, 404, { ok: false, error: 'squad_not_found' });
+            return;
+          }
+        }
+        let parsed: { name?: unknown; dataBase64?: unknown; mime?: unknown } = {};
+        try {
+          // Base64 of 25MB ≈ 34MB; leave headroom for JSON wrappers.
+          const raw = await readBody(req, 40_000_000);
+          parsed = raw.trim() ? (JSON.parse(raw) as typeof parsed) : {};
+        } catch (err) {
+          if (err instanceof Error && err.message === 'payload_too_large') {
+            sendJson(res, 413, { ok: false, error: 'payload_too_large' });
+            return;
+          }
+          sendJson(res, 400, { ok: false, error: 'invalid_json' });
+          return;
+        }
+        const name = typeof parsed.name === 'string' ? parsed.name.trim() : '';
+        const dataBase64 = typeof parsed.dataBase64 === 'string' ? parsed.dataBase64.trim() : '';
+        const mime = typeof parsed.mime === 'string' ? parsed.mime.trim() : '';
+        if (!dataBase64) {
+          sendJson(res, 400, { ok: false, error: 'missing_data' });
+          return;
+        }
+        let buffer: Buffer;
+        try {
+          buffer = Buffer.from(dataBase64, 'base64');
+        } catch {
+          sendJson(res, 400, { ok: false, error: 'invalid_base64' });
+          return;
+        }
+        if (!buffer.length) {
+          sendJson(res, 400, { ok: false, error: 'empty_upload' });
+          return;
+        }
+        try {
+          const saved = deps.ctx.storage.saveOwnerUpload(id, {
+            name: name || 'file',
+            buffer,
+            mime: mime || null,
+          });
+          sendJson(res, 200, {
+            ok: true,
+            attachment: {
+              kind: saved.kind,
+              path: saved.path,
+              name: saved.name,
+              size: saved.size,
+              mediaPath: saved.mediaPath,
+              assetRel: saved.assetRel,
+            },
+          });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (msg === 'upload_too_large') {
+            sendJson(res, 413, { ok: false, error: 'upload_too_large' });
+            return;
+          }
+          if (msg === 'empty_upload') {
+            sendJson(res, 400, { ok: false, error: 'empty_upload' });
+            return;
+          }
+          console.error('[okbot] http upload failed', err);
+          sendJson(res, 500, { ok: false, error: 'upload_failed' });
         }
         return;
       }

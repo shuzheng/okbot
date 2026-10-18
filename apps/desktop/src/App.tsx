@@ -4,13 +4,11 @@ import { type OrbState } from 'thinking-orbs';
 import { resolveUiLang, t } from './i18n';
 import { FlatAvatar, SquadAvatar, type SquadAvatarMember } from './components/ui/avatars';
 import {
-  ThemeModeIcon,
   CopyIcon,
   CloseIcon,
   CheckIcon,
   EditIcon,
   TrashIcon,
-  ExportAssistantIcon,
   DefaultAssistantIcon,
   PinIcon,
   UnpinIcon,
@@ -18,7 +16,6 @@ import {
   MarkAsUnreadIcon,
   EyeIcon,
   EyeOffIcon,
-  AboutIcon,
   CopyRequestUrlIcon,
   FolderIcon,
   FolderPlusIcon,
@@ -47,6 +44,7 @@ import {
   loadImmersiveChat,
   saveImmersiveChat,
   useSessionListFlip,
+  useSessionDigitShortcuts,
   SIDEBAR_DEFAULT,
   SIDEBAR_MIN,
   SIDEBAR_MAX,
@@ -68,6 +66,7 @@ import {
 import { applyTheme, subscribeSystemTheme } from './utils/theme';
 import { mergeSettingsPatch } from './utils/settingsPatch';
 import { updateScrollFade } from './utils/scrollFade';
+import { isWindowResizing, subscribeWindowResizeGate } from './utils/windowResizeGate';
 import {
   blobToWhisperAudio,
   openMicStream as openMicStreamHelper,
@@ -134,7 +133,6 @@ import {
   type MessageTrace,
   type Squad,
   type SquadMember,
-  type ThemeMode,
   type UpdaterStatus,
 } from '@okbot/shared';
 
@@ -152,6 +150,9 @@ export function App() {
     clearUnreadForSelection,
     sessionHasUnread,
     sessions,
+    sessionInteractedAt,
+    avatarMotionNow,
+    touchSessionInteraction,
   } = useSessions();
 
   const {
@@ -362,14 +363,20 @@ export function App() {
     attachments,
     attachmentsRef,
     updateAttachments,
+    clearAttachments,
     onPickAttach,
     onRemoveAttachment,
+    onPasteFiles,
     fileDragOver,
     onChatDragEnter,
     onChatDragLeave,
     onChatDragOver,
     onChatDrop,
-  } = useAttachments({ lang, listening });
+  } = useAttachments({
+    lang,
+    listening,
+    ownerId: selection?.id ?? null,
+  });
 
 
   useEffect(() => {
@@ -835,6 +842,11 @@ export function App() {
     };
   }, []);
 
+  useEffect(() => {
+    document.documentElement.dataset.translucent =
+      settings?.translucent !== false ? 'true' : 'false';
+  }, [settings?.translucent]);
+
   // `system` theme: keep concrete data-theme in sync with OS (matchMedia + main nativeTheme).
   useEffect(() => {
     if (!settings || settings.theme !== 'system') return;
@@ -847,10 +859,13 @@ export function App() {
     };
   }, [settings?.theme]);
 
-  // Main may persist closeAction (remember checkbox) without going through saveSettings IPC.
+  // Main may persist closeAction / theme (tray) without going through saveSettings IPC.
   useEffect(() => {
     const unsub = window.okbot.onSettingsChanged((next) => {
       setSettings(next);
+      applyTheme(next.theme);
+      document.documentElement.dataset.translucent =
+        next.translucent !== false ? 'true' : 'false';
     });
     return unsub;
   }, []);
@@ -964,6 +979,9 @@ export function App() {
 
     let pinRaf: number | null = null;
     const pinIfSticky = () => {
+      // During live window resize every bubble reflows; skip layout thrash and
+      // flush once on settle (subscribeWindowResizeGate below).
+      if (isWindowResizing()) return;
       if (!stickToBottomRef.current) {
         // Content grew while user is reading history — refresh jump affordance.
         const distance = distanceFromBottom();
@@ -975,7 +993,7 @@ export function App() {
       if (pinRaf != null) return;
       pinRaf = requestAnimationFrame(() => {
         pinRaf = null;
-        if (!stickToBottomRef.current) return;
+        if (!stickToBottomRef.current || isWindowResizing()) return;
         pinningScrollRef.current = true;
         el.scrollTop = el.scrollHeight;
         requestAnimationFrame(() => {
@@ -991,36 +1009,33 @@ export function App() {
 
     el.addEventListener('scroll', syncStickFromUserScroll, { passive: true });
 
-    // Child growth (bubbles/markdown) + scrollport resize (turn-status overlay /
-    // composer height) must both re-pin while sticky.
+    // Observe the scrollport + a single growing content wrapper — NOT every
+    // bubble. Per-child RO fired N times on each window-resize frame and was
+    // the main resize jank source (scrollHeight reads + nested scrollTop writes).
+    const content =
+      el.querySelector('.messages-content') ?? el.firstElementChild ?? el;
     const ro =
       typeof ResizeObserver !== 'undefined'
         ? new ResizeObserver(() => {
             pinIfSticky();
           })
         : null;
-    const observed = new Set<Element>();
-    const observeTree = () => {
-      if (!ro) return;
-      if (!observed.has(el)) {
-        observed.add(el);
-        ro.observe(el);
-      }
-      for (const child of el.children) {
-        if (observed.has(child)) continue;
-        observed.add(child);
-        ro.observe(child);
-      }
-    };
-    observeTree();
+    ro?.observe(el);
+    if (content instanceof Element && content !== el) ro?.observe(content);
     const mo =
       typeof MutationObserver !== 'undefined'
         ? new MutationObserver(() => {
-            observeTree();
             pinIfSticky();
           })
         : null;
-    mo?.observe(el, { childList: true, subtree: true, characterData: true });
+    // childList only — characterData storms during streaming are covered by
+    // the content-wrapper ResizeObserver when height grows.
+    mo?.observe(el, { childList: true, subtree: true });
+
+    const unsubResize = subscribeWindowResizeGate(() => {
+      pinIfSticky();
+      updateScrollFade(el);
+    });
 
     syncStickFromUserScroll();
     return () => {
@@ -1028,6 +1043,7 @@ export function App() {
       if (pinRaf != null) cancelAnimationFrame(pinRaf);
       ro?.disconnect();
       mo?.disconnect();
+      unsubResize();
     };
   }, [chatOwnerId, AT_BOTTOM_SLACK_PX, JUMP_BUTTON_PX]);
 
@@ -1192,6 +1208,69 @@ export function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const { hintsVisible, hintByOwnerId } = useSessionDigitShortcuts({
+    enabled: !!settings,
+    platform,
+    sessions,
+    pinnedOwnerIds: settings?.pinnedOwnerIds ?? [],
+    hiddenOwnerIds: settings?.hiddenOwnerIds ?? [],
+    ownerGroups: settings?.ownerGroups ?? [],
+    ownerGroupOrder: settings?.ownerGroupOrder ?? [],
+    ownerGroupMembership: settings?.ownerGroupMembership ?? {},
+    onSelect: (sel) => {
+      selectSession(sel);
+      setImmersiveChat(false);
+    },
+  });
+
+  const shortcutHintByOwnerId = useMemo(() => {
+    if (!hintsVisible) return undefined;
+    const out: Record<string, string> = {};
+    for (const [id, slot] of Object.entries(hintByOwnerId)) {
+      out[id] = slot.label;
+    }
+    return out;
+  }, [hintsVisible, hintByOwnerId]);
+
+  const selectSessionRef = useRef(selectSession);
+  selectSessionRef.current = selectSession;
+
+  useEffect(() => {
+    return window.okbot.onShellNavigate((payload) => {
+      if (payload.action === 'settings') {
+        setSettingsFocus(null);
+        setSettingsOpen(true);
+        setImmersiveChat(false);
+        return;
+      }
+      if (payload.action === 'openSession') {
+        setSettingsOpen(false);
+        setImmersiveChat(false);
+        const id = (payload.id || '').trim();
+        if (!id) return;
+        const kind = payload.kind === 'squad' ? 'squad' : 'bot';
+        selectSessionRef.current({ kind, id });
+        return;
+      }
+      if (payload.action === 'sessions') {
+        setSettingsOpen(false);
+        setImmersiveChat(false);
+        // Expand sidebar if collapsed to rail.
+        if (sidebarWidthRef.current <= SIDEBAR_NARROW_AT) {
+          const restore = lastExpandedWidthRef.current || SIDEBAR_DEFAULT;
+          setSidebarWidth(Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, restore)));
+          manualCollapsedRef.current = false;
+          autoCollapsedRef.current = false;
+        }
+        // Focus session list for keyboard users.
+        requestAnimationFrame(() => {
+          sessionListRef.current?.focus?.();
+          sidebarRef.current?.scrollIntoView?.({ block: 'nearest' });
+        });
+      }
+    });
   }, []);
 
   const handleGlobalSearchSelect = useCallback(
@@ -1498,9 +1577,9 @@ export function App() {
         ? { enabledGlobalSkills: values.enabledGlobalSkills }
         : {}),
     });
-    // If Advanced AGENTS was edited, write after updateBot so it wins over syncAgentsMdProfile.
-    if (values.agentsMdTouched && typeof values.agentsMd === 'string') {
-      await window.okbot.writeAgentsMd(botId, values.agentsMd);
+    // If Advanced AGENTS was edited, write after updateBot so it wins over syncSoulMdProfile.
+    if (values.soulMdTouched && typeof values.soulMd === 'string') {
+      await window.okbot.writeSoulMd(botId, values.soulMd);
     }
     return updated;
   }
@@ -1736,6 +1815,9 @@ export function App() {
   function openAssistantGallery() {
     setCreateMenu(false);
     setCreateMenuPos(null);
+    // Entering 市场 clears session selection (no active chat row while on market).
+    setSelection(null);
+    saveLastSelection(null);
     setGalleryOpen(true);
   }
 
@@ -2050,7 +2132,7 @@ async function handleSend(retry?: {
     const structuredAtts: ChatMessage['attachments'] = isRetry
       ? retry!.attachments
       : pendingAtts.length
-        ? pendingAtts.map(({ kind, path, name }) => ({ kind, path, name }))
+        ? pendingAtts.map(({ kind, path, name, size }) => ({ kind, path, name, ...(size != null ? { size } : {}) }))
         : undefined;
     const text = isRetry
       ? rawBody
@@ -2069,9 +2151,11 @@ async function handleSend(retry?: {
     if (!isRetry) {
       updateDraft('');
       updateQuoteDraft(null);
-      updateAttachments([]);
+      clearAttachments();
     }
     setError('');
+    // Opening / chatting counts as interaction for sidebar avatar idle→静止.
+    touchSessionInteraction(ownerId);
     // Always jump to bottom on send and re-enable stick-to-bottom.
     stickToBottomRef.current = true;
     setShowJumpToBottom(false);
@@ -2608,22 +2692,6 @@ async function handleSend(retry?: {
     }
   }
 
-  async function cycleTheme() {
-    if (!settings) return;
-    const order: ThemeMode[] = ['system', 'light', 'dark'];
-    const idx = order.indexOf(settings.theme);
-    const next = order[(idx >= 0 ? idx + 1 : 1) % order.length];
-    applyTheme(next);
-    try {
-      // Re-base on disk so a main-persisted closeAction is not rolled back.
-      const disk = await window.okbot.getSettings();
-      const saved = await window.okbot.saveSettings(mergeSettingsPatch(disk, { theme: next }));
-      setSettings(saved);
-    } catch (err) {
-      toast.error(formatSystemError(err));
-    }
-  }
-
   // Stable identities for memo(SessionSidebar) / memo(ChatTranscript).
   const onOpenSearch = useCallback(() => setSearchOpen(true), []);
   const onToggleImmersiveChat = useCallback(() => setImmersiveChat((v) => !v), []);
@@ -2739,6 +2807,7 @@ async function handleSend(retry?: {
         onClearQuote={onClearQuote}
         onRemoveAttachment={onRemoveAttachment}
         onPickAttach={onPickAttach}
+        onPasteFiles={onPasteFiles}
         onSend={onSend}
         onStop={handleStop}
         onToggleVoice={onToggleVoice}
@@ -2758,6 +2827,7 @@ async function handleSend(retry?: {
       onClearQuote,
       onRemoveAttachment,
       onPickAttach,
+      onPasteFiles,
       onSend,
       handleStop,
       onToggleVoice,
@@ -2838,6 +2908,8 @@ async function handleSend(retry?: {
         newBtnFooterRef={newBtnFooterRef}
         botIsWorking={botIsWorking}
         sessionHasUnread={sessionHasUnread}
+        sessionInteractedAt={sessionInteractedAt}
+        avatarMotionNow={avatarMotionNow}
         onOpenSearch={onOpenSearch}
         onOpenCreateMenu={openCreateMenu}
         onStartCreateBot={onStartCreateBot}
@@ -2855,6 +2927,7 @@ async function handleSend(retry?: {
         onCommitRename={onCommitRename}
         onCancelRename={cancelInlineRename}
         onOpenSettings={onOpenSettings}
+        onOpenAbout={() => setAboutOpen(true)}
         onDockMouseMove={updateDockMagnify}
         onDockScroll={onDockScroll}
         onDockMouseLeave={onDockMouseLeave}
@@ -2875,6 +2948,7 @@ async function handleSend(retry?: {
           void reorderOwnerGroupBefore(fromId, toId);
         }}
         updateControl={sidebarUpdateControl}
+        shortcutHintByOwnerId={shortcutHintByOwnerId}
       />
 
       <div
@@ -2933,7 +3007,7 @@ async function handleSend(retry?: {
         ) : !selection ? (
           <ChatWatermark />
         ) : null}
-        {!selection && platform === 'win32' ? (
+        {platform === 'win32' && !galleryOpen ? (
           <div className="window-controls-float">
             <WindowControls lang={lang} />
           </div>
@@ -2952,73 +3026,54 @@ async function handleSend(retry?: {
                 <div className="chat-drop-overlay-card">{t(lang, 'attachDropHint')}</div>
               </div>
             ) : null}
-            <div className="main-header">
-              {selectedBot ? (
-                <button
-                  type="button"
-                  className="header-identity"
-                  title={t(lang, 'profile')}
-                  aria-label={t(lang, 'profile')}
-                  onClick={() => setProfileBot(selectedBot)}
-                >
-                  <FlatAvatar
-                    className="header-avatar"
-                    emoji={selectedBot.emoji}
-                    color={selectedBot.color}
-                    avatarKind={selectedBot.avatarKind}
-                    botAvatarType={selectedBot.botAvatarType}
-                    busy={botIsWorking(selectedBot.id)}
+            {selectedBot ? (
+              <button
+                type="button"
+                className="chat-member-pill"
+                title={t(lang, 'profile')}
+                aria-label={t(lang, 'profile')}
+                onClick={() => setProfileBot(selectedBot)}
+              >
+                <FlatAvatar
+                  className="header-avatar"
+                  emoji={selectedBot.emoji}
+                  color={selectedBot.color}
+                  avatarKind={selectedBot.avatarKind}
+                  botAvatarType={selectedBot.botAvatarType}
+                  busy={botIsWorking(selectedBot.id)}
+                />
+                <span className="chat-member-pill-name">{selectedBot.name}</span>
+                <span className="chat-member-pill-arrow" aria-hidden>
+                  <ChevronRightIcon />
+                </span>
+              </button>
+            ) : selectedSquad ? (
+              <button
+                type="button"
+                className="chat-member-pill"
+                title={t(lang, 'squadProfile')}
+                aria-label={t(lang, 'squadProfile')}
+                onClick={() => openSquadEditor(selectedSquad)}
+              >
+                <span className="header-avatar">
+                  <SquadAvatar
+                    members={selectedSquad.members
+                      .map((m) => bots.find((b) => b.id === m.botId))
+                      .filter((b): b is Bot => !!b)
+                      .map((b) => ({
+                        emoji: b.emoji,
+                        color: b.color,
+                        avatarKind: b.avatarKind,
+                        botAvatarType: b.botAvatarType,
+                      }))}
                   />
-                  <h1>{selectedBot.name}</h1>
-                </button>
-              ) : selectedSquad ? (
-                <button
-                  type="button"
-                  className="header-identity"
-                  title={t(lang, 'squadProfile')}
-                  aria-label={t(lang, 'squadProfile')}
-                  onClick={() => openSquadEditor(selectedSquad)}
-                >
-                  <span className="header-avatar">
-                    <SquadAvatar
-                      members={selectedSquad.members
-                        .map((m) => bots.find((b) => b.id === m.botId))
-                        .filter((b): b is Bot => !!b)
-                        .map((b) => ({
-                          emoji: b.emoji,
-                          color: b.color,
-                          avatarKind: b.avatarKind,
-                          botAvatarType: b.botAvatarType,
-                        }))}
-                    />
-                  </span>
-                  <h1>{selectedSquad.name}</h1>
-                </button>
-              ) : null}
-              <div className="header-actions">
-                <QuickTip place="below" text={t(lang, 'themeCycle')}>
-                <button
-                  type="button"
-                  className="header-icon-btn"
-                  aria-label={t(lang, 'themeCycle')}
-                  onClick={() => void cycleTheme()}
-                >
-                  <ThemeModeIcon mode={settings?.theme ?? 'system'} />
-                </button>
-                </QuickTip>
-                <QuickTip text={t(lang, 'aboutOpen')} place="below">
-                <button
-                  type="button"
-                  className="header-icon-btn"
-                  aria-label={t(lang, 'aboutOpen')}
-                  onClick={() => setAboutOpen(true)}
-                >
-                  <AboutIcon />
-                </button>
-                </QuickTip>
-                {platform === 'win32' ? <WindowControls lang={lang} /> : null}
-              </div>
-            </div>
+                </span>
+                <span className="chat-member-pill-name">{selectedSquad.name}</span>
+                <span className="chat-member-pill-arrow" aria-hidden>
+                  <ChevronRightIcon />
+                </span>
+              </button>
+            ) : null}
             <ChatTranscript
               lang={lang}
               messages={messages}
@@ -3221,26 +3276,6 @@ async function handleSend(retry?: {
                     <span>{t(lang, 'copyRequestUrl')}</span>
                   </button>
                 ) : null,
-                <button
-                  type="button"
-                  onClick={() => {
-                    const botId = menu.bot.id;
-                    setMenu(null);
-                    void (async () => {
-                      try {
-                        const res = await window.okbot.exportAssistantPackage(botId);
-                        if (res && !res.canceled && 'path' in res) {
-                          toast.success(`${t(lang, 'botPackageExported')}: ${res.path}`);
-                        }
-                      } catch (err) {
-                        toast.error(formatSystemError(err));
-                      }
-                    })();
-                  }}
-                >
-                  <span className="menu-item-icon"><ExportAssistantIcon /></span>
-                  <span>{t(lang, 'botExportPackage')}</span>
-                </button>,
               ],
               [
                 <button

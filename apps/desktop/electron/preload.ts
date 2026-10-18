@@ -76,10 +76,10 @@ const api = {
     }) as Promise<Bot>,
   cancelImportAssistantFromUrl: () =>
     ipcRenderer.invoke(IpcChannels.cancelImportAssistantFromUrl) as Promise<boolean>,
-  readAgentsMd: (botId: string) =>
-    ipcRenderer.invoke(IpcChannels.readAgentsMd, botId) as Promise<string>,
-  writeAgentsMd: (botId: string, content: string) =>
-    ipcRenderer.invoke(IpcChannels.writeAgentsMd, botId, content) as Promise<boolean>,
+  readSoulMd: (botId: string) =>
+    ipcRenderer.invoke(IpcChannels.readSoulMd, botId) as Promise<string>,
+  writeSoulMd: (botId: string, content: string) =>
+    ipcRenderer.invoke(IpcChannels.writeSoulMd, botId, content) as Promise<boolean>,
   listBotMemories: (botId: string) =>
     ipcRenderer.invoke(IpcChannels.listBotMemories, botId),
   upsertBotMemory: (entry: {
@@ -150,6 +150,14 @@ const api = {
   getMessages: (botId: string) => ipcRenderer.invoke(IpcChannels.getMessages, botId),
   getTasks: (ownerId: string) =>
     ipcRenderer.invoke(IpcChannels.getTasks, ownerId) as Promise<import('@okbot/shared').TaskRecord[]>,
+  listOwnerTasks: (ownerId: string) =>
+    ipcRenderer.invoke(IpcChannels.listOwnerTasks, ownerId) as Promise<
+      import('@okbot/shared').TaskRecord[]
+    >,
+  listOwnerResources: (ownerId: string) =>
+    ipcRenderer.invoke(IpcChannels.listOwnerResources, ownerId) as Promise<
+      import('@okbot/shared').OwnerResourceInfo[]
+    >,
   getMessagesPage: (botId: string, opts?: { limit?: number; beforeMessageId?: string | null }) =>
     ipcRenderer.invoke(IpcChannels.getMessagesPage, {
       botId,
@@ -187,6 +195,27 @@ const api = {
       canceled: boolean;
       paths: string[];
     }>,
+  uploadOwnerAttachment: (payload: {
+    ownerId: string;
+    name?: string;
+    localPath?: string;
+    dataBase64?: string;
+    mime?: string;
+  }) =>
+    ipcRenderer.invoke(IpcChannels.uploadOwnerAttachment, payload) as Promise<
+      | {
+          ok: true;
+          attachment: {
+            kind: 'image' | 'file';
+            path: string;
+            name: string;
+            size: number;
+            mediaPath: string;
+            assetRel: string;
+          };
+        }
+      | { ok: false; error: string }
+    >,
   /** Absolute path for a File from drag-drop / <input> (Electron 32+; replaces File.path). */
   getPathForFile: (file: File): string => {
     try {
@@ -297,6 +326,16 @@ const api = {
     ipcRenderer.on(IpcChannels.settingsChanged, listener);
     return () => {
       ipcRenderer.removeListener(IpcChannels.settingsChanged, listener);
+    };
+  },
+  onShellNavigate: (
+    handler: (payload: import('@okbot/shared').ShellNavigatePayload) => void,
+  ): (() => void) => {
+    const listener = (_: unknown, payload: import('@okbot/shared').ShellNavigatePayload) =>
+      handler(payload);
+    ipcRenderer.on(IpcChannels.shellNavigate, listener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.shellNavigate, listener);
     };
   },
 };

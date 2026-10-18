@@ -46,7 +46,7 @@ export interface SquadMemberAgentSpec {
   name: string;
   description: string;
   role: string;
-  agentsMd?: string;
+  soulMd?: string;
   /** Catalog-only skills for this member's nested run. */
   skillsText?: string;
   /** Resolve full skill body for this member's `read_skill` tool. */
@@ -149,8 +149,8 @@ function buildMemberSquadInstructions(
       `你是「${member.name || 'OkBot'}」，小队成员助手。`,
       roleLine,
       member.description?.trim() ? `对外简介：${member.description.trim()}` : '',
-      member.agentsMd?.trim()
-        ? `以下是本助手的 AGENTS.md（系统提示，须遵守）：\n\n${member.agentsMd.trim()}`
+      member.soulMd?.trim()
+        ? `以下是本助手的 SOUL.md（系统提示，须遵守）：\n\n${member.soulMd.trim()}`
         : '',
       member.memoriesText?.trim()
         ? `## 记忆（须遵守；过期项已过滤）\n\n${member.memoriesText.trim()}`
@@ -327,7 +327,7 @@ function createSquadRuntime(input: RunSquadChatInput & { resumeNote?: string }) 
       }),
     });
     const runner = new Runner({ modelProvider: provider, model: input.model.model });
-    const runOpts: { stream: true; signal?: AbortSignal; maxTurns?: number } = {
+    const runOpts: { stream: true; signal?: AbortSignal; maxTurns: number } = {
       stream: true,
       signal: input.signal,
       maxTurns: memberMaxTurns,

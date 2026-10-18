@@ -1,12 +1,12 @@
 import {
   normalizeCloseAction,
-  normalizeDefaultAssistantId,
-  type Bot,
+  normalizeTimezone,
   type ThemeMode,
 } from '@okbot/shared';
 import { applyTheme } from '../../utils/theme';
 import { SettingsHelpTip } from './SettingsHelpTip';
 import { SettingsToggle } from './SettingsToggle';
+import { TimezoneCombobox } from './TimezoneCombobox';
 
 import { t, type UiLang } from '../../i18n';
 
@@ -32,12 +32,13 @@ export function GeneralSettingsPanel({
   setShowAdvancedSettings,
   setSidebarDockMagnify,
   setTheme,
+  setTimezone,
+  setTranslucent,
   showAdvancedSettings,
   sidebarDockMagnify,
   theme,
-  bots,
-  defaultAssistantId,
-  setDefaultAssistantId,
+  timezone,
+  translucent,
   gatewayClient,
   needsHwRestart,
   dataDir,
@@ -70,15 +71,15 @@ export function GeneralSettingsPanel({
   setShowAdvancedSettings: React.Dispatch<React.SetStateAction<any>>;
   setSidebarDockMagnify: React.Dispatch<React.SetStateAction<any>>;
   setTheme: React.Dispatch<React.SetStateAction<any>>;
+  setTimezone: React.Dispatch<React.SetStateAction<string>>;
+  setTranslucent: React.Dispatch<React.SetStateAction<boolean>>;
   showAdvancedSettings: any;
   sidebarDockMagnify: any;
   theme: any;
-  bots: Bot[];
-  defaultAssistantId: string;
-  setDefaultAssistantId: React.Dispatch<React.SetStateAction<string>>;
+  timezone: string;
+  translucent: boolean;
 }) {
   return (
-
     <div>
       <div className="settings-section-label">{t(lang, 'appearance')}</div>
       <div className="settings-card">
@@ -111,23 +112,32 @@ export function GeneralSettingsPanel({
             <option value="en">{t(lang, 'langEn')}</option>
           </select>
         </div>
-        <div className="settings-row" data-settings-id="defaultAssistant">
+        <div className="settings-row" data-settings-id="timezone">
           <span className="settings-row-label">
-            <span className="settings-row-label-text">{t(lang, 'defaultAssistant')}</span>
-            <SettingsHelpTip text={t(lang, 'defaultAssistantHint')} />
+            <span className="settings-row-label-text">{t(lang, 'timezone')}</span>
+            <SettingsHelpTip text={t(lang, 'timezoneHint')} />
           </span>
-          <select
-            value={normalizeDefaultAssistantId(defaultAssistantId, bots)}
-            aria-label={t(lang, 'defaultAssistant')}
-            onChange={(e) => setDefaultAssistantId(normalizeDefaultAssistantId(e.target.value, bots))}
-          >
-            <option value="">{t(lang, 'defaultAssistantNone')}</option>
-            {bots.map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.name}
-              </option>
-            ))}
-          </select>
+          <TimezoneCombobox
+            lang={lang}
+            value={normalizeTimezone(timezone)}
+            onChange={(next) => setTimezone(normalizeTimezone(next))}
+          />
+        </div>
+        <div className="settings-row" data-settings-id="translucent">
+          <span className="settings-row-label">
+            <span className="settings-row-label-text">{t(lang, 'translucent')}</span>
+            <SettingsHelpTip text={t(lang, 'translucentHint')} />
+          </span>
+          <SettingsToggle
+            checked={translucent}
+            onChange={() => {
+              setTranslucent((v) => {
+                const next = !v;
+                document.documentElement.dataset.translucent = next ? 'true' : 'false';
+                return next;
+              });
+            }}
+          />
         </div>
         <div className="settings-row" data-settings-id="sidebarDockMagnify">
           <span className="settings-row-label">

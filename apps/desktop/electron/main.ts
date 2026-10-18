@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, screen, session
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { IpcChannels, type AppSettings, type RuntimeEvent } from '@okbot/shared';
+import { IpcChannels, type AppSettings, type RuntimeEvent, type ShellNavigatePayload } from '@okbot/shared';
 import { FileStorage } from './storage';
 import { registerAllIpc, registerWindowControlIpc, type PendingToolApproval } from './ipc';
 import { initAutoUpdater, onAutoUpdatePreferenceChanged } from './updater';
@@ -10,6 +10,7 @@ import { recoverInterruptedMacUpdate } from './macUpdateInstall';
 import { getAllowQuit, setAllowQuit, getIsQuitting, setIsQuitting } from './quitState';
 import { backgroundQuitCopy, closeDialogCopy, resolveMainUiLang } from './mainI18n';
 import { destroyAppTray, ensureAppTray, focusOrShowWindows, hideWindowToTray, type AppTrayCallbacks } from './appTray';
+import { collectTraySessions } from './appTrayMenu';
 import { createLocalHttpApi } from './localHttpApi';
 import { closeMcp } from './mcpRuntime';
 import { ensureGatewayToken, resolveGatewayUiRoot, startSkillWatch } from './gatewayRuntime';
@@ -57,24 +58,115 @@ let gatewayClient: { base: string; token: string; serveUi: boolean } | null = nu
 /** Prevent re-entrant close dialogs when the user hammers the close button. */
 let closeDialogOpen = false;
 
+/** Tray navigate while a window is still loading — flushed on did-finish-load. */
+let pendingShellNavigate: ShellNavigatePayload | null = null;
+/** Debounce tray rebuild when sessions/settings change. */
+let trayRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+function sendShellNavigate(payload: ShellNavigatePayload): void {
+  let sent = false;
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed()) continue;
+    if (win.webContents.isLoadingMainFrame()) {
+      pendingShellNavigate = payload;
+      continue;
+    }
+    win.webContents.send(IpcChannels.shellNavigate, payload);
+    sent = true;
+  }
+  if (!sent) pendingShellNavigate = payload;
+}
+
+function flushPendingShellNavigate(win: BrowserWindow): void {
+  const payload = pendingShellNavigate;
+  if (!payload || win.isDestroyed()) return;
+  pendingShellNavigate = null;
+  win.webContents.send(IpcChannels.shellNavigate, payload);
+}
+
 function trayCallbacks(): AppTrayCallbacks {
-  const copy = closeDialogCopy(resolveMainUiLang(storage.getSettings().language));
+  const settings = storage.getSettings();
+  const copy = closeDialogCopy(resolveMainUiLang(settings.language));
+  const { pinned, recent } = collectTraySessions({
+    bots: storage.listBots(),
+    squads: storage.listSquads(),
+    pinnedOwnerIds: settings.pinnedOwnerIds || [],
+    hiddenOwnerIds: settings.hiddenOwnerIds || [],
+    recentLimit: 10,
+  });
+  const theme =
+    settings.theme === 'light' || settings.theme === 'dark' ? settings.theme : 'system';
   return {
     showWindow: () => {
       focusOrShowWindows(() => {
         if (app.isReady()) createWindow();
       });
     },
+    openSession: (entry) => {
+      focusOrShowWindows(() => {
+        if (app.isReady()) createWindow();
+      });
+      sendShellNavigate({ action: 'openSession', kind: entry.kind, id: entry.id });
+    },
+    openSettings: () => {
+      focusOrShowWindows(() => {
+        if (app.isReady()) createWindow();
+      });
+      sendShellNavigate({ action: 'settings' });
+    },
     quitApp: () => {
       setIsQuitting(true);
       app.quit();
     },
+    setTheme: (next) => {
+      try {
+        const cur = storage.getSettings();
+        const themeNext = next === 'light' || next === 'dark' ? next : 'system';
+        if (cur.theme === themeNext) {
+          applyTheme(themeNext);
+          scheduleRefreshAppTray();
+          return;
+        }
+        storage.saveSettings({ ...cur, theme: themeNext });
+        applyTheme(themeNext);
+        broadcastSettingsChanged();
+      } catch (err) {
+        console.error('[okbot] tray setTheme failed', err);
+      }
+    },
+    theme,
     labels: {
       show: copy.trayShow,
+      recentSessions: copy.trayRecentSessions,
+      pinnedSessions: copy.trayPinnedSessions,
+      theme: copy.trayTheme,
+      themeSystem: copy.trayThemeSystem,
+      themeLight: copy.trayThemeLight,
+      themeDark: copy.trayThemeDark,
+      settings: copy.traySettings,
       quit: copy.trayQuit,
       tooltip: copy.trayTooltip,
     },
+    pinned,
+    recent,
   };
+}
+
+function refreshAppTray(): void {
+  if (!app.isReady()) return;
+  try {
+    ensureAppTray(trayCallbacks());
+  } catch (err) {
+    console.error('[okbot] refreshAppTray failed', err);
+  }
+}
+
+function scheduleRefreshAppTray(): void {
+  if (trayRefreshTimer != null) clearTimeout(trayRefreshTimer);
+  trayRefreshTimer = setTimeout(() => {
+    trayRefreshTimer = null;
+    refreshAppTray();
+  }, 400);
 }
 
 function quitFromClose(): void {
@@ -88,6 +180,7 @@ function broadcastSettingsChanged(): void {
     for (const win of BrowserWindow.getAllWindows()) {
       if (!win.isDestroyed()) win.webContents.send(IpcChannels.settingsChanged, settings);
     }
+    scheduleRefreshAppTray();
   } catch (err) {
     console.error('[okbot] broadcast settingsChanged failed', err);
   }
@@ -224,9 +317,40 @@ function rejectPendingApprovalsForBot(botId: string, message = '已取消') {
   }
 }
 
+function opaqueWindowBg(): string {
+  return nativeTheme.shouldUseDarkColors ? '#000000' : '#f6f6f7';
+}
+
+/** Darwin vibrancy + clear bg when translucent; opaque fill when off. */
+function applyDarwinWindowMaterial(translucent: boolean) {
+  if (process.platform !== 'darwin') return;
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed()) continue;
+    try {
+      win.setVibrancy(translucent ? 'sidebar' : null);
+    } catch (err) {
+      console.error('[okbot] setVibrancy failed', err);
+    }
+  }
+}
+
 function applyTheme(theme: AppSettings['theme']) {
   if (theme === 'system') nativeTheme.themeSource = 'system';
   else nativeTheme.themeSource = theme;
+  // Translucent (default on): clear darwin bg for vibrancy. Off: opaque fill.
+  // Note: BrowserWindow `transparent` is constructor-only; live toggle uses
+  // setVibrancy + backgroundColor + renderer data-translucent CSS.
+  const translucent = storage.getSettings().translucent !== false;
+  applyDarwinWindowMaterial(translucent);
+  const bg =
+    process.platform === 'darwin'
+      ? translucent
+        ? '#00000000'
+        : opaqueWindowBg()
+      : opaqueWindowBg();
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.setBackgroundColor(bg);
+  }
 }
 
 function isBoundsOnScreen(bounds: { x: number; y: number; width: number; height: number }) {
@@ -261,13 +385,23 @@ function createWindow() {
     minWidth: 500,
     minHeight: 500,
     title: 'OkBot',
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#000000' : '#f6f6f7',
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
     },
   };
+  const translucent = storage.getSettings().translucent !== false;
+  if (process.platform === 'darwin' && translucent) {
+    // Transparent + sidebar vibrancy so the left rail frosts the desktop
+    // (CSS backdrop-filter alone only blurred flat --chat-bg under an overlay).
+    opts.transparent = true;
+    opts.backgroundColor = '#00000000';
+    opts.vibrancy = 'sidebar';
+    opts.visualEffectState = 'followWindow';
+  } else {
+    opts.backgroundColor = opaqueWindowBg();
+  }
   const client = gatewayClient;
   if (client) {
     // Same renderer as a normal launch. Do not navigate to the gateway origin:
@@ -337,6 +471,9 @@ function createWindow() {
     void handleWindowCloseRequest(win);
   });
 
+  win.webContents.once('did-finish-load', () => {
+    flushPendingShellNavigate(win);
+  });
   if (process.env.ELECTRON_RENDERER_URL) {
     void win.loadURL(process.env.ELECTRON_RENDERER_URL);
   } else {
@@ -365,6 +502,7 @@ function sendRuntimeEvent(event: RuntimeEvent) {
 
 storage.setSessionsChangedListener((ownerId, reason) => {
   sendRuntimeEvent({ type: 'sessions_changed', botId: ownerId, reason });
+  scheduleRefreshAppTray();
 });
 
 app.on('second-instance', () => {
@@ -496,6 +634,7 @@ app.whenReady().then(async () => {
     applyTheme,
     onAutoUpdatePreferenceChanged,
     onLocalHttpApiSettingsChanged: syncLocalHttpApi,
+    onSettingsPersisted: scheduleRefreshAppTray,
   };
   localHttpApiController = createLocalHttpApi({
     ctx: ipcCtx,
@@ -546,6 +685,8 @@ app.whenReady().then(async () => {
   registerAttachTokenIpc();
   registerWindowControlIpc();
   createWindow();
+  // Menu bar / system tray from launch (not only after hide-to-tray).
+  ensureAppTray(trayCallbacks());
 
   app.on('activate', () => {
     const wins = BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed());

@@ -23,18 +23,28 @@ export type ScheduleStoreDeps = {
   assertKnownOwnerId(ownerId: string): void;
   listBots(): Bot[];
   listSquads(): Squad[];
+  /** settings.timezone (empty = auto). Used when a job omits timezone. */
+  getAppTimezone(): string;
 };
 
-/** Per-owner schedules.json wiring (logic lives in schedules.ts). */
+/** Per-owner schedules.jsonl wiring (logic lives in schedules.ts). */
 export class ScheduleStore {
   constructor(
     private readonly life: OwnerLifecycle,
     private readonly deps: ScheduleStoreDeps,
   ) {}
 
-  /** `~/.okbot/<ownerId>/schedules.json` */
+  private appTimezone(): string {
+    try {
+      return (this.deps.getAppTimezone() || '').trim();
+    } catch {
+      return '';
+    }
+  }
+
+  /** `~/.okbot/<ownerId>/schedules.jsonl` */
   private schedulesFile(ownerId: string): string {
-    return path.join(this.deps.ownerDir(ownerId), 'schedules.json');
+    return path.join(this.deps.ownerDir(ownerId), 'schedules.jsonl');
   }
 
   listScheduledJobs(ownerId: string): ScheduledJob[] {
@@ -111,6 +121,7 @@ export class ScheduleStore {
         title: input.title,
         schedule: parsed,
         timezone: input.timezone,
+        appTimezone: this.appTimezone(),
         once: input.once === true,
       });
       if (!job.nextRunAt) {
@@ -141,6 +152,7 @@ export class ScheduleStore {
         const next = refreshJobNextRun(
           { ...j, enabled, updatedAt: now.toISOString(), lastError: enabled ? j.lastError : j.lastError },
           now,
+          this.appTimezone(),
         );
         return next;
       });
@@ -176,6 +188,7 @@ export class ScheduleStore {
           lastRunAt: j.lastRunAt,
           lastError: j.lastError,
           once: j.once,
+          createdAt: j.createdAt || '',
         });
       }
     };
@@ -243,7 +256,7 @@ export class ScheduleStore {
       job.enabled = false;
       job.nextRunAt = null;
     } else {
-      job = refreshJobNextRun(job, now);
+      job = refreshJobNextRun(job, now, this.appTimezone());
     }
     jobs[idx] = job;
     this.writeScheduledJobs(id, jobs);

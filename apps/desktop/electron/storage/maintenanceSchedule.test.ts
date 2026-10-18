@@ -23,7 +23,7 @@ assert.equal(userAskedToRemember('remembrance day'), false);
     userText: '好的',
   });
   assert.equal(a.runMemory, false);
-  assert.equal(a.runAgents, false);
+  assert.equal(a.runSoul, false);
   assert.equal(a.runSkills, false);
   assert.equal(c.turnsSince.memory, 1);
 
@@ -34,10 +34,10 @@ assert.equal(userAskedToRemember('remembrance day'), false);
   });
   // memoryEveryTurns default 2 → second short turn runs memory only
   assert.equal(b.runMemory, true);
-  assert.equal(b.runAgents, false);
+  assert.equal(b.runSoul, false);
   assert.equal(b.runSkills, false);
   assert.equal(c.turnsSince.memory, 0);
-  assert.equal(c.turnsSince.agents, 2);
+  assert.equal(c.turnsSince.soul, 2);
 }
 
 {
@@ -49,7 +49,7 @@ assert.equal(userAskedToRemember('remembrance day'), false);
     userText: long,
   });
   assert.equal(a.runMemory, true);
-  assert.equal(a.runAgents, false);
+  assert.equal(a.runSoul, false);
 }
 
 {
@@ -60,7 +60,7 @@ assert.equal(userAskedToRemember('remembrance day'), false);
     userText: '请记住门牌号是 42',
   });
   assert.equal(a.runMemory, true);
-  assert.equal(a.runAgents, false);
+  assert.equal(a.runSoul, false);
 }
 
 {
@@ -77,7 +77,7 @@ assert.equal(userAskedToRemember('remembrance day'), false);
     counters: c,
     userText: 'ok',
   });
-  assert.equal(fifth.runAgents, true);
+  assert.equal(fifth.runSoul, true);
   assert.equal(fifth.runSkills, true);
 }
 

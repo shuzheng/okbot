@@ -42,8 +42,33 @@ export function expandHome(p: string): string {
   return p;
 }
 
-function resolvePathish(p: string): string {
-  return path.resolve(expandHome(p.trim()));
+/** Absolute or home-relative (`~/…`) — user named an explicit location. */
+export function isAbsoluteOrHomePath(p: string): boolean {
+  const t = (p || '').trim();
+  if (!t) return false;
+  if (t === '~' || t.startsWith('~/')) return true;
+  return path.isAbsolute(t);
+}
+
+/**
+ * Resolve a tool fs path for the owner work root.
+ * Relative paths land under `resourcesDir` (`~/.okbot/<owner>/resources/`) when set;
+ * absolute / `~/…` paths keep their explicit location.
+ */
+export function resolveOwnerWorkPath(
+  filePath: string,
+  resourcesDir?: string | null,
+): string {
+  const raw = (filePath || '').trim();
+  if (!raw) return raw;
+  if (isAbsoluteOrHomePath(raw)) return expandHome(raw);
+  const root = (resourcesDir || '').trim();
+  if (root) return path.join(root, raw);
+  return raw;
+}
+
+function resolvePathish(p: string, resourcesDir?: string | null): string {
+  return path.resolve(resolveOwnerWorkPath(p, resourcesDir));
 }
 
 /** Case-fold path compare on APFS/Windows (case-insensitive FS). */
@@ -105,13 +130,14 @@ export type PathCheckResult =
 export function checkPathAllowed(
   filePath: string,
   security: SecuritySettings,
+  resourcesDir?: string | null,
 ): PathCheckResult {
   if (!filePath?.trim()) {
     return { ok: false, reason: '路径为空，已拦截。' };
   }
   let resolved: string;
   try {
-    resolved = tryRealpath(resolvePathish(filePath));
+    resolved = tryRealpath(resolvePathish(filePath, resourcesDir));
   } catch {
     return { ok: false, reason: `无法解析路径「${filePath}」，已拦截。` };
   }
@@ -189,9 +215,11 @@ function blockOutput(security: SecuritySettings, message: string) {
  */
 export function buildToolInputGuardrails(
   securityRaw: SecuritySettings | undefined | null,
+  opts?: { resourcesDir?: string | null },
 ): ToolInputGuardrailDefinition[] {
   const security = normalizeSecuritySettings(securityRaw ?? undefined);
   if (!security.enabled) return [];
+  const resourcesDir = opts?.resourcesDir;
 
   const pathGuard = defineToolInputGuardrail({
     name: 'okbot_path_scope',
@@ -200,7 +228,7 @@ export function buildToolInputGuardrails(
       const args = parseArgsJson(toolCall.arguments);
       if (name === 'read_file' || name === 'write_file' || name === 'edit_file') {
         const p = typeof args.path === 'string' ? args.path : '';
-        const check = checkPathAllowed(p, security);
+        const check = checkPathAllowed(p, security, resourcesDir);
         if (!check.ok) return blockOutput(security, check.reason);
       }
       if (name === 'run_shell') {

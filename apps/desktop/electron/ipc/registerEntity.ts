@@ -34,6 +34,7 @@ export function persistAppSettings(
   const prev = ctx.storage.getSettings();
   const saved = ctx.storage.saveSettings(settings);
   ctx.applyTheme(saved.theme);
+  ctx.onSettingsPersisted?.();
   if (prev.autoUpdate !== saved.autoUpdate) {
     ctx.onAutoUpdatePreferenceChanged?.(saved.autoUpdate !== false);
   }
@@ -103,9 +104,9 @@ export function registerEntityIpc(ctx: IpcContext): void {
   );
   ipcMain.handle(IpcChannels.deleteBot, (_e, id: string) => ops.deleteBot({ id: id || '' }));
 
-  ipcMain.handle(IpcChannels.readAgentsMd, (_e, botId: string) => ops.readAgentsMd({ botId }));
-  ipcMain.handle(IpcChannels.writeAgentsMd, (_e, botId: string, content: string) =>
-    ops.writeAgentsMd({ botId, content }),
+  ipcMain.handle(IpcChannels.readSoulMd, (_e, botId: string) => ops.readSoulMd({ botId }));
+  ipcMain.handle(IpcChannels.writeSoulMd, (_e, botId: string, content: string) =>
+    ops.writeSoulMd({ botId, content }),
   );
   ipcMain.handle(IpcChannels.listBotMemories, (_e, botId: string) => ops.listBotMemories({ botId }));
   ipcMain.handle(IpcChannels.upsertBotMemory, (_e, entry) => ops.upsertBotMemory({ entry }));

@@ -14,9 +14,9 @@ function basenameOf(filePath: string): string {
 /** Sanitize attachments from ChatMessage / meta for persistence. */
 export function normalizeMessageAttachments(
   raw: unknown,
-): Array<{ kind: 'image' | 'file' | 'folder'; path: string; name: string }> | undefined {
+): Array<{ kind: 'image' | 'file' | 'folder'; path: string; name: string; size?: number }> | undefined {
   if (!Array.isArray(raw) || !raw.length) return undefined;
-  const out: Array<{ kind: 'image' | 'file' | 'folder'; path: string; name: string }> = [];
+  const out: Array<{ kind: 'image' | 'file' | 'folder'; path: string; name: string; size?: number }> = [];
   for (const item of raw) {
     if (!item || typeof item !== 'object') continue;
     const o = item as Record<string, unknown>;
@@ -26,7 +26,11 @@ export function normalizeMessageAttachments(
     if (!kind || !filePath) continue;
     const name =
       typeof o.name === 'string' && o.name.trim() ? o.name.trim() : basenameOf(filePath);
-    out.push({ kind, path: filePath, name });
+    const size =
+      typeof o.size === 'number' && Number.isFinite(o.size) && o.size >= 0
+        ? Math.floor(o.size)
+        : undefined;
+    out.push({ kind, path: filePath, name, ...(size != null ? { size } : {}) });
   }
   return out.length ? out : undefined;
 }

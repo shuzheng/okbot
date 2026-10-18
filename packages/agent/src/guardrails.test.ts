@@ -6,6 +6,8 @@ import {
   findDangerousShellPattern,
   buildToolInputGuardrails,
   expandHome,
+  resolveOwnerWorkPath,
+  isAbsoluteOrHomePath,
 } from './guardrails.js';
 import { DEFAULT_SECURITY, normalizeSecuritySettings } from '@okbot/shared';
 
@@ -112,6 +114,25 @@ const home = homedir();
   assert.equal(expandHome('~/Documents'), path.join(home, 'Documents'));
   assert.equal(expandHome('/tmp/x'), '/tmp/x');
   assert.equal(expandHome('relative/path'), 'relative/path');
+}
+
+{
+  const resources = path.join(home, '.okbot', 'bot_x', 'resources');
+  assert.equal(isAbsoluteOrHomePath('notes.md'), false);
+  assert.equal(isAbsoluteOrHomePath('~/Desktop/a'), true);
+  assert.equal(isAbsoluteOrHomePath('/tmp/a'), true);
+  assert.equal(
+    resolveOwnerWorkPath('notes.md', resources),
+    path.join(resources, 'notes.md'),
+  );
+  assert.equal(
+    resolveOwnerWorkPath('sub/out.txt', resources),
+    path.join(resources, 'sub', 'out.txt'),
+  );
+  assert.equal(resolveOwnerWorkPath('~/Desktop/a.txt', resources), path.join(home, 'Desktop', 'a.txt'));
+  assert.equal(resolveOwnerWorkPath('/tmp/abs.txt', resources), '/tmp/abs.txt');
+  assert.equal(resolveOwnerWorkPath('rel.txt', null), 'rel.txt');
+  assert.equal(resolveOwnerWorkPath('rel.txt', ''), 'rel.txt');
 }
 
 console.log('guardrails.test.ts: ok');

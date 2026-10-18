@@ -1,0 +1,4 @@
+{
+  "name": "Computer Helper",
+  "description": "Finds files, tidies folders and explains error messages. Before it changes files, it lists them in the chat and asks you."
+}

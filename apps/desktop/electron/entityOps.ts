@@ -24,9 +24,15 @@ import type { IpcContext } from './ipc/context';
 import { readRecentErrorLog } from './storage/errorLog';
 import { isSquadOwnerId } from './storage/ids';
 import { discoverModels, testModelConnection } from './modelProbe';
-import { compressSessionNow } from './ipc/registerChat';
+import { compressSessionNow, startChatTurn } from './ipc/registerChat';
+import { onboardingSkipGreetingText } from './ipc/chat/turnContext';
 import { abortAllOwnerRuns } from './ipc/ownerRuns';
 import { buildMeshPeerSpecs } from './ipc/chatTurnHelpers';
+import {
+  seedBotDescriptionAfterOnboarding,
+  didOwnerNameChange,
+  refreshOwnerDescriptionAfterRename,
+} from './contextMaterials';
 
 /**
  * Bot / squad / memory / skill / model-probe operations without a transport.
@@ -185,7 +191,7 @@ export function buildPromptContext(
     if (!bot) {
       return { text: `助手不存在：${ownerId}` };
     }
-    const agentsMd = ctx.storage.readAgentsMd(bot.id);
+    const soulMd = ctx.storage.readSoulMd(bot.id);
     const skillsText = ctx.storage.formatSkillsForPrompt(bot.id);
     const memoriesText = ctx.storage.formatMemoriesForPrompt(bot.id);
     const summaryState = ctx.storage.readSessionSummary(bot.id);
@@ -208,7 +214,7 @@ export function buildPromptContext(
       bot.description,
       [] /* session owns history */,
       toolPrefs,
-      agentsMd,
+      soulMd,
       skillsText,
       memoriesText,
       sessionSummary || undefined,
@@ -248,13 +254,79 @@ export function createEntityOps(ctx: IpcContext) {
   return {
     createBot: (a: Obj) =>
       s.createBot({ ...(a as Parameters<typeof s.createBot>[0]), name: typeof a.name === 'string' ? a.name : '新助手' }),
-    updateBot: (a: Obj) => s.updateBot(str(a.id), obj(a.patch) as Parameters<typeof s.updateBot>[1]),
-    finishBotOnboarding: (a: Obj) =>
-      s.finishBotOnboarding(str(a.botId), obj(a.answers) as BotOnboardingAnswers),
+    updateBot: (a: Obj) => {
+      const id = str(a.id);
+      const patch = obj(a.patch) as Parameters<typeof s.updateBot>[1];
+      const prev = s.listBots().find((b) => b.id === id);
+      const nameChanged = prev ? didOwnerNameChange(prev.name, patch.name) : false;
+      const updated = s.updateBot(id, patch);
+      if (nameChanged) {
+        void refreshOwnerDescriptionAfterRename({
+          storage: s,
+          ownerKind: 'bot',
+          ownerId: id,
+        }).catch((err) => {
+          console.error('[okbot] post-rename description refresh failed', id, err);
+        });
+      }
+      return updated;
+    },
+    finishBotOnboarding: (a: Obj) => {
+      const answers = obj(a.answers) as BotOnboardingAnswers;
+      const bot = s.finishBotOnboarding(str(a.botId), answers);
+      // Immediate description seed (name + onboarding + SOUL); do not wait for turn throttle.
+      void seedBotDescriptionAfterOnboarding({
+        storage: s,
+        botId: bot.id,
+        answers,
+      }).catch((err) => {
+        console.error('[okbot] post-onboarding description seed failed', err);
+      });
+      // Skip / empty answers: quiet model turn asks scope + collaboration prefs (no visible user bubble).
+      const skipped =
+        !(answers.scenarioLabel || '').trim() && !(answers.howLabel || '').trim();
+      if (skipped) {
+        let hasMessages = false;
+        try {
+          hasMessages = s.getMessages(bot.id).some((m) => m.role === 'user' || m.role === 'assistant');
+        } catch {
+          hasMessages = false;
+        }
+        if (!hasMessages) {
+          // Headless/gateway has no Electron locale — zh|en from settings, else zh.
+          const rawLang = s.getSettings().language;
+          const lang = rawLang === 'en' ? 'en' : 'zh';
+          const text = onboardingSkipGreetingText(lang);
+          void startChatTurn(ctx, {
+            botId: bot.id,
+            text,
+            origin: 'onboarding_skip',
+          }).catch((err) => {
+            console.error('[okbot] onboarding-skip greeting turn failed', err);
+          });
+        }
+      }
+      return bot;
+    },
     deleteBot: (a: Obj) => deleteOwner(ctx, str(a.id), 'bot'),
     createSquad: (a: Obj) => s.createSquad(a as unknown as CreateSquadInput),
-    updateSquad: (a: Obj) =>
-      s.updateSquad(str(a.id), obj(a.patch) as Parameters<typeof s.updateSquad>[1]),
+    updateSquad: (a: Obj) => {
+      const id = str(a.id);
+      const patch = obj(a.patch) as Parameters<typeof s.updateSquad>[1];
+      const prev = s.listSquads().find((sq) => sq.id === id);
+      const nameChanged = prev ? didOwnerNameChange(prev.name, patch.name) : false;
+      const updated = s.updateSquad(id, patch);
+      if (nameChanged) {
+        void refreshOwnerDescriptionAfterRename({
+          storage: s,
+          ownerKind: 'squad',
+          ownerId: id,
+        }).catch((err) => {
+          console.error('[okbot] post-rename description refresh failed', id, err);
+        });
+      }
+      return updated;
+    },
     deleteSquad: (a: Obj) => deleteOwner(ctx, str(a.id), 'squad'),
     listAssistantGallery: (a: Obj) => listAssistantGallery(galleryLang(a.lang)),
     /** Install one built-in starter assistant (same path as `.okbot` import). */
@@ -302,9 +374,9 @@ export function createEntityOps(ctx: IpcContext) {
       s.setHasUnreadReply(ownerId, a.hasUnread === true);
       return true;
     },
-    readAgentsMd: (a: Obj) => s.readAgentsMd(str(a.botId)),
-    writeAgentsMd: (a: Obj) => {
-      s.writeAgentsMd(str(a.botId), str(a.content));
+    readSoulMd: (a: Obj) => s.readSoulMd(str(a.botId)),
+    writeSoulMd: (a: Obj) => {
+      s.writeSoulMd(str(a.botId), str(a.content));
       return true;
     },
     listBotMemories: (a: Obj) => s.listBotMemories(str(a.botId)),

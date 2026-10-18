@@ -20,6 +20,13 @@ assert.deepEqual(parseAssetRel('bot_1/resources/bee-honey.png'), {
   assetRel: 'bot_1/resources/bee-honey.png',
   ownerId: 'bot_1',
   fileName: 'bee-honey.png',
+  subdir: 'resources',
+});
+assert.deepEqual(parseAssetRel('bot_1/uploads/clip.png'), {
+  assetRel: 'bot_1/uploads/clip.png',
+  ownerId: 'bot_1',
+  fileName: 'clip.png',
+  subdir: 'uploads',
 });
 assert.equal(parseAssetRel('../etc/passwd'), null);
 assert.equal(parseAssetRel('bot_1/other/x.png'), null);
@@ -29,12 +36,20 @@ assert.deepEqual(parseOwnerResourceSrc('okbot-asset:bot_1/resources/bee-honey.pn
   assetRel: 'bot_1/resources/bee-honey.png',
   ownerId: 'bot_1',
   fileName: 'bee-honey.png',
+  subdir: 'resources',
 });
 
 assert.deepEqual(parseOwnerResourceSrc('/v1/media/bot_1/resources/bee-honey.png'), {
   assetRel: 'bot_1/resources/bee-honey.png',
   ownerId: 'bot_1',
   fileName: 'bee-honey.png',
+  subdir: 'resources',
+});
+assert.deepEqual(parseOwnerResourceSrc('/v1/media/bot_1/uploads/clip.png'), {
+  assetRel: 'bot_1/uploads/clip.png',
+  ownerId: 'bot_1',
+  fileName: 'clip.png',
+  subdir: 'uploads',
 });
 
 assert.deepEqual(
@@ -43,6 +58,7 @@ assert.deepEqual(
     assetRel: 'bot_1/resources/bee-honey.png',
     ownerId: 'bot_1',
     fileName: 'bee-honey.png',
+    subdir: 'resources',
   },
 );
 
@@ -52,6 +68,16 @@ assert.deepEqual(
     assetRel: 'bot_1/resources/bee-honey.png',
     ownerId: 'bot_1',
     fileName: 'bee-honey.png',
+    subdir: 'resources',
+  },
+);
+assert.deepEqual(
+  parseOwnerResourceSrc('/Users/zhangshuzheng/.okbot/bot_1/uploads/pasted.png'),
+  {
+    assetRel: 'bot_1/uploads/pasted.png',
+    ownerId: 'bot_1',
+    fileName: 'pasted.png',
+    subdir: 'uploads',
   },
 );
 
@@ -61,6 +87,7 @@ assert.deepEqual(
     assetRel: 'squad_2/resources/x.webp',
     ownerId: 'squad_2',
     fileName: 'x.webp',
+    subdir: 'resources',
   },
 );
 
@@ -71,6 +98,10 @@ assert.equal(parseOwnerResourceSrc('https://example.com/a.png'), null);
 assert.equal(
   mediaAssetPathname('bot_1/resources/bee-honey.png'),
   '/v1/media/bot_1/resources/bee-honey.png',
+);
+assert.equal(
+  mediaAssetPathname('bot_1/uploads/clip.png'),
+  '/v1/media/bot_1/uploads/clip.png',
 );
 assert.equal(mediaAssetPathname('bad'), null);
 

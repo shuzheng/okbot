@@ -19,6 +19,13 @@ type CloseDialogCopy = {
   cancel: string;
   remember: string;
   trayShow: string;
+  trayRecentSessions: string;
+  trayPinnedSessions: string;
+  trayTheme: string;
+  trayThemeSystem: string;
+  trayThemeLight: string;
+  trayThemeDark: string;
+  traySettings: string;
   trayQuit: string;
   trayTooltip: string;
 };
@@ -32,8 +39,15 @@ const CLOSE_DIALOG: Record<MainUiLang, CloseDialogCopy> = {
     quit: '退出',
     cancel: '取消',
     remember: '记住我的选择',
-    trayShow: '打开 OkBot',
-    trayQuit: '退出 OkBot',
+    trayShow: '打开窗口',
+    trayRecentSessions: '最近会话',
+    trayPinnedSessions: '置顶',
+    trayTheme: '主题',
+    trayThemeSystem: '跟随系统',
+    trayThemeLight: '浅色',
+    trayThemeDark: '深色',
+    traySettings: '设置',
+    trayQuit: '退出',
     trayTooltip: 'OkBot',
   },
   en: {
@@ -44,8 +58,15 @@ const CLOSE_DIALOG: Record<MainUiLang, CloseDialogCopy> = {
     quit: 'Quit',
     cancel: 'Cancel',
     remember: 'Remember my choice',
-    trayShow: 'Open OkBot',
-    trayQuit: 'Quit OkBot',
+    trayShow: 'Open Window',
+    trayRecentSessions: 'Recent Sessions',
+    trayPinnedSessions: 'Pinned',
+    trayTheme: 'Theme',
+    trayThemeSystem: 'System',
+    trayThemeLight: 'Light',
+    trayThemeDark: 'Dark',
+    traySettings: 'Settings',
+    trayQuit: 'Quit',
     trayTooltip: 'OkBot',
   },
 };

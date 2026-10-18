@@ -8,6 +8,13 @@ export {
   extractMemoriesFromFoldedHistory,
   runThrottledPostTurnMaintenance,
   runThrottledPostTurnSquadDescriptionRefresh,
+  seedBotDescriptionAfterOnboarding,
+  didOwnerNameChange,
+  refreshOwnerDescriptionAfterRename,
+  markPendingDescriptionAfterOnboardingSkip,
+  hasPendingDescriptionAfterOnboardingSkip,
+  clearPendingDescriptionAfterOnboardingSkip,
+  resetPendingDescriptionAfterOnboardingSkipForTests,
 } from '../ipc/chatMaintenance';
 
 export {

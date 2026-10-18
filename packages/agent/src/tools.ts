@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { SecuritySettings, ToolPreferences } from '@okbot/shared';
 import { DEFAULT_SECURITY } from '@okbot/shared';
 import { buildToolInputGuardrails } from './guardrails.js';
+
 import { wrapToolExecute, type ToolRunBudget } from './toolRunBudget.js';
 import {
   formatGenerateImageToolOutput,
@@ -195,10 +196,14 @@ export function buildTools(
   options?: BuildToolsOptions,
 ) {
   const list = [];
-  const inputGuardrails = buildToolInputGuardrails(security ?? DEFAULT_SECURITY);
+  const resourcesDir = options?.imageAssets?.resourcesDir?.trim() || '';
+  const inputGuardrails = buildToolInputGuardrails(security ?? DEFAULT_SECURITY, {
+    resourcesDir: resourcesDir || null,
+  });
   const guardrailOpts = inputGuardrails.length ? { inputGuardrails } : {};
   const route = options?.computerRoute;
-  const backend = options?.backend ?? createLocalExecutionBackend();
+  const backend =
+    options?.backend ?? createLocalExecutionBackend({ resourcesDir: resourcesDir || null });
   const where = route ? defaultComputerLabel(route) : backend.label || '本机';
   const onBeforeToolExecute = options?.onBeforeToolExecute;
   /** Local wrap: always attach tool-boundary seal hook when provided. */
@@ -223,7 +228,11 @@ export function buildTools(
     }
     const picked = selectComputerForTool(route, requested);
     if (!picked.ok) return picked.message;
-    return resolveExecutionBackend({ computerId: picked.id, computers: route.computers });
+    return resolveExecutionBackend({
+      computerId: picked.id,
+      computers: route.computers,
+      resourcesDir: resourcesDir || null,
+    });
   }
 
   const shellHint = route
@@ -264,9 +273,9 @@ export function buildTools(
         name: 'read_file',
         description: route
           ? `读取电脑上的一个文本文件（默认「${where}」）。用户点名电脑时传 computer。`
-          : `读取「${where}」上的一个文本文件。`,
+          : `读取「${where}」上的一个文本文件；相对路径默认在当前助手/小队 resources/。`,
         parameters: z.object({
-          path: z.string().describe('文件绝对路径或 ~/…'),
+          path: z.string().describe('文件路径：相对路径默认落到当前助手/小队 resources/；也可用绝对路径或 ~/…'),
           computer: computerParam,
         }),
         needsApproval: prefs.read_file.approval === 'ask',
@@ -370,7 +379,7 @@ export function buildTools(
       tool({
         name: 'manage_schedule',
         description:
-          '管理当前助手/小队的定时任务（到点后会像用户发消息一样唤醒一轮对话；定时轮次沿用当前工具审批/预算，无单独收紧）。action=create|list|pause|resume|delete。create 时传 schedule（如 daily 09:00、每天 09:00、hourly、every 15m、cron 0 9 * * 1-5）与 prompt；可选 title、timezone（IANA，省略则用运行 OkBot 的机器本地时区）、once。pause/resume/delete 传 job_id（或唯一 title）。未用到的可选字段请省略，不要传 null。create/delete 始终需要用户确认；list 不需确认。',
+          '管理当前助手/小队的定时任务（到点后会像用户发消息一样唤醒一轮对话；定时轮次沿用当前工具审批/预算，无单独收紧）。action=create|list|pause|resume|delete。create 时传 schedule（如 daily 09:00、每天 09:00、hourly、every 15m、cron 0 9 * * 1-5）与 prompt；可选 title、timezone（IANA，省略则用 settings.timezone，再否则用运行 OkBot 的机器本地时区）、once。pause/resume/delete 传 job_id（或唯一 title）。未用到的可选字段请省略，不要传 null。create/delete 始终需要用户确认；list 不需确认。',
         parameters: z.object({
           action: z
             .enum(['create', 'list', 'pause', 'resume', 'delete'])
@@ -548,9 +557,9 @@ export function buildTools(
         name: 'write_file',
         description: route
           ? `写入（覆盖）电脑上的一个文本文件（默认「${where}」）；必要时创建父目录。用户点名电脑时传 computer。`
-          : `写入（覆盖）「${where}」上的一个文本文件；必要时创建父目录。适合新建文件或整文件重写。`,
+          : `写入（覆盖）「${where}」上的一个文本文件；相对路径默认写到当前助手/小队 resources/；必要时创建父目录。适合新建文件或整文件重写。`,
         parameters: z.object({
-          path: z.string().describe('文件绝对路径或 ~/…'),
+          path: z.string().describe('文件路径：相对路径默认落到当前助手/小队 resources/；也可用绝对路径或 ~/…'),
           content: z.string().describe('要写入的完整 UTF-8 文本内容'),
           computer: computerParam,
         }),
@@ -574,9 +583,9 @@ export function buildTools(
         name: 'edit_file',
         description: route
           ? `对电脑上已存在的文本文件做一次精确替换（默认「${where}」）。用户点名电脑时传 computer。匹配 0 次或多于 1 次则不改。`
-          : `对「${where}」上已存在的文本文件做一次精确字符串替换（old_text → new_text）。适合小范围修改；若匹配 0 次或多于 1 次则报错不改。`,
+          : `对「${where}」上已存在的文本文件做一次精确字符串替换（old_text → new_text）；相对路径默认在当前助手/小队 resources/。适合小范围修改；若匹配 0 次或多于 1 次则报错不改。`,
         parameters: z.object({
-          path: z.string().describe('文件绝对路径或 ~/…'),
+          path: z.string().describe('文件路径：相对路径默认落到当前助手/小队 resources/；也可用绝对路径或 ~/…'),
           old_text: z.string().describe('要替换的原文本（须在文件中恰好出现一次）'),
           new_text: z.string().describe('替换后的新文本'),
           computer: computerParam,

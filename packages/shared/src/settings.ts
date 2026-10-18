@@ -575,11 +575,18 @@ export function normalizeContextCompression(raw: unknown): ContextCompressionSet
 }
 
 /**
- * Global 1:1 chat max agent turns (`settings.json` root key `maxTurns`).
- * One turn ≈ one model call (tool executions in that loop do not add turns).
- * Missing / invalid → DEFAULT_MAX_TURNS; clamped to 1–100. No dual-format shims.
+ * Default fallback for `normalizeMaxTurns` (squad captain/member caps, message
+ * limit knobs). Not a user-facing 1:1 setting — that UI was removed.
  */
 export const DEFAULT_MAX_TURNS = 50;
+
+/**
+ * Hardcoded 1:1 `runner.run({ maxTurns })` default (settings.maxTurns removed).
+ * Above the old UI default of 50 so long tool loops are less likely to hit the
+ * cap; still finite so a runaway agent cannot loop forever. Avoids SDK's
+ * DEFAULT_MAX_TURNS=10 when callers omit maxTurns.
+ */
+export const DEFAULT_RUNNER_MAX_TURNS = 100;
 
 /** Clamp agent maxTurns to 1–100; null/empty/missing/invalid → fallback. */
 export function normalizeMaxTurns(raw: unknown, fallback: number = DEFAULT_MAX_TURNS): number {
@@ -667,6 +674,8 @@ export type ScheduledJobInfo = {
   lastRunAt: string | null;
   lastError: string | null;
   once: boolean;
+  /** ISO create time (for edit-UI sort newest→oldest). */
+  createdAt: string;
 };
 /** How tool input guardrails short-circuit a blocked call. */
 export type SecurityBlockMode = 'reject' | 'tripwire';
@@ -981,15 +990,21 @@ export function normalizeSquadSettings(raw: unknown): SquadSettings {
 /**
  * Global 1:1 instruction templates (`settings.json` → `instructions`).
  * `{name}` is replaced with botName || 'OkBot' when building the system prompt.
- * Also holds AGENTS.md / skills silent-refresh knobs (UI under 设置 → 指令).
+ * Also holds SOUL.md / skills silent-refresh knobs (UI under 设置 → 指令).
  */
 export interface InstructionsSettings {
   /** Opening role sentence for 1:1 assistants. Empty / whitespace → default. */
   assistantRoleTemplate: string;
-  /** Full system prompt for refreshAgentsMd. Empty → default. */
-  agentsMdRefreshSystemPrompt: string;
-  /** How many recent user/assistant messages refreshAgentsMd analyzes. Default 12; clamp 1–100. */
-  agentsMdRecentMessageLimit: number;
+  /**
+   * Full system prompt for refreshSoulMd. Empty → default.
+   * Settings JSON key: `soulMdRefreshSystemPrompt` (migrates from legacy `agentsMdRefreshSystemPrompt` on load).
+   */
+  soulMdRefreshSystemPrompt: string;
+  /**
+   * How many recent user/assistant messages refreshSoulMd analyzes. Default 12; clamp 1–100.
+   * Settings JSON key: `soulMdRecentMessageLimit` (migrates from legacy `agentsMdRecentMessageLimit` on load).
+   */
+  soulMdRecentMessageLimit: number;
   /** The create/update decision line injected into refreshBotSkills system prompt. Empty → default. */
   skillsCreateUpdateInstruction: string;
   /** How many recent messages refreshBotSkills analyzes. Default 20; clamp 1–100. */
@@ -1004,8 +1019,9 @@ export const LEGACY_DEFAULT_ASSISTANT_ROLE_TEMPLATE =
   '你是「{name}」，一个可使用本机工具的桌面个人助手。';
 
 /**
- * Older AGENTS.md refresh system prompts (exact text). Persisted settings that still
- * store any of these exact defaults are upgraded to DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT.
+ * Older AGENTS.md / SOUL.md refresh system prompts (exact text). Persisted settings that
+ * still store any of these exact defaults are upgraded to DEFAULT_SOUL_MD_REFRESH_SYSTEM_PROMPT.
+ * Bodies keep historical AGENTS.md wording so on-disk custom-or-default matching still works.
  */
 export const LEGACY_DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT = [
   '你负责维护桌面助手机器人的 AGENTS.md（系统提示词）。',
@@ -1052,8 +1068,11 @@ export const LEGACY_AGENTS_MD_REFRESH_WITH_ROBOT = [
   'heading 用现有章节名（不要带 #）。只列有变化的章节。',
 ].join('\n');
 
-/** Full default system prompt for silent AGENTS.md maintenance (section patches only). */
-export const DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT = [
+/**
+ * Pre-SOUL section-patch default (AGENTS.md product name + old section themes).
+ * Exact persisted copies upgrade to DEFAULT_SOUL_MD_REFRESH_SYSTEM_PROMPT.
+ */
+export const LEGACY_AGENTS_MD_REFRESH_SECTION_PATCH = [
   '你负责维护桌面助手的 AGENTS.md（系统提示词）。',
   '只写入值得跨会话记住的内容：用户偏好、长期目标、项目路径/技术栈、反复出现的约束。',
   '不要写入一次性任务细节、密钥、冗长日志或与助手无关的闲聊。',
@@ -1065,7 +1084,21 @@ export const DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT = [
   'heading 用现有章节名（不要带 #）。只列有变化的章节。',
 ].join('\n');
 
-export const DEFAULT_AGENTS_MD_RECENT_MESSAGE_LIMIT = 12;
+/** Full default system prompt for silent SOUL.md maintenance (section patches only). */
+export const DEFAULT_SOUL_MD_REFRESH_SYSTEM_PROMPT = [
+  '你负责维护桌面助手的 SOUL.md（个性、边界、语气、约束、安全红线与输入输出习惯）。',
+  '只写入跨会话仍成立的内容：个性与边界、语气与表达、长期约束、安全红线、稳定的输入/输出习惯。',
+  '不要写入一次性任务细节、密钥、冗长日志或与助手无关的闲聊。',
+  '不要重写整份文件，不要删除未提到的章节。',
+  '只输出有改动的章节。新约定可以追加为新章节。',
+  '合并后全文不超过 2000 字。',
+  '只输出 JSON，不要代码围栏，不要解释。',
+  '无需更新：{"action":"none"}',
+  '需要更新：{"action":"patch","sections":[{"heading":"个性与边界","body":"该章节的新正文（Markdown，不含标题行）"}]}',
+  'heading 用现有章节名（不要带 #），常见章节：个性与边界 / 语气与表达 / 约束 / 安全红线 / 输入输出习惯。只列有变化的章节。',
+].join('\n');
+
+export const DEFAULT_SOUL_MD_RECENT_MESSAGE_LIMIT = 12;
 
 /** Default create/update gate line for refreshBotSkills (one system line only). */
 export const DEFAULT_SKILLS_CREATE_UPDATE_INSTRUCTION =
@@ -1093,8 +1126,8 @@ export const DEFAULT_SKILLS_RECENT_MESSAGE_LIMIT = 20;
 
 export const DEFAULT_INSTRUCTIONS_SETTINGS: InstructionsSettings = {
   assistantRoleTemplate: DEFAULT_ASSISTANT_ROLE_TEMPLATE,
-  agentsMdRefreshSystemPrompt: DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT,
-  agentsMdRecentMessageLimit: DEFAULT_AGENTS_MD_RECENT_MESSAGE_LIMIT,
+  soulMdRefreshSystemPrompt: DEFAULT_SOUL_MD_REFRESH_SYSTEM_PROMPT,
+  soulMdRecentMessageLimit: DEFAULT_SOUL_MD_RECENT_MESSAGE_LIMIT,
   skillsCreateUpdateInstruction: DEFAULT_SKILLS_CREATE_UPDATE_INSTRUCTION,
   skillsRecentMessageLimit: DEFAULT_SKILLS_RECENT_MESSAGE_LIMIT,
 };
@@ -1109,19 +1142,25 @@ export function normalizeInstructionsSettings(raw: unknown): InstructionsSetting
     typeof src.assistantRoleTemplate === 'string' ? src.assistantRoleTemplate.trim() : '';
   const template =
     !templateRaw || templateRaw === LEGACY_DEFAULT_ASSISTANT_ROLE_TEMPLATE ? '' : templateRaw;
-  const agentsPromptRaw =
-    typeof src.agentsMdRefreshSystemPrompt === 'string'
-      ? src.agentsMdRefreshSystemPrompt.trim()
-      : '';
-  // Upgrade exact legacy defaults (pre-vision-guard / vision-guard+NO_CHANGE) in place.
-  const agentsPrompt =
-    !agentsPromptRaw ||
-    agentsPromptRaw === LEGACY_DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT ||
-    agentsPromptRaw === LEGACY_AGENTS_MD_REFRESH_WITH_VISION_GUARD ||
-    agentsPromptRaw === LEGACY_AGENTS_MD_REFRESH_FULL_FILE ||
-    agentsPromptRaw === LEGACY_AGENTS_MD_REFRESH_WITH_ROBOT
+  // Prefer new keys; fall back to legacy agentsMd* so custom prompts are not wiped.
+  const srcAny = src as Partial<Record<string, unknown>>;
+  const soulPromptCandidate =
+    typeof srcAny.soulMdRefreshSystemPrompt === 'string'
+      ? srcAny.soulMdRefreshSystemPrompt
+      : typeof srcAny.agentsMdRefreshSystemPrompt === 'string'
+        ? srcAny.agentsMdRefreshSystemPrompt
+        : '';
+  const soulPromptRaw = soulPromptCandidate.trim();
+  // Upgrade exact legacy defaults (pre-vision-guard / vision-guard+NO_CHANGE / pre-SOUL) in place.
+  const soulPrompt =
+    !soulPromptRaw ||
+    soulPromptRaw === LEGACY_DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT ||
+    soulPromptRaw === LEGACY_AGENTS_MD_REFRESH_WITH_VISION_GUARD ||
+    soulPromptRaw === LEGACY_AGENTS_MD_REFRESH_FULL_FILE ||
+    soulPromptRaw === LEGACY_AGENTS_MD_REFRESH_WITH_ROBOT ||
+    soulPromptRaw === LEGACY_AGENTS_MD_REFRESH_SECTION_PATCH
       ? ''
-      : agentsPromptRaw;
+      : soulPromptRaw;
   const skillsInstrRaw =
     typeof src.skillsCreateUpdateInstruction === 'string'
       ? src.skillsCreateUpdateInstruction.trim()
@@ -1132,12 +1171,16 @@ export function normalizeInstructionsSettings(raw: unknown): InstructionsSetting
     skillsInstrRaw === LEGACY_DEFAULT_SKILLS_CREATE_UPDATE_INSTRUCTION_V2
       ? ''
       : skillsInstrRaw;
+  const soulLimitRaw =
+    srcAny.soulMdRecentMessageLimit !== undefined
+      ? srcAny.soulMdRecentMessageLimit
+      : srcAny.agentsMdRecentMessageLimit;
   return {
     assistantRoleTemplate: template || DEFAULT_ASSISTANT_ROLE_TEMPLATE,
-    agentsMdRefreshSystemPrompt: agentsPrompt || DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT,
-    agentsMdRecentMessageLimit: normalizeMaxTurns(
-      src.agentsMdRecentMessageLimit,
-      DEFAULT_AGENTS_MD_RECENT_MESSAGE_LIMIT,
+    soulMdRefreshSystemPrompt: soulPrompt || DEFAULT_SOUL_MD_REFRESH_SYSTEM_PROMPT,
+    soulMdRecentMessageLimit: normalizeMaxTurns(
+      soulLimitRaw,
+      DEFAULT_SOUL_MD_RECENT_MESSAGE_LIMIT,
     ),
     skillsCreateUpdateInstruction:
       skillsInstr || DEFAULT_SKILLS_CREATE_UPDATE_INSTRUCTION,
@@ -1231,7 +1274,7 @@ export function normalizeMemorySettings(raw: unknown): MemorySettings {
 
 /**
  * Post-turn silent maintenance throttle (`settings.json` → `maintenance`).
- * Memory refreshes more often than AGENTS.md / skills. User phrases like
+ * Memory refreshes more often than SOUL.md / skills. User phrases like
  * 「记住」/ remember / 「别忘了」 force an immediate memory refresh.
  */
 export interface MaintenanceSettings {
@@ -1239,10 +1282,10 @@ export interface MaintenanceSettings {
   memoryEveryTurns: number;
   /** Or when user chars since last memory refresh ≥ this (default 400). Clamp 50–20000. */
   memoryEveryUserChars: number;
-  /** AGENTS.md refresh every N turns (default 5). Clamp 1–50. */
-  agentsEveryTurns: number;
-  /** Or when user chars since last AGENTS refresh ≥ this (default 1200). */
-  agentsEveryUserChars: number;
+  /** SOUL.md refresh every N turns (default 5). Clamp 1–50. Settings key migrates from agentsEveryTurns. */
+  soulEveryTurns: number;
+  /** Or when user chars since last SOUL refresh ≥ this (default 1200). Migrates from agentsEveryUserChars. */
+  soulEveryUserChars: number;
   /** Skills refresh every N turns (default 5). Clamp 1–50. */
   skillsEveryTurns: number;
   /** Or when user chars since last skills refresh ≥ this (default 1200). */
@@ -1252,8 +1295,8 @@ export interface MaintenanceSettings {
 export const DEFAULT_MAINTENANCE_SETTINGS: MaintenanceSettings = {
   memoryEveryTurns: 2,
   memoryEveryUserChars: 400,
-  agentsEveryTurns: 5,
-  agentsEveryUserChars: 1200,
+  soulEveryTurns: 5,
+  soulEveryUserChars: 1200,
   skillsEveryTurns: 5,
   skillsEveryUserChars: 1200,
 };
@@ -1286,10 +1329,15 @@ export function normalizeMaintenanceSettings(raw: unknown): MaintenanceSettings 
       src.memoryEveryUserChars,
       DEFAULT_MAINTENANCE_SETTINGS.memoryEveryUserChars,
     ),
-    agentsEveryTurns: clampMaintTurns(src.agentsEveryTurns, DEFAULT_MAINTENANCE_SETTINGS.agentsEveryTurns),
-    agentsEveryUserChars: clampMaintChars(
-      src.agentsEveryUserChars,
-      DEFAULT_MAINTENANCE_SETTINGS.agentsEveryUserChars,
+    soulEveryTurns: clampMaintTurns(
+      (src as Partial<Record<string, unknown>>).soulEveryTurns ??
+        (src as Partial<Record<string, unknown>>).agentsEveryTurns,
+      DEFAULT_MAINTENANCE_SETTINGS.soulEveryTurns,
+    ),
+    soulEveryUserChars: clampMaintChars(
+      (src as Partial<Record<string, unknown>>).soulEveryUserChars ??
+        (src as Partial<Record<string, unknown>>).agentsEveryUserChars,
+      DEFAULT_MAINTENANCE_SETTINGS.soulEveryUserChars,
     ),
     skillsEveryTurns: clampMaintTurns(src.skillsEveryTurns, DEFAULT_MAINTENANCE_SETTINGS.skillsEveryTurns),
     skillsEveryUserChars: clampMaintChars(
@@ -1386,6 +1434,74 @@ export function normalizeDefaultAssistantId(
     if (bid === id) return id;
   }
   return '';
+}
+
+/** True when `tz` is a valid IANA zone for Intl. */
+export function isValidIanaTimezone(tz: string): boolean {
+  const id = (tz || '').trim();
+  if (!id) return false;
+  try {
+    Intl.DateTimeFormat('en-US', { timeZone: id }).format(new Date());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * User timezone preference (`settings.json` → `timezone`).
+ * Empty string = auto-detect host local at use time. Invalid → ''.
+ */
+export function normalizeTimezone(raw: unknown): string {
+  const id = typeof raw === 'string' ? raw.trim() : '';
+  if (!id) return '';
+  return isValidIanaTimezone(id) ? id : '';
+}
+
+/** Host IANA timezone (Intl); falls back to UTC. */
+export function detectHostTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {
+    return 'UTC';
+  }
+}
+
+/**
+ * Effective app timezone: explicit settings.timezone when valid, else host local.
+ */
+export function resolveAppTimezone(settingsTimezone: string | undefined | null): string {
+  const n = normalizeTimezone(settingsTimezone);
+  return n || detectHostTimezone();
+}
+
+/** All IANA zones from Intl when available (sorted). */
+export function listIanaTimezones(): string[] {
+  try {
+    const fn = (Intl as unknown as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf;
+    if (typeof fn === 'function') {
+      const list = fn.call(Intl, 'timeZone');
+      if (Array.isArray(list) && list.length) return list.slice().sort((a, b) => a.localeCompare(b));
+    }
+  } catch {
+    /* fall through */
+  }
+  return ['UTC'];
+}
+
+/** Current wall-clock time label in a zone (HH:MM, 24h). */
+export function formatTimezoneLocalTime(timeZone: string, now: Date = new Date()): string {
+  const tz = normalizeTimezone(timeZone) || detectHostTimezone();
+  try {
+    return new Intl.DateTimeFormat('en-GB', {
+      timeZone: tz,
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).format(now);
+  } catch {
+    return '';
+  }
 }
 
 /**
@@ -1670,6 +1786,11 @@ export interface AppSettings {
   theme: ThemeMode;
   /** UI language. */
   language: LanguageCode;
+  /**
+   * Preferred IANA timezone for schedules / time display.
+   * Empty string = auto-detect host local at use time.
+   */
+  timezone: string;
   /** Empty string = system default microphone. */
   microphoneId: string;
   /** Requires app restart when changed. Default true. */
@@ -1681,6 +1802,11 @@ export interface AppSettings {
    * Default false (off).
    */
   sidebarDockMagnify: boolean;
+  /**
+   * Frost / glass translucency (sidebar vibrancy, drawers, pills, transparent
+   * BrowserWindow on darwin). Default true; missing on disk = on.
+   */
+  translucent: boolean;
   /**
    * Shows developer-only settings (系统指令). Default false.
    * Missing on disk stays off.
@@ -1696,11 +1822,6 @@ export interface AppSettings {
   model: ModelSettings;
   /** Summary+Buffer compression policy (sibling of model). */
   contextCompression: ContextCompressionSettings;
-  /**
-   * Max agent turns per 1:1 chat run (`runner.run` maxTurns).
-   * Separate from settings.squad captain/member maxTurns. Default 50; clamp 1–100.
-   */
-  maxTurns: number;
   /** 1:1 assistant instruction templates (role sentence, etc.). */
   instructions: InstructionsSettings;
   /** Memory refresh scope rule + global memory manager settings. */
@@ -1793,6 +1914,40 @@ export function clampOwnerDescription(raw: unknown): string {
     : s.slice(0, OWNER_DESCRIPTION_MAX_CHARS);
 }
 
+/**
+ * Strip generic product capability / safety boilerplate from roster description.
+ * Description is duties + work boundaries for assistant handoff only; tool laundry
+ * lists and consent/secrets lines belong in SOUL.md, not bots.json description.
+ */
+export function sanitizeOwnerDescriptionDuties(raw: unknown): string {
+  let s = typeof raw === 'string' ? raw.trim() : '';
+  if (!s) return '';
+  const cap =
+    '(?:查资料|读写(?:本机)?文件|执行命令|生成图片|设定?时(?:提醒|任务)|(?:管理)?定时任务)';
+  // Capability laundry lists (file/shell/web/schedule/image — product tools, not duties).
+  s = s.replace(
+    new RegExp(
+      `(?:，|、|；|,|和|与)?(?:也(?:能|可)|并能|并可|可以|能|可|支持)?${cap}(?:(?:，|、|和|与)${cap})*等?`,
+      'g',
+    ),
+    '',
+  );
+  // English-ish variants sometimes produced by the model.
+  s = s.replace(
+    /(?:[,;]\s*)?(?:also\s+)?(?:can\s+|supports?\s+)?(?:browse(?:\s+the\s+web)?|read\/?write\s+local\s+files|run\s+shell(?:\s+commands)?|generate\s+images?|set\s+reminders?|schedule\s+tasks?)(?:\s*(?:,|and)\s*(?:browse(?:\s+the\s+web)?|read\/?write\s+local\s+files|run\s+shell(?:\s+commands)?|generate\s+images?|set\s+reminders?|schedule\s+tasks?))*\.?/gi,
+    '',
+  );
+  // Safety boilerplate (destructive-ops consent / secrets) — SOUL.md only.
+  s = s.replace(/(?:，|、|；|,)?(?:涉及)?破坏性操作[^。；;!\n]*?(?:征得同意|先问(?:我|你)?)/g, '');
+  s = s.replace(/(?:，|、|；|,)?不(?:写入?|传|泄露)[^。；;!\n]*?(?:密钥|令牌|验证码|敏感)[^。；;!\n]*/g, '');
+  s = s.replace(/(?:[,;]\s*)?(?:ask\s+before\s+destructive\s+ops?|never\s+(?:write|share|leak)\s+secrets?)[^.;!\n]*/gi, '');
+  // Tidy leftover punctuation / empty clauses.
+  s = s.replace(/^[，、；,\s]+/g, '').replace(/[，、；,\s]+$/g, '');
+  s = s.replace(/[，、]{2,}/g, '，').replace(/\s{2,}/g, ' ');
+  s = s.replace(/，([。；;])/g, '$1');
+  return clampOwnerDescription(s);
+}
+
 /** Max chars for skill frontmatter `description` (Cursor-style). */
 export const SKILL_DESCRIPTION_MAX_CHARS = 1024;
 
@@ -1874,6 +2029,13 @@ export function randomBotAvatarType(): BotAvatarShape {
 /** Per-bot detail in `~/.okbot/<botId>/bot.json`. */
 export interface BotConfig {
   id: string;
+  /**
+   * Display name dual-written from `bots.json` so a bot folder is self-contained
+   * for export/import. List UI still reads the central roster.
+   */
+  name: string;
+  /** Short persona blurb; kept in sync with `bots.json` description. */
+  description: string;
   /**
    * Avatar mode. Missing / unknown values normalize to `bot-avatar` on read
    * (early product: no dual-format shim; 立体头像 is the default).
@@ -1988,6 +2150,16 @@ export interface Squad {
   hasUnreadReply?: boolean;
 }
 
+/**
+ * Per-squad profile in `~/.okbot/<squadId>/squad.json` (name card dual-write).
+ * List UI still reads central `squads.json`; this file stays synced for folder export.
+ */
+export interface SquadConfig {
+  id: string;
+  name: string;
+  description: string;
+}
+
 export interface CreateSquadInput {
   name: string;
   description?: string;
@@ -2038,21 +2210,40 @@ export function normalizeSquad(raw: unknown): Squad | null {
   return out;
 }
 
-export const DEFAULT_AGENTS_MD = `# 角色与目标
+/** Hard cap for per-bot SOUL.md (write + post-refresh merge). */
+export const SOUL_MD_MAX_CHARS = 2000;
 
-你是用户的本机个人助手。根据对话持续学习用户习惯与当前任务上下文。
+/** Trim + hard-cap SOUL.md body. */
+export function clampSoulMd(raw: unknown): string {
+  const s = typeof raw === 'string' ? raw.replace(/\s+$/u, '') : '';
+  if (!s) return '';
+  if (s.length <= SOUL_MD_MAX_CHARS) {
+    return s.endsWith('\n') ? s : `${s}\n`;
+  }
+  const sliced = s.slice(0, SOUL_MD_MAX_CHARS);
+  return sliced.endsWith('\n') ? sliced : `${sliced}\n`;
+}
 
-# 用户偏好
+export const DEFAULT_SOUL_MD = `# 个性与边界
 
-- （暂无）
+你是用户的本机个人助手。保持清晰、可靠、有分寸的协作风格；在能力范围内主动帮忙，越界或不确定时先说明。
 
-# 项目与环境
+# 语气与表达
 
-- （暂无）
+- 简洁清楚；不确定时先说明假设再行动
 
-# 工作备注
+# 约束
 
-- （暂无）
+- （随对话自动补充长期约定）
+
+# 安全红线
+
+- 涉及破坏性操作（删除、覆盖、推送、安装）前先征得同意
+- 不写入或泄露密钥、令牌、验证码
+
+# 输入输出习惯
+
+- （随对话自动补充偏好的格式与交互方式）
 `;
 
 
@@ -2068,10 +2259,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
   assistantMarketplace: { savedSources: [] },
   theme: 'system',
   language: 'system',
+  timezone: '',
   microphoneId: '',
   hardwareAcceleration: true,
   autoUpdate: true,
   sidebarDockMagnify: false,
+  translucent: true,
   developerMode: false,
   autoApprovalEnabled: false,
   autoApprovalRules: [],
@@ -2096,7 +2289,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
     defaultModelId: '',
   },
   contextCompression: { ...DEFAULT_CONTEXT_COMPRESSION },
-  maxTurns: DEFAULT_MAX_TURNS,
   instructions: { ...DEFAULT_INSTRUCTIONS_SETTINGS },
   memory: { ...DEFAULT_MEMORY_SETTINGS },
   maintenance: { ...DEFAULT_MAINTENANCE_SETTINGS },

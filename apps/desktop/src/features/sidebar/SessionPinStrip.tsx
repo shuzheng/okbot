@@ -1,8 +1,9 @@
 import type { CSSProperties, MouseEvent } from 'react';
 import type { Bot, Squad } from '@okbot/shared';
 import { t, type UiLang } from '../../i18n';
-import type { MenuState, Selection, SessionItem } from '../../types';
+import type { MenuState, RenameTarget, Selection, SessionItem } from '../../types';
 import { FlatAvatar, SquadAvatar, type SquadAvatarMember } from '../../components/ui/avatars';
+import { resolveSessionAvatarMotion } from '../../utils/sessionAvatarMotion';
 import { usePinStripFlip } from './usePinStripFlip';
 
 type DockTipTarget =
@@ -22,10 +23,19 @@ export type SessionPinStripProps = {
   defaultAssistantId: string;
   botIsWorking: (id: string) => boolean;
   sessionHasUnread: (id: string) => boolean;
+  sessionInteractedAt?: Record<string, number>;
+  avatarMotionNow?: number;
   onSelect: (selection: Selection) => void;
   onOpenSessionMenu: (menu: NonNullable<MenuState>) => void;
+  renameTarget: RenameTarget;
+  renameValue: string;
+  onRenameValueChange: (value: string) => void;
+  onCommitRename: () => void;
+  onCancelRename: () => void;
   onPlaceDockTip: (node: HTMLElement, target: DockTipTarget) => void;
   onScheduleHideDockTip: () => void;
+  /** When set, show ⌘/Win+N badge on pin avatar top-right. */
+  shortcutHintByOwnerId?: Record<string, string>;
 };
 
 function squadMembers(squad: Squad, bots: Bot[]): SquadAvatarMember[] {
@@ -54,12 +64,47 @@ export function SessionPinStrip({
   defaultAssistantId,
   botIsWorking,
   sessionHasUnread,
+  sessionInteractedAt = {},
+  avatarMotionNow = 0,
   onSelect,
   onOpenSessionMenu,
+  renameTarget,
+  renameValue,
+  onRenameValueChange,
+  onCommitRename,
+  onCancelRename,
   onPlaceDockTip,
   onScheduleHideDockTip,
+  shortcutHintByOwnerId,
 }: SessionPinStripProps) {
   const { stripRef, displayItems, stripStyle } = usePinStripFlip(pinnedSessions);
+
+  const renameInput = (
+    <input
+      spellCheck={false}
+      className="session-rename-input session-pin-rename-input"
+      size={1}
+      value={renameValue}
+      autoFocus
+      onFocus={(e) => e.currentTarget.select()}
+      onClick={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      onPointerDown={(e) => e.stopPropagation()}
+      onChange={(e) => onRenameValueChange(e.target.value)}
+      onBlur={() => onCommitRename()}
+      onKeyDown={(e) => {
+        if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          (e.target as HTMLInputElement).blur();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          onCancelRename();
+        }
+      }}
+    />
+  );
 
   if (displayItems.length === 0) return null;
 
@@ -82,6 +127,7 @@ export function SessionPinStrip({
               onOpenSessionMenu({ kind: 'bot', x: e.clientX, y: e.clientY, bot });
             };
             const dockScale = narrow ? dockScales[`bot:${bot.id}`] || 1 : 1;
+            const renaming = renameTarget?.kind === 'bot' && renameTarget.id === bot.id;
             const unread = !active && sessionHasUnread(bot.id) && !botIsWorking(bot.id);
             const avatarStyle: CSSProperties | undefined = narrow
               ? {
@@ -94,13 +140,13 @@ export function SessionPinStrip({
                 key={`pin:${id}`}
                 data-session-id={id}
                 data-pin-phase={phase}
-                className={`${itemClass}${active ? ' active' : ''}`}
+                className={`${itemClass}${active ? ' active' : ''}${renaming ? ' renaming' : ''}`}
                 style={leaveStyle}
                 role="listitem"
                 tabIndex={leaving ? -1 : 0}
                 aria-hidden={leaving || undefined}
-                onClick={leaving ? undefined : selectBot}
-                onContextMenu={leaving ? undefined : botContext}
+                onClick={leaving || renaming ? undefined : selectBot}
+                onContextMenu={leaving || renaming ? undefined : botContext}
                 onMouseEnter={
                   leaving
                     ? undefined
@@ -130,14 +176,29 @@ export function SessionPinStrip({
                     color={bot.color}
                     avatarKind={bot.avatarKind}
                     botAvatarType={bot.botAvatarType}
-                    busy={botIsWorking(bot.id)}
+                    {...resolveSessionAvatarMotion({
+                      active,
+                      busy: botIsWorking(bot.id),
+                      lastInteractedAt: sessionInteractedAt[bot.id],
+                      now: avatarMotionNow || Date.now(),
+                    })}
                     style={avatarStyle}
                     size={narrow ? undefined : 56}
                     showDefaultMark={defaultAssistantId === bot.id}
                     defaultMarkTitle={t(lang, 'defaultAssistant')}
                   />
+                  {shortcutHintByOwnerId?.[bot.id] ? (
+                    <span className="session-shortcut-hint session-shortcut-hint-pin" aria-hidden>
+                      {shortcutHintByOwnerId[bot.id]}
+                    </span>
+                  ) : null}
                 </span>
-                {!narrow ? <span className="session-pin-name">{bot.name}</span> : null}
+                {!narrow || renaming ? (
+                  <span className={`session-pin-name-edit${renaming ? ' is-renaming' : ''}`}>
+                    <span className="session-pin-name">{bot.name}</span>
+                    {renaming ? renameInput : null}
+                  </span>
+                ) : null}
               </div>
             );
           }
@@ -146,6 +207,7 @@ export function SessionPinStrip({
           const active = !leaving && selection?.kind === 'squad' && selection.id === g.id;
           const tipMembers = squadMembers(g, bots);
           const dockScale = narrow ? dockScales[`squad:${g.id}`] || 1 : 1;
+          const renaming = renameTarget?.kind === 'squad' && renameTarget.id === g.id;
           const unread = !active && sessionHasUnread(g.id) && !botIsWorking(g.id);
           const selectSquad = () => onSelect({ kind: 'squad', id: g.id });
           const squadContext = (e: MouseEvent) => {
@@ -158,13 +220,13 @@ export function SessionPinStrip({
               key={`pin:${id}`}
               data-session-id={id}
               data-pin-phase={phase}
-              className={`${itemClass}${active ? ' active' : ''}`}
+              className={`${itemClass}${active ? ' active' : ''}${renaming ? ' renaming' : ''}`}
               style={leaveStyle}
               role="listitem"
               tabIndex={leaving ? -1 : 0}
               aria-hidden={leaving || undefined}
-              onClick={leaving ? undefined : selectSquad}
-              onContextMenu={leaving ? undefined : squadContext}
+              onClick={leaving || renaming ? undefined : selectSquad}
+              onContextMenu={leaving || renaming ? undefined : squadContext}
               onMouseEnter={
                 leaving
                   ? undefined
@@ -208,8 +270,18 @@ export function SessionPinStrip({
                     className={narrow ? 'session-avatar' : 'session-pin-avatar'}
                   />
                 </span>
+                  {shortcutHintByOwnerId?.[g.id] ? (
+                    <span className="session-shortcut-hint session-shortcut-hint-pin" aria-hidden>
+                      {shortcutHintByOwnerId[g.id]}
+                    </span>
+                  ) : null}
               </span>
-              {!narrow ? <span className="session-pin-name">{g.name}</span> : null}
+              {!narrow || renaming ? (
+                <span className={`session-pin-name-edit${renaming ? ' is-renaming' : ''}`}>
+                  <span className="session-pin-name">{g.name}</span>
+                  {renaming ? renameInput : null}
+                </span>
+              ) : null}
             </div>
           );
         })}

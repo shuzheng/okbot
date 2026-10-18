@@ -45,10 +45,10 @@ export type BotFormValues = {
   modelId: string;
   /**
    * When Advanced AGENTS was edited, App writes this after updateBot
-   * so it wins over syncAgentsMdProfile for that save.
+   * so it wins over syncSoulMdProfile for that save.
    */
-  agentsMd?: string | null;
-  agentsMdTouched?: boolean;
+  soulMd?: string | null;
+  soulMdTouched?: boolean;
   useGlobalSkills?: boolean;
   enabledGlobalSkills?: string[];
 };

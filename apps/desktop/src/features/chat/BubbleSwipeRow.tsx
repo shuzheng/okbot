@@ -3,6 +3,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type RefObject,
   type ReactNode,
 } from 'react';
 import { formatMessageClockTime } from '../../utils/formatSessionUpdatedAt';
@@ -10,30 +11,21 @@ import { formatMessageClockTime } from '../../utils/formatSessionUpdatedAt';
 /** Fallback when `--bubble-swipe-reveal` is unavailable (matches app.css). */
 export const BUBBLE_SWIPE_REVEAL_PX = 52;
 
-/** Movement before axis lock / time reveal (px). Higher = less sensitive. */
-const AXIS_LOCK_PX = 20;
-
 /** Horizontal must dominate vertical by this factor to claim the gesture. */
 const HORIZ_DOMINANCE = 0.85;
 
-/** Idle after last horizontal wheel before spring-back (ms). Keep low so release feels instant. */
-const WHEEL_IDLE_MS = 80;
+/**
+ * Idle after last horizontal wheel before spring-back (ms).
+ * Must be long enough that a brief pause mid-reverse (跟手滑出) does not
+ * finishAll — 80ms was firing while the finger was still on the trackpad.
+ */
+const WHEEL_IDLE_MS = 280;
 
 /** Minimum |deltaX| (px, after deltaMode scale) to treat as horizontal. */
 const WHEEL_EPS = 0.08;
 
-/** Amplify trackpad/mouse deltaX so a small flick fully reveals HH:MM. */
-const WHEEL_GAIN = 10;
-
-/**
- * macOS trackpad / Magic Mouse often emit |deltaX| ≪ 1–3 px per event.
- * Extra boost when the raw horizontal delta is tiny.
- */
-const WHEEL_TINY_ABS = 2.5;
-const WHEEL_TINY_BOOST = 2.8;
-
-/** Opacity reaches 1 before full reveal so the clock is readable sooner. */
-const OPACITY_FULL_AT = 0.28;
+/** Gesture owner id when the chat messages area owns the swipe (not a bubble row). */
+const MESSAGES_GESTURE_OWNER = '__messages__';
 
 type RowHandle = {
   id: string;
@@ -52,8 +44,6 @@ let gestureOwnerId: string | null = null;
 let wheelIdleTimer: ReturnType<typeof setTimeout> | null = null;
 let rafId: number | null = null;
 let pendingOffset: number | null = null;
-/** Accumulated open-direction wheel delta while still inside the activation deadzone. */
-let wheelArmAccum = 0;
 
 function clearWheelIdleTimer(): void {
   if (wheelIdleTimer != null) {
@@ -94,7 +84,6 @@ function finishAll(): void {
   }
   sharedOffset = 0;
   gestureOwnerId = null;
-  wheelArmAccum = 0;
 }
 
 function scheduleWheelSpringBack(): void {
@@ -126,7 +115,8 @@ function registerRow(handle: RowHandle): () => void {
   }
   return () => {
     swipeRows.delete(handle.id);
-    if (gestureOwnerId === handle.id) {
+    // Rows no longer own the gesture; only clear if nothing left to paint.
+    if (swipeRows.size === 0 && (sharedOffset !== 0 || sharedDragging)) {
       finishAll();
     }
   };
@@ -134,6 +124,10 @@ function registerRow(handle: RowHandle): () => void {
 
 function claimGesture(id: string): void {
   gestureOwnerId = id;
+}
+
+function currentOffset(): number {
+  return pendingOffset ?? sharedOffset;
 }
 
 function isInteractiveTarget(target: EventTarget | null): boolean {
@@ -158,10 +152,11 @@ function canScrollOverflow(el: HTMLElement): boolean {
 }
 
 /**
- * Wheel over scrollable content inside the bubble (e.g. code blocks):
- * let native scroll win — do not start swipe-to-show-time.
+ * Wheel over nested scrollable content (e.g. code blocks) inside the chat
+ * area: let native scroll win — do not start swipe-to-show-time.
+ * The messages container itself is excluded (it is the gesture host).
  */
-function isOverScrollableInsideHost(
+function isOverNestedScrollable(
   target: EventTarget | null,
   host: HTMLElement | null,
 ): boolean {
@@ -195,25 +190,99 @@ function wheelDeltaPx(e: WheelEvent): { dx: number; dy: number } {
   return { dx, dy };
 }
 
+/** Opacity fades 0→1 with the same progress as horizontal enter. */
 function opacityForOffset(offset: number, max: number): number {
-  const progress = Math.min(1, Math.abs(offset) / Math.max(1, max));
-  return Math.min(1, progress / OPACITY_FULL_AT);
-}
-
-/** Effective wheel gain — aggressive for tiny macOS trackpad deltas. */
-function wheelGainFor(horiz: number): number {
-  const abs = Math.abs(horiz);
-  if (abs > 0 && abs < WHEEL_TINY_ABS) return WHEEL_GAIN * WHEEL_TINY_BOOST;
-  return WHEEL_GAIN;
+  return Math.min(1, Math.abs(offset) / Math.max(1, max));
 }
 
 /** Shared max reveal across mounted rows (CSS var is uniform). */
-function sharedMaxReveal(): number {
+function sharedMaxReveal(fallbackEl?: HTMLElement | null): number {
   for (const row of swipeRows.values()) {
     const m = row.readMax();
     if (m > 0) return m;
   }
-  return BUBBLE_SWIPE_REVEAL_PX;
+  return readRevealPx(fallbackEl ?? null);
+}
+
+/**
+ * Bind wheel/trackpad swipe-to-reveal on the **entire** messages scroll
+ * container (including gaps between bubbles). Left-button pointer drag is
+ * intentionally left alone so native text/box selection works.
+ * Keeps 跟手 progress, opacity, swipe-out, and idle auto-close. Broadcasts
+ * offset to every mounted BubbleSwipeRow time column.
+ */
+export function useMessagesSwipeReveal(
+  containerRef: RefObject<HTMLElement | null>,
+): void {
+  useEffect(() => {
+    const host = containerRef.current;
+    if (!host) return;
+
+    const onWheel = (e: WheelEvent) => {
+      if (isInteractiveTarget(e.target)) return;
+      if (isOverNestedScrollable(e.target, host)) return;
+
+      const { dx, dy } = wheelDeltaPx(e);
+      let horiz = dx;
+      if (Math.abs(dx) < WHEEL_EPS && e.shiftKey && Math.abs(dy) >= WHEEL_EPS) {
+        horiz = dy;
+      }
+
+      const base = currentOffset();
+      // Any reveal counts as open so reverse stays 跟手 all the way to 0
+      // (base > 1 left a 1px band where reverse was ignored then idle snapped shut).
+      const alreadyOpen = base > 0;
+
+      // While revealing: even sub-EPS / non-dominant wheel means the finger is
+      // still active — refresh idle so a noisy pause mid-滑出 cannot finishAll.
+      if (alreadyOpen && Math.abs(horiz) < WHEEL_EPS) {
+        scheduleWheelSpringBack();
+        return;
+      }
+      if (Math.abs(horiz) < WHEEL_EPS) return;
+
+      const shiftFallback = e.shiftKey && Math.abs(dx) < WHEEL_EPS;
+      if (
+        !alreadyOpen &&
+        Math.abs(horiz) <= Math.abs(dy) * HORIZ_DOMINANCE &&
+        !shiftFallback
+      ) {
+        return;
+      }
+
+      // Closed + finger-right (negative deltaX under macOS natural scroll): ignore.
+      // Open is finger-left → positive deltaX → content left, time from right.
+      // Already open: negative horiz 跟手滑出 (proportionally closes).
+      if (base <= 0 && horiz < 0) {
+        return;
+      }
+
+      // 跟手 1:1 both ways — NO gain on open or close.
+      // progress = clamp(offset / timeColumnWidthPx, 0, 1).
+      const enterDelta = horiz;
+
+      // Closed: only open-direction travel starts the reveal (no binary deadzone).
+      if (!alreadyOpen && enterDelta <= 0) return;
+
+      // Reversed vs 58acd8b: positive horiz increases reveal; negative decreases (跟手滑出).
+      e.preventDefault();
+      e.stopPropagation();
+      claimGesture(MESSAGES_GESTURE_OWNER);
+      const max = sharedMaxReveal(host);
+      const next = Math.min(max, Math.max(0, base + enterDelta));
+      scheduleSharedOffset(next, true);
+      scheduleWheelSpringBack();
+    };
+
+    host.addEventListener('wheel', onWheel, { passive: false, capture: true });
+
+    return () => {
+      host.removeEventListener('wheel', onWheel, { capture: true });
+      if (gestureOwnerId === MESSAGES_GESTURE_OWNER) {
+        finishAll();
+      }
+    };
+  }, [containerRef]);
 }
 
 export type BubbleSwipeRowProps = {
@@ -228,13 +297,18 @@ export type BubbleSwipeRowProps = {
 /**
  * Reveal HH:MM in the trailing gutter (iMessage-style).
  *
- * Gesture targets the **whole message row** (host), not only the bubble.
- * One horizontal gesture updates **every** mounted row's clock together.
+ * Gesture is owned by the **messages scroll container** (`useMessagesSwipeReveal`)
+ * so gaps between bubbles also trigger reveal. This row only paints the shared
+ * offset onto its time column / user slide.
  *
- * - Wheel / trackpad: macOS natural-scroll deltaX — finger left (positive deltaX) opens;
- *   finger right closes. Reversed vs 58acd8b wheel polarity.
- *   Mouse press-drag is intentionally disabled so text selection works in bubbles.
- * - Time slides in from the **right** proportional to distance; vertically centered.
+ * - Wheel / trackpad only: macOS natural-scroll deltaX — finger left (positive
+ *   deltaX) opens; finger right closes (跟手滑出). Idle after last horizontal
+ *   wheel spring-closes. Left-button drag never claims swipe — native text
+ *   selection only.
+ * - 跟手: swipePx accumulates 1:1 both ways (no gain on open OR close).
+ *   progress = clamp(swipePx / timeColumnWidthPx, 0, 1) where timeColumnWidthPx
+ *   is `--bubble-swipe-reveal` (fallback 52). Opacity and translateX both use progress.
+ * - Time slides in from the **right** with translate + opacity fade (0→1) by that progress.
  * - Only **user** slides translateX left; assistant slides stay put (time still paints).
  * - Slide uses `transform` (not `left`) so bubble layout width/shape never changes.
  */
@@ -275,8 +349,9 @@ export function BubbleSwipeRow({
       }
     }
     if (time) {
+      // progress = clamp(offset / timeColumnWidth, 0, 1)
       const progress = Math.min(1, Math.abs(next) / Math.max(1, max));
-      // Slide in from the right proportional to swipe distance.
+      // Horizontal enter from the right + opacity fade with the same progress.
       time.style.transform = `translateX(${(1 - progress) * max}px)`;
       time.style.opacity = String(opacityForOffset(next, max));
     }
@@ -301,80 +376,6 @@ export function BubbleSwipeRow({
       host: () => hostRef.current,
     });
   }, [clock, messageId, paintLocal]);
-
-  useEffect(() => {
-    if (!clock) return;
-    const host = hostRef.current;
-    if (!host) return;
-
-    const onWheel = (e: WheelEvent) => {
-      if (isInteractiveTarget(e.target)) return;
-      // Code blocks / nested overflow: never steal for swipe-to-show-time.
-      if (isOverScrollableInsideHost(e.target, host)) return;
-
-      const { dx, dy } = wheelDeltaPx(e);
-      let horiz = dx;
-      if (Math.abs(dx) < WHEEL_EPS && e.shiftKey && Math.abs(dy) >= WHEEL_EPS) {
-        horiz = dy;
-      }
-
-      if (Math.abs(horiz) < WHEEL_EPS) return;
-
-      const base = pendingOffset ?? sharedOffset;
-      const alreadyOpen = base > 1;
-      const shiftFallback = e.shiftKey && Math.abs(dx) < WHEEL_EPS;
-      if (
-        !alreadyOpen &&
-        Math.abs(horiz) <= Math.abs(dy) * HORIZ_DOMINANCE &&
-        !shiftFallback
-      ) {
-        wheelArmAccum = 0;
-        return;
-      }
-
-      // Closed + finger-right (negative deltaX under macOS natural scroll): ignore.
-      // Open is finger-left → positive deltaX → content left, time from right.
-      if (base <= 0 && horiz < 0) {
-        wheelArmAccum = 0;
-        return;
-      }
-
-      const gain = wheelGainFor(horiz);
-      const delta = horiz * gain;
-
-      // Deadzone: require AXIS_LOCK_PX of open-direction travel before locking.
-      if (!alreadyOpen) {
-        if (delta <= 0) return;
-        wheelArmAccum += delta;
-        if (wheelArmAccum < AXIS_LOCK_PX) return;
-        // Crossed threshold — start reveal from overshoot past the deadzone.
-        const overshoot = wheelArmAccum - AXIS_LOCK_PX;
-        wheelArmAccum = AXIS_LOCK_PX;
-        e.preventDefault();
-        e.stopPropagation();
-        maxRef.current = readRevealPx(hostRef.current);
-        claimGesture(messageId);
-        const max = sharedMaxReveal();
-        const next = Math.min(max, Math.max(0, overshoot));
-        scheduleSharedOffset(next, true);
-        scheduleWheelSpringBack();
-        return;
-      }
-
-      // Reversed vs 58acd8b: positive horiz increases reveal (matches natural scroll).
-      e.preventDefault();
-      e.stopPropagation();
-      maxRef.current = readRevealPx(hostRef.current);
-      claimGesture(messageId);
-      const max = sharedMaxReveal();
-      const next = Math.min(max, Math.max(0, base + delta));
-      scheduleSharedOffset(next, true);
-      scheduleWheelSpringBack();
-    };
-
-    host.addEventListener('wheel', onWheel, { passive: false, capture: true });
-    return () => host.removeEventListener('wheel', onWheel, { capture: true });
-  }, [clock, messageId]);
 
   if (!clock) {
     return (

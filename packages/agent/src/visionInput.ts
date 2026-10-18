@@ -23,11 +23,11 @@ export const MAX_VISION_TOTAL_BYTES = 20 * 1024 * 1024;
 
 /**
  * System-prompt override for turns that actually carry vision `input_image` parts.
- * Silent AGENTS.md refresh often invents "无图像处理能力"; without this, models
+ * Silent SOUL.md refresh often invents "无图像处理能力"; without this, models
  * (incl. MiniMax-M3) ignore real image_url parts and claim text-only.
  */
 export const VISION_TURN_INSTRUCTION = [
-  '## 本回合视觉输入（优先于 AGENTS.md / 记忆中的能力边界）',
+  '## 本回合视觉输入（优先于 SOUL.md / 记忆中的能力边界）',
   '',
   '用户本条消息附带了图片，已作为多模态视觉输入（chat completions `image_url` / data URL）发给你。',
   '你可以且应当直接看图回答、描述、OCR 或依据图中内容推理。',

@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import { type BotSkill, type MemoryEntry } from '@okbot/shared';
 import { t, type UiLang } from '../../i18n';
 import { MemoryEntriesList } from '../settings/MemoryEntriesList';
-import { SchedulesList } from '../settings/SchedulesList';
 import { SettingsToggle } from '../settings/SettingsToggle';
 import { resolveWheelPassOuter, updateScrollFade } from '../../utils/scrollFade';
 import { formatSystemError } from '../../utils/formatSystemError';
@@ -62,43 +61,18 @@ function useWheelPassThrough(depKey: string | number) {
   return listScrollRef;
 }
 
-type Props = {
+type AdvancedProps = {
   lang: UiLang;
   /** Existing bot id (create flow already allocates before modal). */
   botId: string | null;
-  useGlobalSkills: boolean;
-  enabledGlobalSkills: string[];
-  onAgentsMdChange: (text: string, touched: boolean) => void;
-  onGlobalSkillsChange: (next: {
-    useGlobalSkills: boolean;
-    enabledGlobalSkills: string[];
-  }) => void;
+  onSoulMdChange: (text: string, touched: boolean) => void;
 };
 
-export function BotAdvancedSection({
-  lang,
-  botId,
-  useGlobalSkills,
-  enabledGlobalSkills,
-  onAgentsMdChange,
-  onGlobalSkillsChange,
-}: Props) {
+/** Details-tab Advanced: SOUL.md / 灵魂 only (memory & skills moved to their own tabs). */
+export function BotAdvancedSection({ lang, botId, onSoulMdChange }: AdvancedProps) {
   const [open, setOpen] = useState(false);
   const [loaded, setLoaded] = useState(false);
-  const [agentsMd, setAgentsMd] = useState('');
-  const [memories, setMemories] = useState<MemoryEntry[]>([]);
-  const [skills, setSkills] = useState<BotSkill[]>([]);
-  const [globalSkills, setGlobalSkills] = useState<BotSkill[]>([]);
-  const [editingSkillSlug, setEditingSkillSlug] = useState<string | null>(null);
-  const [draftSkillName, setDraftSkillName] = useState('');
-  const [draftSkillDesc, setDraftSkillDesc] = useState('');
-  const [draftSkillBody, setDraftSkillBody] = useState('');
-  const skillScrollRef = useWheelPassThrough(
-    `${skills.length}:${editingSkillSlug ?? ''}:${open ? 1 : 0}`,
-  );
-  const globalScrollRef = useWheelPassThrough(
-    `${globalSkills.length}:${useGlobalSkills ? 1 : 0}:${open ? 1 : 0}`,
-  );
+  const [soulMd, setSoulMd] = useState('');
 
   useEffect(() => {
     if (!open || loaded) return;
@@ -107,27 +81,16 @@ export function BotAdvancedSection({
       try {
         if (!botId) {
           if (!cancelled) {
-            setAgentsMd('');
-            setMemories([]);
-            setSkills([]);
-            setGlobalSkills([]);
+            setSoulMd('');
             setLoaded(true);
           }
           return;
         }
-        const [md, mems, localSkills, globals] = await Promise.all([
-          window.okbot.readAgentsMd(botId),
-          window.okbot.listBotMemories(botId),
-          window.okbot.listBotSkills(botId),
-          window.okbot.listGlobalAgentsSkills(),
-        ]);
+        const md = await window.okbot.readSoulMd(botId);
         if (cancelled) return;
-        setAgentsMd(typeof md === 'string' ? md : '');
-        setMemories(Array.isArray(mems) ? mems : []);
-        setSkills(Array.isArray(localSkills) ? localSkills : []);
-        setGlobalSkills(Array.isArray(globals) ? globals : []);
+        setSoulMd(typeof md === 'string' ? md : '');
         setLoaded(true);
-        onAgentsMdChange(typeof md === 'string' ? md : '', false);
+        onSoulMdChange(typeof md === 'string' ? md : '', false);
       } catch {
         if (!cancelled) setLoaded(true);
       }
@@ -135,16 +98,108 @@ export function BotAdvancedSection({
     return () => {
       cancelled = true;
     };
-  }, [open, loaded, botId, onAgentsMdChange]);
+  }, [open, loaded, botId, onSoulMdChange]);
 
-  const persistAgents = async (text: string) => {
+  const persistSoul = async (text: string) => {
     if (!botId) return;
     try {
-      await window.okbot.writeAgentsMd(botId, text);
+      await window.okbot.writeSoulMd(botId, text);
     } catch {
       /* parent toast on apply path */
     }
   };
+
+  return (
+    <div className="bot-advanced">
+      <button
+        type="button"
+        className={`bot-advanced-toggle${open ? ' open' : ''}`}
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span>{t(lang, 'botAdvanced')}</span>
+        <span className={`bot-advanced-chevron${open ? ' open' : ''}`} aria-hidden>
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none">
+            <path
+              d="M8 10l4 4 4-4"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </span>
+      </button>
+
+      {open ? (
+        <div className="bot-advanced-body">
+          <div className="field">
+            <label>{t(lang, 'botAgentsMd')}</label>
+            <textarea
+              className="settings-paths-textarea bot-agents-md"
+              spellCheck={false}
+              rows={8}
+              value={soulMd}
+              disabled={!botId}
+              onChange={(e) => {
+                const v = e.target.value;
+                setSoulMd(v);
+                onSoulMdChange(v, true);
+              }}
+              onBlur={() => {
+                onSoulMdChange(soulMd, true);
+                void persistSoul(soulMd);
+              }}
+            />
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** 记忆 tab: existing MemoryEntriesList card UI moved as-is from details Advanced. */
+export function BotMemoryPanel({
+  lang,
+  botId,
+  active,
+}: {
+  lang: UiLang;
+  botId: string | null;
+  active: boolean;
+}) {
+  const [loaded, setLoaded] = useState(false);
+  const [memories, setMemories] = useState<MemoryEntry[]>([]);
+
+  useEffect(() => {
+    if (!active) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        if (!botId) {
+          if (!cancelled) {
+            setMemories([]);
+            setLoaded(true);
+          }
+          return;
+        }
+        const mems = await window.okbot.listBotMemories(botId);
+        if (cancelled) return;
+        setMemories(Array.isArray(mems) ? mems : []);
+        setLoaded(true);
+      } catch {
+        if (!cancelled) setLoaded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [active, botId]);
+
+  // Reload when switching bots while tab already loaded once.
+  useEffect(() => {
+    setLoaded(false);
+  }, [botId]);
 
   const commitMemory = async (entry: MemoryEntry) => {
     if (!botId) return;
@@ -174,6 +229,98 @@ export function BotAdvancedSection({
       toast.error(formatSystemError(err));
     }
   };
+
+  if (!active) return null;
+
+  if (!botId) {
+    return (
+      <div className="settings-aar-inline list-card">
+        <div className="aar-empty">{t(lang, 'botMemoriesNeedSave')}</div>
+      </div>
+    );
+  }
+  if (!loaded) return null;
+  return (
+    <MemoryEntriesList
+      lang={lang}
+      entries={memories}
+      emptyLabel={t(lang, 'botMemoriesEmpty')}
+      placeholder={t(lang, 'botMemoryPlaceholder')}
+      scrollOuterSelector=".form-drawer-body"
+      newBotId={botId}
+      onCommit={commitMemory}
+      onDelete={deleteMemory}
+    />
+  );
+}
+
+/** 技能 tab: 私有技能 cards, then 全局技能 toggle list (moved from details Advanced). */
+export function BotSkillsPanel({
+  lang,
+  botId,
+  active,
+  useGlobalSkills,
+  enabledGlobalSkills,
+  onGlobalSkillsChange,
+}: {
+  lang: UiLang;
+  botId: string | null;
+  active: boolean;
+  useGlobalSkills: boolean;
+  enabledGlobalSkills: string[];
+  onGlobalSkillsChange: (next: {
+    useGlobalSkills: boolean;
+    enabledGlobalSkills: string[];
+  }) => void;
+}) {
+  const [loaded, setLoaded] = useState(false);
+  const [skills, setSkills] = useState<BotSkill[]>([]);
+  const [globalSkills, setGlobalSkills] = useState<BotSkill[]>([]);
+  const [editingSkillSlug, setEditingSkillSlug] = useState<string | null>(null);
+  const [draftSkillName, setDraftSkillName] = useState('');
+  const [draftSkillDesc, setDraftSkillDesc] = useState('');
+  const [draftSkillBody, setDraftSkillBody] = useState('');
+  const skillScrollRef = useWheelPassThrough(
+    `${skills.length}:${editingSkillSlug ?? ''}:${active ? 1 : 0}`,
+  );
+  const globalScrollRef = useWheelPassThrough(
+    `${globalSkills.length}:${useGlobalSkills ? 1 : 0}:${active ? 1 : 0}`,
+  );
+
+  useEffect(() => {
+    setLoaded(false);
+    setEditingSkillSlug(null);
+  }, [botId]);
+
+  useEffect(() => {
+    if (!active) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        if (!botId) {
+          if (!cancelled) {
+            setSkills([]);
+            setGlobalSkills([]);
+            setLoaded(true);
+          }
+          return;
+        }
+        const [localSkills, globals] = await Promise.all([
+          window.okbot.listBotSkills(botId),
+          window.okbot.listGlobalAgentsSkills(),
+        ]);
+        if (cancelled) return;
+        setSkills(Array.isArray(localSkills) ? localSkills : []);
+        setGlobalSkills(Array.isArray(globals) ? globals : []);
+        setLoaded(true);
+      } catch {
+        if (!cancelled) setLoaded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [active, botId]);
 
   const saveSkill = async () => {
     if (!botId || !editingSkillSlug) return;
@@ -224,221 +371,153 @@ export function BotAdvancedSection({
     });
   };
 
+  if (!active) return null;
+
   return (
-    <div className="bot-advanced">
-      <button
-        type="button"
-        className={`bot-advanced-toggle${open ? ' open' : ''}`}
-        aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-      >
-        <span>{t(lang, 'botAdvanced')}</span>
-        <span className={`bot-advanced-chevron${open ? ' open' : ''}`} aria-hidden>
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none">
-            <path
-              d="M8 10l4 4 4-4"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </span>
-      </button>
-
-      {open ? (
-        <div className="bot-advanced-body">
-          <div className="field">
-            <label>{t(lang, 'botAgentsMd')}</label>
-            <p className="bot-form-model-hint">{t(lang, 'botAgentsMdHint')}</p>
-            <textarea
-              className="settings-paths-textarea bot-agents-md"
-              spellCheck={false}
-              rows={8}
-              value={agentsMd}
-              disabled={!botId}
-              onChange={(e) => {
-                const v = e.target.value;
-                setAgentsMd(v);
-                onAgentsMdChange(v, true);
-              }}
-              onBlur={() => {
-                onAgentsMdChange(agentsMd, true);
-                void persistAgents(agentsMd);
-              }}
-            />
-          </div>
-
-          <div className="field">
-            <label>{t(lang, 'botMemories')}</label>
-            {!botId ? (
-              <div className="aar-empty">{t(lang, 'botMemoriesNeedSave')}</div>
-            ) : (
-              <MemoryEntriesList
-                lang={lang}
-                entries={memories}
-                emptyLabel={t(lang, 'botMemoriesEmpty')}
-                placeholder={t(lang, 'botMemoryPlaceholder')}
-                scrollOuterSelector=".form-drawer-body"
-                newBotId={botId}
-                onCommit={commitMemory}
-                onDelete={deleteMemory}
-              />
-            )}
-          </div>
-
-          <div className="field">
-            <label>{t(lang, 'botSkills')}</label>
-            {!botId ? (
-              <div className="aar-empty">{t(lang, 'botMemoriesNeedSave')}</div>
-            ) : (
-              <div className="settings-aar-inline">
-                <div ref={skillScrollRef} className="aar-list-scroll scroll-fade">
-                  {skills.length === 0 && !editingSkillSlug ? (
-                    <div className="aar-empty">{t(lang, 'botSkillsEmpty')}</div>
-                  ) : null}
-                  {skills.map((s) =>
-                    editingSkillSlug === s.slug ? (
-                      <div key={s.slug} className="aar-item aar-item-editing aar-item-stack">
-                        <input
-                          type="text"
-                          className="aar-inline-input"
-                          spellCheck={false}
-                          placeholder={t(lang, 'botSkillName')}
-                          value={draftSkillName}
-                          onChange={(e) => setDraftSkillName(e.target.value)}
-                          aria-label={t(lang, 'botSkillName')}
-                        />
-                        <input
-                          type="text"
-                          className="aar-inline-input"
-                          spellCheck={false}
-                          placeholder={t(lang, 'botSkillDescription')}
-                          value={draftSkillDesc}
-                          onChange={(e) => setDraftSkillDesc(e.target.value)}
-                          aria-label={t(lang, 'botSkillDescription')}
-                        />
-                        <textarea
-                          className="aar-inline-input bot-skill-body"
-                          spellCheck={false}
-                          rows={4}
-                          placeholder={t(lang, 'botSkillBody')}
-                          value={draftSkillBody}
-                          onChange={(e) => setDraftSkillBody(e.target.value)}
-                          aria-label={t(lang, 'botSkillBody')}
-                        />
-                        <div className="aar-item-trailing">
-                          <button
-                            type="button"
-                            className="model-icon-btn"
-                            title={t(lang, 'botSkillSave')}
-                            aria-label={t(lang, 'botSkillSave')}
-                            onClick={() => void saveSkill()}
-                          >
-                            <CheckIcon />
-                          </button>
-                          <button
-                            type="button"
-                            className="model-icon-btn"
-                            title={t(lang, 'cancel')}
-                            aria-label={t(lang, 'cancel')}
-                            onClick={() => setEditingSkillSlug(null)}
-                          >
-                            <XIcon />
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div key={s.slug} className="aar-item">
-                        <div className="aar-item-text">
-                          <div className="aar-item-title">{s.name}</div>
-                          <div className="aar-item-sub">{s.description}</div>
-                        </div>
-                        <div className="aar-item-trailing">
-                          <button
-                            type="button"
-                            className="model-icon-btn"
-                            title={t(lang, 'botSkillEdit')}
-                            aria-label={t(lang, 'botSkillEdit')}
-                            onClick={() => {
-                              setEditingSkillSlug(s.slug);
-                              setDraftSkillName(s.name);
-                              setDraftSkillDesc(s.description);
-                              setDraftSkillBody(s.body);
-                            }}
-                          >
-                            <EditIcon />
-                          </button>
-                          <button
-                            type="button"
-                            className="model-icon-btn"
-                            title={t(lang, 'botSkillDelete')}
-                            aria-label={t(lang, 'botSkillDelete')}
-                            onClick={() => void deleteSkill(s.slug)}
-                          >
-                            <TrashIcon />
-                          </button>
-                        </div>
-                      </div>
-                    ),
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="field">
-            <label>{t(lang, 'scheduledJobsList')}</label>
-            <SchedulesList lang={lang} active={Boolean(botId)} ownerId={botId} compact />
-          </div>
-
-          <div className="field">
-            <div className="settings-row bot-global-skills-master">
-              <span className="settings-row-label">
-                <span className="settings-row-label-text">{t(lang, 'botGlobalSkills')}</span>
-              </span>
-              <SettingsToggle
-                checked={useGlobalSkills}
-                disabled={!botId}
-                aria-label={t(lang, 'botGlobalSkills')}
-                onChange={() =>
-                  onGlobalSkillsChange({
-                    useGlobalSkills: !useGlobalSkills,
-                    enabledGlobalSkills,
-                  })
-                }
-              />
-            </div>
-            <p className="bot-form-model-hint">{t(lang, 'botGlobalSkillsHint')}</p>
-            {useGlobalSkills ? (
-              <div className="settings-aar-inline">
-                <div ref={globalScrollRef} className="aar-list-scroll scroll-fade">
-                  {!botId ? (
-                    <div className="aar-empty">{t(lang, 'botMemoriesNeedSave')}</div>
-                  ) : globalSkills.length === 0 ? (
-                    <div className="aar-empty">{t(lang, 'botGlobalSkillsEmpty')}</div>
-                  ) : (
-                    globalSkills.map((s) => (
-                      <div key={s.slug} className="aar-item">
-                        <div className="aar-item-text">
-                          <div className="aar-item-title">{s.name}</div>
-                          <div className="aar-item-sub">{s.description}</div>
-                        </div>
-                        <SettingsToggle
-                          checked={enabledGlobalSkills.includes(s.slug)}
-                          aria-label={s.name}
-                          onChange={() => toggleGlobalSlug(s.slug)}
-                        />
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            ) : null}
-          </div>
-
+    <>
+      {!botId ? (
+        <div className="settings-aar-inline list-card">
+          <div className="aar-empty">{t(lang, 'botMemoriesNeedSave')}</div>
         </div>
-      ) : null}
-    </div>
+      ) : !loaded ? null : (
+        <div className="settings-aar-inline list-card">
+          <div ref={skillScrollRef} className="aar-list-scroll scroll-fade">
+            {skills.length === 0 && !editingSkillSlug ? (
+              <div className="aar-empty">{t(lang, 'botSkillsEmpty')}</div>
+            ) : null}
+            {skills.map((s) =>
+              editingSkillSlug === s.slug ? (
+                <div key={s.slug} className="aar-item aar-item-editing aar-item-stack">
+                  <input
+                    type="text"
+                    className="aar-inline-input bot-skill-field"
+                    spellCheck={false}
+                    placeholder={t(lang, 'botSkillName')}
+                    value={draftSkillName}
+                    onChange={(e) => setDraftSkillName(e.target.value)}
+                    aria-label={t(lang, 'botSkillName')}
+                  />
+                  <input
+                    type="text"
+                    className="aar-inline-input bot-skill-field"
+                    spellCheck={false}
+                    placeholder={t(lang, 'botSkillDescription')}
+                    value={draftSkillDesc}
+                    onChange={(e) => setDraftSkillDesc(e.target.value)}
+                    aria-label={t(lang, 'botSkillDescription')}
+                  />
+                  <textarea
+                    className="aar-inline-input bot-skill-body"
+                    spellCheck={false}
+                    rows={4}
+                    placeholder={t(lang, 'botSkillBody')}
+                    value={draftSkillBody}
+                    onChange={(e) => setDraftSkillBody(e.target.value)}
+                    aria-label={t(lang, 'botSkillBody')}
+                  />
+                  <div className="aar-item-trailing">
+                    <button
+                      type="button"
+                      className="model-icon-btn"
+                      title={t(lang, 'botSkillSave')}
+                      aria-label={t(lang, 'botSkillSave')}
+                      onClick={() => void saveSkill()}
+                    >
+                      <CheckIcon />
+                    </button>
+                    <button
+                      type="button"
+                      className="model-icon-btn"
+                      title={t(lang, 'cancel')}
+                      aria-label={t(lang, 'cancel')}
+                      onClick={() => setEditingSkillSlug(null)}
+                    >
+                      <XIcon />
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div key={s.slug} className="aar-item">
+                  <div className="aar-item-text">
+                    <div className="aar-item-title">{s.name}</div>
+                    <div className="aar-item-sub">{s.description}</div>
+                  </div>
+                  <div className="aar-item-trailing">
+                    <button
+                      type="button"
+                      className="model-icon-btn"
+                      title={t(lang, 'botSkillEdit')}
+                      aria-label={t(lang, 'botSkillEdit')}
+                      onClick={() => {
+                        setEditingSkillSlug(s.slug);
+                        setDraftSkillName(s.name);
+                        setDraftSkillDesc(s.description);
+                        setDraftSkillBody(s.body);
+                      }}
+                    >
+                      <EditIcon />
+                    </button>
+                    <button
+                      type="button"
+                      className="model-icon-btn"
+                      title={t(lang, 'botSkillDelete')}
+                      aria-label={t(lang, 'botSkillDelete')}
+                      onClick={() => void deleteSkill(s.slug)}
+                    >
+                      <TrashIcon />
+                    </button>
+                  </div>
+                </div>
+              ),
+            )}
+          </div>
+        </div>
+      )}
+
+      <div className="field">
+        <div className="settings-row bot-global-skills-master">
+          <span className="settings-row-label">
+            <span className="settings-row-label-text">{t(lang, 'botGlobalSkills')}</span>
+          </span>
+          <SettingsToggle
+            checked={useGlobalSkills}
+            disabled={!botId}
+            aria-label={t(lang, 'botGlobalSkills')}
+            onChange={() =>
+              onGlobalSkillsChange({
+                useGlobalSkills: !useGlobalSkills,
+                enabledGlobalSkills,
+              })
+            }
+          />
+        </div>
+        <p className="bot-form-model-hint">{t(lang, 'botGlobalSkillsHint')}</p>
+        {useGlobalSkills ? (
+          <div className="settings-aar-inline list-card">
+            <div ref={globalScrollRef} className="aar-list-scroll scroll-fade">
+              {!botId ? (
+                <div className="aar-empty">{t(lang, 'botMemoriesNeedSave')}</div>
+              ) : !loaded ? null : globalSkills.length === 0 ? (
+                <div className="aar-empty">{t(lang, 'botGlobalSkillsEmpty')}</div>
+              ) : (
+                globalSkills.map((s) => (
+                  <div key={s.slug} className="aar-item">
+                    <div className="aar-item-text">
+                      <div className="aar-item-title">{s.name}</div>
+                      <div className="aar-item-sub">{s.description}</div>
+                    </div>
+                    <SettingsToggle
+                      checked={enabledGlobalSkills.includes(s.slug)}
+                      aria-label={s.name}
+                      onChange={() => toggleGlobalSlug(s.slug)}
+                    />
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </>
   );
 }

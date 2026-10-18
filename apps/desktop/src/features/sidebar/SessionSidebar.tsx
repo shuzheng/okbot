@@ -20,7 +20,8 @@ import {
 import { t, type UiLang } from '../../i18n';
 import type { MenuState, RenameTarget, Selection, SessionItem } from '../../types';
 import { FlatAvatar, SquadAvatar, type SquadAvatarMember } from '../../components/ui/avatars';
-import { AssistantGalleryIcon, ChevronDownIcon, DownloadUpdateIcon, ImportAssistantIcon, InstallUpdateIcon, PersonIcon, SearchIcon, SettingsIcon, SquadNavIcon } from '../../components/ui/icons';
+import { resolveSessionAvatarMotion } from '../../utils/sessionAvatarMotion';
+import { AboutIcon, AssistantGalleryIcon, ChevronDownIcon, DownloadUpdateIcon, ImportAssistantIcon, InstallUpdateIcon, PersonIcon, SearchIcon, SettingsIcon, SquadNavIcon } from '../../components/ui/icons';
 import { QuickTip } from '../../components/ui/QuickTip';
 import { SessionPinStrip } from './SessionPinStrip';
 import { formatSessionDraftPreview } from '../../utils/formatSessionDraftPreview';
@@ -60,6 +61,10 @@ export type SessionSidebarProps = {
   newBtnFooterRef: RefObject<HTMLButtonElement | null>;
   botIsWorking: (id: string) => boolean;
   sessionHasUnread: (id: string) => boolean;
+  /** ownerId → last open/interact ms; drives 闲动画 vs 静止. */
+  sessionInteractedAt?: Record<string, number>;
+  /** Coarse clock for 1-minute idle → 静止. */
+  avatarMotionNow?: number;
   onOpenSearch: () => void;
   onOpenCreateMenu: (e: MouseEvent) => void;
   onStartCreateBot: () => void;
@@ -72,6 +77,8 @@ export type SessionSidebarProps = {
   onCommitRename: () => void;
   onCancelRename: () => void;
   onOpenSettings: () => void;
+  /** Open About modal (collapsed fab menu). */
+  onOpenAbout: () => void;
   onDockMouseMove: (clientY: number) => void;
   onDockScroll: () => void;
   onDockMouseLeave: () => void;
@@ -103,6 +110,8 @@ export type SessionSidebarProps = {
   onReorderOwnerGroup?: (fromId: string, toId: string) => void;
   /** When set, show update control to the right of 市场. */
   updateControl?: SidebarUpdateControl | null;
+  /** Long-press modifier hints: ownerId → label (⌘1 / Win+1). */
+  shortcutHintByOwnerId?: Record<string, string>;
 };
 
 function resolvedOrbTheme(): 'light' | 'dark' {
@@ -129,6 +138,8 @@ export const SessionSidebar = memo(function SessionSidebar({
   newBtnFooterRef,
   botIsWorking,
   sessionHasUnread,
+  sessionInteractedAt = {},
+  avatarMotionNow = 0,
   onOpenSearch,
   onOpenCreateMenu,
   onStartCreateBot,
@@ -141,6 +152,7 @@ export const SessionSidebar = memo(function SessionSidebar({
   onCommitRename,
   onCancelRename,
   onOpenSettings,
+  onOpenAbout,
   onDockMouseMove,
   onDockScroll,
   onDockMouseLeave,
@@ -157,11 +169,14 @@ export const SessionSidebar = memo(function SessionSidebar({
   onMoveOwnerToGroup,
   onReorderOwnerGroup,
   updateControl = null,
+  shortcutHintByOwnerId,
 }: SessionSidebarProps) {
   const [footerMenuOpen, setFooterMenuOpen] = useState(false);
   const [hiddenExpanded, setHiddenExpanded] = useState(false);
   /** Per-group expand; missing id → expanded (default open). Local UI like 已隐藏. */
   const [ownerGroupExpanded, setOwnerGroupExpanded] = useState<Record<string, boolean>>({});
+  /** Blocks header toggle for one click after rename blur (blur→click race). */
+  const suppressGroupToggleRef = useRef(false);
   const [dragOverGroupId, setDragOverGroupId] = useState<string | null>(null);
   const [draggingOwnerId, setDraggingOwnerId] = useState<string | null>(null);
   const [draggingGroupId, setDraggingGroupId] = useState<string | null>(null);
@@ -247,14 +262,6 @@ export const SessionSidebar = memo(function SessionSidebar({
   useEffect(() => {
     if (!narrow) setFooterMenuOpen(false);
   }, [narrow]);
-
-  useEffect(() => {
-    if (renameTarget?.kind !== 'owner-group') return;
-    const id = renameTarget.id;
-    setOwnerGroupExpanded((prev) =>
-      prev[id] === false ? { ...prev, [id]: true } : prev,
-    );
-  }, [renameTarget]);
 
   useEffect(() => {
     if (!footerMenuOpen) return;
@@ -393,7 +400,9 @@ export const SessionSidebar = memo(function SessionSidebar({
       autoFocus
       onFocus={(e) => e.currentTarget.select()}
       onClick={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
+      onPointerDown={(e) => e.stopPropagation()}
       onChange={(e) => onRenameValueChange(e.target.value)}
       onBlur={() => onCommitRename()}
       onKeyDown={(e) => {
@@ -448,8 +457,13 @@ export const SessionSidebar = memo(function SessionSidebar({
         onDragEnd={() => setDraggingGroupId(null)}
         onDragOver={(e) => onGroupDragOver(e, section.groupId)}
         onDrop={(e) => onGroupDrop(e, section.groupId)}
-        onClick={() => {
-          if (renaming) return;
+        onClick={(e) => {
+          // Rename interactions must never toggle fold (blur→click races included).
+          if (renaming || suppressGroupToggleRef.current) {
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+          }
           toggleOwnerGroupExpanded(section.groupId);
         }}
         onContextMenu={openMenu}
@@ -462,7 +476,13 @@ export const SessionSidebar = memo(function SessionSidebar({
         }
       >
         {!narrow || renaming ? (
-          <span className={`session-owner-group-label-edit${renaming ? ' is-renaming' : ''}`}>
+          <span
+            className={`session-owner-group-label-edit${renaming ? ' is-renaming' : ''}`}
+            onClick={renaming ? (e) => e.stopPropagation() : undefined}
+            onDoubleClick={renaming ? (e) => e.stopPropagation() : undefined}
+            onMouseDown={renaming ? (e) => e.stopPropagation() : undefined}
+            onPointerDown={renaming ? (e) => e.stopPropagation() : undefined}
+          >
             {!narrow ? (
               <span className="session-owner-group-label">{label}</span>
             ) : (
@@ -479,9 +499,18 @@ export const SessionSidebar = memo(function SessionSidebar({
                 autoFocus
                 onFocus={(e) => e.currentTarget.select()}
                 onClick={(e) => e.stopPropagation()}
+                onDoubleClick={(e) => e.stopPropagation()}
                 onMouseDown={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
                 onChange={(e) => onRenameValueChange(e.target.value)}
-                onBlur={() => onCommitRename()}
+                onBlur={() => {
+                  // Suppress the click that often follows blur on the same header.
+                  suppressGroupToggleRef.current = true;
+                  onCommitRename();
+                  window.setTimeout(() => {
+                    suppressGroupToggleRef.current = false;
+                  }, 0);
+                }}
                 onKeyDown={(e) => {
                   if (e.nativeEvent.isComposing || e.keyCode === 229) return;
                   if (e.key === 'Enter') {
@@ -489,7 +518,11 @@ export const SessionSidebar = memo(function SessionSidebar({
                     (e.target as HTMLInputElement).blur();
                   } else if (e.key === 'Escape') {
                     e.preventDefault();
+                    suppressGroupToggleRef.current = true;
                     onCancelRename();
+                    window.setTimeout(() => {
+                      suppressGroupToggleRef.current = false;
+                    }, 0);
                   }
                 }}
               />
@@ -561,7 +594,12 @@ export const SessionSidebar = memo(function SessionSidebar({
                       color={bot.color}
                       avatarKind={bot.avatarKind}
                       botAvatarType={bot.botAvatarType}
-                      busy={botIsWorking(bot.id)}
+                      {...resolveSessionAvatarMotion({
+                        active,
+                        busy: botIsWorking(bot.id),
+                        lastInteractedAt: sessionInteractedAt[bot.id],
+                        now: avatarMotionNow || Date.now(),
+                      })}
                       style={avatarStyle}
                       showDefaultMark={defaultAssistantId === bot.id}
                       defaultMarkTitle={t(lang, 'defaultAssistant')}
@@ -583,6 +621,11 @@ export const SessionSidebar = memo(function SessionSidebar({
                       <span className="session-desc">{preview}</span>
                     ) : null}
                   </span>
+                  {shortcutHintByOwnerId?.[bot.id] ? (
+                    <span className="session-shortcut-hint session-shortcut-hint-row" aria-hidden>
+                      {shortcutHintByOwnerId[bot.id]}
+                    </span>
+                  ) : null}
                 </div>
               );
               return (
@@ -700,6 +743,11 @@ export const SessionSidebar = memo(function SessionSidebar({
                   </span>
                   <span className="session-desc">{squadPreview}</span>
                 </span>
+                  {shortcutHintByOwnerId?.[g.id] ? (
+                    <span className="session-shortcut-hint session-shortcut-hint-row" aria-hidden>
+                      {shortcutHintByOwnerId[g.id]}
+                    </span>
+                  ) : null}
               </div>
             );
             return (
@@ -874,10 +922,18 @@ export const SessionSidebar = memo(function SessionSidebar({
           defaultAssistantId={defaultAssistantId}
           botIsWorking={botIsWorking}
           sessionHasUnread={sessionHasUnread}
+          sessionInteractedAt={sessionInteractedAt}
+          avatarMotionNow={avatarMotionNow}
           onSelect={onSelect}
           onOpenSessionMenu={onOpenSessionMenu}
+          renameTarget={renameTarget}
+          renameValue={renameValue}
+          onRenameValueChange={onRenameValueChange}
+          onCommitRename={onCommitRename}
+          onCancelRename={onCancelRename}
           onPlaceDockTip={onPlaceDockTip}
           onScheduleHideDockTip={onScheduleHideDockTip}
+          shortcutHintByOwnerId={shortcutHintByOwnerId}
         />
         <div
           className="session-list scroll-fade"
@@ -1048,6 +1104,20 @@ export const SessionSidebar = memo(function SessionSidebar({
               >
                 <span className="ico">
                   <SettingsIcon />
+                </span>
+              </button>
+              <button
+                type="button"
+                className="footer-btn"
+                role="menuitem"
+                aria-label={t(lang, 'aboutOpen')}
+                onClick={() => {
+                  setFooterMenuOpen(false);
+                  onOpenAbout();
+                }}
+              >
+                <span className="ico">
+                  <AboutIcon />
                 </span>
               </button>
             </div>

@@ -1,19 +1,21 @@
 /**
- * Chat markdown images under ~/.okbot/<owner>/resources/.
- * Canonical src is absolute gateway `/v1/media/<owner>/resources/<file>`
- * (also accept legacy okbot-asset:… / file://…/.okbot/…/resources/…);
+ * Chat media under ~/.okbot/<owner>/{resources|uploads}/.
+ * Canonical src is absolute gateway `/v1/media/<owner>/{resources|uploads}/<file>`
+ * (also accept legacy okbot-asset:… / file://…/.okbot/…/(resources|uploads)/…);
  * rendered via the local gateway GET /v1/media/… (not file://, not remote https).
  */
 
 export type ParsedOwnerResource = {
-  /** `<ownerId>/resources/<fileName>` */
+  /** `<ownerId>/{resources|uploads}/<fileName>` */
   assetRel: string;
   ownerId: string;
   fileName: string;
+  /** Disk subdir under the owner; defaults to resources for legacy callers. */
+  subdir: 'resources' | 'uploads';
 };
 
-const OWNER_RESOURCES_RE =
-  /(?:^|[\\/])\.okbot[\\/]([^/\\]+)[\\/]resources[\\/]([^/\\?#]+)/i;
+const OWNER_MEDIA_RE =
+  /(?:^|[\\/])\.okbot[\\/]([^/\\]+)[\\/](resources|uploads)[\\/]([^/\\?#]+)/i;
 
 /** True for legacy okbot-asset: srcs (canonical form is `/v1/media/…`). */
 export function isOkbotAssetSrc(src: string | undefined): src is string {
@@ -31,8 +33,8 @@ export function isSafeDataImageSrc(src: string | undefined): src is string {
 }
 
 /**
- * Parse `/v1/media/<ownerId>/resources/<file>`, okbot-asset:…, or a file://
- * (or absolute) path that points at ~/.okbot/<ownerId>/resources/<file>.
+ * Parse `/v1/media/<ownerId>/{resources|uploads}/<file>`, okbot-asset:…, or a file://
+ * (or absolute) path that points at ~/.okbot/<ownerId>/{resources|uploads}/<file>.
  */
 export function parseOwnerResourceSrc(src: string | undefined): ParsedOwnerResource | null {
   if (!src || typeof src !== 'string') return null;
@@ -41,17 +43,18 @@ export function parseOwnerResourceSrc(src: string | undefined): ParsedOwnerResou
 
   const fromMediaPathname = (pathname: string): ParsedOwnerResource | null => {
     const pathOnly = pathname.split('?')[0]!.split('#')[0]!;
-    const m = /^\/v1\/media\/([^/]+)\/resources\/([^/]+)$/i.exec(pathOnly);
-    if (!m?.[1] || !m?.[2]) return null;
+    const m = /^\/v1\/media\/([^/]+)\/(resources|uploads)\/([^/]+)$/i.exec(pathOnly);
+    if (!m?.[1] || !m?.[2] || !m?.[3]) return null;
     let ownerId = m[1];
-    let fileName = m[2];
+    const subdir = m[2].toLowerCase() === 'uploads' ? 'uploads' : 'resources';
+    let fileName = m[3];
     try {
       ownerId = decodeURIComponent(ownerId);
       fileName = decodeURIComponent(fileName);
     } catch {
       /* keep encoded */
     }
-    return parseAssetRel(`${ownerId}/resources/${fileName}`);
+    return parseAssetRel(`${ownerId}/${subdir}/${fileName}`);
   };
 
   if (/^\/v1\/media\//i.test(trimmed)) {
@@ -92,29 +95,48 @@ export function parseOwnerResourceSrc(src: string | undefined): ParsedOwnerResou
     }
   }
 
-  const m = OWNER_RESOURCES_RE.exec(pathPart.replace(/\\/g, '/'));
-  if (!m?.[1] || !m?.[2]) return null;
-  return parseAssetRel(`${m[1]}/resources/${m[2]}`);
+  const m = OWNER_MEDIA_RE.exec(pathPart.replace(/\\/g, '/'));
+  if (!m?.[1] || !m?.[2] || !m?.[3]) return null;
+  const subdir = m[2].toLowerCase() === 'uploads' ? 'uploads' : 'resources';
+  return parseAssetRel(`${m[1]}/${subdir}/${m[3]}`);
 }
 
 export function parseAssetRel(relRaw: string): ParsedOwnerResource | null {
   const rel = (relRaw || '').replace(/^\/+/, '').replace(/\\/g, '/');
   if (!rel || rel.includes('..') || rel.startsWith('/')) return null;
   const parts = rel.split('/');
-  if (parts.length !== 3 || parts[1] !== 'resources') return null;
+  if (parts.length !== 3) return null;
+  const subdirRaw = parts[1];
+  if (subdirRaw !== 'resources' && subdirRaw !== 'uploads') return null;
   const ownerId = parts[0] || '';
   const fileName = parts[2] || '';
   if (!ownerId || !fileName) return null;
   if (ownerId.includes('\\') || fileName.includes('\\')) return null;
   if (ownerId.includes('\0') || fileName.includes('\0')) return null;
-  return { assetRel: `${ownerId}/resources/${fileName}`, ownerId, fileName };
+  const subdir = subdirRaw;
+  return { assetRel: `${ownerId}/${subdir}/${fileName}`, ownerId, fileName, subdir };
 }
 
-/** Pathname only: `/v1/media/<ownerId>/resources/<fileName>` (encoded). */
+/** Pathname only: `/v1/media/<ownerId>/{resources|uploads}/<fileName>` (encoded). */
 export function mediaAssetPathname(assetRel: string): string | null {
   const parsed = parseAssetRel(assetRel);
   if (!parsed) return null;
-  return `/v1/media/${encodeURIComponent(parsed.ownerId)}/resources/${encodeURIComponent(parsed.fileName)}`;
+  return `/v1/media/${encodeURIComponent(parsed.ownerId)}/${parsed.subdir}/${encodeURIComponent(parsed.fileName)}`;
+}
+
+/**
+ * Build assetRel / media pathname from an absolute gateway path under
+ * ~/.okbot/<owner>/{resources|uploads}/<file>.
+ */
+export function mediaPathFromAbsolute(absPath: string): {
+  assetRel: string;
+  mediaPath: string;
+} | null {
+  const parsed = parseOwnerResourceSrc(absPath);
+  if (!parsed) return null;
+  const mediaPath = mediaAssetPathname(parsed.assetRel);
+  if (!mediaPath) return null;
+  return { assetRel: parsed.assetRel, mediaPath };
 }
 
 type AttachCfg = { base?: string; token?: string };

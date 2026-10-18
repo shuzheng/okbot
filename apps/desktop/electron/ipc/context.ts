@@ -41,4 +41,6 @@ export type IpcContext = {
   applyTheme: (theme: AppSettings['theme']) => void;
   onAutoUpdatePreferenceChanged?: (enabled: boolean) => void;
   onLocalHttpApiSettingsChanged?: () => void;
+  /** Pin list / language / etc. — rebuild tray menu. */
+  onSettingsPersisted?: () => void;
 };

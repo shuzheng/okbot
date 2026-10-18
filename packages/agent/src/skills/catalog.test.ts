@@ -86,20 +86,24 @@ const pkg = buildAssistantPackage({
   name: '演示助手',
   description: '人设：耐心的工程师',
   avatar: { avatarKind: 'emoji', emoji: '🧪', color: '#336699' },
-  agentsMd: '# 人设\n你是演示助手。',
+  soulMd: '# 人设\n你是演示助手。',
   skills: [parsed],
 });
 assert.equal(pkg.manifest.format, OKBOT_ASSISTANT_PACKAGE_FORMAT);
 assert.equal(pkg.manifest.name, '演示助手');
 const files = assistantPackageToFileMap(pkg);
 assert.ok(files['manifest.json']);
-assert.ok(files['AGENTS.md']);
+assert.ok(files['bot.json']);
+const botJson = JSON.parse(files['bot.json']!) as { name: string; description: string };
+assert.equal(botJson.name, '演示助手');
+assert.equal(botJson.description, '人设：耐心的工程师');
+assert.ok(files['SOUL.md']);
 assert.ok(files['skills/okbot-demo-pack/SKILL.md']);
 assert.doesNotMatch(files['manifest.json']!, /sk-secret|apiKey/);
 
 const roundtrip = parseAssistantPackage({
   manifest: JSON.parse(files['manifest.json']!),
-  agentsMd: files['AGENTS.md'],
+  soulMd: files['SOUL.md'],
   skillFiles: [
     { slug: 'okbot-demo-pack', raw: files['skills/okbot-demo-pack/SKILL.md']! },
   ],

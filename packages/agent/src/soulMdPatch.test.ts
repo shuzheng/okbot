@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mergeAgentsMdFromModel, parseMarkdownSections } from './agentsMdPatch.js';
+import { mergeSoulMdFromModel, parseMarkdownSections } from './soulMdPatch.js';
 
 const current = `# 角色与目标
 
@@ -15,7 +15,7 @@ const current = `# 角色与目标
 `;
 
 {
-  const next = mergeAgentsMdFromModel(
+  const next = mergeSoulMdFromModel(
     current,
     JSON.stringify({
       action: 'patch',
@@ -42,11 +42,11 @@ const current = `# 角色与目标
 
 - 也改
 `;
-  assert.equal(mergeAgentsMdFromModel(current, rewritten), null);
+  assert.equal(mergeSoulMdFromModel(current, rewritten), null);
 }
 
 {
-  const next = mergeAgentsMdFromModel(
+  const next = mergeSoulMdFromModel(
     current,
     JSON.stringify({
       action: 'patch',
@@ -61,9 +61,9 @@ const current = `# 角色与目标
 }
 
 {
-  assert.equal(mergeAgentsMdFromModel(current, 'NO_CHANGE'), null);
+  assert.equal(mergeSoulMdFromModel(current, 'NO_CHANGE'), null);
   assert.equal(
-    mergeAgentsMdFromModel(current, JSON.stringify({ action: 'none' })),
+    mergeSoulMdFromModel(current, JSON.stringify({ action: 'none' })),
     null,
   );
 }
@@ -77,7 +77,7 @@ const current = `# 角色与目标
 
 {
   const one = '# 角色与目标\n\n保持原样。\n';
-  const next = mergeAgentsMdFromModel(
+  const next = mergeSoulMdFromModel(
     one,
     JSON.stringify({ action: 'patch', sections: [{ heading: '角色与目标', body: '更新了' }] }),
   );
@@ -86,7 +86,7 @@ const current = `# 角色与目标
 }
 
 {
-  const next = mergeAgentsMdFromModel(
+  const next = mergeSoulMdFromModel(
     current,
     JSON.stringify({
       action: 'patch',
@@ -103,7 +103,7 @@ const current = `# 角色与目标
 }
 
 {
-  const next = mergeAgentsMdFromModel(
+  const next = mergeSoulMdFromModel(
     current,
     '好的，补丁如下：\n' +
       JSON.stringify({ action: 'patch', sections: [{ heading: '用户偏好', body: '- 来自前言' }] }),
@@ -113,4 +113,4 @@ const current = `# 角色与目标
   assert.ok(next!.includes('保持原样。'));
 }
 
-console.log('agentsMdPatch.test.ts: ok');
+console.log('soulMdPatch.test.ts: ok');

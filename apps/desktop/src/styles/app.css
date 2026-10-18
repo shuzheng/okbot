@@ -1,7 +1,7 @@
 :root {
   color-scheme: light dark;
   --bg: #f4f4f5;
-  --panel: #f1f1f3;
+  --panel: #E8EAEA;
   --panel-2: #e4e4e7;
   --chat-bg: #fafafa;
   --border: #d4d4d8;
@@ -9,6 +9,8 @@
   --muted: #71717a;
   --accent: #3f3f46;
   --accent-soft: rgba(0, 0, 0, 0.06);
+  /* Open/selected session row wash — softer than hover --accent-soft. */
+  --session-active-bg: rgba(0, 0, 0, 0.02);
   --danger: #dc2626;
   /* Default-assistant avatar star badge (orange fill + white glyph). */
   --default-assistant-mark: #f59e0b;
@@ -21,7 +23,17 @@
   --pin-item-pad: 12px;
   /* Expanded pin hover wash: wider left/right than vertical. */
   --pin-item-pad-x: 16px;
-  --bubble-user: #18181b;
+  /* Pin label: show ≥ ~5 Chinese chars (1em ≈ one CJK glyph at 12px name). */
+  --pin-label-chars: 8em;
+  /* Session digit shortcut hint badge (opaque; dark overrides below). */
+  --shortcut-hint-bg: #e4e4e7;
+  --shortcut-hint-fg: #18181b;
+  --shortcut-hint-border: #d4d4d8;
+  /* Inline @助手 mention chip (readable in light + dark; bubble overrides below). */
+  --mention-chip-bg: var(--accent-soft);
+  --mention-chip-fg: var(--text);
+  --mention-chip-border: var(--border);
+  --bubble-user: #333333;
   --bubble-user-text: #fff;
   --bubble-bot: #f3f3f5;
   /* Attach +/fan chrome; no soft elevation (native border feel). */
@@ -55,13 +67,17 @@
   --bubble-row-max: 100%;
   --bubble-side-gutter: 48px;
   /* Right rail for assistant hover FABs: 4×24px + 3×2px gaps + 4px row gap. */
-  --bubble-actions-rail: 100px;
+  --bubble-actions-rail: 84px;
   /* Trailing gutter for message HH:MM clock (time enters from the right). */
   --bubble-swipe-reveal: 52px;
   /* Shared sticky inset for squad speaker avatar + bubble hover actions. */
   --bubble-sticky-top: 0;
   --hairline: 0.5px;
   --hairline-color: #4a4a4a;
+  /* Darwin transparent window rim (matches Electron roundedCorners clip). */
+  --window-radius: 10px;
+  /* Solid rim — light theme default (dark-ish edge). Dark theme overrides below. */
+  --window-rim-color: #a8a8ae;
   font-family:
     -apple-system,
     BlinkMacSystemFont,
@@ -83,6 +99,7 @@
     --muted: #8a8a8a;
     --accent: #f5f5f5;
     --accent-soft: rgba(255, 255, 255, 0.07);
+    --session-active-bg: rgba(255, 255, 255, 0.04);
     --bubble-user: #2e2e2e;
     --bubble-user-text: #f5f5f5;
     --bubble-bot: #212121;
@@ -90,6 +107,14 @@
     --composer-attach-text: #f5f5f5;
     --composer-attach-shadow: none;
     --input: #212121;
+    --shortcut-hint-bg: #2a2a2a;
+    --shortcut-hint-fg: #f5f5f5;
+    --shortcut-hint-border: #3f3f3f;
+    --mention-chip-bg: rgba(255, 255, 255, 0.12);
+    --mention-chip-fg: var(--text);
+    --mention-chip-border: rgba(255, 255, 255, 0.2);
+    /* Solid light-ish edge on dark frost (no alpha wash). */
+    --window-rim-color: #6e6e73;
   }
 }
 
@@ -103,6 +128,7 @@
   --muted: #8a8a8a;
   --accent: #f5f5f5;
   --accent-soft: rgba(255, 255, 255, 0.07);
+  --session-active-bg: rgba(255, 255, 255, 0.04);
   --bubble-user: #2e2e2e;
   --bubble-user-text: #f5f5f5;
   --bubble-bot: #212121;
@@ -110,12 +136,20 @@
   --composer-attach-text: #f5f5f5;
   --composer-attach-shadow: none;
   --input: #212121;
+  --shortcut-hint-bg: #2a2a2a;
+  --shortcut-hint-fg: #f5f5f5;
+  --shortcut-hint-border: #3f3f3f;
+  --mention-chip-bg: rgba(255, 255, 255, 0.12);
+  --mention-chip-fg: var(--text);
+  --mention-chip-border: rgba(255, 255, 255, 0.2);
+  --window-rim-color: #6e6e73;
 }
 
 :root[data-theme='light'] {
   --hairline-color: #a8a8ae;
+  --window-rim-color: #a8a8ae;
   --bg: #f4f4f5;
-  --panel: #f1f1f3;
+  --panel: #E8EAEA;
   --panel-2: #e4e4e7;
   --chat-bg: #fafafa;
   --border: #d4d4d8;
@@ -123,7 +157,8 @@
   --muted: #71717a;
   --accent: #3f3f46;
   --accent-soft: rgba(0, 0, 0, 0.06);
-  --bubble-user: #18181b;
+  --session-active-bg: rgba(0, 0, 0, 0.02);
+  --bubble-user: #333333;
   --bubble-user-text: #fff;
   --bubble-bot: #f3f3f5;
   --composer-attach: #ececee;
@@ -137,13 +172,25 @@ html, body, #root {
   height: 100%;
   margin: 0;
   overflow: hidden;
+  /* Transparent so macOS BrowserWindow vibrancy can show through the sidebar
+     column; .main keeps opaque --chat-bg for the transcript. */
+  background: transparent;
 }
 body {
-  background: var(--bg);
+  background: transparent;
   color: var(--text);
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
   user-select: none;
+}
+/* Non-darwin: no window vibrancy — keep an opaque page fill behind chrome. */
+:root:not([data-platform='darwin']) body,
+:root:not([data-platform='darwin']) html,
+:root:not([data-platform='darwin']) #root {
+  background: var(--bg);
+}
+:root:not([data-platform='darwin']) .app {
+  background: var(--chat-bg);
 }
 button, input, textarea { font: inherit; color: inherit; }
 button {
@@ -162,16 +209,55 @@ input, textarea { user-select: text; }
 
 .app {
   display: grid;
-  /* Keep using --sidebar-w in narrow mode too so width can animate smoothly */
+  /* Sidebar | splitter | chat. On darwin the window is transparent+vibrancy
+     so the sidebar column frosts the desktop; .main stays opaque chat-bg.
+     Overlay+padding-left only sampled flat --chat-bg (ineffective frost). */
   grid-template-columns: var(--sidebar-w) 5px 1fr;
   height: 100%;
   max-height: 100%;
   overflow: hidden;
   min-height: 0;
+  background: transparent;
+  /* Containing block + clip for darwin window rim (::after). Radius matches
+     Electron macOS roundedCorners so content/rim follow the system clip. */
+  position: relative;
+  border-radius: var(--window-radius);
   transition: --sidebar-w 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Darwin transparent+vibrancy: solid 0.5px rim flush to window edges (no alpha
+   wash, no inset gap). Border on ::after follows --window-radius so corners
+   match chrome; pointer-events none keeps frost/hit-testing intact. */
+:root[data-platform='darwin'] .app::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 10000;
+  pointer-events: none;
+  box-sizing: border-box;
+  border-radius: inherit;
+  border: 0.5px solid var(--window-rim-color);
 }
 .app.is-resizing {
   transition: none;
+}
+
+/* Live Electron window resize: drop GPU-heavy effects that recomposite every frame.
+   Class is toggled by windowResizeGate (no React re-render). */
+html.is-window-resizing .chat-member-pill,
+html.is-window-resizing .immersive-chat-fab,
+html.is-window-resizing .scroll-to-bottom-btn,
+html.is-window-resizing .mesh-exchange-close,
+html.is-window-resizing .sidebar,
+html.is-window-resizing .modal.form-drawer {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+html.is-window-resizing .scroll-fade.fade-top,
+html.is-window-resizing .scroll-fade.fade-bottom,
+html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
+  -webkit-mask-image: none !important;
+  mask-image: none !important;
 }
 .app.immersive {
   grid-template-columns: 1fr;
@@ -180,14 +266,7 @@ input, textarea { user-select: text; }
 .app.immersive .sidebar-resize {
   display: none;
 }
-/* macOS: without sidebar, push avatar/title clear of traffic lights. */
-:root[data-platform='darwin'] .app.immersive .main-header {
-  padding-left: var(--traffic-lights-inset);
-}
-/* Hide chat-header icon cluster; Windows window controls stay so the frame is still usable. */
-.app.immersive .header-actions > :not(.window-controls) {
-  display: none;
-}
+/* Floating member pill is centered; no left inset needed for traffic lights. */
 
 .sidebar.menu-open,
 .sidebar.fab-open {
@@ -195,7 +274,13 @@ input, textarea { user-select: text; }
   z-index: 30;
 }
 .sidebar {
-  background: var(--panel);
+  /* Darwin: window vibrancy supplies real frost; keep a light panel wash.
+     Other platforms: denser wash + CSS blur (no vibrancy). */
+  position: relative;
+  z-index: 1;
+  background: color-mix(in srgb, var(--panel) 18%, transparent);
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -203,20 +288,36 @@ input, textarea { user-select: text; }
   min-height: 0;
   min-width: 0;
   overflow: hidden;
-  position: relative;
   -webkit-app-region: drag;
   container-type: inline-size;
   container-name: sidebar;
 }
 .sidebar * { -webkit-app-region: no-drag; }
+:root[data-platform='darwin'] .sidebar {
+  /* Vibrancy already blurs; avoid double-stacking CSS blur on the material. */
+  background: color-mix(in srgb, var(--panel) 12%, transparent);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+:root[data-theme='light'] .sidebar {
+  background: color-mix(in srgb, var(--panel) 22%, transparent);
+}
+:root[data-platform='darwin'][data-theme='light'] .sidebar {
+  background: color-mix(in srgb, var(--panel) 14%, transparent);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .sidebar {
+    background: color-mix(in srgb, var(--panel) 22%, transparent);
+  }
+  :root[data-platform='darwin']:not([data-theme='dark']) .sidebar {
+    background: color-mix(in srgb, var(--panel) 14%, transparent);
+  }
+}
 
 .sidebar-resize {
   position: relative;
   cursor: col-resize;
-  /* Hairline on the LEFT sits flush against the session-list scrollbar.
-     Fill the 5px hit strip with --chat-bg (not --panel, not transparent):
-     transparent showed body --bg past the hairline; match .main so the
-     splitter reads as chat surface, not sidebar bleed. */
+  /* Hairline on the LEFT flush against session-list scrollbar; fill matches chat. */
   background: var(--chat-bg);
   border-left: var(--hairline) solid var(--hairline-color);
   border-right: none;
@@ -330,8 +431,8 @@ input, textarea { user-select: text; }
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  /* No top padding — sticky group headers must sit flush at the scrollport top
-     with no seam. Bottom pad still lets bot-avatars hop overscan paint inside.
+  /* No top padding — group shells sit flush with list chrome (no seam).
+     Bottom pad still lets bot-avatars hop overscan paint inside.
      Horizontal inset lives on children so the scrollbar stays flush. */
   padding: 0 0 12px;
   margin: 0;
@@ -358,7 +459,7 @@ input, textarea { user-select: text; }
   flex-shrink: 0;
   overflow: visible;
   position: relative;
-  /* Above session-list sticky headers if hop paint bleeds downward. */
+  /* Above session-list group shells if hop paint bleeds downward. */
   z-index: 2;
 }
 .session-pin-item {
@@ -370,22 +471,35 @@ input, textarea { user-select: text; }
   cursor: pointer;
   border-radius: var(--rail-row-radius);
   padding: var(--pin-item-pad) var(--pin-item-pad-x);
-  /* Fixed footprint so plastic / emoji / squad share one hover wash size. */
-  width: calc(var(--pin-avatar) + 2 * var(--pin-item-pad-x));
-  min-width: calc(var(--pin-avatar) + 2 * var(--pin-item-pad-x));
-  max-width: calc(var(--pin-avatar) + 2 * var(--pin-item-pad-x));
+  /* Footprint: avatar pad, or ≥ ~5 Chinese chars under the name (12px). */
+  width: max(
+    calc(var(--pin-avatar) + 2 * var(--pin-item-pad-x)),
+    calc(var(--pin-label-chars) + 2 * var(--pin-item-pad-x))
+  );
+  min-width: max(
+    calc(var(--pin-avatar) + 2 * var(--pin-item-pad-x)),
+    calc(var(--pin-label-chars) + 2 * var(--pin-item-pad-x))
+  );
+  max-width: max(
+    calc(var(--pin-avatar) + 2 * var(--pin-item-pad-x)),
+    calc(var(--pin-label-chars) + 2 * var(--pin-item-pad-x))
+  );
+  /* ch/em for --pin-label-chars tracks the 12px pin name, not sidebar default. */
+  font-size: 12px;
   box-sizing: border-box;
   outline: none;
   transition: background 0.12s ease;
-  /* Default transparent; hover/active use accent-soft like session rows. */
+  /* Default transparent; hover uses accent-soft, active uses --session-active-bg. */
   background: transparent;
   overflow: visible;
   /* WAAPI pin enter/leave scale + neighbor squeeze. */
   transform-origin: center center;
 }
-.session-pin-item:hover,
-.session-pin-item.active {
+.session-pin-item:hover {
   background: var(--accent-soft);
+}
+.session-pin-item.active {
+  background: var(--session-active-bg);
 }
 .session-pin-item:focus-visible {
   outline: 1px solid #8a8a8a;
@@ -437,6 +551,14 @@ input, textarea { user-select: text; }
 .session-pin-avatar-shell.unread::after {
   border-radius: 18px;
 }
+.session-pin-name-edit {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  height: 1.25em;
+  overflow: hidden;
+}
 .session-pin-name {
   display: block;
   width: 100%;
@@ -449,6 +571,73 @@ input, textarea { user-select: text; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.session-pin-name-edit.is-renaming > .session-pin-name {
+  visibility: hidden;
+  pointer-events: none;
+}
+/* Compound selector beats later .session-rename-input (13.5px/600). */
+.session-rename-input.session-pin-rename-input {
+  text-align: center;
+  font-size: 12px; /* match .session-pin-name pre-edit */
+  font-weight: 500;
+}
+.session-pin-item.renaming {
+  /* Keep pin hit-target stable while the name input is focused. */
+  pointer-events: auto;
+}
+
+/* --- Session digit shortcut hints (long-press ⌘/Win) --- */
+.session-shortcut-hint {
+  pointer-events: none;
+  user-select: none;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  color: var(--shortcut-hint-fg);
+  background: var(--shortcut-hint-bg);
+  border: 1px solid var(--shortcut-hint-border);
+  border-radius: 4px;
+  opacity: 1;
+  backdrop-filter: none;
+  padding: 3px 5px;
+  box-shadow: none;
+  white-space: nowrap;
+  /* Above dock magnify inline zIndex (scale*10) and pin/avatar shells. */
+  z-index: 50;
+}
+.session-shortcut-hint-pin {
+  position: absolute;
+  top: -4px;
+  right: -6px;
+}
+/* Overlay on the row — do not insert into flex (avoids name/desc jitter). */
+.session-shortcut-hint-row {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  margin: 0;
+}
+
+/* Collapsed rail: center digit hints on the avatar (pins + list rows). */
+.app.narrow .session-shortcut-hint-pin,
+.app.narrow .session-shortcut-hint-row {
+  top: 50%;
+  left: 50%;
+  right: auto;
+  transform: translate(-50%, -50%);
+  z-index: 50;
+}
+/* Raise stacking so centered hints sit above neighbor pin/avatar overlap. */
+.app.narrow .session-pin-item:has(.session-shortcut-hint),
+.app.narrow .session-pin-avatar-shell:has(.session-shortcut-hint),
+.app.narrow .session-item-wrap:has(.session-shortcut-hint),
+.app.narrow .session-item:has(.session-shortcut-hint) {
+  position: relative;
+  z-index: 25;
+}
+
 /* Inset divider — same width as session rows (14px margins). */
 .session-pin-divider {
   height: var(--hairline, 0.5px);
@@ -620,19 +809,18 @@ input, textarea { user-select: text; }
   background: var(--accent-soft) !important;
 }
 
-/* Full-bleed sticky shell: sits flush at scrollport top (no padding gap/seam). */
+/* Group header shell (class name historical). Not sticky — headers scroll
+   with the session list so they never overlay rows under frost. */
 .session-group-sticky {
-  position: sticky;
-  top: 0;
-  z-index: 3;
+  position: relative;
   flex-shrink: 0;
   /* Definite width so group header % / ellipsis resolve; no content-driven grow. */
   box-sizing: border-box;
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  background: var(--panel);
-  /* Cancel list flex gap so stuck header has no hairline seam above. */
+  background: transparent;
+  /* Cancel list flex gap so adjacent group chrome stays flush. */
   margin-top: -2px;
   padding-top: 2px;
 }
@@ -649,7 +837,7 @@ input, textarea { user-select: text; }
   min-width: 0;
 }
 
-/* Smooth expand/collapse for group member lists (0fr → 1fr; sticky headers stay outside).
+/* Smooth expand/collapse for group member lists (0fr → 1fr; group shells stay outside).
    Implicit grid column defaults to auto (= content min-width). With open fold-inner
    overflow visible for avatar hops, long nowrap titles inflated that column and the
    flex item (min-width:auto) — sidebar content spilled past the splitter. Pin the
@@ -877,6 +1065,23 @@ input, textarea { user-select: text; }
 .app.narrow .session-owner-group-header:not(.renaming):focus-visible::before {
   opacity: 0;
 }
+
+/* Dark + narrow: soften group/pin hairlines over vibrancy frost.
+   Solid --border (#1f1f1f) reads as a hard black stroke when light desktop
+   shows through the sidebar glass; use a low-alpha light line instead
+   (same idea as other frost-friendly chrome). Light theme unchanged. */
+:root[data-theme='dark'] .app.narrow .session-hidden-header::before,
+:root[data-theme='dark'] .app.narrow .session-owner-group-header:not(.renaming)::before,
+:root[data-theme='dark'] .app.narrow .session-pin-divider {
+  background: color-mix(in srgb, #ffffff 16%, transparent);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .app.narrow .session-hidden-header::before,
+  :root:not([data-theme='light']) .app.narrow .session-owner-group-header:not(.renaming)::before,
+  :root:not([data-theme='light']) .app.narrow .session-pin-divider {
+    background: color-mix(in srgb, #ffffff 16%, transparent);
+  }
+}
 .app.narrow .session-owner-group-header:not(.renaming) .session-owner-group-label,
 .app.narrow .session-owner-group-count {
   display: none;
@@ -1000,7 +1205,7 @@ input, textarea { user-select: text; }
 }
 
 /* When there is no pin strip, give the first list block a little top air for
-   avatar hop — sticky shell still paints flush over scrolling content. */
+   avatar hop — group shell stays in normal flow (no sticky overlay). */
 .session-list > .session-owner-group:first-child,
 .session-list > .session-item-wrap:first-child,
 .session-list > .empty-side:first-child {
@@ -1029,9 +1234,11 @@ input, textarea { user-select: text; }
   padding: var(--rail-row-pad);
   border-radius: var(--rail-row-radius);
 }
-.app.narrow .session-pin-item:hover,
-.app.narrow .session-pin-item.active {
+.app.narrow .session-pin-item:hover {
   background: var(--accent-soft);
+}
+.app.narrow .session-pin-item.active {
+  background: var(--session-active-bg);
 }
 .app.narrow .session-pin-avatar-shell {
   width: var(--rail-avatar);
@@ -1057,8 +1264,13 @@ input, textarea { user-select: text; }
   transition: transform 0.12s cubic-bezier(0.22, 1, 0.36, 1);
   will-change: transform;
 }
-.app.narrow .session-pin-name {
+.app.narrow .session-pin-item:not(.renaming) .session-pin-name-edit {
   display: none;
+}
+.app.narrow .session-pin-item.renaming .session-pin-name-edit {
+  display: block;
+  width: var(--rail-avatar);
+  max-width: var(--rail-avatar);
 }
 .app.narrow .session-pin-divider {
   width: var(--rail-avatar);
@@ -1082,9 +1294,11 @@ input, textarea { user-select: text; }
   min-height: var(--rail-row-h);
   /* Let bot-avatars hop/flip paint past the row box (BorderBeam + neighbors). */
   overflow: visible;
+  /* Anchor for absolute .session-shortcut-hint-row overlay. */
+  position: relative;
 }
 .session-item:hover { background: var(--accent-soft); }
-.session-item.active { background: var(--accent-soft); }
+.session-item.active { background: var(--session-active-bg); }
 .session-avatar {
   width: var(--rail-avatar);
   height: var(--rail-avatar);
@@ -1137,8 +1351,11 @@ input, textarea { user-select: text; }
   place-items: center;
   overflow: hidden;
   border-radius: 10px;
+  /* Color fill must stay square — same aspect as live avatar (pin/preview), not a strip. */
+  aspect-ratio: 1;
   flex-shrink: 0;
   position: relative;
+  box-sizing: border-box;
 }
 .flat-avatar.has-default-mark {
   overflow: visible;
@@ -1274,9 +1491,12 @@ input, textarea { user-select: text; }
   background: var(--accent-soft);
 }
 .bot-avatar-type-preview {
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
+  /* Match .session-avatar footprint exactly (--rail-avatar / 10px radius). */
+  width: var(--rail-avatar);
+  height: var(--rail-avatar);
+  aspect-ratio: 1;
+  font-size: var(--rail-avatar);
+  border-radius: 10px;
 }
 .color-swatch-default {
   min-width: 40px;
@@ -1302,7 +1522,8 @@ input, textarea { user-select: text; }
 .bubble-speaker-avatar .flat-avatar-emoji,
 .squad-member-row .flat-avatar-emoji,
 .squad-role-row .flat-avatar-emoji,
-.bot-picker-chip-avatar .flat-avatar-emoji {
+.bot-picker-chip-avatar .flat-avatar-emoji,
+.bot-avatar-type-preview .flat-avatar-emoji {
   font-size: 0.889em;
 }
 .header-avatar {
@@ -1310,6 +1531,13 @@ input, textarea { user-select: text; }
   height: 22px;
   border-radius: 6.11px;
   font-size: 22px;
+}
+/* Chat floating member pill: slightly larger than header default for balance with 14px name. */
+.chat-member-pill .header-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 6.67px;
+  font-size: 24px;
 }
 .avatar-preview-row {
   display: flex;
@@ -1320,6 +1548,89 @@ input, textarea { user-select: text; }
   overflow: visible;
   position: relative;
   z-index: 1;
+}
+/* Edit assistant / squad: centered avatar, then name, then plain description. */
+.avatar-preview-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0 14px;
+  overflow: visible;
+  position: relative;
+  z-index: 1;
+}
+.avatar-preview-stack .avatar-preview-hit {
+  margin: 0 auto;
+}
+.avatar-preview-stack .field-name {
+  width: 100%;
+  margin-bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  height: auto;
+}
+.avatar-preview-stack .field-name input {
+  width: 100%;
+  box-sizing: border-box;
+  text-align: center;
+  height: 36px;
+  padding-top: 0;
+  padding-bottom: 0;
+  /* Borderless name under avatar: no frost fill (user: background none). */
+  appearance: none;
+  -webkit-appearance: none;
+  border: none;
+  outline: none;
+  box-shadow: none;
+  background: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.avatar-preview-stack .field-name input:focus,
+.avatar-preview-stack .field-name input:focus-visible {
+  appearance: none;
+  -webkit-appearance: none;
+  border: none;
+  outline: none;
+  box-shadow: none;
+  background: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.avatar-preview-stack .avatar-preview-static {
+  pointer-events: none;
+  cursor: default;
+}
+/* Match sidebar pin-strip avatar footprint (--pin-avatar / .session-pin-avatar). */
+.avatar-preview-stack .session-pin-avatar {
+  width: var(--pin-avatar);
+  height: var(--pin-avatar);
+  min-width: var(--pin-avatar);
+  min-height: var(--pin-avatar);
+  max-width: var(--pin-avatar);
+  max-height: var(--pin-avatar);
+  border-radius: 15px;
+  font-size: var(--pin-avatar);
+}
+.avatar-preview-stack .avatar-preview-hit {
+  border-radius: 15px;
+}
+.avatar-preview-stack .avatar-preview-mask {
+  border-radius: 15px;
+}
+.bot-form-description-text {
+  width: 100%;
+  margin: 0;
+  padding: 0 4px;
+  box-sizing: border-box;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+  text-align: center;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 .avatar-preview-hit {
   position: relative;
@@ -1404,26 +1715,43 @@ input, textarea { user-select: text; }
   width: 16px;
   height: 16px;
   flex-shrink: 0;
+  /* Original circular ink/sticker chips (pre-f9921ba / pre-b08dbb8 oval outline). */
+  aspect-ratio: 1;
   border-radius: 50%;
   border: 1.5px solid transparent;
   padding: 0;
   box-sizing: border-box;
+  position: relative;
+  overflow: visible;
 }
 .color-swatch-white {
   border-color: color-mix(in srgb, var(--muted) 55%, transparent);
 }
+/* Hand-drawn sticker circle: white gap + ink ring (box-shadow), not outline oval. */
 .color-swatch.active {
   border-color: rgba(255, 255, 255, 0.92);
   box-shadow: 0 0 0 1.5px #4a4a4a;
+  outline: none;
 }
-:root[data-theme='light'] .color-swatch.active {
+.color-swatch-default.active {
+  /* Beat dashed default chrome; keep the same ink circle. */
+  border-style: solid;
+  border-color: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 0 0 1.5px #4a4a4a;
+  outline: none;
+}
+:root[data-theme='light'] .color-swatch.active,
+:root[data-theme='light'] .color-swatch-default.active {
   border-color: #fff;
   box-shadow: 0 0 0 1.5px #6a6a70;
+  outline: none;
 }
 @media (prefers-color-scheme: light) {
-  :root:not([data-theme='dark']) .color-swatch.active {
+  :root:not([data-theme='dark']) .color-swatch.active,
+  :root:not([data-theme='dark']) .color-swatch-default.active {
     border-color: #fff;
     box-shadow: 0 0 0 1.5px #6a6a70;
+    outline: none;
   }
 }
 .emoji-grid-raw {
@@ -1464,40 +1792,52 @@ input, textarea { user-select: text; }
 }
 .session-item-wrap:has(.session-item.active),
 .session-item-wrap.active {
-  background: var(--accent-soft);
+  background: var(--session-active-bg);
 }
-/* Light: fainter active/hover wash so the selected row is less prominent. */
-:root[data-theme='light'] .session-item-wrap:hover,
+/* Light: fainter hover wash; active uses --session-active-bg (softer still). */
+:root[data-theme='light'] .session-item-wrap:hover {
+  background: rgba(0, 0, 0, 0.035);
+}
 :root[data-theme='light'] .session-item-wrap:has(.session-item.active),
 :root[data-theme='light'] .session-item-wrap.active {
-  background: rgba(0, 0, 0, 0.035);
+  background: var(--session-active-bg);
 }
 @media (prefers-color-scheme: light) {
-  :root:not([data-theme='dark']) .session-item-wrap:hover,
+  :root:not([data-theme='dark']) .session-item-wrap:hover {
+    background: rgba(0, 0, 0, 0.035);
+  }
   :root:not([data-theme='dark']) .session-item-wrap:has(.session-item.active),
   :root:not([data-theme='dark']) .session-item-wrap.active {
-    background: rgba(0, 0, 0, 0.035);
+    background: var(--session-active-bg);
   }
 }
-:root[data-theme='light'] .session-item:hover,
+:root[data-theme='light'] .session-item:hover {
+  background: rgba(0, 0, 0, 0.035);
+}
 :root[data-theme='light'] .session-item.active {
-  background: rgba(0, 0, 0, 0.035);
+  background: var(--session-active-bg);
 }
 @media (prefers-color-scheme: light) {
-  :root:not([data-theme='dark']) .session-item:hover,
-  :root:not([data-theme='dark']) .session-item.active {
+  :root:not([data-theme='dark']) .session-item:hover {
     background: rgba(0, 0, 0, 0.035);
   }
+  :root:not([data-theme='dark']) .session-item.active {
+    background: var(--session-active-bg);
+  }
 }
-/* Pin strip shares the same light wash. */
-:root[data-theme='light'] .session-pin-item:hover,
-:root[data-theme='light'] .session-pin-item.active {
+/* Pin strip: light hover wash; active uses --session-active-bg. */
+:root[data-theme='light'] .session-pin-item:hover {
   background: rgba(0, 0, 0, 0.035);
 }
+:root[data-theme='light'] .session-pin-item.active {
+  background: var(--session-active-bg);
+}
 @media (prefers-color-scheme: light) {
-  :root:not([data-theme='dark']) .session-pin-item:hover,
-  :root:not([data-theme='dark']) .session-pin-item.active {
+  :root:not([data-theme='dark']) .session-pin-item:hover {
     background: rgba(0, 0, 0, 0.035);
+  }
+  :root:not([data-theme='dark']) .session-pin-item.active {
+    background: var(--session-active-bg);
   }
 }
 .session-item-wrap:focus-visible {
@@ -1644,7 +1984,7 @@ input, textarea { user-select: text; }
 }
 .app.narrow .session-item-wrap.active:hover,
 .app.narrow .session-item-wrap:has(.session-item.active):hover {
-  background: var(--accent-soft);
+  background: var(--session-active-bg);
 }
 .app.narrow .session-list {
   overflow-x: visible;
@@ -1892,7 +2232,7 @@ input, textarea { user-select: text; }
   /* Single composited transform (center + fly-up); no width/height/top animation. */
   transform: translate3d(-50%, 8px, 0);
   display: flex;
-  /* DOM top→bottom: create (+), search, marketplace, settings — settings nearest trigger */
+  /* DOM top→bottom: create (+), search, marketplace, [update], settings, about — about nearest trigger */
   flex-direction: column;
   align-items: center;
   gap: 2px;
@@ -1925,24 +2265,39 @@ input, textarea { user-select: text; }
     background 0.12s ease,
     color 0.12s ease;
 }
-/* stagger from bottom toggle up: settings (4) → marketplace (3) → search (2) → create (1) */
+/* stagger from bottom toggle up: last child nearest trigger fires first */
 .footer-fab.open .footer-fab-actions > *:nth-child(1) {
-  transition-delay: 0.1s;
+  transition-delay: 0.12s;
   opacity: 1;
   transform: translate3d(0, 0, 0);
 }
 .footer-fab.open .footer-fab-actions > *:nth-child(2) {
-  transition-delay: 0.07s;
+  transition-delay: 0.1s;
   opacity: 1;
   transform: translate3d(0, 0, 0);
 }
 .footer-fab.open .footer-fab-actions > *:nth-child(3) {
-  transition-delay: 0.04s;
+  transition-delay: 0.08s;
   opacity: 1;
   transform: translate3d(0, 0, 0);
 }
 .footer-fab.open .footer-fab-actions > *:nth-child(4) {
+  transition-delay: 0.05s;
+  opacity: 1;
+  transform: translate3d(0, 0, 0);
+}
+.footer-fab.open .footer-fab-actions > *:nth-child(5) {
+  transition-delay: 0.03s;
+  opacity: 1;
+  transform: translate3d(0, 0, 0);
+}
+.footer-fab.open .footer-fab-actions > *:nth-child(6) {
   transition-delay: 0.01s;
+  opacity: 1;
+  transform: translate3d(0, 0, 0);
+}
+.footer-fab.open .footer-fab-actions > *:nth-child(n+7) {
+  transition-delay: 0s;
   opacity: 1;
   transform: translate3d(0, 0, 0);
 }
@@ -1965,8 +2320,10 @@ input, textarea { user-select: text; }
   height: 100%;
   max-height: 100%;
   overflow: hidden;
+  /* Opaque chat surface — keeps vibrancy/transparent window out of the transcript. */
   background: var(--chat-bg);
   position: relative;
+  box-sizing: border-box;
 }
 .main-topdrag {
   position: absolute;
@@ -1978,29 +2335,111 @@ input, textarea { user-select: text; }
   z-index: 1;
   pointer-events: none;
 }
-.main-header {
-  flex-shrink: 0;
-  height: 45px;
-  display: flex;
+/* Floating conversation member pill (top-center overlay; replaces full-width chat header). */
+.chat-member-pill {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 12;
+  display: inline-flex;
   align-items: center;
-  padding: 0 14px;
-  gap: 8px;
-  position: relative;
-  z-index: 2;
-  -webkit-app-region: drag;
-  border-bottom: var(--hairline) solid rgba(255, 255, 255, 0.12);
+  gap: 0;
+  max-width: min(72%, 360px);
+  min-width: 0;
+  margin: 0;
+  padding: 8px 18px 8px 16px;
+  /* Very thin light edge; --hairline is 0.5px. */
+  border: var(--hairline) solid color-mix(in srgb, #ffffff 18%, transparent);
+  border-radius: 999px;
+  /* Frosted glass: panel ~10% + blur ~10px (lighter frost). */
+  background: color-mix(in srgb, var(--panel) 10%, transparent);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  box-sizing: border-box;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: none;
+  -webkit-app-region: no-drag;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    padding 0.15s ease;
 }
-:root[data-theme='light'] .main-header {
-  border-bottom-color: rgba(0, 0, 0, 0.12);
+:root[data-theme='light'] .chat-member-pill {
+  background: color-mix(in srgb, var(--panel) 10%, transparent);
+  border-color: color-mix(in srgb, #000000 10%, transparent);
+  box-shadow: none;
 }
 @media (prefers-color-scheme: light) {
-  :root:not([data-theme='dark']) .main-header {
-    border-bottom-color: rgba(0, 0, 0, 0.12);
+  :root:not([data-theme='dark']) .chat-member-pill {
+    background: color-mix(in srgb, var(--panel) 10%, transparent);
+    border-color: color-mix(in srgb, #000000 10%, transparent);
+    box-shadow: none;
   }
 }
-.main-header > * { -webkit-app-region: no-drag; }
+.chat-member-pill:hover {
+  /* Slightly denser frost on hover. */
+  background: color-mix(in srgb, var(--panel) 16%, transparent);
+  padding-right: 16px;
+}
+:root[data-theme='light'] .chat-member-pill:hover {
+  background: color-mix(in srgb, var(--panel) 16%, transparent);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .chat-member-pill:hover {
+    background: color-mix(in srgb, var(--panel) 16%, transparent);
+  }
+}
+.chat-member-pill:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent, #6366f1) 55%, transparent);
+  outline-offset: 2px;
+}
+.chat-member-pill-name {
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  min-width: 0;
+  margin-left: 7px;
+}
+.chat-member-pill-arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 0;
+  max-width: 0;
+  margin-left: 0;
+  opacity: 0;
+  overflow: hidden;
+  color: var(--muted);
+  transition:
+    opacity 0.14s ease,
+    width 0.14s ease,
+    max-width 0.14s ease,
+    margin-left 0.14s ease;
+}
+.chat-member-pill-arrow svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+.chat-member-pill:hover .chat-member-pill-arrow,
+.chat-member-pill:focus-visible .chat-member-pill-arrow {
+  width: 14px;
+  max-width: 14px;
+  margin-left: 4px;
+  opacity: 1;
+  color: var(--text);
+}
 
-/* Chat column: header + transcript + composer. */
+/* Chat column: floating pill overlay + transcript + composer. */
 .chat-pane {
   position: relative;
   flex: 1 1 0;
@@ -2043,10 +2482,11 @@ input, textarea { user-select: text; }
   border-color: color-mix(in srgb, var(--accent, #6366f1) 45%, transparent);
 }
 
-/* Bottom-right immersive toggle: fade in on message-area hover; no hit-target when hidden. */
+/* Bottom-right immersive toggle: fade in on message-area hover; no hit-target when hidden.
+   Right edge tracks .composer-inner at any pane width (centered column + shared gutter). */
 .immersive-chat-fab {
   position: absolute;
-  right: 18px;
+  right: calc((100% - min(100%, var(--chat-column-max))) / 2 + var(--chat-gutter-x));
   bottom: 16px;
   z-index: 8;
   width: 36px;
@@ -2288,39 +2728,6 @@ input, textarea { user-select: text; }
 .about-copy-btn.copied {
   color: var(--accent, #6366f1);
 }
-.main-header h1 {
-  /* Typography lives on .header-identity h1 so mesh overlay matches private chat. */
-  margin: 0;
-}
-.header-identity {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0;
-  padding: 2px 6px 2px 2px;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  font: inherit;
-  max-width: 100%;
-  min-width: 0;
-  text-align: left;
-}
-.header-identity:hover {
-  background: var(--accent-soft);
-}
-.header-identity h1 {
-  font-size: 13px;
-  margin: 0;
-  font-weight: 650;
-  line-height: 1.2;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text);
-}
 .messages-shell {
   position: relative;
   flex: 1 1 0;
@@ -2386,15 +2793,22 @@ input, textarea { user-select: text; }
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 8px var(--chat-gutter-x) 18px;
+  /* Top pad clears the floating member pill (~40px + 10px top). */
+  padding: 56px var(--chat-gutter-x) 18px;
+  display: flex;
+  flex-direction: column;
+  user-select: text;
+  /* pan-y: vertical scroll free; HH:MM reveal via wheel/trackpad only (pointer = text select). */
+  touch-action: pan-y;
+}
+/* Single growing wrapper observed by stick-to-bottom ResizeObserver (not every bubble). */
+.messages-content {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  user-select: text;
-}
-/* Safe area under sticky turn-status overlay so the last bubble stays readable. */
-.messages.has-turn-status {
-  padding-bottom: var(--chat-turn-status-space, 48px);
+  width: 100%;
+  min-height: 100%;
+  box-sizing: border-box;
 }
 .bubble-row {
   display: flex;
@@ -3080,11 +3494,17 @@ input, textarea { user-select: text; }
 }
 
 /* Open multi-task dump above the composer — same width as .composer-inner
-   (chat column max minus shared --chat-gutter-x on each side). */
+   (chat column max minus shared --chat-gutter-x on each side).
+   Top margin matches .composer padding-top (10px); bottom margin is 0 so the
+   composer's own top padding is the only air below (avoids stacking margins). */
 .open-tasks-panel {
+  /* Anchor for upward absolute overlay; keep collapsed header in flow only. */
+  position: relative;
+  z-index: 9;
+  overflow: visible;
   width: calc(100% - 2 * var(--chat-gutter-x));
   max-width: calc(var(--chat-column-max) - 2 * var(--chat-gutter-x));
-  margin: 0 auto 8px;
+  margin: 10px auto 0;
   box-sizing: border-box;
   padding: 8px 10px;
   border-radius: 12px;
@@ -3093,11 +3513,19 @@ input, textarea { user-select: text; }
   color: var(--text);
 }
 .open-tasks-header {
+  width: 100%;
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 6px;
-  padding: 0 2px;
+  margin: 0;
+  padding: 2px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
 }
 .open-tasks-title {
   font-size: 12px;
@@ -3116,6 +3544,76 @@ input, textarea { user-select: text; }
   background: var(--accent-soft);
   color: var(--text);
 }
+/* Header list fold: same ChevronDownIcon + always-visible chevron as open-task-row.
+   Open points up (expand upward overlay). */
+.open-tasks-header .session-owner-group-chevron {
+  margin-left: auto;
+  opacity: 0.8;
+  visibility: visible;
+  color: var(--muted);
+}
+.open-tasks-header.expanded .session-owner-group-chevron {
+  /* Expand-up: CCW from collapsed (-90°) to up (-180°); collapse CW back. */
+  transform: rotate(-180deg);
+}
+/* Expand upward as absolute overlay above the header — must not push .messages-shell. */
+.open-tasks-list-fold {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 0fr;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 12px;
+  transition: grid-template-rows 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+  pointer-events: none;
+}
+.open-tasks-list-fold.is-open {
+  grid-template-rows: 1fr;
+  pointer-events: auto;
+}
+.open-tasks-list-fold-inner {
+  overflow: hidden;
+  min-height: 0;
+  min-width: 0;
+  opacity: 0;
+  transition: opacity 0.16s ease;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: var(--hairline) solid var(--border);
+  /* Match .modal.form-drawer / .sidebar frost: ~10% panel + blur 28px. */
+  background: color-mix(in srgb, var(--panel) 10%, transparent);
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+}
+:root[data-theme='light'] .open-tasks-list-fold-inner {
+  background: color-mix(in srgb, var(--panel) 10%, transparent);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .open-tasks-list-fold-inner {
+    background: color-mix(in srgb, var(--panel) 10%, transparent);
+  }
+}
+.open-tasks-list-fold.is-open > .open-tasks-list-fold-inner {
+  opacity: 1;
+  transition-delay: 0.02s;
+}
+.open-tasks-list-fold:not(.is-open) > .open-tasks-list-fold-inner {
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .open-tasks-list-fold,
+  .open-tasks-list-fold-inner {
+    transition: none;
+  }
+}
 .open-tasks-list {
   list-style: none;
   margin: 0;
@@ -3128,7 +3626,8 @@ input, textarea { user-select: text; }
   /* scrollbar via .scroll-fade (same as chat .messages) */
 }
 .open-tasks-list.scroll-fade {
-  --scroll-fade: var(--panel-2);
+  /* Frost surface: fade toward panel (same as session-list over glass sidebar). */
+  --scroll-fade: var(--panel);
 }
 .open-task-row {
   width: 100%;
@@ -3265,7 +3764,8 @@ input, textarea { user-select: text; }
   justify-content: center;
   gap: 8px;
   position: relative;
-  z-index: 6;
+  /* Above .open-tasks-panel (z9) so the + attach fan is not covered. */
+  z-index: 10;
   overflow: visible;
 }
 .composer-row {
@@ -3378,18 +3878,29 @@ input, textarea { user-select: text; }
 .composer-attachments {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  align-items: flex-start;
+  gap: 8px;
   width: 100%;
+  flex: 1 0 100%;
+  order: -2;
   box-sizing: border-box;
+  padding: 2px 4px 4px;
+}
+.composer-inner.has-attachments {
+  flex-wrap: wrap;
+  align-items: flex-end;
+  row-gap: 6px;
+  padding-top: 8px;
 }
 .composer-attach-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   max-width: min(280px, 100%);
-  padding: 4px 6px 4px 8px;
+  padding: 6px 8px 6px 8px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--text) 8%, transparent);
+  border: var(--hairline) solid var(--hairline-color);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
   color: var(--muted);
   font-size: 12px;
   line-height: 1.2;
@@ -3397,12 +3908,19 @@ input, textarea { user-select: text; }
 .composer-attach-chip-icon {
   display: inline-flex;
   color: var(--text);
-  opacity: 0.85;
+  opacity: 0.9;
+  flex: 0 0 auto;
 }
 .composer-attach-chip-icon svg {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   display: block;
+}
+.composer-attach-chip-meta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
 }
 .composer-attach-chip-name {
   min-width: 0;
@@ -3410,6 +3928,12 @@ input, textarea { user-select: text; }
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text);
+  font-weight: 500;
+}
+.composer-attach-chip-size {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.2;
 }
 .composer-attach-chip-x {
   flex: 0 0 auto;
@@ -3434,6 +3958,62 @@ input, textarea { user-select: text; }
 .composer-attach-chip-x svg {
   width: 12px;
   height: 12px;
+}
+.composer-attach-thumb {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  border-radius: 10px;
+  overflow: visible;
+  flex: 0 0 auto;
+  border: var(--hairline) solid var(--hairline-color);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+.composer-attach-thumb img {
+  display: block;
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 10px;
+}
+.composer-attach-thumb-fallback {
+  display: flex;
+  width: 56px;
+  height: 56px;
+  align-items: center;
+  justify-content: center;
+  color: var(--text);
+  opacity: 0.7;
+}
+.composer-attach-thumb-fallback svg {
+  width: 20px;
+  height: 20px;
+}
+.composer-attach-thumb-x {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: var(--hairline) solid var(--hairline-color);
+  border-radius: 50%;
+  background: var(--input);
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 1;
+}
+.composer-attach-thumb-x:hover,
+.composer-attach-thumb-x:focus-visible {
+  background: color-mix(in srgb, var(--text) 12%, var(--input));
+  outline: none;
+}
+.composer-attach-thumb-x svg {
+  width: 10px;
+  height: 10px;
 }
 
 .message-attachments {
@@ -3472,6 +4052,24 @@ input, textarea { user-select: text; }
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text);
+}
+
+.message-attach-image {
+  display: block;
+  max-width: min(280px, 100%);
+  border-radius: 12px;
+  overflow: hidden;
+  border: var(--hairline) solid var(--hairline-color);
+  line-height: 0;
+}
+.message-attach-image img {
+  display: block;
+  max-width: 100%;
+  max-height: 240px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  background: color-mix(in srgb, var(--text) 4%, transparent);
 }
 .bubble.user.bubble-attach-only {
   min-width: 28px;
@@ -3792,32 +4390,33 @@ input, textarea { user-select: text; }
   -webkit-app-region: no-drag;
 }
 /* Right-side form drawer (assistant / squad create-edit) */
+/* Slide via margin (not transform): Chromium/Electron skips backdrop-filter on
+   the same element (and descendants) while a transform is non-none — that caused
+   the solid→frost flash on open. Margin keeps frost sampling from first paint. */
 @keyframes okbot-drawer-in {
-  from { transform: translateX(100%); }
-  to { transform: translateX(0); }
+  from { margin-inline-end: -100%; }
+  to { margin-inline-end: 0; }
 }
 @keyframes okbot-drawer-out {
-  from { transform: translateX(0); }
-  to { transform: translateX(100%); }
+  from { margin-inline-end: 0; }
+  to { margin-inline-end: -100%; }
 }
-@keyframes okbot-drawer-backdrop-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-@keyframes okbot-drawer-backdrop-out {
-  from { opacity: 1; }
-  to { opacity: 0; }
-}
+/* No okbot-drawer-backdrop-* opacity keyframes: opacity < 1 on .drawer-backdrop
+   disables child backdrop-filter (same solid→frost flash). */
 .modal-backdrop.drawer-backdrop {
   display: flex;
   justify-content: flex-end;
   align-items: stretch;
   place-items: unset;
-  background: rgba(0, 0, 0, 0.4);
-  animation: okbot-drawer-backdrop-in 0.16s ease-out;
+  /* No mask/dim: stay fully transparent so .modal.form-drawer can
+     backdrop-blur the live app UI (frosted glass). No opacity animation —
+     that would break child backdrop-filter during open. */
+  background: transparent;
+  opacity: 1;
 }
 .modal-backdrop.drawer-backdrop.closing {
-  animation: okbot-drawer-backdrop-out 0.2s ease-in forwards;
+  /* Keep opacity at 1 so drawer frost stays valid through the slide-out;
+     pointer-events off so clicks pass while unmount waits for animation end. */
   pointer-events: none;
 }
 .form-drawer {
@@ -3832,7 +4431,8 @@ input, textarea { user-select: text; }
   padding: 0;
   box-shadow: none;
   animation: okbot-drawer-in 0.2s cubic-bezier(0.22, 1, 0.36, 1);
-  will-change: transform;
+  /* Slide uses margin-inline-end (see keyframes) so backdrop-filter works on
+     first paint. Avoid will-change: transform — same Chromium skip. */
 }
 .form-drawer.closing {
   animation: okbot-drawer-out 0.2s cubic-bezier(0.22, 1, 0.36, 1) forwards;
@@ -3882,6 +4482,12 @@ input, textarea { user-select: text; }
   gap: 8px;
   margin: 0 0 10px;
 }
+.modal-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
 .modal-head h2 {
   margin: 0;
   flex: 1;
@@ -3906,7 +4512,8 @@ input, textarea { user-select: text; }
 }
 .modal-compact h2 { margin: 0; font-size: 15px; }
 .modal-compact .field { margin-bottom: 10px; gap: 4px; }
-.modal-compact .avatar-preview-row .field-name {
+.modal-compact .avatar-preview-row .field-name,
+.modal-compact .avatar-preview-stack .field-name {
   gap: 8px;
   margin-bottom: 0;
 }
@@ -3915,12 +4522,36 @@ input, textarea { user-select: text; }
   padding-left: 9px;
   padding-right: 9px;
 }
-.modal-compact .avatar-preview-row { margin-bottom: 10px; }
+.modal-compact .avatar-preview-row,
+.modal-compact .avatar-preview-stack { margin-bottom: 10px; }
 .modal-compact .avatar-preview {
   width: 36px;
   height: 36px;
   border-radius: 10px;
   font-size: 36px;
+}
+.modal-compact .avatar-preview-stack .session-pin-avatar {
+  width: var(--pin-avatar);
+  height: var(--pin-avatar);
+  min-width: var(--pin-avatar);
+  min-height: var(--pin-avatar);
+  max-width: var(--pin-avatar);
+  max-height: var(--pin-avatar);
+  border-radius: 15px;
+  font-size: var(--pin-avatar);
+}
+.modal-compact .avatar-preview-stack .field-name input {
+  appearance: none;
+  -webkit-appearance: none;
+  border: none;
+  outline: none;
+  box-shadow: none;
+  background: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.modal-compact .bot-form-description-text {
+  font-size: 12px;
 }
 :root[data-theme='light'] .modal,
 :root:not([data-theme='dark']):not(.x) {
@@ -3934,8 +4565,11 @@ input, textarea { user-select: text; }
 :root[data-theme='light'] .modal { background: var(--panel); }
 
 /* Full-height right drawers (assistant / squad): beat later .modal constraints.
-   Match left sidebar — stretch top-to-bottom, flush right, no floating short panel. */
+   Match left sidebar — stretch top-to-bottom, flush right, no floating short panel.
+   Frosted glass: translucent --panel + backdrop blur (see chat-member-pill / FABs). */
 .modal.form-drawer {
+  position: relative;
+  z-index: 1;
   width: min(420px, 100vw);
   height: 100%;
   max-height: 100%;
@@ -3945,12 +4579,15 @@ input, textarea { user-select: text; }
   border: none;
   border-left: var(--hairline) solid var(--hairline-color);
   overflow: hidden;
-  background: var(--panel);
-  box-shadow: none;
+  /* More transparent + stronger blur so frost reads clearly over app UI. */
+  background: color-mix(in srgb, var(--panel) 10%, transparent);
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+  /* Soft left edge depth (no page dim/mask); dark theme strengthens below. */
+  box-shadow: -6px 0 18px rgba(0, 0, 0, 0.14);
   display: flex;
   flex-direction: column;
   animation: okbot-drawer-in 0.2s cubic-bezier(0.22, 1, 0.36, 1);
-  will-change: transform;
 }
 .modal.form-drawer.closing {
   animation: okbot-drawer-out 0.2s cubic-bezier(0.22, 1, 0.36, 1) forwards;
@@ -3965,20 +4602,107 @@ input, textarea { user-select: text; }
     animation: none;
   }
 }
+/* Dark: left edge lighter than default --hairline-color (#4a4a4a);
+   strengthen left shadow — shared 0.14 alpha disappears on dark panels. */
+:root[data-theme='dark'] .modal.form-drawer {
+  border-left-color: color-mix(in srgb, var(--text) 22%, transparent);
+  box-shadow: -8px 0 28px rgba(0, 0, 0, 0.55);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .modal.form-drawer {
+    border-left-color: color-mix(in srgb, var(--text) 22%, transparent);
+    box-shadow: -8px 0 28px rgba(0, 0, 0, 0.55);
+  }
+}
 :root[data-theme='light'] .modal.form-drawer {
-  background: var(--panel);
+  background: color-mix(in srgb, var(--panel) 10%, transparent);
 }
 @media (prefers-color-scheme: light) {
   :root:not([data-theme='dark']) .modal.form-drawer {
-    background: var(--panel);
+    background: color-mix(in srgb, var(--panel) 10%, transparent);
   }
 }
 .modal.form-drawer .form-drawer-head {
-  background: var(--panel);
+  /* Transparent so drawer frost shows through sticky head. */
+  background: transparent;
 }
 .modal.form-drawer .modal-head h2 {
   margin: 0;
 }
+
+/* Drawer-scoped frosted controls: replace solid panel fills so selects /
+   pickers match .modal.form-drawer glass (native <select> popup is OS-drawn). */
+.modal.form-drawer .field input,
+.modal.form-drawer .field textarea,
+.modal.form-drawer .field select,
+.modal.form-drawer .model-ref-select,
+.modal.form-drawer .bot-picker-trigger,
+.modal.form-drawer .bot-picker-menu,
+.modal.form-drawer .bot-picker-search,
+.modal.form-drawer .aar-policy-select,
+.modal.form-drawer .tool-mgmt-approval-select,
+.modal.form-drawer .settings-row select {
+  background: color-mix(in srgb, var(--panel) 14%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+:root[data-theme='light'] .modal.form-drawer .field input,
+:root[data-theme='light'] .modal.form-drawer .field textarea,
+:root[data-theme='light'] .modal.form-drawer .field select,
+:root[data-theme='light'] .modal.form-drawer .model-ref-select,
+:root[data-theme='light'] .modal.form-drawer .bot-picker-trigger,
+:root[data-theme='light'] .modal.form-drawer .bot-picker-menu,
+:root[data-theme='light'] .modal.form-drawer .bot-picker-search,
+:root[data-theme='light'] .modal.form-drawer .aar-policy-select,
+:root[data-theme='light'] .modal.form-drawer .tool-mgmt-approval-select,
+:root[data-theme='light'] .modal.form-drawer .settings-row select {
+  background: color-mix(in srgb, var(--panel) 14%, transparent);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .modal.form-drawer .field input,
+  :root:not([data-theme='dark']) .modal.form-drawer .field textarea,
+  :root:not([data-theme='dark']) .modal.form-drawer .field select,
+  :root:not([data-theme='dark']) .modal.form-drawer .model-ref-select,
+  :root:not([data-theme='dark']) .modal.form-drawer .bot-picker-trigger,
+  :root:not([data-theme='dark']) .modal.form-drawer .bot-picker-menu,
+  :root:not([data-theme='dark']) .modal.form-drawer .bot-picker-search,
+  :root:not([data-theme='dark']) .modal.form-drawer .aar-policy-select,
+  :root:not([data-theme='dark']) .modal.form-drawer .tool-mgmt-approval-select,
+  :root:not([data-theme='dark']) .modal.form-drawer .settings-row select {
+    background: color-mix(in srgb, var(--panel) 14%, transparent);
+  }
+}
+.modal.form-drawer .bot-picker-menu {
+  border-color: color-mix(in srgb, var(--border) 70%, transparent);
+  box-shadow: none;
+}
+
+/* Name under avatar: borderless, no frost fill (background none). */
+.modal.form-drawer .avatar-preview-stack .field-name input,
+.modal.form-drawer .avatar-preview-stack .field-name input:focus,
+.modal.form-drawer .avatar-preview-stack .field-name input:focus-visible {
+  appearance: none;
+  -webkit-appearance: none;
+  background: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: none;
+  outline: none;
+  box-shadow: none;
+}
+:root[data-theme='light'] .modal.form-drawer .avatar-preview-stack .field-name input,
+:root[data-theme='light'] .modal.form-drawer .avatar-preview-stack .field-name input:focus,
+:root[data-theme='light'] .modal.form-drawer .avatar-preview-stack .field-name input:focus-visible {
+  background: none;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .modal.form-drawer .avatar-preview-stack .field-name input,
+  :root:not([data-theme='dark']) .modal.form-drawer .avatar-preview-stack .field-name input:focus,
+  :root:not([data-theme='dark']) .modal.form-drawer .avatar-preview-stack .field-name input:focus-visible {
+    background: none;
+  }
+}
+
 
 .modal h2 { margin: 0 0 12px; font-size: 16px; }
 .modal .modal-head h2 {
@@ -4010,55 +4734,66 @@ input, textarea { user-select: text; }
 .modal textarea {
   font-size: 13px;
 }
-.emoji-picker-row {
-  display: flex;
-  align-items: flex-end;
-  gap: 4px;
-}
+/* Same footprint as .bot-avatar-type-grid (3×6); last cell is 「更多」. */
 .emoji-grid {
   display: grid;
-  grid-template-columns: repeat(7, 32px);
-  gap: 4px;
-  align-items: center;
-  justify-content: start;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
 }
-.emoji-grid button {
-  width: 32px;
-  height: 32px;
-  flex-shrink: 0;
-  font-size: 18px;
-  padding: 0;
-  border-radius: 8px;
+.emoji-grid-btn {
   display: grid;
   place-items: center;
-  border: none;
-  background: transparent;
+  width: 100%;
+  aspect-ratio: 1;
+  padding: 4px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: var(--panel-2, transparent);
   color: inherit;
   cursor: pointer;
 }
-.emoji-grid button.active,
-.emoji-grid button:hover {
+.emoji-grid-btn:hover {
   background: var(--accent-soft);
+}
+.emoji-grid-btn.active {
+  border-color: color-mix(in srgb, var(--accent, #6366f1) 60%, transparent);
+  background: var(--accent-soft);
+}
+.emoji-grid-btn .bot-avatar-type-preview {
+  /* Same color-plate + emoji ratio as sidebar .session-avatar. */
+  width: var(--rail-avatar);
+  height: var(--rail-avatar);
+  aspect-ratio: 1;
+  border-radius: 10px;
+  font-size: var(--rail-avatar);
 }
 .emoji-more-wrap {
   position: relative;
-  flex-shrink: 0;
+  width: 100%;
+  aspect-ratio: 1;
 }
 .emoji-more-btn {
-  width: auto !important;
-  min-width: 40px;
-  height: 32px;
-  padding: 0 8px !important;
-  font-size: 11px !important;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  padding: 4px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: var(--panel-2, transparent);
   color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
   white-space: nowrap;
-  border-radius: 8px;
-  border: none;
-  background: transparent;
   cursor: pointer;
+}
+.emoji-more-btn:hover {
+  background: var(--accent-soft);
+  color: var(--text);
 }
 .emoji-more-btn.open {
   color: var(--text);
+  border-color: color-mix(in srgb, var(--accent, #6366f1) 60%, transparent);
   background: var(--accent-soft);
 }
 /* Full emoji-mart picker: portaled to body above modal backdrop (z-index 50).
@@ -4091,10 +4826,24 @@ input, textarea { user-select: text; }
   width: 100%;
   justify-content: space-between;
   gap: 4px;
+  /* Let the ink selection ring paint outside the chips. */
+  overflow: visible;
+  padding-block: 4px;
+  margin-block: -4px;
+  box-sizing: border-box;
 }
 .color-grid-one-row .color-swatch {
-  width: 14px;
-  height: 14px;
+  width: 18px;
+  height: 18px;
+  aspect-ratio: 1;
+  border-radius: 50%;
+}
+/* 「默认」 stays a label chip — do not force square avatar footprint. */
+.color-grid-one-row .color-swatch-default {
+  width: auto;
+  height: 18px;
+  aspect-ratio: auto;
+  border-radius: 6px;
 }
 .modal-actions {
   display: flex;
@@ -4411,34 +5160,25 @@ input, textarea { user-select: text; }
   line-height: 0;
 }
 
-/* Sticky turn status overlays the transcript bottom while agent busy (「正在进化」etc.).
-   Full-bleed gradient; content inset matches composer-inner left edge at all widths:
-   max(gutter, (pane − column-max)/2 + gutter). */
+/* In-flow turn status (orb + shimmer) sits below the last bubble while busy.
+   margin-top:auto pins it to the viewport bottom when the transcript is short. */
 .chat-turn-status {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 5;
+  position: relative;
+  z-index: 1;
   width: 100%;
   max-width: none;
-  margin: 0;
+  margin: auto 0 0;
   box-sizing: border-box;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 18px max(var(--chat-gutter-x), calc((100% - var(--chat-column-max)) / 2 + var(--chat-gutter-x))) 10px;
+  padding: 8px 0 4px;
   pointer-events: none;
   user-select: none;
-  /* Fade into chat bg so last bubble isn't hard-clipped under the banner. */
-  background: linear-gradient(
-    to top,
-    var(--chat-bg, var(--panel, #1c1c1e)) 0%,
-    var(--chat-bg, var(--panel, #1c1c1e)) 42%,
-    color-mix(in srgb, var(--chat-bg, var(--panel, #1c1c1e)) 55%, transparent) 78%,
-    transparent 100%
-  );
+  background: transparent;
+  flex-shrink: 0;
 }
+/* Keep jump / immersive FABs clear of the in-flow status row when pinned to bottom. */
 .messages-shell:has(.chat-turn-status) .scroll-to-bottom-btn {
   bottom: calc(12px + var(--chat-turn-status-space, 48px));
 }
@@ -4582,18 +5322,26 @@ input, textarea { user-select: text; }
 }
 .settings-nav {
   background: #080808;
-  border-right: var(--hairline) solid var(--hairline-color);
+  /* Fainter than default --hairline-color (match .sidebar-resize). */
+  border-right: var(--hairline) solid color-mix(in srgb, var(--hairline-color) 38%, transparent);
   padding: 14px 10px;
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 :root[data-theme='light'] .settings-nav {
-  background: #ececee;
+  background: var(--panel);
+  border-right-color: color-mix(in srgb, var(--hairline-color) 42%, transparent);
 }
 @media (prefers-color-scheme: light) {
   :root:not([data-theme='dark']) .settings-nav {
-    background: #ececee;
+    background: var(--panel);
+    border-right-color: color-mix(in srgb, #a8a8ae 42%, transparent);
+  }
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .settings-nav {
+    border-right-color: color-mix(in srgb, var(--hairline-color) 38%, transparent);
   }
 }
 .settings-nav-item {
@@ -4603,7 +5351,8 @@ input, textarea { user-select: text; }
   width: 100%;
   padding: 9px 10px;
   border-radius: 10px;
-  color: var(--muted);
+  /* Same text color as .active; only background/indicator may differ. */
+  color: var(--text);
   font-size: 13px;
   font-weight: 500;
   text-align: left;
@@ -4698,11 +5447,11 @@ input, textarea { user-select: text; }
   overflow: hidden;
 }
 :root[data-theme='light'] .settings-card {
-  background: #ececee;
+  background: var(--panel);
 }
 @media (prefers-color-scheme: light) {
   :root:not([data-theme='dark']) .settings-card {
-    background: #ececee;
+    background: var(--panel);
   }
 }
 .settings-row {
@@ -4765,6 +5514,124 @@ input, textarea { user-select: text; }
   min-width: 0;
   flex: 1;
   max-width: none;
+}
+
+/* Searchable timezone combobox (General settings). */
+.settings-timezone-combo {
+  position: relative;
+  flex: 0 1 auto;
+  min-width: 160px;
+  max-width: 320px;
+}
+.settings-timezone-combo-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  max-width: 320px;
+  background: #2a2a2a;
+  border: none;
+  border-radius: 8px;
+  padding: 5px 10px;
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+  cursor: pointer;
+  text-align: left;
+}
+:root[data-theme='light'] .settings-timezone-combo-trigger {
+  background: #fff;
+  border: 1px solid var(--border);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .settings-timezone-combo-trigger {
+    background: #fff;
+    border: 1px solid var(--border);
+  }
+}
+.settings-timezone-combo-trigger-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-timezone-combo-caret {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1;
+}
+.settings-timezone-combo-panel {
+  display: flex;
+  flex-direction: column;
+  background: #1f1f1f;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+:root[data-theme='light'] .settings-timezone-combo-panel {
+  background: #fff;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .settings-timezone-combo-panel {
+    background: #fff;
+  }
+}
+.settings-timezone-combo-search {
+  margin: 8px 8px 4px;
+  width: calc(100% - 16px);
+  box-sizing: border-box;
+  background: #2a2a2a;
+  border: none;
+  border-radius: 8px;
+  padding: 6px 10px;
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+  max-width: none !important;
+  min-width: 0 !important;
+}
+:root[data-theme='light'] .settings-timezone-combo-search {
+  background: #f3f3f5;
+  border: 1px solid var(--border);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .settings-timezone-combo-search {
+    background: #f3f3f5;
+    border: 1px solid var(--border);
+  }
+}
+.settings-timezone-combo-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 0 8px;
+}
+.settings-timezone-combo-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 7px 12px;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+.settings-timezone-combo-option:hover,
+.settings-timezone-combo-option:focus-visible {
+  background: var(--accent-soft);
+  outline: none;
+}
+.settings-timezone-combo-option.is-selected {
+  color: var(--accent);
+  font-weight: 600;
+}
+.settings-timezone-combo-empty {
+  padding: 10px 12px;
+  color: var(--muted);
+  font-size: 12px;
 }
 .settings-card-model .settings-row {
   display: grid;
@@ -5359,43 +6226,20 @@ input, textarea { user-select: text; }
   min-height: 0;
   min-width: 0;
 }
-.mesh-exchange-panel-header {
-  position: relative;
-  flex-shrink: 0;
-  height: 45px;
-  display: flex;
-  align-items: center;
-  /* Match .main-header: primary identity left-aligned in the private-chat slot. */
-  justify-content: flex-start;
-  gap: 8px;
-  padding: 0 44px 0 14px;
-  border-bottom: var(--hairline) solid rgba(255, 255, 255, 0.12);
-  box-sizing: border-box;
-}
-:root[data-theme='light'] .mesh-exchange-panel-header {
-  border-bottom-color: rgba(0, 0, 0, 0.12);
-}
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme='dark']) .mesh-exchange-panel-header {
-    border-bottom-color: rgba(0, 0, 0, 0.12);
-  }
-}
-/* Caller + callee reuse .header-identity / .header-avatar / h1 (same as private chat). */
-.mesh-exchange-header-primary,
-.mesh-exchange-header-peer {
-  flex: 0 1 auto;
-  max-width: min(42%, 100%);
-  pointer-events: none; /* read-only overlay; profile stays on main-header underneath */
+/* Floating A → B pill: same surface as .chat-member-pill; read-only (not a button). */
+.mesh-exchange-member-pill {
+  /* Wider than single-member pill to fit avatar+name → avatar+name. */
+  max-width: min(88%, 420px);
   cursor: default;
+  pointer-events: none;
+  gap: 0;
 }
-.mesh-exchange-header-primary:hover,
-.mesh-exchange-header-peer:hover {
-  background: transparent;
-}
-.mesh-exchange-header-arrow {
+.mesh-exchange-pill-arrow {
   flex-shrink: 0;
+  margin: 0 6px 0 8px;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 13px;
+  font-weight: 600;
   line-height: 1;
   user-select: none;
 }
@@ -5406,6 +6250,11 @@ input, textarea { user-select: text; }
   max-width: var(--chat-column-max);
   margin-inline: auto;
   box-sizing: border-box;
+  /* Extra bottom pad clears the floating close control. */
+  padding-bottom: 64px;
+  /* Peer bubbles are direct children (no .messages-content); match normal
+     session spacing (.messages-content gap: 12px). */
+  gap: 12px;
 }
 .mesh-exchange-bubble-row {
   max-width: 100%;
@@ -5417,11 +6266,76 @@ input, textarea { user-select: text; }
   padding: 8px 4px;
   align-self: center;
 }
-.mesh-exchange-header-close {
+/* Bottom-centered floating close: perfect circle + hairline edge (pill frost). */
+.mesh-exchange-close {
   position: absolute;
-  right: 10px;
-  top: 50%;
-  transform: translateY(-50%);
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  z-index: 26;
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  padding: 0;
+  box-sizing: border-box;
+  /* Very thin edge; match .chat-member-pill hairline. */
+  border: var(--hairline) solid color-mix(in srgb, #ffffff 18%, transparent);
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  /* Frosted glass: match .chat-member-pill (panel ~10% + blur ~10px). */
+  background: color-mix(in srgb, var(--panel) 10%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: none;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    transform 0.15s ease;
+}
+:root[data-theme='light'] .mesh-exchange-close {
+  background: color-mix(in srgb, var(--panel) 10%, transparent);
+  border-color: color-mix(in srgb, #000000 10%, transparent);
+  box-shadow: none;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .mesh-exchange-close {
+    background: color-mix(in srgb, var(--panel) 10%, transparent);
+    border-color: color-mix(in srgb, #000000 10%, transparent);
+    box-shadow: none;
+  }
+}
+.mesh-exchange-close:hover {
+  background: color-mix(in srgb, var(--panel) 16%, transparent);
+  color: var(--text);
+}
+:root[data-theme='light'] .mesh-exchange-close:hover {
+  background: color-mix(in srgb, var(--panel) 16%, transparent);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .mesh-exchange-close:hover {
+    background: color-mix(in srgb, var(--panel) 16%, transparent);
+  }
+}
+.mesh-exchange-close:active {
+  transform: translateX(-50%) scale(0.96);
+}
+.mesh-exchange-close:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent, #6366f1) 55%, transparent);
+  outline-offset: 2px;
+}
+.mesh-exchange-close svg {
+  width: 18px;
+  height: 18px;
+  display: block;
 }
 
 .bot-mention-chip-clickable {
@@ -5453,7 +6367,7 @@ input, textarea { user-select: text; }
   align-self: stretch;
   width: 100%;
   box-sizing: border-box;
-  /* pan-y: vertical scroll free; time reveal is wheel/trackpad only (no press-drag). */
+  /* pan-y: vertical scroll free; time reveal via wheel/trackpad only (pointer = text select). */
   touch-action: pan-y;
   /* No overflow:hidden — that would become a scrollport and break sticky actions. */
   cursor: default;
@@ -5693,6 +6607,33 @@ input, textarea { user-select: text; }
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.aar-item-title.is-expanded {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: unset;
+  word-break: break-word;
+  line-height: 1.45;
+}
+.aar-item.is-expanded {
+  align-items: flex-start;
+}
+.aar-item.is-expanded .aar-item-trailing {
+  padding-top: 2px;
+}
+.aar-expand-btn svg {
+  transition: transform 0.15s ease;
+  transform: rotate(-90deg);
+}
+.aar-expand-btn.expanded svg {
+  transform: rotate(0deg);
+}
+/* Affordance only — row click toggles expand; no hover fill on the chevron. */
+.aar-expand-btn:hover {
+  background: transparent;
+}
+.aar-item-clickable {
+  cursor: pointer;
 }
 .settings-aar-inline .aar-item-title {
   font-size: 12px;
@@ -6132,7 +7073,10 @@ input, textarea { user-select: text; }
   opacity: 0.45;
   cursor: default;
 }
-.settings-aar-inline {
+/* Shared inset list card — memory/skills (.settings-aar-inline) and
+   edit 任务/自动化/资源 (.list-card). Same shell across Settings + edit. */
+.settings-aar-inline,
+.list-card {
   border-top: none;
   margin: 4px 12px 10px 12px;
   padding: 2px 0;
@@ -6140,7 +7084,8 @@ input, textarea { user-select: text; }
   border-radius: 10px;
   background: color-mix(in srgb, var(--text) 4.5%, transparent);
 }
-.settings-aar-inline::before {
+.settings-aar-inline::before,
+.list-card::before {
   content: '';
   position: absolute;
   top: 0;
@@ -6149,11 +7094,13 @@ input, textarea { user-select: text; }
   height: 0;
   pointer-events: none;
 }
-:root[data-theme='light'] .settings-aar-inline {
+:root[data-theme='light'] .settings-aar-inline,
+:root[data-theme='light'] .list-card {
   background: color-mix(in srgb, var(--text) 5.5%, transparent);
 }
 @media (prefers-color-scheme: light) {
-  :root:not([data-theme='dark']) .settings-aar-inline {
+  :root:not([data-theme='dark']) .settings-aar-inline,
+  :root:not([data-theme='dark']) .list-card {
     background: color-mix(in srgb, var(--text) 5.5%, transparent);
   }
 }
@@ -6165,10 +7112,13 @@ input, textarea { user-select: text; }
   left: 12px;
   right: 12px;
 }
-.settings-aar-inline .aar-empty {
+.settings-aar-inline .aar-empty,
+.list-card > .settings-hint,
+.list-card > .aar-empty {
   padding: 10px 12px;
   font-size: 12px;
   color: var(--muted);
+  box-sizing: border-box;
 }
 .settings-aar-inline .tool-mgmt-approval-select {
   font-size: 11px;
@@ -6184,6 +7134,24 @@ input, textarea { user-select: text; }
 }
 :root[data-theme='light'] .settings-aar-inline .aar-item:hover {
   background: rgba(0, 0, 0, 0.04);
+}
+
+/* Shared inset hairline for list-card rows (not edge-to-edge). */
+.list-card-row + .list-card-row {
+  border-top: none;
+  border-bottom: none;
+  position: relative;
+}
+.list-card-row + .list-card-row::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 12px;
+  right: 12px;
+  height: var(--hairline);
+  background: var(--hairline-color);
+  opacity: 0.55;
+  pointer-events: none;
 }
 
 .aar-item-trailing {
@@ -6575,11 +7543,10 @@ input, textarea { user-select: text; }
 
 
 
-/* unified modal close tokens — settings / aar / prompt / mesh share modal-close geometry */
+/* unified modal close tokens — settings / aar / prompt share modal-close geometry */
 .settings-close,
 .aar-close-icon,
-.prompt-context-icon-btn,
-.mesh-exchange-header-close {
+.prompt-context-icon-btn {
   width: 28px;
   height: 28px;
   border-radius: 8px;
@@ -6597,8 +7564,7 @@ input, textarea { user-select: text; }
 }
 .settings-close:hover,
 .aar-close-icon:hover,
-.prompt-context-icon-btn:hover,
-.mesh-exchange-header-close:hover {
+.prompt-context-icon-btn:hover {
   background: var(--accent-soft);
   color: var(--text);
 }
@@ -6696,9 +7662,9 @@ input, textarea { user-select: text; }
   margin: 0 1px;
   padding: 0 8px 0 2px;
   border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--accent-soft);
-  color: var(--text);
+  border: 1px solid var(--mention-chip-border);
+  background: var(--mention-chip-bg);
+  color: var(--mention-chip-fg);
   font-size: 12px;
   line-height: 1;
   vertical-align: middle;
@@ -6741,7 +7707,7 @@ input, textarea { user-select: text; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text);
+  color: inherit;
   line-height: 14px;
   font-size: 12px;
 }
@@ -6750,6 +7716,13 @@ input, textarea { user-select: text; }
   /* Keep chips from inheriting paragraph margins; stay centered in bubble text. */
   margin-block: 0;
   vertical-align: middle;
+}
+
+/* User bubbles (dark fill in light theme / tinted): keep chips readable on bubble bg. */
+.bubble.user .bot-mention-chip {
+  --mention-chip-bg: color-mix(in srgb, var(--bubble-user-text) 16%, transparent);
+  --mention-chip-fg: var(--bubble-user-text);
+  --mention-chip-border: color-mix(in srgb, var(--bubble-user-text) 28%, transparent);
 }
 
 /* Searchable bot picker (create-squad) */
@@ -7156,31 +8129,17 @@ input, textarea { user-select: text; }
   align-items: center;
   gap: 6px;
   padding: 8px 4px;
-}
-.provider-item-toggle {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: none;
-  border: none;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-  padding: 2px 4px;
-  border-radius: 6px;
   min-width: 0;
 }
-.provider-item-toggle:hover {
+.provider-item-head-clickable {
+  cursor: pointer;
+  border-radius: 6px;
+}
+.provider-item-head-clickable:hover {
   background: color-mix(in srgb, var(--fg) 6%, transparent);
 }
-.provider-chevron {
-  font-size: 10px;
-  opacity: 0.55;
-  width: 12px;
-  flex-shrink: 0;
-}
 .provider-item-name {
+  flex: 1;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -7190,6 +8149,7 @@ input, textarea { user-select: text; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  padding: 2px 4px;
 }
 .provider-item.open .provider-item-name {
   color: var(--accent, #8b5cf6);
@@ -7199,6 +8159,41 @@ input, textarea { user-select: text; }
   align-items: center;
   gap: 2px;
   flex-shrink: 0;
+}
+/* Cascade: 接口 + 模型列表 nested under the expanded provider row. */
+.provider-item-body {
+  padding: 2px 6px 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 0;
+}
+.provider-item-body > .settings-section-label {
+  margin-top: 10px;
+  margin-bottom: 6px;
+  padding-left: 2px;
+}
+.provider-item-body > .settings-section-label:first-child {
+  margin-top: 2px;
+}
+/* Same card chrome, slightly tighter for the nested width. */
+.provider-item-body .provider-nested-card {
+  margin: 0;
+}
+.provider-item-body .settings-card-model .settings-row {
+  grid-template-columns: 88px 1fr;
+  gap: 8px;
+}
+.provider-item-body .settings-card-model .settings-row-label {
+  width: 88px;
+}
+.provider-item-body .model-list-head {
+  padding-left: 8px;
+  padding-right: 8px;
+}
+.provider-item-body .model-list-scroll {
+  padding-left: 4px;
+  padding-right: 4px;
 }
 .provider-rename-input {
   /* Match .settings-row input chrome (BaseURL / API Key). */
@@ -7507,8 +8502,9 @@ input, textarea { user-select: text; }
   background: var(--text);
   color: var(--chat-bg);
 }
+/* Top gap after tabs comes from .owner-form-tabs margin-bottom (not here). */
 .bot-form-model-row {
-  margin-top: 4px;
+  margin-top: 0;
 }
 .bot-form-model-row select {
   width: 100%;
@@ -7735,6 +8731,13 @@ input, textarea { user-select: text; }
   color: var(--text);
 }
 
+/* Bubble ··· overflow — same chrome as sidebar .menu; fixed via portal. */
+.bubble-more-menu {
+  z-index: 70;
+  min-width: 148px;
+}
+
+
 /* Usage settings */
 .usage-total-card { padding: 14px; }
 .usage-total-grid {
@@ -7948,12 +8951,21 @@ input, textarea { user-select: text; }
   resize: vertical;
   font-size: 12px;
   /* Override .aar-inline-input single-line height/padding so multi-line editors
-     match settings-paths-textarea / assistant AGENTS.md field (even inset). */
+     match settings-paths-textarea / assistant SOUL.md field (even inset). */
   height: auto;
   min-height: 0;
   padding: 10px 12px;
   line-height: 1.45;
   box-sizing: border-box;
+}
+/* Private skill name/description: match .provider-rename-input padding
+   (Settings → 模型接入 → custom provider name). Drop fixed 28px height so
+   vertical padding is not clipped by border-box. */
+.bot-skill-field.aar-inline-input {
+  height: auto;
+  min-height: 28px;
+  padding: 5px 10px;
+  line-height: 1.35;
 }
 .aar-item-stack {
   display: flex;
@@ -8158,7 +9170,7 @@ input, textarea { user-select: text; }
   gap: 2px;
   padding: 3px;
   border-radius: 10px;
-  background: var(--panel-2, transparent);
+  background: transparent;
   border: 1px solid var(--border, rgba(255,255,255,0.12));
 }
 .marketplace-tabs-pill {
@@ -8168,7 +9180,6 @@ input, textarea { user-select: text; }
   left: 0;
   border-radius: 8px;
   background: var(--accent-soft, color-mix(in srgb, var(--accent, #6366f1) 22%, transparent));
-  border: 1px solid color-mix(in srgb, var(--accent, #6366f1) 45%, transparent);
   pointer-events: none;
   transition: transform 180ms ease, width 180ms ease, opacity 120ms ease;
   z-index: 0;
@@ -8659,4 +9670,457 @@ input, textarea { user-select: text; }
 .parallel-task-elapsed {
   font-variant-numeric: tabular-nums;
   opacity: 0.9;
+}
+
+
+/* Edit assistant/squad: 详情 / 任务 / 自动化 / 记忆 / 技能 / 资源
+   Tabs reuse Market sliding-pill (.marketplace-tabs-track / .marketplace-tabs-pill).
+   margin-bottom is the single shared gap from tabs → first card/content. */
+.owner-form-tabs {
+  margin: 4px 0 12px;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.owner-form-tabs .marketplace-tabs-track {
+  width: auto;
+  display: inline-flex;
+}
+.owner-form-tabs .marketplace-tabs-track > button {
+  flex: 0 0 auto;
+  min-width: 0;
+  font-size: 12px;
+  padding: 6px 14px;
+}
+/* First panel after tabs: no extra top margin on list-cards / details fields.
+   Direct .list-card siblings margin-collapsed with tabs (gap 12px) while cards
+   nested in .field did not (gap 16px). Tabs own the gap. */
+.form-drawer-body > .owner-form-tabs + .settings-aar-inline,
+.form-drawer-body > .owner-form-tabs + .list-card,
+.form-drawer-body > .owner-form-tabs + .field > .settings-aar-inline:first-child,
+.form-drawer-body > .owner-form-tabs + .field > .list-card:first-child {
+  margin-top: 0;
+}
+.form-drawer-body > .owner-form-tabs + .field {
+  margin-top: 0;
+}
+
+/* 任务 tab: status + title + time + chevron; steps same row, indented.
+   Wrapped in .settings-aar-inline.list-card — match memory card padding/dividers. */
+.owner-tasks-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.owner-task-item {
+  border-bottom: none;
+  position: relative;
+}
+.owner-task-item + .owner-task-item::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 12px;
+  right: 12px;
+  height: var(--hairline);
+  background: var(--hairline-color);
+  opacity: 0.55;
+  pointer-events: none;
+}
+.owner-task-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  box-sizing: border-box;
+}
+button.owner-task-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+:root[data-theme='light'] button.owner-task-row:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+.owner-task-status {
+  flex: 0 0 auto;
+  width: 1.1em;
+  text-align: center;
+  opacity: 0.85;
+  font-size: 13px;
+}
+.owner-task-item.status-in_progress > .owner-task-row .owner-task-status,
+.owner-task-step.status-in_progress .owner-task-status {
+  color: var(--accent);
+}
+.owner-task-item.status-pending > .owner-task-row .owner-task-status,
+.owner-task-step.status-pending .owner-task-status {
+  color: var(--muted);
+}
+.owner-task-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+/* In-place unwrap: task row expand (steps) or step title-expanded. */
+.owner-task-row.expanded .owner-task-title,
+.owner-task-title.is-expanded {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: unset;
+  word-break: break-word;
+  line-height: 1.4;
+}
+.owner-task-row.expanded,
+.owner-task-row.title-expanded {
+  align-items: flex-start;
+}
+.owner-task-row.expanded .owner-task-status,
+.owner-task-row.title-expanded .owner-task-status,
+.owner-task-row.expanded .owner-task-time,
+.owner-task-row.title-expanded .owner-task-time,
+.owner-task-row.expanded .session-owner-group-chevron,
+.owner-task-row.title-expanded .session-owner-group-chevron,
+.owner-task-row.expanded .owner-task-chevron-spacer,
+.owner-task-row.title-expanded .owner-task-chevron-spacer {
+  margin-top: 2px;
+}
+.owner-task-time {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  max-width: 42%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.owner-task-row .session-owner-group-chevron {
+  opacity: 0.8;
+  visibility: visible;
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+.owner-task-row.expanded .session-owner-group-chevron {
+  transform: rotate(0deg);
+}
+.owner-task-chevron-spacer {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+}
+.owner-task-fold {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 0fr;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  transition: grid-template-rows 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.owner-task-fold.is-open {
+  grid-template-rows: 1fr;
+}
+.owner-task-fold-inner {
+  overflow: hidden;
+  min-height: 0;
+  min-width: 0;
+  opacity: 0;
+  transition: opacity 0.16s ease;
+}
+.owner-task-fold.is-open > .owner-task-fold-inner {
+  opacity: 1;
+  transition-delay: 0.02s;
+}
+.owner-task-fold:not(.is-open) > .owner-task-fold-inner {
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .owner-task-fold,
+  .owner-task-fold-inner {
+    transition: none;
+  }
+}
+.owner-task-steps {
+  list-style: none;
+  margin: 0 0 4px;
+  padding: 0 12px 4px 30px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.owner-task-step {
+  list-style: none;
+}
+.owner-task-step-row {
+  cursor: pointer;
+  padding: 6px 0;
+}
+.owner-task-step.status-in_progress .owner-task-title {
+  color: var(--text);
+}
+.owner-task-step:not(.status-in_progress) .owner-task-title {
+  color: var(--muted);
+}
+
+/* 自动化 tab (edit): toggle + trash; meta/prompt full width.
+   Edit mode shell is .settings-aar-inline.list-card (same as memory). */
+.schedules-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.schedules-list-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.schedule-edit-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-bottom: none;
+  position: relative;
+  box-sizing: border-box;
+}
+.schedule-edit-row + .schedule-edit-row::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 12px;
+  right: 12px;
+  height: var(--hairline);
+  background: var(--hairline-color);
+  opacity: 0.55;
+  pointer-events: none;
+}
+.schedule-edit-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.schedule-edit-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.schedule-edit-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.schedule-edit-meta,
+.schedule-edit-prompt {
+  margin-top: 0;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+/* 资源 tab: square thumb + filename.
+   Wrapped in .settings-aar-inline.list-card — match memory card padding/dividers. */
+.owner-resources-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.owner-resource-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: none;
+  position: relative;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.owner-resource-row + .owner-resource-row::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 12px;
+  right: 12px;
+  height: var(--hairline);
+  background: var(--hairline-color);
+  opacity: 0.55;
+  pointer-events: none;
+}
+.owner-resource-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+:root[data-theme='light'] .owner-resource-row:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+.owner-resource-thumb {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--panel-2, var(--panel));
+  border: var(--hairline) solid var(--border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.owner-resource-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.owner-resource-thumb-file {
+  color: var(--muted);
+}
+.owner-resource-thumb-file svg {
+  width: 18px;
+  height: 18px;
+}
+.owner-resource-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--text);
+}
+
+/* Tasks / Resources: load-more footer inside list-card (hairline + muted). */
+.owner-list-load-more {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: center;
+  box-sizing: border-box;
+  position: relative;
+}
+.owner-list-load-more::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 12px;
+  right: 12px;
+  height: var(--hairline);
+  background: var(--hairline-color);
+  opacity: 0.55;
+  pointer-events: none;
+}
+.owner-list-load-more:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+}
+:root[data-theme='light'] .owner-list-load-more:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+
+/* === translucent OFF (settings.translucent === false) ===
+   Kill frost/glass everywhere: opaque fills, no backdrop-filter.
+   Darwin window vibrancy is cleared in main via setVibrancy(null). */
+:root[data-translucent='false'] html,
+:root[data-translucent='false'] body,
+:root[data-translucent='false'] #root {
+  background: var(--bg);
+}
+:root[data-translucent='false'] .app {
+  background: var(--chat-bg);
+}
+:root[data-translucent='false'] *,
+:root[data-translucent='false'] *::before,
+:root[data-translucent='false'] *::after {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+:root[data-translucent='false'] .sidebar,
+:root[data-translucent='false'][data-platform='darwin'] .sidebar,
+:root[data-translucent='false'][data-theme='light'] .sidebar,
+:root[data-translucent='false'][data-platform='darwin'][data-theme='light'] .sidebar {
+  background: var(--panel) !important;
+}
+@media (prefers-color-scheme: light) {
+  :root[data-translucent='false']:not([data-theme='dark']) .sidebar,
+  :root[data-translucent='false'][data-platform='darwin']:not([data-theme='dark']) .sidebar {
+    background: var(--panel) !important;
+  }
+}
+:root[data-translucent='false'] .modal.form-drawer,
+:root[data-translucent='false'][data-theme='light'] .modal.form-drawer {
+  background: var(--panel) !important;
+}
+@media (prefers-color-scheme: light) {
+  :root[data-translucent='false']:not([data-theme='dark']) .modal.form-drawer {
+    background: var(--panel) !important;
+  }
+}
+:root[data-translucent='false'] .chat-member-pill,
+:root[data-translucent='false'] .chat-member-pill:hover,
+:root[data-translucent='false'][data-theme='light'] .chat-member-pill,
+:root[data-translucent='false'][data-theme='light'] .chat-member-pill:hover {
+  background: var(--panel) !important;
+}
+@media (prefers-color-scheme: light) {
+  :root[data-translucent='false']:not([data-theme='dark']) .chat-member-pill,
+  :root[data-translucent='false']:not([data-theme='dark']) .chat-member-pill:hover {
+    background: var(--panel) !important;
+  }
+}
+:root[data-translucent='false'] .open-tasks-list-fold-inner,
+:root[data-translucent='false'][data-theme='light'] .open-tasks-list-fold-inner {
+  background: var(--panel) !important;
+}
+@media (prefers-color-scheme: light) {
+  :root[data-translucent='false']:not([data-theme='dark']) .open-tasks-list-fold-inner {
+    background: var(--panel) !important;
+  }
+}
+:root[data-translucent='false'] .immersive-chat-fab,
+:root[data-translucent='false'] .scroll-to-bottom-btn,
+:root[data-translucent='false'] .mesh-exchange-close,
+:root[data-translucent='false'] .footer-fab-toggle,
+:root[data-translucent='false'] .footer-fab-actions {
+  background: var(--panel) !important;
+}
+:root[data-translucent='false'] .modal.form-drawer .field input,
+:root[data-translucent='false'] .modal.form-drawer .field textarea,
+:root[data-translucent='false'] .modal.form-drawer .field select,
+:root[data-translucent='false'] .modal.form-drawer .model-ref-select,
+:root[data-translucent='false'] .modal.form-drawer .bot-picker-trigger,
+:root[data-translucent='false'] .modal.form-drawer .bot-picker-menu,
+:root[data-translucent='false'] .modal.form-drawer .bot-picker-search,
+:root[data-translucent='false'] .modal.form-drawer .aar-policy-select,
+:root[data-translucent='false'] .modal.form-drawer .tool-mgmt-approval-select,
+:root[data-translucent='false'] .modal.form-drawer .settings-row select,
+:root[data-translucent='false'] .modal.form-drawer .avatar-preview-stack .field-name input {
+  background: var(--input, var(--panel-2)) !important;
 }

@@ -16,9 +16,13 @@ import {
   resolveTopicCompressForce,
 } from '../../storage/sessionCompression';
 import {
+  clearPendingDescriptionAfterOnboardingSkip,
   extractMemoriesFromFoldedHistory,
+  hasPendingDescriptionAfterOnboardingSkip,
+  markPendingDescriptionAfterOnboardingSkip,
   rememberSummaryFacts,
   runThrottledPostTurnMaintenance,
+  seedBotDescriptionAfterOnboarding,
 } from '../../contextMaterials';
 import {
   attachTraceHooks,
@@ -50,6 +54,7 @@ import {
   emitAssistantMessageBubble,
   persistAssistantContent,
   resolveQuoteFields,
+  isQuietChatOrigin,
   type ChatStartPayload,
   type ChatStartResult,
   type LiveAssistantState,
@@ -68,7 +73,7 @@ export async function startBotTurn(
 
       const quote = resolveQuoteFields(ctx.storage, bot.id, payload.quoteMessageId, text);
       const attachments = normalizeMessageAttachments(payload.attachments);
-      const isAutoContinue = payload.origin === 'auto_continue';
+      const isAutoContinue = isQuietChatOrigin(payload.origin);
       const userMsg: ChatMessage = {
         id: createId('msg'),
         role: 'user',
@@ -148,7 +153,7 @@ export async function startBotTurn(
         controller,
       });
       try {
-        const agentsMd = ctx.storage.readAgentsMd(bot.id);
+        const soulMd = ctx.storage.readSoulMd(bot.id);
         const skillsText = ctx.storage.formatSkillsForPrompt(bot.id);
         const skillLookup = skillLookupFor(ctx.storage, bot.id);
         const memoriesText = ctx.storage.formatMemoriesForPrompt(bot.id);
@@ -162,7 +167,7 @@ export async function startBotTurn(
           .filter((m) => (m.id === userMsg.id ? true : Boolean(m.content?.trim())));
 
         const prior = allMessages.filter((m) => m.id !== userMsg.id);
-        const staticText = [agentsMd, skillsText, memoriesText, bot.name, bot.description, text]
+        const staticText = [soulMd, skillsText, memoriesText, bot.name, bot.description, text]
           .filter(Boolean)
           .join('\n');
         const existingSummary = ctx.storage.readSessionSummary(bot.id);
@@ -237,7 +242,7 @@ export async function startBotTurn(
 
           botName: bot.name,
           botDescription: bot.description,
-          agentsMd,
+          soulMd,
           skillsText,
           skillLookup,
           historySearch: historySearchForOwner(ctx.storage, bot.id),
@@ -264,7 +269,6 @@ export async function startBotTurn(
           model: modelConfig,
           tools: settings.tools,
           security: settings.security,
-          maxTurns: settings.maxTurns,
           toolRunBudget: guards.budget,
           extraTools: await mcpToolsForRun(settings, guards.budget),
           history: [], // model history via session
@@ -420,11 +424,26 @@ export async function startBotTurn(
         if (bot.onboardingComplete === false && !controller.signal.aborted) {
           try {
             ctx.storage.finishBotOnboarding(bot.id, {});
+            // Same immediate description seed as UI finishBotOnboarding (no turn throttle).
+            void seedBotDescriptionAfterOnboarding({
+              storage: ctx.storage,
+              botId: bot.id,
+              answers: {},
+              signal: controller.signal,
+            }).catch((err) => {
+              console.error('[okbot] post-onboarding description seed failed', err);
+            });
           } catch (err) {
             console.error('[okbot] soft onboarding close failed', err);
           }
         }
-        // Silent AGENTS.md / skills / memory maintenance (throttled) — next turn reloads from disk.
+        // After skip greeting: next real user reply must evolve description (bypass SOUL throttle).
+        if (payload.origin === 'onboarding_skip' && !controller.signal.aborted) {
+          markPendingDescriptionAfterOnboardingSkip(bot.id);
+        }
+        const forceDescription =
+          !isAutoContinue && hasPendingDescriptionAfterOnboardingSkip(bot.id);
+        // Silent SOUL.md / skills / memory maintenance (throttled) — next turn reloads from disk.
         try {
           if (!controller.signal.aborted) {
             await withOwnerMaintenanceLock(bot.id, () =>
@@ -433,14 +452,17 @@ export async function startBotTurn(
                 botId: bot.id,
                 botName: bot.name,
                 model: modelConfig,
-                agentsMd,
+                soulMd,
                 userText: text,
                 signal: controller.signal,
+                ...(forceDescription ? { forceDescription: true } : {}),
               }),
             );
           }
         } catch (err) {
-          console.error('[okbot] AGENTS.md/skills/memory refresh failed', err);
+          console.error('[okbot] SOUL.md/skills/memory refresh failed', err);
+        } finally {
+          if (forceDescription) clearPendingDescriptionAfterOnboardingSkip(bot.id);
         }
         return { userMessage: userMsg, assistantMessage: live.assistantMsg };
       } catch (err) {

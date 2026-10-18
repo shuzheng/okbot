@@ -4,7 +4,7 @@ export type { ContextMaterial, ContextMaterialCadence, ContextMaterialKind } fro
 
 /** Desktop-owned materials that share planPostTurnMaintenance cadence. */
 export const SCHEDULED_CONTEXT_MATERIALS: ContextMaterialKind[] = [
-  'agentsMd',
+  'soulMd',
   'skills',
   'memories',
 ];

@@ -9,22 +9,22 @@ import {
   type MaintenanceSettings,
 } from '@okbot/shared';
 
-export type MaintenanceKind = 'memory' | 'agents' | 'skills';
+export type MaintenanceKind = 'memory' | 'soul' | 'skills';
 
 export type MaintenanceCounters = {
   turnsSince: Record<MaintenanceKind, number>;
   charsSince: Record<MaintenanceKind, number>;
 };
 
-const KINDS: MaintenanceKind[] = ['memory', 'agents', 'skills'];
+const KINDS: MaintenanceKind[] = ['memory', 'soul', 'skills'];
 
 /** In-process counters per chat owner (bot or squad). Lost on restart — fail open to a light refresh. */
 const counterByOwner = new Map<string, MaintenanceCounters>();
 
 export function createMaintenanceCounters(): MaintenanceCounters {
   return {
-    turnsSince: { memory: 0, agents: 0, skills: 0 },
-    charsSince: { memory: 0, agents: 0, skills: 0 },
+    turnsSince: { memory: 0, soul: 0, skills: 0 },
+    charsSince: { memory: 0, soul: 0, skills: 0 },
   };
 }
 
@@ -55,7 +55,7 @@ export function userAskedToRemember(text: string): boolean {
 
 export type MaintenancePlan = {
   runMemory: boolean;
-  runAgents: boolean;
+  runSoul: boolean;
   runSkills: boolean;
 };
 
@@ -84,9 +84,9 @@ export function planPostTurnMaintenance(input: {
     forceMemory ||
     next.turnsSince.memory >= s.memoryEveryTurns ||
     next.charsSince.memory >= s.memoryEveryUserChars;
-  const runAgents =
-    next.turnsSince.agents >= s.agentsEveryTurns ||
-    next.charsSince.agents >= s.agentsEveryUserChars;
+  const runSoul =
+    next.turnsSince.soul >= s.soulEveryTurns ||
+    next.charsSince.soul >= s.soulEveryUserChars;
   const runSkills =
     next.turnsSince.skills >= s.skillsEveryTurns ||
     next.charsSince.skills >= s.skillsEveryUserChars;
@@ -95,9 +95,9 @@ export function planPostTurnMaintenance(input: {
     next.turnsSince.memory = 0;
     next.charsSince.memory = 0;
   }
-  if (runAgents) {
-    next.turnsSince.agents = 0;
-    next.charsSince.agents = 0;
+  if (runSoul) {
+    next.turnsSince.soul = 0;
+    next.charsSince.soul = 0;
   }
   if (runSkills) {
     next.turnsSince.skills = 0;
@@ -108,5 +108,5 @@ export function planPostTurnMaintenance(input: {
   input.counters.turnsSince = next.turnsSince;
   input.counters.charsSince = next.charsSince;
 
-  return { runMemory, runAgents, runSkills, counters: next };
+  return { runMemory, runSoul, runSkills, counters: next };
 }

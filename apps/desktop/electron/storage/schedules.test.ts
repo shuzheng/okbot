@@ -2,10 +2,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { isUlid } from '@okbot/shared';
 import {
   computeNextRunAt,
+  resolveScheduleTimezone,
   createScheduledJob,
   formatScheduleSpec,
+  migrateSchedulesJsonToJsonl,
   normalizeSchedulesFile,
   parseCron,
   parseScheduleString,
@@ -102,7 +105,7 @@ assert.equal(parseCron('bad'), null);
     timezone: 'Asia/Shanghai',
     now: new Date('2026-03-15T00:00:00.000Z'),
   });
-  assert.ok(job.id.startsWith('sched_'));
+  assert.ok(isUlid(job.id), `new job id must be ULID, got ${job.id}`);
   assert.ok(job.nextRunAt);
   assert.equal(job.enabled, true);
   const paused = refreshJobNextRun({ ...job, enabled: false });
@@ -111,7 +114,7 @@ assert.equal(parseCron('bad'), null);
 
 {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'okbot-sched-'));
-  const file = path.join(root, 'schedules.json');
+  const file = path.join(root, 'schedules.jsonl');
   const job = createScheduledJob({
     ownerId: 'bot_a',
     prompt: 'hi',
@@ -119,13 +122,89 @@ assert.equal(parseCron('bad'), null);
     timezone: 'UTC',
     now: new Date('2026-01-01T00:00:00.000Z'),
   });
+  assert.ok(isUlid(job.id));
   writeSchedulesFile(file, { version: 1, jobs: [job] });
+  assert.ok(fs.existsSync(file));
+  const raw = fs.readFileSync(file, 'utf8').trim();
+  assert.equal(raw.split('\n').length, 1);
+  const lineObj = JSON.parse(raw) as { id?: string; jobs?: unknown };
+  assert.equal(lineObj.id, job.id);
+  assert.equal(lineObj.jobs, undefined, 'jsonl line must be a job, not {version,jobs}');
   const loaded = readSchedulesFile(file, 'bot_a');
   assert.equal(loaded.jobs.length, 1);
   assert.equal(loaded.jobs[0]!.prompt, 'hi');
   assert.equal(loaded.jobs[0]!.ownerId, 'bot_a');
+  assert.equal(loaded.jobs[0]!.id, job.id);
   const norm = normalizeSchedulesFile({ jobs: [{ id: '', prompt: 'x' }] }, 'bot_a');
   assert.equal(norm.jobs.length, 0);
+  fs.rmSync(root, { recursive: true, force: true });
+}
+
+{
+  // Legacy schedules.json → schedules.jsonl migration keeps old ids.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'okbot-sched-mig-'));
+  const legacy = path.join(root, 'schedules.json');
+  const jsonl = path.join(root, 'schedules.jsonl');
+  const legacyJob = {
+    id: 'sched_legacy_keep_me',
+    ownerId: 'bot_m',
+    title: '旧',
+    prompt: 'migrate me',
+    enabled: true,
+    timezone: 'UTC',
+    schedule: { kind: 'daily', hour: 7, minute: 0 },
+    nextRunAt: '2026-01-02T07:00:00.000Z',
+    lastRunAt: null,
+    lastError: null,
+    once: false,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  };
+  fs.writeFileSync(legacy, JSON.stringify({ version: 1, jobs: [legacyJob] }, null, 2), 'utf8');
+  assert.equal(migrateSchedulesJsonToJsonl(jsonl, 'bot_m'), true);
+  assert.ok(fs.existsSync(jsonl));
+  assert.ok(!fs.existsSync(legacy), 'legacy schedules.json should be deleted after migrate');
+  const loaded = readSchedulesFile(jsonl, 'bot_m');
+  assert.equal(loaded.jobs.length, 1);
+  assert.equal(loaded.jobs[0]!.id, 'sched_legacy_keep_me');
+  assert.equal(loaded.jobs[0]!.prompt, 'migrate me');
+  // Second call is a no-op (no leftover json).
+  assert.equal(migrateSchedulesJsonToJsonl(jsonl, 'bot_m'), false);
+  fs.rmSync(root, { recursive: true, force: true });
+}
+
+{
+  // readSchedulesFile auto-migrates when only legacy JSON is present.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'okbot-sched-auto-'));
+  const legacy = path.join(root, 'schedules.json');
+  const jsonl = path.join(root, 'schedules.jsonl');
+  fs.writeFileSync(
+    legacy,
+    JSON.stringify({
+      version: 1,
+      jobs: [
+        {
+          id: 'sched_auto_1',
+          prompt: 'auto',
+          enabled: true,
+          timezone: '',
+          schedule: { kind: 'hourly', minute: 0 },
+          nextRunAt: null,
+          lastRunAt: null,
+          lastError: null,
+          once: false,
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+    }),
+    'utf8',
+  );
+  const loaded = readSchedulesFile(jsonl, 'bot_auto');
+  assert.equal(loaded.jobs.length, 1);
+  assert.equal(loaded.jobs[0]!.id, 'sched_auto_1');
+  assert.ok(fs.existsSync(jsonl));
+  assert.ok(!fs.existsSync(legacy));
   fs.rmSync(root, { recursive: true, force: true });
 }
 
@@ -167,6 +246,16 @@ assert.equal(parseCron('bad'), null);
   const ms = performance.now() - t0;
   assert.ok(next);
   assert.ok(ms < 200, `weekday cron should be fast (took ${ms}ms)`);
+}
+
+
+{
+  // Empty job tz + app timezone → app zone; empty both → host local.
+  assert.equal(resolveScheduleTimezone('', 'Asia/Tokyo'), 'Asia/Tokyo');
+  assert.equal(resolveScheduleTimezone('UTC', 'Asia/Tokyo'), 'UTC');
+  assert.equal(resolveScheduleTimezone('Not/AZone', 'Asia/Shanghai'), 'Asia/Shanghai');
+  const host = resolveScheduleTimezone('', '');
+  assert.ok(typeof host === 'string' && host.length > 0);
 }
 
 console.log('schedules.test.ts OK');

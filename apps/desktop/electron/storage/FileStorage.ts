@@ -115,10 +115,11 @@ export class FileStorage {
       squadDir: (id) => this.squadDir(id),
       ownerDir: (id) => this.ownerDir(id),
       sessionFile: (id) => this.sessionFile(id),
-      agentsMdPath: (id) => this.agentsMdPath(id),
+      soulMdPath: (id) => this.soulMdPath(id),
       botSkillsDir: (id) => this.botSkillsDir(id),
       botResourcesDir: (id) => this.botResourcesDir(id),
       botConfigPath: (id) => this.botConfigPath(id),
+      squadConfigPath: (id) => this.squadConfigPath(id),
       ensureMemoryFile: (file) => this.memoryStore.ensureMemoryFile(file),
       botMemoryPath: (id) => this.memoryStore.botMemoryPath(id),
       noteSessionsChanged: (id, reason) => this.noteSessionsChanged(id, reason),
@@ -146,6 +147,7 @@ export class FileStorage {
       assertKnownOwnerId: (id) => this.rosterStore.assertKnownOwnerId(id),
       listBots: () => this.rosterStore.listBots(),
       listSquads: () => this.rosterStore.listSquads(),
+      getAppTimezone: () => this.settingsStore.getSettings().timezone || '',
     });
 
     this.pendingHitlStore = new PendingHitlStore(this.life, {
@@ -171,15 +173,19 @@ export class FileStorage {
       assertKnownBotId: (id) => this.rosterStore.assertKnownBotId(id),
       listRoster: () => this.rosterStore.listRoster(),
       readBotConfig: (id) => this.rosterStore.readBotConfig(id),
-      readAgentsMd: (id) => this.rosterStore.readAgentsMd(id),
+      readSoulMd: (id) => this.rosterStore.readSoulMd(id),
       listSkills: (id) => this.skillsStore.listSkills(id),
       createBot: (input) => this.rosterStore.createBot(input),
-      writeAgentsMd: (id, content) => this.rosterStore.writeAgentsMd(id, content),
+      writeSoulMd: (id, content) => this.rosterStore.writeSoulMd(id, content),
       writeSkill: (id, skill) => this.skillsStore.writeSkill(id, skill),
       writeBotConfig: (cfg) => this.rosterStore.writeBotConfig(cfg),
       deleteBot: (id) => this.rosterStore.deleteBot(id),
       listBots: () => this.rosterStore.listBots(),
     });
+
+    // Backfill name+description into each <id>/bot.json and <id>/squad.json for
+    // owners created before dual-write. Every-load safe (only rewrites on mismatch).
+    this.rosterStore.syncAllOwnerConfigNameDescriptions();
   }
 
   // ── paths / layout (shared) ─────────────────────────────────
@@ -200,8 +206,8 @@ export class FileStorage {
     return path.join(this.botDir(botId), 'session.jsonl');
   }
 
-  private agentsMdPath(botId: string): string {
-    return path.join(this.botDir(botId), 'AGENTS.md');
+  private soulMdPath(botId: string): string {
+    return path.join(this.botDir(botId), 'SOUL.md');
   }
 
   private botSkillsDir(botId: string): string {
@@ -216,12 +222,153 @@ export class FileStorage {
     return path.join(this.botDir(botId), 'bot.json');
   }
 
+  private squadConfigPath(squadId: string): string {
+    return path.join(this.squadDir(squadId), 'squad.json');
+  }
+
   ownerResourcesDir(ownerId: string): string {
     const id = assertSafeOwnerSegment(ownerId);
     this.life.assertOwnerAlive(id);
     const dir = path.join(this.ownerDir(id), 'resources');
     ensureDir(dir);
     return dir;
+  }
+
+  ownerUploadsDir(ownerId: string): string {
+    const id = assertSafeOwnerSegment(ownerId);
+    this.life.assertOwnerAlive(id);
+    const dir = path.join(this.ownerDir(id), 'uploads');
+    ensureDir(dir);
+    return dir;
+  }
+
+  /**
+   * Persist a composer attachment under ~/.okbot/<ownerId>/uploads/.
+   * Returns gateway-absolute path + media pathname for chat display.
+   */
+  saveOwnerUpload(
+    ownerId: string,
+    input: { name: string; buffer: Buffer; mime?: string | null },
+  ): {
+    kind: 'image' | 'file';
+    path: string;
+    name: string;
+    size: number;
+    mediaPath: string;
+    assetRel: string;
+  } {
+    const id = assertSafeOwnerSegment(ownerId);
+    this.life.assertOwnerAlive(id);
+    const buf = input.buffer;
+    if (!Buffer.isBuffer(buf) || buf.length <= 0) {
+      throw new Error('empty_upload');
+    }
+    const maxBytes = 25 * 1024 * 1024;
+    if (buf.length > maxBytes) {
+      throw new Error('upload_too_large');
+    }
+    const rawName = (input.name || 'file').trim() || 'file';
+    const base = path.basename(rawName.replace(/\\/g, '/'));
+    const safeBase =
+      base
+        .replace(/[^a-zA-Z0-9._\u4e00-\u9fff-]+/g, '_')
+        .replace(/^[._]+/, '')
+        .slice(0, 120) || 'file';
+    const ext = path.extname(safeBase).toLowerCase();
+    const imageExts = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']);
+    const mime = (input.mime || '').toLowerCase();
+    const kind: 'image' | 'file' =
+      imageExts.has(ext) || mime.startsWith('image/') ? 'image' : 'file';
+    // Prefer a real image extension when clipboard paste only had a mime.
+    let finalName = safeBase;
+    if (kind === 'image' && !imageExts.has(ext)) {
+      const fromMime =
+        mime === 'image/jpeg' || mime === 'image/jpg'
+          ? '.jpg'
+          : mime === 'image/webp'
+            ? '.webp'
+            : mime === 'image/gif'
+              ? '.gif'
+              : mime === 'image/bmp'
+                ? '.bmp'
+                : '.png';
+      finalName = `${safeBase}${fromMime}`;
+    }
+    const unique = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}_${finalName}`;
+    const dir = this.ownerUploadsDir(id);
+    const filePath = path.join(dir, unique);
+    fs.writeFileSync(filePath, buf);
+    const assetRel = `${id}/uploads/${unique}`;
+    const mediaPath = `/v1/media/${encodeURIComponent(id)}/uploads/${encodeURIComponent(unique)}`;
+    return {
+      kind,
+      path: filePath,
+      name: finalName,
+      size: buf.length,
+      mediaPath,
+      assetRel,
+    };
+  }
+
+
+  /** List files in owner `resources/` (newest mtime first). Non-recursive. */
+  listOwnerResources(ownerId: string): import('@okbot/shared').OwnerResourceInfo[] {
+    const id = assertSafeOwnerSegment(ownerId);
+    this.life.assertOwnerAlive(id);
+    const dir = path.join(this.ownerDir(id), 'resources');
+    if (!fs.existsSync(dir)) return [];
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return [];
+    }
+    const out: import('@okbot/shared').OwnerResourceInfo[] = [];
+    for (const ent of entries) {
+      if (!ent.isFile()) continue;
+      const name = ent.name;
+      if (!name || name.startsWith('.')) continue;
+      if (name.includes('/') || name.includes('\\') || name.includes('..')) continue;
+      const filePath = path.join(dir, name);
+      let st: fs.Stats;
+      try {
+        st = fs.statSync(filePath);
+      } catch {
+        continue;
+      }
+      if (!st.isFile()) continue;
+      const ext = path.extname(name).toLowerCase();
+      const mime =
+        ext === '.jpg' || ext === '.jpeg'
+          ? 'image/jpeg'
+          : ext === '.png'
+            ? 'image/png'
+            : ext === '.webp'
+              ? 'image/webp'
+              : ext === '.gif'
+                ? 'image/gif'
+                : ext === '.svg'
+                  ? 'image/svg+xml'
+                  : ext === '.md'
+                    ? 'text/markdown'
+                    : ext === '.txt' || ext === '.log'
+                      ? 'text/plain'
+                      : ext === '.json'
+                        ? 'application/json'
+                        : ext === '.csv'
+                          ? 'text/csv'
+                          : 'application/octet-stream';
+      out.push({
+        name,
+        path: filePath,
+        size: st.size,
+        createdAt: new Date(st.mtimeMs).toISOString(),
+        mime,
+        assetRel: `${id}/resources/${name}`,
+      });
+    }
+    out.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '') || b.name.localeCompare(a.name));
+    return out;
   }
 
   private noteSessionsChanged(ownerId: string, reason: SessionsChangedReason): void {
@@ -358,12 +505,12 @@ export class FileStorage {
 
   // ── agents.md ───────────────────────────────────────────────
 
-  readAgentsMd(botId: string): string {
-    return this.rosterStore.readAgentsMd(botId);
+  readSoulMd(botId: string): string {
+    return this.rosterStore.readSoulMd(botId);
   }
 
-  writeAgentsMd(botId: string, content: string): void {
-    this.rosterStore.writeAgentsMd(botId, content);
+  writeSoulMd(botId: string, content: string): void {
+    this.rosterStore.writeSoulMd(botId, content);
   }
 
   // ── roster / bots / squads ──────────────────────────────────

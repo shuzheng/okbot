@@ -3,7 +3,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { execFile, type ChildProcess } from 'node:child_process';
-import { expandHome } from './guardrails.js';
+import { expandHome, resolveOwnerWorkPath } from './guardrails.js';
 import {
   foldExecStreamToFormatted,
   parseExecStreamSseBlocks,
@@ -182,8 +182,8 @@ async function runLocalShellCommand(
   }
 }
 
-async function readLocalFile(filePath: string): Promise<string> {
-  const resolved = path.resolve(expandHome(filePath.trim()));
+async function readLocalFile(filePath: string, resourcesDir?: string): Promise<string> {
+  const resolved = path.resolve(resolveOwnerWorkPath(filePath, resourcesDir));
   const stat = await fs.stat(resolved);
   if (!stat.isFile()) throw new Error(`不是普通文件: ${resolved}`);
   if (stat.size > MAX_FILE_BYTES) {
@@ -194,8 +194,8 @@ async function readLocalFile(filePath: string): Promise<string> {
   return truncate(`path: ${resolved}\n\n${buf.toString('utf8')}`);
 }
 
-async function writeLocalFile(filePath: string, content: string): Promise<string> {
-  const resolved = path.resolve(expandHome(filePath.trim()));
+async function writeLocalFile(filePath: string, content: string, resourcesDir?: string): Promise<string> {
+  const resolved = path.resolve(resolveOwnerWorkPath(filePath, resourcesDir));
   const ext = path.extname(resolved).toLowerCase();
   const binaryExts = new Set([
     '.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.bmp', '.pdf',
@@ -218,8 +218,9 @@ async function editLocalFile(
   filePath: string,
   oldText: string,
   newText: string,
+  resourcesDir?: string,
 ): Promise<string> {
-  const resolved = path.resolve(expandHome(filePath.trim()));
+  const resolved = path.resolve(resolveOwnerWorkPath(filePath, resourcesDir));
   let stat;
   try {
     stat = await fs.stat(resolved);
@@ -259,13 +260,18 @@ async function editLocalFile(
 }
 
 /** Local desktop host backend (default). */
-export function createLocalExecutionBackend(): ExecutionBackend {
+export function createLocalExecutionBackend(opts?: {
+  /** `~/.okbot/<owner>/resources` — relative write/read/edit paths resolve here. */
+  resourcesDir?: string | null;
+}): ExecutionBackend {
+  const resourcesDir = (opts?.resourcesDir || '').trim() || undefined;
   return {
     label: '本机',
     runShell: runLocalShellCommand,
-    readFile: readLocalFile,
-    writeFile: writeLocalFile,
-    editFile: editLocalFile,
+    readFile: (filePath) => readLocalFile(filePath, resourcesDir),
+    writeFile: (filePath, content) => writeLocalFile(filePath, content, resourcesDir),
+    editFile: (filePath, oldText, newText) =>
+      editLocalFile(filePath, oldText, newText, resourcesDir),
   };
 }
 
@@ -509,9 +515,11 @@ export async function probeRemoteComputer(
 export function resolveExecutionBackend(input: {
   computerId?: string | null;
   computers?: Array<{ id: string; name: string; host: string; port: number; token: string }>;
+  /** Owner resources dir for local relative fs paths. */
+  resourcesDir?: string | null;
 }): ExecutionBackend {
   const id = (input.computerId || 'local').trim() || 'local';
-  if (id === 'local') return createLocalExecutionBackend();
+  if (id === 'local') return createLocalExecutionBackend({ resourcesDir: input.resourcesDir });
   const list = Array.isArray(input.computers) ? input.computers : [];
   const entry = list.find((c) => c.id === id);
   if (!entry) {

@@ -1,4 +1,4 @@
-import { Fragment, memo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
+import { Fragment, memo, useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import { BorderBeam } from 'border-beam';
 import { ThinkingOrb, type OrbState } from 'thinking-orbs';
 import {
@@ -22,8 +22,19 @@ import {
   ImageAttachIcon,
   ChevronDownIcon,
   ImmersiveChatIcon,
+  QuoteMessageIcon,
+  QuoteReplyIcon,
+  ViewPromptContextIcon,
+  TokenUsageBarsIcon,
+  TurnTraceIcon,
 } from '../../components/ui/icons';
+import { BubbleMoreMenu } from './BubbleMoreMenu';
 import { resolveMessageAttachments } from '../../utils/messageAttachments';
+import {
+  mediaPathFromAbsolute,
+  parseOwnerResourceSrc,
+  resolveMediaAssetUrl,
+} from '../../utils/mediaAsset';
 import { isAvatarAccentHex, userBubbleTintStyle } from '../../utils/userBubbleTint';
 import {
   formatSessionUpdatedAt,
@@ -37,7 +48,7 @@ import { ParallelTasksStrip, type ParallelTask } from './ParallelTasksStrip';
 import { OpenTasksPanel } from './OpenTasksPanel';
 import type { TaskRecord } from '@okbot/shared';
 import { TokenUsagePopover } from './TokenUsagePopover';
-import { BubbleSwipeRow } from './BubbleSwipeRow';
+import { BubbleSwipeRow, useMessagesSwipeReveal } from './BubbleSwipeRow';
 import { MeshExchangeModal } from './MeshExchangeModal';
 import {
   buildMeshReceivedCollapse,
@@ -110,44 +121,142 @@ function AttachKindIcon({ kind }: { kind: MessageAttachment['kind'] }) {
 }
 
 
-function BubbleUsageButton({
+/** Usage popover opened from the assistant ··· menu (anchor = more button). */
+function BubbleUsageFromMenu({
   lang,
   message,
   modelRef,
+  open,
+  anchorEl,
+  onClose,
 }: {
   lang: UiLang;
   message: ChatMessage;
   modelRef?: string;
+  open: boolean;
+  anchorEl: HTMLElement | null;
+  onClose: () => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const btnRef = useRef<HTMLButtonElement | null>(null);
+  if (!open) return null;
   return (
-    <>
+    <TokenUsagePopover
+      lang={lang}
+      usage={message.usage}
+      modelRef={modelRef}
+      anchorEl={anchorEl}
+      onClose={onClose}
+    />
+  );
+}
+
+function UserBubbleActions({
+  lang,
+  message,
+  showAdvancedSettings,
+  onCopyMessage,
+  onOpenPromptContext,
+  onQuoteMessage,
+}: {
+  lang: UiLang;
+  message: ChatMessage;
+  showAdvancedSettings: boolean;
+  onCopyMessage: (message: ChatMessage) => boolean | Promise<boolean>;
+  onOpenPromptContext: (messageId: string) => void;
+  onQuoteMessage: (message: ChatMessage) => void;
+}) {
+  const moreItems = showAdvancedSettings
+    ? [
+        {
+          id: 'prompt-context',
+          label: t(lang, 'viewPromptContext'),
+          icon: <ViewPromptContextIcon />,
+          onSelect: () => onOpenPromptContext(message.id),
+        },
+      ]
+    : [];
+  return (
+    <div className="bubble-actions">
+      {moreItems.length ? (
+        <BubbleMoreMenu lang={lang} items={moreItems} preferLeft={false} />
+      ) : null}
+      <BubbleCopyButton lang={lang} message={message} onCopyMessage={onCopyMessage} />
       <button
-        ref={btnRef}
         type="button"
-        className={`bubble-action-btn${open ? ' is-active' : ''}`}
-        title={t(lang, 'viewTokenUsage')}
-        aria-label={t(lang, 'viewTokenUsage')}
-        aria-expanded={open}
-        aria-haspopup="dialog"
-        onClick={() => setOpen((v) => !v)}
+        className="bubble-action-btn"
+        title={t(lang, 'quoteMessage')}
+        aria-label={t(lang, 'quoteMessage')}
+        onClick={() => onQuoteMessage(message)}
       >
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
-          <path d="M4 19V5M4 19h16" />
-          <path d="M8 15v-4M12 15V8M16 15v-7" />
-        </svg>
+        <QuoteMessageIcon />
       </button>
-      {open ? (
-        <TokenUsagePopover
+    </div>
+  );
+}
+
+function AssistantBubbleActions({
+  lang,
+  message,
+  showAdvancedSettings,
+  usageModelRef,
+  onCopyMessage,
+  onQuoteMessage,
+  onViewTurnTrace,
+}: {
+  lang: UiLang;
+  message: ChatMessage;
+  showAdvancedSettings: boolean;
+  usageModelRef?: string;
+  onCopyMessage: (message: ChatMessage) => boolean | Promise<boolean>;
+  onQuoteMessage: (message: ChatMessage) => void;
+  onViewTurnTrace: (message: ChatMessage) => void;
+}) {
+  const moreBtnRef = useRef<HTMLButtonElement | null>(null);
+  const [usageOpen, setUsageOpen] = useState(false);
+  const moreItems = showAdvancedSettings
+    ? [
+        {
+          id: 'token-usage',
+          label: t(lang, 'viewTokenUsage'),
+          icon: <TokenUsageBarsIcon />,
+          onSelect: () => setUsageOpen(true),
+        },
+        {
+          id: 'turn-trace',
+          label: t(lang, 'viewTurnTrace'),
+          icon: <TurnTraceIcon />,
+          onSelect: () => onViewTurnTrace(message),
+        },
+      ]
+    : [];
+  return (
+    <div className={`bubble-actions${usageOpen ? ' is-pinned' : ''}`}>
+      <button
+        type="button"
+        className="bubble-action-btn"
+        title={t(lang, 'quoteMessage')}
+        aria-label={t(lang, 'quoteMessage')}
+        onClick={() => onQuoteMessage(message)}
+      >
+        <QuoteReplyIcon />
+      </button>
+      <BubbleCopyButton lang={lang} message={message} onCopyMessage={onCopyMessage} />
+      {moreItems.length ? (
+        <BubbleMoreMenu
           lang={lang}
-          usage={message.usage}
-          modelRef={modelRef}
-          anchorEl={btnRef.current}
-          onClose={() => setOpen(false)}
+          items={moreItems}
+          preferLeft
+          buttonRef={moreBtnRef}
         />
       ) : null}
-    </>
+      <BubbleUsageFromMenu
+        lang={lang}
+        message={message}
+        modelRef={usageModelRef}
+        open={usageOpen}
+        anchorEl={moreBtnRef.current}
+        onClose={() => setUsageOpen(false)}
+      />
+    </div>
   );
 }
 
@@ -185,6 +294,59 @@ function BubbleCopyButton({
   );
 }
 
+function MessageAttachImage({
+  attachment,
+}: {
+  attachment: MessageAttachment;
+}) {
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const parsed =
+      parseOwnerResourceSrc(attachment.path) ||
+      (attachment.path.startsWith('/v1/media/')
+        ? parseOwnerResourceSrc(attachment.path)
+        : null);
+    const assetRel =
+      parsed?.assetRel ||
+      mediaPathFromAbsolute(attachment.path)?.assetRel ||
+      null;
+    if (!assetRel) {
+      setSrc(null);
+      return;
+    }
+    void resolveMediaAssetUrl(assetRel).then((url) => {
+      if (!cancelled) setSrc(url);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [attachment.path]);
+
+  if (!src) {
+    return (
+      <div className="message-attach-chip" role="listitem" title={attachment.path}>
+        <span className="message-attach-chip-icon" aria-hidden>
+          <ImageAttachIcon />
+        </span>
+        <span className="message-attach-chip-name">{attachment.name}</span>
+      </div>
+    );
+  }
+  return (
+    <a
+      className="message-attach-image"
+      href={src}
+      target="_blank"
+      rel="noreferrer"
+      role="listitem"
+      title={attachment.name}
+    >
+      <img src={src} alt={attachment.name} loading="lazy" />
+    </a>
+  );
+}
+
 function MessageAttachmentChips({
   attachments,
   lang,
@@ -199,19 +361,23 @@ function MessageAttachmentChips({
       role="list"
       aria-label={t(lang, 'attachSent')}
     >
-      {attachments.map((a, i) => (
-        <div
-          key={`${a.kind}:${a.path}:${i}`}
-          className="message-attach-chip"
-          role="listitem"
-          title={a.path}
-        >
-          <span className="message-attach-chip-icon" aria-hidden>
-            <AttachKindIcon kind={a.kind} />
-          </span>
-          <span className="message-attach-chip-name">{a.name}</span>
-        </div>
-      ))}
+      {attachments.map((a, i) =>
+        a.kind === 'image' ? (
+          <MessageAttachImage key={`${a.kind}:${a.path}:${i}`} attachment={a} />
+        ) : (
+          <div
+            key={`${a.kind}:${a.path}:${i}`}
+            className="message-attach-chip"
+            role="listitem"
+            title={a.path}
+          >
+            <span className="message-attach-chip-icon" aria-hidden>
+              <AttachKindIcon kind={a.kind} />
+            </span>
+            <span className="message-attach-chip-name">{a.name}</span>
+          </div>
+        ),
+      )}
     </div>
   );
 }
@@ -257,6 +423,10 @@ export const ChatTranscript = memo(function ChatTranscript({
   showAdvancedSettings = false,
 }: ChatTranscriptProps) {
   const [meshViewMessage, setMeshViewMessage] = useState<ChatMessage | null>(null);
+  // Close assistant-to-assistant overlay when the user switches sessions.
+  useEffect(() => {
+    setMeshViewMessage(null);
+  }, [selectedBot?.id, selectedSquad?.id]);
   const sessionOwnerId = selectedSquad ? undefined : selectedBot?.id;
   const meshRecvCollapse = buildMeshReceivedCollapse(messages, sessionOwnerId);
   // Squad has no squad-level color; tint only when 1:1 bot accent is set.
@@ -265,6 +435,9 @@ export const ChatTranscript = memo(function ChatTranscript({
       ? selectedBot.color
       : undefined;
   const userBubbleTint = userBubbleTintStyle(userBubbleAccent);
+
+  // Swipe-to-reveal HH:MM on the whole messages area (gaps included).
+  useMessagesSwipeReveal(messagesBoxRef);
 
   const renderToolCard = (card: ToolCard) => (
     <ToolCardView
@@ -281,12 +454,11 @@ export const ChatTranscript = memo(function ChatTranscript({
     <>
       <div className="messages-shell">
         <div
-          className={`messages scroll-fade${userBubbleAccent ? ' has-user-bubble-tint' : ''}${
-            busy ? ' has-turn-status' : ''
-          }`}
+          className={`messages scroll-fade${userBubbleAccent ? ' has-user-bubble-tint' : ''}`}
           style={userBubbleTint as CSSProperties | undefined}
           ref={messagesBoxRef}
         >
+          <div className="messages-content">
           {loadingOlder ? (
             <div className="messages-page-hint">{t(lang, 'loadEarlierMessages')}</div>
           ) : hasMoreOlder ? (
@@ -450,37 +622,14 @@ export const ChatTranscript = memo(function ChatTranscript({
                         ) : null}
                         <MessageAttachmentChips attachments={userAttachments} lang={lang} />
                         <div className="bubble-body-row">
-                          <div className="bubble-actions">
-                            <BubbleCopyButton
-                              lang={lang}
-                              message={m}
-                              onCopyMessage={onCopyMessage}
-                            />
-                            {showAdvancedSettings ? (
-                              <button
-                                type="button"
-                                className="bubble-action-btn"
-                                title={t(lang, 'viewPromptContext')}
-                                aria-label={t(lang, 'viewPromptContext')}
-                                onClick={() => onOpenPromptContext(m.id)}
-                              >
-                                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
-                                  <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
-                                </svg>
-                              </button>
-                            ) : null}
-                            <button
-                              type="button"
-                              className="bubble-action-btn"
-                              title={t(lang, 'quoteMessage')}
-                              aria-label={t(lang, 'quoteMessage')}
-                              onClick={() => onQuoteMessage(m)}
-                            >
-                              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden>
-                                <path d="M7.2 18c1.9 0 3.3-1.5 3.3-3.4 0-1.8-1.3-3.1-3-3.1-.2 0-.5 0-.7.1.3-1.7 1.6-3.1 3.4-3.8L9.4 6C6.3 7.2 4 10 4 14.1 4 16.4 5.4 18 7.2 18zm9.3 0c1.9 0 3.3-1.5 3.3-3.4 0-1.8-1.3-3.1-3-3.1-.2 0-.5 0-.7.1.3-1.7 1.6-3.1 3.4-3.8L18.7 6C15.6 7.2 13.3 10 13.3 14.1c0 2.3 1.4 3.9 3.2 3.9z" />
-                              </svg>
-                            </button>
-                          </div>
+                          <UserBubbleActions
+                            lang={lang}
+                            message={m}
+                            showAdvancedSettings={showAdvancedSettings}
+                            onCopyMessage={onCopyMessage}
+                            onOpenPromptContext={onOpenPromptContext}
+                            onQuoteMessage={onQuoteMessage}
+                          />
                           {m.sendStatus === 'pending' ? (
                             <BorderBeam
                               className="bubble-send-beam"
@@ -547,43 +696,15 @@ export const ChatTranscript = memo(function ChatTranscript({
                             bots={bots}
                           />
                         </div>
-                        <div className="bubble-actions">
-                          {showAdvancedSettings ? (
-                            <>
-                              <BubbleUsageButton lang={lang} message={m} modelRef={usageModelRef} />
-                              <button
-                                type="button"
-                                className="bubble-action-btn"
-                                title={t(lang, 'viewTurnTrace')}
-                                aria-label={t(lang, 'viewTurnTrace')}
-                                onClick={() => onViewTurnTrace(m)}
-                              >
-                                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
-                                  <path d="M4 6h8" />
-                                  <path d="M4 12h14" />
-                                  <path d="M4 18h10" />
-                                  <path d="M4 4v16" />
-                                </svg>
-                              </button>
-                            </>
-                          ) : null}
-                          <button
-                            type="button"
-                            className="bubble-action-btn"
-                            title={t(lang, 'quoteMessage')}
-                            aria-label={t(lang, 'quoteMessage')}
-                            onClick={() => onQuoteMessage(m)}
-                          >
-                            <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden>
-                              <path d="M7.2 18c1.9 0 3.3-1.5 3.3-3.4 0-1.8-1.3-3.1-3-3.1-.2 0-.5 0-.7.1.3-1.7 1.6-3.1 3.4-3.8L9.4 6C6.3 7.2 4 10 4 14.1 4 16.4 5.4 18 7.2 18zm9.3 0c1.9 0 3.3-1.5 3.3-3.4 0-1.8-1.3-3.1-3-3.1-.2 0-.5 0-.7.1.3-1.7 1.6-3.1 3.4-3.8L18.7 6C15.6 7.2 13.3 10 13.3 14.1c0 2.3 1.4 3.9 3.2 3.9z" />
-                            </svg>
-                          </button>
-                          <BubbleCopyButton
-                            lang={lang}
-                            message={m}
-                            onCopyMessage={onCopyMessage}
-                          />
-                        </div>
+                        <AssistantBubbleActions
+                          lang={lang}
+                          message={m}
+                          showAdvancedSettings={showAdvancedSettings}
+                          usageModelRef={usageModelRef}
+                          onCopyMessage={onCopyMessage}
+                          onQuoteMessage={onQuoteMessage}
+                          onViewTurnTrace={onViewTurnTrace}
+                        />
                       </div>
                     )}
                   </BubbleSwipeRow>
@@ -598,7 +719,19 @@ export const ChatTranscript = memo(function ChatTranscript({
                 !messages.some((m) => m.id === c.messageId),
             )
             .map((card) => renderToolCard(card))}
+          {busy ? (
+            <div className="chat-turn-status" aria-live="polite" aria-label={turnStatusText}>
+              <ThinkingOrb
+                state={turnPhaseOrbState[turnPhase]}
+                size={20}
+                theme={resolvedOrbTheme()}
+                aria-hidden
+              />
+              <span className="chat-turn-status-text">{turnStatusText}</span>
+            </div>
+          ) : null}
           <div ref={bottomRef} />
+          </div>
         </div>
         {showJumpToBottom ? (
           <QuickTip text={t(lang, 'scrollToBottom')}>
@@ -612,7 +745,6 @@ export const ChatTranscript = memo(function ChatTranscript({
             </button>
           </QuickTip>
         ) : null}
-        <QuickTip text={t(lang, immersiveChat ? 'immersiveChatExit' : 'immersiveChatEnable')}>
         <button
           type="button"
           className="immersive-chat-fab"
@@ -622,18 +754,6 @@ export const ChatTranscript = memo(function ChatTranscript({
         >
           <ImmersiveChatIcon immersive={immersiveChat} />
         </button>
-        </QuickTip>
-        {busy ? (
-          <div className="chat-turn-status" aria-live="polite" aria-label={turnStatusText}>
-            <ThinkingOrb
-              state={turnPhaseOrbState[turnPhase]}
-              size={20}
-              theme={resolvedOrbTheme()}
-              aria-hidden
-            />
-            <span className="chat-turn-status-text">{turnStatusText}</span>
-          </div>
-        ) : null}
       </div>
       <OpenTasksPanel lang={lang} tasks={openTasks} />
       <ParallelTasksStrip lang={lang} tasks={parallelTasks} onJump={onJumpParallelTask} />

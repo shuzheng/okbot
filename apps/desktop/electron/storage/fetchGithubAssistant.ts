@@ -169,17 +169,41 @@ async function loadPackageDir(
   const manifestRel = dirPath ? `${dirPath}/manifest.json` : 'manifest.json';
   const manifestRaw = await readGithubFile(owner, repo, ref, manifestRel, signal);
 
-  let agentsMd = '';
+  let soulMd = '';
   try {
-    agentsMd = await readGithubFile(
+    soulMd = await readGithubFile(
       owner,
       repo,
       ref,
-      dirPath ? `${dirPath}/AGENTS.md` : 'AGENTS.md',
+      dirPath ? `${dirPath}/SOUL.md` : 'SOUL.md',
       signal,
     );
   } catch {
-    /* optional */
+    try {
+      soulMd = await readGithubFile(
+        owner,
+        repo,
+        ref,
+        dirPath ? `${dirPath}/AGENTS.md` : 'AGENTS.md',
+        signal,
+      );
+    } catch {
+      /* optional */
+    }
+  }
+
+  let botJson: unknown;
+  try {
+    const botRaw = await readGithubFile(
+      owner,
+      repo,
+      ref,
+      dirPath ? `${dirPath}/bot.json` : 'bot.json',
+      signal,
+    );
+    botJson = JSON.parse(botRaw) as unknown;
+  } catch {
+    /* optional — legacy packages may omit bot.json */
   }
 
   const skillFiles: Array<{ slug: string; raw: string }> = [];
@@ -218,7 +242,7 @@ async function loadPackageDir(
   } catch {
     throw new Error('manifest.json 不是有效 JSON');
   }
-  return parseAssistantPackage({ manifest, agentsMd, skillFiles });
+  return parseAssistantPackage({ manifest, soulMd, skillFiles, botJson });
 }
 
 async function discoverPackage(

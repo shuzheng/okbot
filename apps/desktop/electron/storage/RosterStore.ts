@@ -1,13 +1,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  DEFAULT_AGENTS_MD,
+  DEFAULT_SOUL_MD,
+  clampSoulMd,
   type AppSettings,
   type Bot,
   type BotConfig,
   type BotOnboardingAnswers,
   type BotRosterEntry,
   type Squad,
+  type SquadConfig,
   type SquadMember,
   type CreateSquadInput,
   normalizeSquad,
@@ -41,10 +43,11 @@ export type RosterStoreDeps = {
   squadDir(squadId: string): string;
   ownerDir(ownerId: string): string;
   sessionFile(botId: string): string;
-  agentsMdPath(botId: string): string;
+  soulMdPath(botId: string): string;
   botSkillsDir(botId: string): string;
   botResourcesDir(botId: string): string;
   botConfigPath(botId: string): string;
+  squadConfigPath(squadId: string): string;
   ensureMemoryFile(file: string): void;
   botMemoryPath(botId: string): string;
   noteSessionsChanged(ownerId: string, reason: import('@okbot/shared').SessionsChangedReason): void;
@@ -88,15 +91,16 @@ export class RosterStore {
     ensureDir(this.deps.botDir(botId));
     ensureDir(this.deps.botSkillsDir(botId));
     ensureDir(this.deps.botResourcesDir(botId));
-    const agents = this.deps.agentsMdPath(botId);
-    if (!fs.existsSync(agents)) {
-      writeText(agents, DEFAULT_AGENTS_MD);
+    const soulPath = this.deps.soulMdPath(botId);
+    const legacyAgentsPath = path.join(this.deps.botDir(botId), 'AGENTS.md');
+    if (!fs.existsSync(soulPath) && !fs.existsSync(legacyAgentsPath)) {
+      writeText(soulPath, DEFAULT_SOUL_MD);
     }
     this.deps.ensureMemoryFile(this.deps.botMemoryPath(botId));
   }
 
 
-  /** `~/.okbot/<squadId>` — session + pending HITL + resources (no AGENTS/skills). */
+  /** `~/.okbot/<squadId>` — session + pending HITL + resources (no SOUL/skills). */
   private squadDir(squadId: string): string {
     return path.join(this.deps.root, squadId);
   }
@@ -118,19 +122,37 @@ export class RosterStore {
     this.ensureBotLayout(ownerId);
   }
 
-  readAgentsMd(botId: string): string {
+  readSoulMd(botId: string): string {
     this.assertKnownBotId(botId);
     this.ensureBotLayout(botId);
-    return fs.readFileSync(this.deps.agentsMdPath(botId), 'utf8');
+    const soulPath = this.deps.soulMdPath(botId);
+    if (fs.existsSync(soulPath)) {
+      return fs.readFileSync(soulPath, 'utf8');
+    }
+    const legacy = path.join(this.deps.botDir(botId), 'AGENTS.md');
+    if (fs.existsSync(legacy)) {
+      return fs.readFileSync(legacy, 'utf8');
+    }
+    return DEFAULT_SOUL_MD;
   }
 
-  writeAgentsMd(botId: string, content: string): void {
+  writeSoulMd(botId: string, content: string): void {
     this.assertKnownBotId(botId);
     this.ensureBotLayout(botId);
     // Never persist model CoT into system instructions (refresh / UI / sync).
     const stripped = stripThinkContent(typeof content === 'string' ? content : '').trimEnd();
-    const text = stripped.endsWith('\n') ? stripped : `${stripped}\n`;
-    writeText(this.deps.agentsMdPath(botId), text);
+    const text = clampSoulMd(stripped.endsWith('\n') ? stripped : `${stripped}\n`);
+    const soulPath = this.deps.soulMdPath(botId);
+    writeText(soulPath, text);
+    // Migrate: drop legacy AGENTS.md after writing SOUL.md.
+    const legacy = path.join(this.deps.botDir(botId), 'AGENTS.md');
+    if (fs.existsSync(legacy) && path.resolve(legacy) !== path.resolve(soulPath)) {
+      try {
+        fs.rmSync(legacy, { force: true });
+      } catch (err) {
+        console.error('[okbot] failed to remove legacy AGENTS.md', botId, err);
+      }
+    }
   }
 
 
@@ -192,6 +214,11 @@ export class RosterStore {
       : [];
     const config: BotConfig = {
       id: botId,
+      name:
+        typeof raw.name === 'string' && raw.name.trim()
+          ? raw.name.trim()
+          : '未命名助手',
+      description: clampOwnerDescription(raw.description),
       avatarKind,
       emoji: typeof raw.emoji === 'string' && raw.emoji.trim() ? raw.emoji.trim() : '🤖',
       color,
@@ -233,8 +260,22 @@ export class RosterStore {
             .filter(Boolean),
         )]
       : [];
+    // Prefer central roster name+description when present so bot.json stays dual-written.
+    // createBot writes bot.json before bots.json — fall back to config fields then.
+    const roster = this.listRoster().find((e) => e.id === config.id);
+    const name =
+      (roster?.name.trim() ||
+        (typeof config.name === 'string' ? config.name.trim() : '') ||
+        '未命名助手');
+    const description = clampOwnerDescription(
+      roster !== undefined ? roster.description : config.description,
+    );
+    config.name = name;
+    config.description = description;
     writeJson(this.deps.botConfigPath(config.id), {
       id: config.id,
+      name,
+      description,
       avatarKind,
       emoji: config.emoji,
       color: config.color,
@@ -252,6 +293,86 @@ export class RosterStore {
       useGlobalSkills: config.useGlobalSkills === true,
       enabledGlobalSkills,
     });
+  }
+
+  /** Dual-write name+description into `<squadId>/squad.json` for folder export. */
+  writeSquadConfig(squad: Pick<Squad, 'id' | 'name' | 'description'>): void {
+    ensureDir(this.deps.squadDir(squad.id));
+    const payload: SquadConfig = {
+      id: squad.id,
+      name: (squad.name || '').trim() || '未命名小队',
+      description: clampOwnerDescription(squad.description),
+    };
+    writeJson(this.deps.squadConfigPath(squad.id), payload);
+  }
+
+  /**
+   * Sync roster name+description into `<botId>/bot.json` when missing or stale.
+   * Every-load safe: reads raw disk fields and only rewrites on mismatch.
+   * No-op when bot.json is absent (cannot invent runtime fields).
+   */
+  syncBotConfigFromRoster(entry: BotRosterEntry): void {
+    const cfgPath = this.deps.botConfigPath(entry.id);
+    if (!fs.existsSync(cfgPath)) return;
+    const wantName = entry.name.trim() || '未命名助手';
+    const wantDesc = clampOwnerDescription(entry.description);
+    try {
+      const raw = readJson<Record<string, unknown>>(cfgPath, {});
+      const haveName =
+        typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : '';
+      const haveDesc = clampOwnerDescription(raw.description);
+      if (haveName === wantName && haveDesc === wantDesc) return;
+      const config = this.readBotConfig(entry.id);
+      config.name = wantName;
+      config.description = wantDesc;
+      this.writeBotConfig(config);
+    } catch (err) {
+      console.error('[okbot] syncBotConfigFromRoster failed', entry.id, err);
+    }
+  }
+
+  /**
+   * Sync squads.json name+description into `<squadId>/squad.json` when missing or stale.
+   * Every-load safe: only rewrites on mismatch / missing file.
+   */
+  syncSquadConfigFromRoster(squad: Pick<Squad, 'id' | 'name' | 'description'>): void {
+    const wantName = (squad.name || '').trim() || '未命名小队';
+    const wantDesc = clampOwnerDescription(squad.description);
+    const cfgPath = this.deps.squadConfigPath(squad.id);
+    try {
+      if (fs.existsSync(cfgPath)) {
+        const raw = readJson<Partial<SquadConfig>>(cfgPath, {});
+        const haveName =
+          typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : '';
+        const haveDesc = clampOwnerDescription(raw.description);
+        const haveId = typeof raw.id === 'string' ? raw.id : '';
+        if (haveId === squad.id && haveName === wantName && haveDesc === wantDesc) {
+          return;
+        }
+      }
+      this.writeSquadConfig({ id: squad.id, name: wantName, description: wantDesc });
+    } catch (err) {
+      console.error('[okbot] syncSquadConfigFromRoster failed', squad.id, err);
+    }
+  }
+
+  /**
+   * One-shot / every-load migration: walk bots.json + squads.json and dual-write
+   * name+description into each owner directory. Safe to call repeatedly.
+   */
+  syncAllOwnerConfigNameDescriptions(): void {
+    for (const entry of this.listRoster()) {
+      this.syncBotConfigFromRoster(entry);
+    }
+    // listSquads already syncs squad.json; call the walker directly to avoid
+    // re-entering model-binding rewrite when invoked from FileStorage init.
+    const raw = readJson<unknown[]>(this.deps.squadsPath, []);
+    if (!Array.isArray(raw)) return;
+    for (const item of raw) {
+      const s = normalizeSquad(item);
+      if (!s) continue;
+      this.syncSquadConfigFromRoster(s);
+    }
   }
 
   mergeBot(entry: BotRosterEntry, config: BotConfig): Bot {
@@ -286,6 +407,8 @@ export class RosterStore {
     const out: Bot[] = [];
     for (const entry of roster) {
       try {
+        // Backfill name+description into bot.json for legacy owners (every-load safe).
+        this.syncBotConfigFromRoster(entry);
         out.push(this.mergeBot(entry, this.readBotConfig(entry.id)));
       } catch (err) {
         console.error('[okbot] skip bot', entry.id, err);
@@ -354,6 +477,8 @@ export class RosterStore {
     };
     const config: BotConfig = {
       id,
+      name: entry.name,
+      description: entry.description,
       avatarKind,
       emoji: input.emoji?.trim() || '🤖',
       color,
@@ -469,9 +594,11 @@ export class RosterStore {
     // (touchBot / touchSquad). Profile edits must not reorder the sidebar.
     roster[idx] = entry;
     this.writeRoster(roster);
+    config.name = entry.name;
+    config.description = entry.description;
     this.writeBotConfig(config);
     if (profileChanged) {
-      this.syncAgentsMdProfile(id, entry.name, entry.description);
+      this.syncSoulMdProfile(id, entry.name, entry.description);
     }
     const bot = this.mergeBot(entry, config);
     this.deps.noteSessionsChanged(id, 'updated');
@@ -497,29 +624,27 @@ export class RosterStore {
 
 
 
-  /** Keep AGENTS.md identity lines in sync with roster name/description. */
-  syncAgentsMdProfile(botId: string, name: string, description: string): void {
+  /** Keep SOUL.md identity line in sync with roster name (short; no duty essay). */
+  syncSoulMdProfile(botId: string, name: string, description: string): void {
     this.ensureBotLayout(botId);
-    const prev = this.readAgentsMd(botId);
-    const duty = prev
-      .split('\n')
-      .map((l) => l.trim())
-      .find((l) => l.startsWith('当前主要职责：'));
-    const role = [
-      '# 角色与目标',
+    const prev = this.readSoulMd(botId);
+    // Prefer modern heading; still rewrite legacy「角色与目标」when present.
+    const hasLegacyRole = /^# 角色与目标\s*$/m.test(prev);
+    const heading = hasLegacyRole ? '角色与目标' : '个性与边界';
+    const identity = [
+      `# ${heading}`,
       '',
       `你是「${name}」，用户的本机个人助手。`,
       description.trim()
-        ? `对外简介：${description.trim()}。`
-        : '请用专业、可靠的方式协助用户完成任务。',
-      duty ?? null,
+        ? `对外简介（花名册）：${description.trim()}。`
+        : '保持清晰、可靠、有分寸的协作风格。',
       '',
-    ]
-      .filter((l) => l !== null)
-      .join('\n');
+    ].join('\n');
 
-    const stripped = prev.replace(/^# 角色与目标\s*\n[\s\S]*?(?=^# |\Z)/m, '').replace(/^\s+/, '');
-    this.writeAgentsMd(botId, `${role}${stripped}`);
+    const stripped = prev
+      .replace(/^# (?:个性与边界|角色与目标)\s*\n[\s\S]*?(?=^# |\Z)/m, '')
+      .replace(/^\s+/, '');
+    this.writeSoulMd(botId, `${identity}${stripped}`);
   }
 
   finishBotOnboarding(botId: string, answers: BotOnboardingAnswers = {}): Bot {
@@ -532,25 +657,29 @@ export class RosterStore {
     const scenario = (answers.scenarioLabel || '').trim();
     const how = (answers.howLabel || '').trim();
     const md = [
-      '# 角色与目标',
+      '# 个性与边界',
       '',
       `你是「${name}」，用户的本机个人助手。`,
       description
-        ? `对外简介：${description}。`
-        : '请用专业、可靠的方式协助用户完成任务。',
-      scenario ? `当前主要职责：${scenario}。` : null,
+        ? `对外简介（花名册）：${description}。`
+        : '保持清晰、可靠、有分寸的协作风格。',
+      scenario ? `场景侧重：${scenario}。` : null,
       '',
-      '# 用户偏好',
+      '# 语气与表达',
       '',
       how ? `- 协作方式：${how}` : '- （随对话自动补充）',
-      '- 回答简洁清楚；不确定时先说明假设再行动',
+      '- 简洁清楚；不确定时先说明假设再行动',
+      '',
+      '# 约束',
+      '',
+      '- （随对话自动补充长期约定）',
+      '',
+      '# 安全红线',
+      '',
       '- 涉及破坏性操作（删除、覆盖、推送、安装）前先征得同意',
+      '- 不写入或泄露密钥、令牌、验证码',
       '',
-      '# 项目与环境',
-      '',
-      '- （随对话自动补充仓库路径、技术栈与常用命令）',
-      '',
-      '# 工作备注',
+      '# 输入输出习惯',
       '',
       answers.scenarioId ? `- 场景标签：${answers.scenarioId}` : null,
       answers.howId ? `- 风格标签：${answers.howId}` : null,
@@ -559,8 +688,10 @@ export class RosterStore {
     ]
       .filter((l) => l !== null)
       .join('\n');
-    this.writeAgentsMd(botId, md);
+    this.writeSoulMd(botId, md);
     config.onboardingComplete = true;
+    config.name = entry.name;
+    config.description = entry.description;
     // Keep updatedAt (last chat activity) — finishing onboarding is not a chat message.
     this.writeBotConfig(config);
     const bot = this.mergeBot(entry, config);
@@ -608,6 +739,10 @@ export class RosterStore {
       out.push(s);
     }
     if (dirty) writeJson(this.deps.squadsPath, out);
+    // Dual-write name+description into squad.json (missing or out of date).
+    for (const s of out) {
+      this.syncSquadConfigFromRoster(s);
+    }
     return out;
   }
 
@@ -683,6 +818,7 @@ export class RosterStore {
     list.unshift(squad);
     writeJson(this.deps.squadsPath, list);
     this.ensureSquadLayout(squad.id);
+    this.writeSquadConfig(squad);
     this.deps.noteSessionsChanged(squad.id, 'created');
     return squad;
   }
@@ -740,6 +876,8 @@ export class RosterStore {
     if (prev.hasUnreadReply === true) next.hasUnreadReply = true;
     list[idx] = next;
     writeJson(this.deps.squadsPath, list);
+    this.ensureSquadLayout(id);
+    this.writeSquadConfig(next);
     this.deps.noteSessionsChanged(id, 'updated');
     return next;
   }
@@ -802,6 +940,7 @@ export class RosterStore {
     list.splice(idx, 1);
     list.unshift(next);
     writeJson(this.deps.squadsPath, list);
+    this.writeSquadConfig(next);
     return next;
   }
 
@@ -813,6 +952,8 @@ export class RosterStore {
     const entry = roster[idx]!;
     const config = this.readBotConfig(id);
     config.updatedAt = new Date().toISOString();
+    config.name = entry.name;
+    config.description = entry.description;
     roster.splice(idx, 1);
     roster.unshift(entry);
     this.writeRoster(roster);
@@ -834,6 +975,7 @@ export class RosterStore {
       else delete next.hasUnreadReply;
       list[idx] = next;
       writeJson(this.deps.squadsPath, list);
+      this.writeSquadConfig(next);
       return;
     }
     try {

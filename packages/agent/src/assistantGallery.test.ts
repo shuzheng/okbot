@@ -28,7 +28,7 @@ for (const item of zh) {
   const pkg = galleryAssistantPackage(item.id, 'zh');
   assert.ok(pkg);
   assert.equal(pkg!.manifest.format, 'okbot-assistant');
-  assert.ok(pkg!.agentsMd.startsWith('# '));
+  assert.ok(pkg!.soulMd.startsWith('# '));
   for (const s of pkg!.skills) {
     assert.ok(s.slug.startsWith('okbot-'));
     assert.ok(s.name.startsWith('okbot-'));
@@ -37,6 +37,14 @@ for (const item of zh) {
   const fromDisk = loadGalleryPackageDir(packPath);
   assert.equal(fromDisk.manifest.name, pkg!.manifest.name);
   assert.equal(fromDisk.skills.length, pkg!.skills.length);
+  const botJsonPath = path.join(packPath, 'bot.json');
+  assert.ok(fs.existsSync(botJsonPath), `gallery missing bot.json: ${botJsonPath}`);
+  const botJson = JSON.parse(fs.readFileSync(botJsonPath, 'utf8')) as {
+    name: string;
+    description: string;
+  };
+  assert.equal(botJson.name, pkg!.manifest.name);
+  assert.equal(botJson.description, pkg!.manifest.description);
 }
 assert.equal(galleryAssistantPackage('nope'), null);
 console.log('assistantGallery.test.ts: ok');

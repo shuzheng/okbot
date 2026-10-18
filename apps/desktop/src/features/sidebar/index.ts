@@ -18,3 +18,10 @@ export {
 } from './sidebarPersistence';
 export { useSessionListFlip } from './useSessionListFlip';
 export { usePinStripFlip, sessionPinId } from './usePinStripFlip';
+export { useSessionDigitShortcuts } from './useSessionDigitShortcuts';
+export type { SessionDigitShortcutMap } from './useSessionDigitShortcuts';
+export {
+  computeSessionShortcutOrder,
+  sessionShortcutSlots,
+  sessionShortcutHintLabel,
+} from './sessionShortcutOrder';

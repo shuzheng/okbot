@@ -1,9 +1,9 @@
 /**
- * Common lifecycle for AGENTS.md / skills / memories / session summary / durable facts.
+ * Common lifecycle for SOUL.md / skills / memories / session summary / durable facts.
  * Desktop scheduling + disk write stay in apps/desktop/electron/contextMaterials.
  */
 export type ContextMaterialKind =
-  | 'agentsMd'
+  | 'soulMd'
   | 'skills'
   | 'memories'
   | 'sessionSummary'

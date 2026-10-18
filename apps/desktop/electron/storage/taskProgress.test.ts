@@ -9,7 +9,6 @@ import {
   fingerprintTasks,
   formatTasksForPrompt,
   hasUnfinishedTasks,
-  migrateLegacyTaskProgress,
   normalizeTaskRecord,
   normalizeTaskStep,
 } from './TaskProgressStore';
@@ -104,21 +103,6 @@ const fromItems = normalizeTaskRecord({
 });
 assert.equal(fromItems?.steps.length, 1);
 
-// --- migration helper ---
-const migrated = migrateLegacyTaskProgress({
-  v: 1,
-  title: '迁移',
-  items: [
-    { id: '1', title: '备份', status: 'done' },
-    { id: '2', title: '切换', status: 'in_progress' },
-  ],
-  updatedAt: '2026-01-01T00:00:00.000Z',
-});
-assert.ok(migrated);
-assert.equal(migrated!.id, 'task_1');
-assert.equal(migrated!.status, 'in_progress');
-assert.equal(migrated!.steps.length, 2);
-
 // --- FileStorage multi-task ---
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'okbot-tasks-'));
 const storage = new FileStorage(root);
@@ -170,27 +154,6 @@ const prompt = storage.formatTaskProgressForPrompt(bot.id);
 assert.ok(prompt.includes('当前任务'));
 assert.ok(prompt.includes('已完成'));
 assert.ok(prompt.includes('第二件'));
-
-// --- migrate legacy task-progress.json ---
-const bot2 = storage.createBot({ name: 'B' });
-const legacyPath = path.join(root, bot2.id, 'task-progress.json');
-fs.mkdirSync(path.dirname(legacyPath), { recursive: true });
-fs.writeFileSync(
-  legacyPath,
-  JSON.stringify({
-    v: 1,
-    title: '旧清单',
-    items: [{ id: '1', title: 'A', status: 'pending' }],
-    updatedAt: '2026-01-01T00:00:00.000Z',
-  }),
-);
-const loaded = storage.loadTasks(bot2.id);
-assert.equal(loaded.length, 1);
-assert.equal(loaded[0]!.title, '旧清单');
-assert.ok(fs.existsSync(path.join(root, bot2.id, 'tasks.jsonl')));
-assert.ok(!fs.existsSync(legacyPath));
-assert.ok(fs.existsSync(`${legacyPath}.migrated`));
-
 
 // non-ULID custom id is replaced with a minted ULID
 const t3 = storage.addTask(bot.id, {

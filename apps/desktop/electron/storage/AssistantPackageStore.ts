@@ -20,7 +20,7 @@ export type AssistantPackageStoreDeps = {
   assertKnownBotId(botId: string): void;
   listRoster(): BotRosterEntry[];
   readBotConfig(botId: string): BotConfig;
-  readAgentsMd(botId: string): string;
+  readSoulMd(botId: string): string;
   listSkills(botId: string): BotSkill[];
   createBot(input: {
     name: string;
@@ -30,7 +30,7 @@ export type AssistantPackageStoreDeps = {
     avatarKind?: import('@okbot/shared').BotAvatarKind;
     botAvatarType?: import('@okbot/shared').BotAvatarShape;
   }): Bot;
-  writeAgentsMd(botId: string, content: string): void;
+  writeSoulMd(botId: string, content: string): void;
   writeSkill(botId: string, skill: BotSkill): void;
   writeBotConfig(config: BotConfig): void;
   deleteBot(id: string): void;
@@ -46,14 +46,14 @@ export class AssistantPackageStore {
 
   /**
    * Export assistant install package (secrets stripped): avatar / name / persona /
-   * AGENTS.md / skills/. `targetPath` ends with `.okbot` → zip; otherwise directory.
+   * SOUL.md / skills/. `targetPath` ends with `.okbot` → zip; otherwise directory.
    */
   exportAssistantPackage(botId: string, targetPath: string): { path: string } {
     this.deps.assertKnownBotId(botId);
     const roster = this.deps.listRoster().find((b) => b.id === botId);
     if (!roster) throw new Error('助手不存在');
     const config = this.deps.readBotConfig(botId);
-    const agentsMd = this.deps.readAgentsMd(botId);
+    const soulMd = this.deps.readSoulMd(botId);
     const skills = this.deps.listSkills(botId);
     const pkg = buildAssistantPackage({
       name: roster.name,
@@ -64,7 +64,7 @@ export class AssistantPackageStore {
         color: config.color,
         ...(config.botAvatarType ? { botAvatarType: config.botAvatarType } : {}),
       },
-      agentsMd,
+      soulMd,
       skills,
     });
     const clean = stripSecrets(pkg);
@@ -112,8 +112,8 @@ export class AssistantPackageStore {
       botAvatarType: clean.manifest.avatar.botAvatarType,
     });
     try {
-      if (clean.agentsMd.trim()) {
-        this.deps.writeAgentsMd(bot.id, clean.agentsMd);
+      if (clean.soulMd.trim()) {
+        this.deps.writeSoulMd(bot.id, clean.soulMd);
       }
       for (const skill of clean.skills) {
         this.deps.writeSkill(bot.id, skill);

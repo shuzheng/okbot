@@ -1,6 +1,6 @@
-import { stripThinkContent } from '@okbot/shared';
+import { clampSoulMd, stripThinkContent } from '@okbot/shared';
 
-export type AgentsMdSectionPatch = { heading: string; body: string };
+export type SoulMdSectionPatch = { heading: string; body: string };
 
 const HEADING_RE = /^(#{1,6})\s+(.+?)\s*$/;
 
@@ -44,9 +44,9 @@ function normHeading(heading: string): string {
   return heading.trim().replace(/^#+\s*/, '').replace(/\s+/g, '').toLowerCase();
 }
 
-function parseAgentsJson(text: string):
+function parseSoulJson(text: string):
   | { action: 'none' }
-  | { action: 'patch'; sections: AgentsMdSectionPatch[] }
+  | { action: 'patch'; sections: SoulMdSectionPatch[] }
   | null {
   let candidate = text.trim();
   if (!candidate.startsWith('{')) {
@@ -77,15 +77,15 @@ function parseAgentsJson(text: string):
   return null;
 }
 
-export function parseAgentsMdModelOutput(
+export function parseSoulMdModelOutput(
   raw: string,
-): { action: 'none' } | { action: 'patch'; sections: AgentsMdSectionPatch[] } | { action: 'reject' } {
+): { action: 'none' } | { action: 'patch'; sections: SoulMdSectionPatch[] } | { action: 'reject' } {
   let text = stripThinkContent(raw).trim();
   if (!text || text === 'NO_CHANGE' || /^NO_CHANGE\b/i.test(text)) return { action: 'none' };
   const fenced = text.match(/^```(?:json|markdown|md)?\s*([\s\S]*?)\s*```$/i);
   if (fenced) text = fenced[1]!.trim();
   if (!text || text === 'NO_CHANGE' || /^NO_CHANGE\b/i.test(text)) return { action: 'none' };
-  const fromJson = parseAgentsJson(text);
+  const fromJson = parseSoulJson(text);
   if (fromJson) return fromJson;
   const parsed = parseMarkdownSections(text);
   if (!parsed.sections.length) return { action: 'reject' };
@@ -97,7 +97,7 @@ export function parseAgentsMdModelOutput(
 }
 
 /** True when the model tried to rewrite every existing section (full-file replace). */
-export function isWholeFileReplacement(current: string, patches: AgentsMdSectionPatch[]): boolean {
+export function isWholeFileReplacement(current: string, patches: SoulMdSectionPatch[]): boolean {
   const existing = parseMarkdownSections(current).sections;
   // A one-section file cannot be distinguished from a full rewrite, and refusing
   // it makes every update a silent no-op. Only refuse when two or more sections
@@ -112,7 +112,7 @@ export function isWholeFileReplacement(current: string, patches: AgentsMdSection
   return true;
 }
 
-export function applyAgentsMdSectionPatches(current: string, patches: AgentsMdSectionPatch[]): string {
+export function applySoulMdSectionPatches(current: string, patches: SoulMdSectionPatch[]): string {
   const parsed = parseMarkdownSections(current);
   for (const patch of patches) {
     const key = normHeading(patch.heading);
@@ -143,15 +143,15 @@ export function applyAgentsMdSectionPatches(current: string, patches: AgentsMdSe
  * A full-file rewrite (every current heading replaced) is refused.
  * Unmentioned sections stay as they are.
  */
-export function mergeAgentsMdFromModel(current: string, modelOutput: string): string | null {
-  const parsed = parseAgentsMdModelOutput(modelOutput);
+export function mergeSoulMdFromModel(current: string, modelOutput: string): string | null {
+  const parsed = parseSoulMdModelOutput(modelOutput);
   if (parsed.action === 'reject') {
-    console.warn('[okbot] AGENTS.md update was not applied: model output was not a section patch');
+    console.warn('[okbot] SOUL.md update was not applied: model output was not a section patch');
     return null;
   }
   if (parsed.action !== 'patch') return null;
   if (isWholeFileReplacement(current, parsed.sections)) return null;
-  const next = applyAgentsMdSectionPatches(current, parsed.sections);
+  const next = clampSoulMd(applySoulMdSectionPatches(current, parsed.sections));
   if (next.trim() === current.trim()) return null;
   return next;
 }

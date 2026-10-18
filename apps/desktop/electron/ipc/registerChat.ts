@@ -77,4 +77,31 @@ export function registerChatIpc(ctx: IpcContext): void {
       return [];
     }
   });
+
+  ipcMain.handle(IpcChannels.listOwnerTasks, (_e, ownerId: string) => {
+    const id = (ownerId || '').trim();
+    if (!id) return [];
+    try {
+      const tasks = ctx.storage.loadTasks(id);
+      return [...tasks].sort((a, b) => {
+        const at = a.startedAt || a.updatedAt || a.id;
+        const bt = b.startedAt || b.updatedAt || b.id;
+        return bt.localeCompare(at) || b.id.localeCompare(a.id);
+      });
+    } catch (err) {
+      console.error('[okbot] listOwnerTasks failed', err);
+      return [];
+    }
+  });
+
+  ipcMain.handle(IpcChannels.listOwnerResources, (_e, ownerId: string) => {
+    const id = (ownerId || '').trim();
+    if (!id) return [];
+    try {
+      return ctx.storage.listOwnerResources(id);
+    } catch (err) {
+      console.error('[okbot] listOwnerResources failed', err);
+      return [];
+    }
+  });
 }

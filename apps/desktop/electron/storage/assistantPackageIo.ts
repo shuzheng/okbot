@@ -12,7 +12,7 @@ function ensureDir(p: string) {
   fs.mkdirSync(p, { recursive: true });
 }
 
-/** Write package contents to a directory (manifest + AGENTS.md + skills/). */
+/** Write package contents to a directory (manifest + SOUL.md + skills/). */
 export function writeAssistantPackageDir(
   dir: string,
   pkg: AssistantPackageContents,
@@ -130,10 +130,22 @@ export function readAssistantPackageDir(dir: string): AssistantPackageContents {
     throw new Error('助手包缺少 manifest.json');
   }
   const manifest = JSON.parse(readRegularFile(manifestPath)) as unknown;
-  let agentsMd = '';
-  const agentsPath = path.join(root, 'AGENTS.md');
-  if (fs.existsSync(agentsPath)) {
-    agentsMd = readRegularFile(agentsPath);
+  let soulMd = '';
+  const soulPath = path.join(root, 'SOUL.md');
+  const legacyAgentsPath = path.join(root, 'AGENTS.md');
+  if (fs.existsSync(soulPath)) {
+    soulMd = readRegularFile(soulPath);
+  } else if (fs.existsSync(legacyAgentsPath)) {
+    soulMd = readRegularFile(legacyAgentsPath);
+  }
+  let botJson: unknown;
+  const botJsonPath = path.join(root, 'bot.json');
+  if (fs.existsSync(botJsonPath)) {
+    try {
+      botJson = JSON.parse(readRegularFile(botJsonPath)) as unknown;
+    } catch {
+      throw new Error('助手包 bot.json 不是有效 JSON');
+    }
   }
   const skillFiles: Array<{ slug: string; raw: string }> = [];
   const skillsRoot = path.join(root, 'skills');
@@ -154,7 +166,7 @@ export function readAssistantPackageDir(dir: string): AssistantPackageContents {
       }
     }
   }
-  return parseAssistantPackage({ manifest, agentsMd, skillFiles });
+  return parseAssistantPackage({ manifest, soulMd, skillFiles, botJson });
 }
 
 /** Zip a package directory into a .okbot file (zip archive). */

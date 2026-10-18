@@ -233,7 +233,7 @@ export function ShellPatternsList({
   const showEmpty = patterns.length === 0 && editingId !== 'new';
 
   return (
-    <div className="settings-aar-inline settings-shell-patterns-inline">
+    <div className="settings-aar-inline list-card settings-shell-patterns-inline">
       <div ref={listScrollRef} className="aar-list-scroll scroll-fade">
         {showEmpty ? <div className="aar-empty">{t(lang, 'securityShellPatternsEmpty')}</div> : null}
         {patterns.map((row) =>

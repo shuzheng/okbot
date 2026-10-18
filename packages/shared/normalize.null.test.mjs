@@ -30,10 +30,14 @@ import {
   normalizeInstructionsSettings,
   LEGACY_DEFAULT_SQUAD_CAPTAIN_PERSONA,
   LEGACY_DEFAULT_SQUAD_PLAYBOOK,
-  DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT,
+  DEFAULT_SOUL_MD_REFRESH_SYSTEM_PROMPT,
   LEGACY_DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT,
   LEGACY_AGENTS_MD_REFRESH_WITH_VISION_GUARD,
   LEGACY_AGENTS_MD_REFRESH_WITH_ROBOT,
+  LEGACY_AGENTS_MD_REFRESH_SECTION_PATCH,
+  SOUL_MD_MAX_CHARS,
+  clampSoulMd,
+  DEFAULT_SOUL_MD,
   normalizeMaintenanceSettings,
   normalizeMemorySettings,
   DEFAULT_MAINTENANCE_SETTINGS,
@@ -117,22 +121,46 @@ assert.doesNotMatch(DEFAULT_SQUAD_PLAYBOOK, /默认一次调用一名队员/);
   assert.equal(upgraded.playbook, DEFAULT_SQUAD_PLAYBOOK);
 }
 
-assert.doesNotMatch(DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT, /无图像处理能力/);
-assert.doesNotMatch(DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT, /NO_CHANGE/);
+assert.doesNotMatch(DEFAULT_SOUL_MD_REFRESH_SYSTEM_PROMPT, /无图像处理能力/);
+assert.doesNotMatch(DEFAULT_SOUL_MD_REFRESH_SYSTEM_PROMPT, /NO_CHANGE/);
 {
   const a = normalizeInstructionsSettings({
-    agentsMdRefreshSystemPrompt: LEGACY_DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT,
+    soulMdRefreshSystemPrompt: LEGACY_DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT,
   });
   const b = normalizeInstructionsSettings({
-    agentsMdRefreshSystemPrompt: LEGACY_AGENTS_MD_REFRESH_WITH_VISION_GUARD,
+    soulMdRefreshSystemPrompt: LEGACY_AGENTS_MD_REFRESH_WITH_VISION_GUARD,
   });
   const c = normalizeInstructionsSettings({
-    agentsMdRefreshSystemPrompt: LEGACY_AGENTS_MD_REFRESH_WITH_ROBOT,
+    soulMdRefreshSystemPrompt: LEGACY_AGENTS_MD_REFRESH_WITH_ROBOT,
   });
-  assert.equal(a.agentsMdRefreshSystemPrompt, DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT);
-  assert.equal(b.agentsMdRefreshSystemPrompt, DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT);
-  assert.equal(c.agentsMdRefreshSystemPrompt, DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT);
-  assert.doesNotMatch(DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT, /机器人/);
+  assert.equal(a.soulMdRefreshSystemPrompt, DEFAULT_SOUL_MD_REFRESH_SYSTEM_PROMPT);
+  assert.equal(b.soulMdRefreshSystemPrompt, DEFAULT_SOUL_MD_REFRESH_SYSTEM_PROMPT);
+  assert.equal(c.soulMdRefreshSystemPrompt, DEFAULT_SOUL_MD_REFRESH_SYSTEM_PROMPT);
+  assert.doesNotMatch(DEFAULT_SOUL_MD_REFRESH_SYSTEM_PROMPT, /机器人/);
+  assert.match(DEFAULT_SOUL_MD_REFRESH_SYSTEM_PROMPT, /个性与边界/);
+  assert.match(DEFAULT_SOUL_MD_REFRESH_SYSTEM_PROMPT, /2000/);
+  const d = normalizeInstructionsSettings({
+    soulMdRefreshSystemPrompt: LEGACY_AGENTS_MD_REFRESH_SECTION_PATCH,
+  });
+  assert.equal(d.soulMdRefreshSystemPrompt, DEFAULT_SOUL_MD_REFRESH_SYSTEM_PROMPT);
+  // Legacy settings JSON keys migrate on load.
+  const migrated = normalizeInstructionsSettings({
+    agentsMdRefreshSystemPrompt: 'custom soul prompt keep me',
+    agentsMdRecentMessageLimit: 7,
+  });
+  assert.equal(migrated.soulMdRefreshSystemPrompt, 'custom soul prompt keep me');
+  assert.equal(migrated.soulMdRecentMessageLimit, 7);
+  const maint = normalizeMaintenanceSettings({
+    agentsEveryTurns: 9,
+    agentsEveryUserChars: 900,
+  });
+  assert.equal(maint.soulEveryTurns, 9);
+  assert.equal(maint.soulEveryUserChars, 900);
+  assert.equal(SOUL_MD_MAX_CHARS, 2000);
+  assert.match(DEFAULT_SOUL_MD, /# 个性与边界/);
+  assert.match(DEFAULT_SOUL_MD, /# 安全红线/);
+  const over = 'x'.repeat(SOUL_MD_MAX_CHARS + 50);
+  assert.equal(clampSoulMd(over).length, SOUL_MD_MAX_CHARS + 1); // + trailing newline
 }
 
 
@@ -140,11 +168,11 @@ assert.doesNotMatch(DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT, /NO_CHANGE/);
 {
   const m = normalizeMaintenanceSettings({
     memoryEveryTurns: null,
-    agentsEveryTurns: null,
+    soulEveryTurns: null,
     skillsEveryUserChars: null,
   });
   assert.equal(m.memoryEveryTurns, DEFAULT_MAINTENANCE_SETTINGS.memoryEveryTurns);
-  assert.equal(m.agentsEveryTurns, DEFAULT_MAINTENANCE_SETTINGS.agentsEveryTurns);
+  assert.equal(m.soulEveryTurns, DEFAULT_MAINTENANCE_SETTINGS.soulEveryTurns);
   assert.equal(m.skillsEveryUserChars, DEFAULT_MAINTENANCE_SETTINGS.skillsEveryUserChars);
 }
 {

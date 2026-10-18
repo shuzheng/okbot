@@ -1,6 +1,6 @@
 /**
  * Built-in starter assistants ("assistant marketplace").
- * Packages live under packages/agent/gallery/<id>/{zh,en}/ (manifest + AGENTS.md + skills/).
+ * Packages live under packages/agent/gallery/<id>/{zh,en}/ (manifest + bot.json + SOUL.md + skills/).
  * Same format as `.okbot` import; install goes through the one package install path.
  * Shipped offline: gallery dir is copied next to the agent package and into desktop resources.
  */
@@ -122,10 +122,18 @@ export function loadGalleryPackageDir(dir: string): AssistantPackageContents {
     throw new Error(`gallery pack missing manifest.json: ${root}`);
   }
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as unknown;
-  let agentsMd = '';
-  const agentsPath = path.join(root, 'AGENTS.md');
-  if (fs.existsSync(agentsPath)) {
-    agentsMd = fs.readFileSync(agentsPath, 'utf8');
+  let soulMd = '';
+  const soulPath = path.join(root, 'SOUL.md');
+  const legacyAgentsPath = path.join(root, 'AGENTS.md');
+  if (fs.existsSync(soulPath)) {
+    soulMd = fs.readFileSync(soulPath, 'utf8');
+  } else if (fs.existsSync(legacyAgentsPath)) {
+    soulMd = fs.readFileSync(legacyAgentsPath, 'utf8');
+  }
+  let botJson: unknown;
+  const botJsonPath = path.join(root, 'bot.json');
+  if (fs.existsSync(botJsonPath)) {
+    botJson = JSON.parse(fs.readFileSync(botJsonPath, 'utf8')) as unknown;
   }
   const skillFiles: Array<{ slug: string; raw: string }> = [];
   const skillsRoot = path.join(root, 'skills');
@@ -136,7 +144,7 @@ export function loadGalleryPackageDir(dir: string): AssistantPackageContents {
       skillFiles.push({ slug: name, raw: fs.readFileSync(skillFile, 'utf8') });
     }
   }
-  return parseAssistantPackage({ manifest, agentsMd, skillFiles });
+  return parseAssistantPackage({ manifest, soulMd, skillFiles, botJson });
 }
 
 function avatarFromPkg(pkg: AssistantPackageContents): { emoji: string; color: string } {

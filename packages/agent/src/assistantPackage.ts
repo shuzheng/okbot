@@ -26,8 +26,8 @@ export type AssistantPackageManifest = {
   /** Short persona / description. */
   description: string;
   avatar: AssistantPackageAvatar;
-  /** Optional AGENTS.md body (persona instructions). */
-  agentsMd?: string;
+  /** Optional SOUL.md body (personality / boundaries / tone). Legacy packages may use agentsMd. */
+  soulMd?: string;
   /** Skills shipped with the package (slug → body already in skills/). */
   skills?: Array<{ slug: string; name: string; description: string }>;
   /** ISO timestamp when exported. */
@@ -36,7 +36,7 @@ export type AssistantPackageManifest = {
 
 export type AssistantPackageContents = {
   manifest: AssistantPackageManifest;
-  agentsMd: string;
+  soulMd: string;
   skills: BotSkill[];
 };
 
@@ -74,7 +74,7 @@ export function buildAssistantPackage(input: {
   name: string;
   description: string;
   avatar: AssistantPackageAvatar;
-  agentsMd?: string;
+  soulMd?: string;
   skills?: BotSkill[];
 }): AssistantPackageContents {
   const skills = (input.skills ?? []).map((s) => ({
@@ -95,13 +95,13 @@ export function buildAssistantPackage(input: {
         ? { botAvatarType: input.avatar.botAvatarType }
         : {}),
     },
-    agentsMd: (input.agentsMd ?? '').trim() || undefined,
+    soulMd: (input.soulMd ?? '').trim() || undefined,
     skills: skills.map(({ slug, name, description }) => ({ slug, name, description })),
     exportedAt: new Date().toISOString(),
   });
   return {
     manifest,
-    agentsMd: (input.agentsMd ?? '').trim(),
+    soulMd: (input.soulMd ?? '').trim(),
     skills,
   };
 }
@@ -109,8 +109,10 @@ export function buildAssistantPackage(input: {
 /** Validate + normalize a parsed package (folder or unzipped .okbot). */
 export function parseAssistantPackage(raw: {
   manifest: unknown;
-  agentsMd?: string;
+  soulMd?: string;
   skillFiles?: Array<{ slug: string; raw: string }>;
+  /** Optional bot.json dual-write (name+description); preferred when present. */
+  botJson?: unknown;
 }): AssistantPackageContents {
   const m = raw.manifest;
   if (!m || typeof m !== 'object') throw new Error('无效的助手包：缺少 manifest');
@@ -118,9 +120,21 @@ export function parseAssistantPackage(raw: {
   if (src.format !== OKBOT_ASSISTANT_PACKAGE_FORMAT) {
     throw new Error(`无效的助手包格式：${String(src.format ?? '')}`);
   }
-  const name = typeof src.name === 'string' ? src.name.trim() : '';
+  const botSrc =
+    raw.botJson && typeof raw.botJson === 'object'
+      ? (raw.botJson as Record<string, unknown>)
+      : null;
+  // Prefer bot.json name+description when present (folder export/import consistency).
+  const nameFromBot =
+    botSrc && typeof botSrc.name === 'string' ? botSrc.name.trim() : '';
+  const descFromBot =
+    botSrc && typeof botSrc.description === 'string' ? botSrc.description.trim() : '';
+  const name =
+    nameFromBot || (typeof src.name === 'string' ? src.name.trim() : '');
   if (!name) throw new Error('无效的助手包：缺少 name');
-  const description = typeof src.description === 'string' ? src.description.trim() : '';
+  const description =
+    descFromBot ||
+    (typeof src.description === 'string' ? src.description.trim() : '');
   const avatarRaw =
     src.avatar && typeof src.avatar === 'object'
       ? (src.avatar as Record<string, unknown>)
@@ -141,18 +155,22 @@ export function parseAssistantPackage(raw: {
     skills.push(parseSkillMarkdown(slug, f.raw));
   }
 
-  const agentsMd =
-    typeof raw.agentsMd === 'string'
-      ? raw.agentsMd
-      : typeof src.agentsMd === 'string'
-        ? src.agentsMd
-        : '';
+  const soulMd =
+    typeof raw.soulMd === 'string'
+      ? raw.soulMd
+      : typeof (raw as { agentsMd?: unknown }).agentsMd === 'string'
+        ? ((raw as { agentsMd?: string }).agentsMd as string)
+      : typeof src.soulMd === 'string'
+        ? src.soulMd
+        : typeof src.agentsMd === 'string'
+          ? src.agentsMd
+          : '';
 
   return buildAssistantPackage({
     name,
     description,
     avatar,
-    agentsMd,
+    soulMd,
     skills,
   });
 }
@@ -163,9 +181,18 @@ export function assistantPackageToFileMap(
 ): Record<string, string> {
   const files: Record<string, string> = {
     'manifest.json': `${JSON.stringify(pkg.manifest, null, 2)}\n`,
+    // Dual-write name+description for parity with runtime `<botId>/bot.json`.
+    'bot.json': `${JSON.stringify(
+      {
+        name: pkg.manifest.name,
+        description: pkg.manifest.description,
+      },
+      null,
+      2,
+    )}\n`,
   };
-  if (pkg.agentsMd.trim()) {
-    files['AGENTS.md'] = pkg.agentsMd.endsWith('\n') ? pkg.agentsMd : `${pkg.agentsMd}\n`;
+  if (pkg.soulMd.trim()) {
+    files['SOUL.md'] = pkg.soulMd.endsWith('\n') ? pkg.soulMd : `${pkg.soulMd}\n`;
   }
   for (const skill of pkg.skills) {
     files[`skills/${skill.slug}/SKILL.md`] = formatSkillMarkdown(skill);

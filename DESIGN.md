@@ -44,7 +44,7 @@ localHttpApi          网关 HTTP。不是独立服务
 
 | 注册 | 通道 |
 | --- | --- |
-| `registerEntity.ts` | bootstrap、bots/squads CRUD、AGENTS.md、记忆、技能、助手包导入导出、助手市场（含 `importAssistantFromUrl`）、settings、`getGatewayAccessToken`、用量、模型探测与连通测试、消息分页与搜索、prompt context、错误日志、清模型绑定、`probeComputer`、`setChatUnread` |
+| `registerEntity.ts` | bootstrap、bots/squads CRUD、SOUL.md、记忆、技能、助手包导入导出、助手市场（含 `importAssistantFromUrl`）、settings、`getGatewayAccessToken`、用量、模型探测与连通测试、消息分页与搜索、prompt context、错误日志、清模型绑定、`probeComputer`、`setChatUnread` |
 | `registerChat.ts` | `chatStart`、`chatAbort`、`toolRespond`、`compressSessionNow`。运行中的 `chatEvent` 由 main 推给渲染进程 |
 | `registerSystem.ts` | 窗口最小化/最大化/关闭、红绿灯位置、麦克风、剪贴板、选路径、生成图 data URL、`getAppInfo`、updater 四个调用 |
 | `main.ts`（仅附着） | `attachGatewayToken`：`ipcMain.on` + `sendSync`，把已保存令牌交给 attach preload。不放进命令行 |
@@ -73,13 +73,15 @@ localHttpApi          网关 HTTP。不是独立服务
 | `GET /v1/computers` | 本机 `local` 加已登记远程电脑（不含令牌） |
 | `GET /v1/usage` | 与 IPC `getUsageStats` 同一形状 |
 | `GET /v1/media/:ownerId/resources/:file` | 聊天气泡内嵌图：读 `~/.okbot/<ownerId>/resources/<file>`。鉴权除 Bearer / cookie 外，**允许 `?token=`**（`<img>` 无法带 Authorization）。路径必须恰好三段且落在该 owner 的 `resources/` 下；单文件上限 25MB |
+| `GET /v1/media/:ownerId/uploads/:file` | Composer 粘贴 / 上传附件：读 `~/.okbot/<ownerId>/uploads/<file>`。鉴权同 resources（含 `?token=`）；路径规则相同；单文件上限 25MB |
+| `POST /v1/bots/:id/uploads`、`POST /v1/squads/:id/uploads` | `{ name, dataBase64, mime? }` → 写入网关主机 `~/.okbot/<ownerId>/uploads/`，返回 `{ attachment: { kind, path, name, size, mediaPath, assetRel } }`。解码后上限 25MB；JSON 体上限约 40MB |
 | `GET /v1/approvals` | 进行中的回合和待审批 |
 | `GET /v1/events` | SSE，只推 `sessions_changed` |
 | `POST /v1/bots/:id/messages`、`POST /v1/squads/:id/messages` | `{ text, computerId? }`。默认 202；`Accept: text/event-stream` 则 SSE 到本轮结束 |
 | `POST /v1/tool-respond` | `{ requestId, approved, message? }`。成功 200，失败 409 |
 | `POST /v1/bots/:id/abort`、`POST /v1/squads/:id/abort` | 与桌面停止同一条 `abortChatOwner` |
 | `POST /v1/settings` | 只接受 `GATEWAY_SETTINGS_PATCH_KEYS` 里的键。其它键有真实改动则整次 409 `settings_not_allowed` |
-| `POST /v1/rpc/:op` | 助手/小队增删改、引导、AGENTS.md、记忆、技能、助手市场、全局搜索、prompt context、错误日志、模型发现与连通测试、立即压缩。`op` 只认 `gatewayRpc.ts` 的 `GATEWAY_RPC_OPS`，其它 404 `unknown_op`；存储报错 400。成功 `{ ok: true, result }` |
+| `POST /v1/rpc/:op` | 助手/小队增删改、引导、SOUL.md、记忆、技能、助手市场、全局搜索、prompt context、错误日志、模型发现与连通测试、立即压缩。`op` 只认 `gatewayRpc.ts` 的 `GATEWAY_RPC_OPS`，其它 404 `unknown_op`；存储报错 400。成功 `{ ok: true, result }` |
 | `GET /`、静态资源 | 仅 `serveUi`。未登录是令牌页，不是 JSON |
 
 `okbot serve` 启动横幅会打印当前访问令牌一次。请求处理路径不打印令牌。
@@ -89,7 +91,8 @@ localHttpApi          网关 HTTP。不是独立服务
 `packages/agent/src/computerSelection.ts` 决定 shell/文件工具去哪。`LOCAL_COMPUTER_ID` 是 `local`。
 
 - 设置里的默认电脑是 `settings.defaultComputerId`。**空等于本机**（`local`）。已设置但未知或已禁用的 id 不会偷偷改回本机执行。
-- 用户选定的默认助手是 `settings.defaultAssistantId`（空=无）。仅身份/UI；删除对应 bot 时清空。读写走 `SettingsStore`，与花名册校验在 UI / 保存与 `deleteOwner`。
+- 用户选定的默认助手是 `settings.defaultAssistantId`（空=无）。仅身份/UI；删除对应 bot 时清空。读写走 `SettingsStore`，与花名册校验在侧栏右键 / 保存与 `deleteOwner`（通用设置页不再展示该下拉）。
+- 用户时区偏好是 `settings.timezone`（空=自动检测主机本地 IANA）。定时任务在 job 未指定 timezone 时，经 `resolveScheduleTimezone` 回退到该值再回退主机本地。
 - 侧栏置顶顺序是 `settings.pinnedOwnerIds`（bot/squad owner id 有序数组；可多选）。删除对应 owner 时从数组移除。与 `defaultAssistantId` 独立。
 - 本轮 HTTP 的 `computerId` 低于对话里点名的电脑。
 - 用户文本点名恰好一台（远程电脑用 id 或名称；本机用「本机」，不用路径里的 `local`）就改到那台。
@@ -118,14 +121,14 @@ localHttpApi          网关 HTTP。不是独立服务
   squads.json
   memory.md              全局记忆
   logs/errors-YYYY-MM-DD.jsonl
-  <botId>/  bot.json、AGENTS.md、memory.md、skills/、session.jsonl、
+  <botId>/  bot.json、SOUL.md、memory.md、skills/、session.jsonl、
             session-summary.json、pending-hitl/、resources/、
-            schedules.json
+            schedules.jsonl
   <squadId>/  session.jsonl、session-summary.json、
-              pending-hitl/、pending-hitl-replies/、resources/、schedules.json
+              pending-hitl/、pending-hitl-replies/、resources/、schedules.jsonl
 ```
 
-定时任务：`~/.okbot/<botId|squadId>/schedules.json`（`manage_schedule`；默认审批 allow；create/delete 始终 HITL（含 AAR 不可旁路）；list 不审批；编辑助手/小队可 pause/resume/delete）。每 owner 上限 50；`every N m` 要求 N 整除 60；`once` 触发后停用。拥有网关的进程（Electron 或 `okbot serve`）内 `scheduleTicker` 约每 20s 扫描到期任务，调用与 UI 相同的 `startChatTurn`（走并行上限 / Stop / 任务条；审批/预算与交互轮次相同）。进程未运行时不会触发；再次起来后若 `nextRunAt` 已过期则补跑一次并推进下次。同一 job 在途中不会叠跑。
+定时任务：`~/.okbot/<botId|squadId>/schedules.jsonl`（一行一个任务；新 id 为 ULID；旧 `schedules.json` 在加载时迁移并保留原 id）（`manage_schedule`；默认审批 allow；create/delete 始终 HITL（含 AAR 不可旁路）；list 不审批；编辑助手/小队可 pause/resume/delete）。每 owner 上限 50；`every N m` 要求 N 整除 60；`once` 触发后停用。拥有网关的进程（Electron 或 `okbot serve`）内 `scheduleTicker` 约每 20s 扫描到期任务，调用与 UI 相同的 `startChatTurn`（走并行上限 / Stop / 任务条；审批/预算与交互轮次相同）。进程未运行时不会触发；再次起来后若 `nextRunAt` 已过期则补跑一次并推进下次。同一 job 在途中不会叠跑。
 
 聊天附件：Composer 支持选择或**拖放**文件 / 图片 / 文件夹；与选择器同一管线。网页工具（`web_fetch` / `web_search`）在桌面主机直接 HTTP（`settings.web`），不经 sandbox-agent。
 
@@ -143,7 +146,7 @@ localHttpApi          网关 HTTP。不是独立服务
 
 ## 网关可写的设置
 
-`gatewaySettingsWrite.ts` 的 `GATEWAY_SETTINGS_PATCH_KEYS`：主题、语言、麦克风、硬件加速、自动更新、侧栏缩放、开发者模式、压缩、`maxTurns`、instructions、memory、maintenance、squad、`notifications`、`showAdvancedSettings`、`assistantMarketplace`。`autoApprovalEnabled` 和 `autoApprovalRules` 另走 `checkGatewayApprovalWrite`。`closeAction` 与备份一样仅桌面 IPC，网关不可写。
+`gatewaySettingsWrite.ts` 的 `GATEWAY_SETTINGS_PATCH_KEYS`：主题、语言、麦克风、硬件加速、自动更新、侧栏缩放、开发者模式、压缩、instructions、memory、maintenance、squad、`notifications`、`showAdvancedSettings`、`assistantMarketplace`。`autoApprovalEnabled` 和 `autoApprovalRules` 另走 `checkGatewayApprovalWrite`。`closeAction` 与备份一样仅桌面 IPC，网关不可写。
 
 网关对自动审批只能做两类改动。一是只会多问的改动：加「询问」规则、删「允许」规则、关掉自动审批。二是工具卡上的「总是允许」：新增或改成「允许」的规则，内容必须正好是一个内置工具名（如 `read_file`）。内置工具名规则只和工具名比较，不和参数比较。宽泛的关键词「允许」规则（比如只写 `a`）、改桌面端规则的说明或内容，都只能在桌面端做；不合规则的写入整体返回 409 `settings_not_allowed`。设置页的规则列表在网关页只读。
 

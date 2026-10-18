@@ -14,10 +14,17 @@ export type MessageAttachmentKind = 'image' | 'file' | 'folder';
 
 export interface MessageAttachment {
   kind: MessageAttachmentKind;
-  /** Absolute path on the local machine. */
+  /**
+   * Absolute path on the **gateway host** (e.g. ~/.okbot/<ownerId>/uploads/…).
+   * Image/file pastes and picks are copied into uploads/ so multi-computer clients
+   * never rely on client-local file:// paths. Folder attachments may still be a
+   * gateway-local directory path from the desktop picker.
+   */
   path: string;
   /** Display basename. */
   name: string;
+  /** Byte size when known (composer pill + persistence). */
+  size?: number;
 }
 
 /**

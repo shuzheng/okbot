@@ -77,7 +77,7 @@ export async function resumeBotAfterRestart(
         controller,
       });
       try {
-        const agentsMd = ctx.storage.readAgentsMd(bot.id);
+        const soulMd = ctx.storage.readSoulMd(bot.id);
         const skillsText = ctx.storage.formatSkillsForPrompt(bot.id);
         const skillLookup = skillLookupFor(ctx.storage, bot.id);
         const memoriesText = ctx.storage.formatMemoriesForPrompt(bot.id);
@@ -94,7 +94,7 @@ export async function resumeBotAfterRestart(
         const result = await resumeAgentChatAfterHitl({
           botName: bot.name,
           botDescription: bot.description,
-          agentsMd,
+          soulMd,
           skillsText,
           skillLookup,
           historySearch: historySearchForOwner(ctx.storage, bot.id),
@@ -121,7 +121,6 @@ export async function resumeBotAfterRestart(
           model: modelConfig,
           tools: settings.tools,
           security: settings.security,
-          maxTurns: settings.maxTurns,
           toolRunBudget: guards.budget,
           extraTools: await mcpToolsForRun(settings, guards.budget),
           session: fileSession,

@@ -5,11 +5,11 @@ import {
   normalizeToolPreferences,
   normalizeModelSettings,
   normalizeContextCompression,
-  normalizeMaxTurns,
   normalizeSecuritySettings,
   normalizeSquadSettings,
   normalizeInstructionsSettings,
   LEGACY_DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT,
+  LEGACY_AGENTS_MD_REFRESH_SECTION_PATCH,
   LEGACY_AGENTS_MD_REFRESH_WITH_VISION_GUARD,
   LEGACY_AGENTS_MD_REFRESH_FULL_FILE,
   LEGACY_AGENTS_MD_REFRESH_WITH_ROBOT,
@@ -26,6 +26,7 @@ import {
   normalizeCloseAction,
   normalizeDefaultComputerId,
   normalizeDefaultAssistantId,
+  normalizeTimezone,
   normalizePinnedOwnerIds,
   normalizeHiddenOwnerIds,
   normalizeOwnerGroups,
@@ -144,7 +145,6 @@ export class SettingsStore {
           allowedPathPrefixes: [...DEFAULT_SETTINGS.security.allowedPathPrefixes],
         },
         contextCompression: { ...DEFAULT_SETTINGS.contextCompression },
-        maxTurns: DEFAULT_SETTINGS.maxTurns,
         instructions: { ...DEFAULT_SETTINGS.instructions },
         memory: { ...DEFAULT_SETTINGS.memory },
         maintenance: { ...DEFAULT_SETTINGS.maintenance },
@@ -170,10 +170,12 @@ export class SettingsStore {
     const next: AppSettings = {
       theme: raw.theme ?? 'system',
       language,
+      timezone: normalizeTimezone((raw as { timezone?: unknown }).timezone),
       microphoneId: typeof raw.microphoneId === 'string' ? raw.microphoneId : '',
       hardwareAcceleration: raw.hardwareAcceleration !== false,
       autoUpdate: raw.autoUpdate !== false,
       sidebarDockMagnify: raw.sidebarDockMagnify === true,
+      translucent: (raw as { translucent?: unknown }).translucent !== false,
       developerMode: raw.developerMode === true,
       autoApprovalEnabled: raw.autoApprovalEnabled === true,
       autoApprovalRules: normalizeAutoApprovalRules(raw.autoApprovalRules),
@@ -183,7 +185,6 @@ export class SettingsStore {
       contextCompression: normalizeContextCompression(
         (raw as { contextCompression?: unknown }).contextCompression,
       ),
-      maxTurns: normalizeMaxTurns((raw as { maxTurns?: unknown }).maxTurns),
       instructions: normalizeInstructionsSettings((raw as { instructions?: unknown }).instructions),
       memory: normalizeMemorySettings((raw as { memory?: unknown }).memory),
       maintenance: normalizeMaintenanceSettings((raw as { maintenance?: unknown }).maintenance),
@@ -258,17 +259,30 @@ export class SettingsStore {
         typeof rawLocal !== 'object' ||
         rawLocal === null ||
         typeof (rawLocal as { token?: unknown }).token !== 'string';
-      const rawInstructions = (raw as { instructions?: { agentsMdRefreshSystemPrompt?: unknown } })
-        .instructions;
-      const rawAgentsPrompt =
-        rawInstructions && typeof rawInstructions.agentsMdRefreshSystemPrompt === 'string'
-          ? rawInstructions.agentsMdRefreshSystemPrompt.trim()
-          : '';
+      const rawInstructions = (raw as {
+        instructions?: {
+          soulMdRefreshSystemPrompt?: unknown;
+          agentsMdRefreshSystemPrompt?: unknown;
+        };
+      }).instructions;
+      const rawSoulPromptSrc =
+        rawInstructions && typeof rawInstructions.soulMdRefreshSystemPrompt === 'string'
+          ? rawInstructions.soulMdRefreshSystemPrompt
+          : rawInstructions && typeof rawInstructions.agentsMdRefreshSystemPrompt === 'string'
+            ? rawInstructions.agentsMdRefreshSystemPrompt
+            : '';
+      const rawAgentsPrompt = typeof rawSoulPromptSrc === 'string' ? rawSoulPromptSrc.trim() : '';
+      const legacyKey =
+        !!rawInstructions &&
+        typeof rawInstructions.agentsMdRefreshSystemPrompt === 'string' &&
+        typeof rawInstructions.soulMdRefreshSystemPrompt !== 'string';
       const legacyAgentsRefreshPrompt =
+        legacyKey ||
         rawAgentsPrompt === LEGACY_DEFAULT_AGENTS_MD_REFRESH_SYSTEM_PROMPT ||
         rawAgentsPrompt === LEGACY_AGENTS_MD_REFRESH_WITH_VISION_GUARD ||
         rawAgentsPrompt === LEGACY_AGENTS_MD_REFRESH_FULL_FILE ||
-        rawAgentsPrompt === LEGACY_AGENTS_MD_REFRESH_WITH_ROBOT;
+        rawAgentsPrompt === LEGACY_AGENTS_MD_REFRESH_WITH_ROBOT ||
+        rawAgentsPrompt === LEGACY_AGENTS_MD_REFRESH_SECTION_PATCH;
       if (
         legacyModel ||
         legacySquadMissing ||
@@ -292,10 +306,12 @@ export class SettingsStore {
     const next: AppSettings = {
       theme: settings.theme ?? 'system',
       language,
+      timezone: normalizeTimezone(settings.timezone),
       microphoneId: typeof settings.microphoneId === 'string' ? settings.microphoneId : '',
       hardwareAcceleration: settings.hardwareAcceleration !== false,
       autoUpdate: settings.autoUpdate !== false,
       sidebarDockMagnify: settings.sidebarDockMagnify === true,
+      translucent: settings.translucent !== false,
       developerMode: settings.developerMode === true,
       autoApprovalEnabled: settings.autoApprovalEnabled === true,
       autoApprovalRules: normalizeAutoApprovalRules(settings.autoApprovalRules),
@@ -316,7 +332,6 @@ export class SettingsStore {
         };
       })(),
       contextCompression: normalizeContextCompression(settings.contextCompression),
-      maxTurns: normalizeMaxTurns(settings.maxTurns),
       instructions: normalizeInstructionsSettings(settings.instructions),
       memory: normalizeMemorySettings(settings.memory),
       maintenance: normalizeMaintenanceSettings(settings.maintenance),

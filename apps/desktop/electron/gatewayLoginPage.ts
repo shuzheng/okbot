@@ -40,8 +40,8 @@ export const GATEWAY_BRIDGE_METHOD_NAMES = [
   'createSquad',
   'updateSquad',
   'deleteSquad',
-  'readAgentsMd',
-  'writeAgentsMd',
+  'readSoulMd',
+  'writeSoulMd',
   'listBotMemories',
   'upsertBotMemory',
   'deleteBotMemory',
@@ -70,6 +70,8 @@ export const GATEWAY_BRIDGE_METHOD_NAMES = [
   'probeComputer',
   'getMessages',
   'getTasks',
+  'listOwnerTasks',
+  'listOwnerResources',
   'getMessagesPage',
   'searchMessages',
   'getPromptContext',
@@ -82,6 +84,7 @@ export const GATEWAY_BRIDGE_METHOD_NAMES = [
   'copyText',
   'pickPaths',
   'getPathForFile',
+  'uploadOwnerAttachment',
   'listScheduledJobs',
   'manageScheduledJob',
   'readGeneratedAssetDataUrl',
@@ -108,6 +111,7 @@ export const GATEWAY_BRIDGE_METHOD_NAMES = [
   'onNativeThemeUpdated',
   'onSettingsChanged',
   'onChatEvent',
+  'onShellNavigate',
 ] as const;
 
 const GATEWAY_EVENT_METHODS = new Set([
@@ -398,6 +402,28 @@ export function gatewayBootJs(): string {
           }).catch(function(){ return []; });
         });
       },
+      listOwnerTasks:function(ownerId){
+        return api('GET','/v1/bots/'+encodeURIComponent(ownerId)+'/tasks?all=1').then(function(res){
+          if (Array.isArray(res)) return res;
+          return (res && res.tasks) || [];
+        }).catch(function(){
+          return api('GET','/v1/squads/'+encodeURIComponent(ownerId)+'/tasks?all=1').then(function(res){
+            if (Array.isArray(res)) return res;
+            return (res && res.tasks) || [];
+          }).catch(function(){ return []; });
+        });
+      },
+      listOwnerResources:function(ownerId){
+        return api('GET','/v1/bots/'+encodeURIComponent(ownerId)+'/resources').then(function(res){
+          if (Array.isArray(res)) return res;
+          return (res && res.resources) || [];
+        }).catch(function(){
+          return api('GET','/v1/squads/'+encodeURIComponent(ownerId)+'/resources').then(function(res){
+            if (Array.isArray(res)) return res;
+            return (res && res.resources) || [];
+          }).catch(function(){ return []; });
+        });
+      },
       getMessages:function(botId, opts){
         var limit=50;
         if(opts&&typeof opts.limit==='number'&&opts.limit>0) limit=Math.min(200, Math.max(1, Math.floor(opts.limit)));
@@ -420,6 +446,7 @@ export function gatewayBootJs(): string {
       },
       onRuntimeEvent:addListener,
       onChatEvent:addListener,
+      onShellNavigate:addListener,
       copyText:function(text){
         try{
           if(navigator.clipboard&&navigator.clipboard.writeText) return navigator.clipboard.writeText(text).then(function(){return true;}, function(){return false;});
@@ -505,6 +532,7 @@ export function gatewayBootJs(): string {
       },
       pickPaths:function(){ return Promise.resolve({canceled:true, paths:[]}); },
       getPathForFile:function(){ return ''; },
+      uploadOwnerAttachment:function(){ return Promise.resolve({ok:false, error:'unauthorized'}); },
       listScheduledJobs:function(){ return Promise.resolve([]); },
       manageScheduledJob:function(){ return Promise.resolve({ok:true, summary:''}); },
       readGeneratedAssetDataUrl:function(){ return Promise.resolve(null); },
@@ -514,7 +542,7 @@ export function gatewayBootJs(): string {
       listGlobalMemories:function(){ return Promise.resolve([]); },
       listBotSkills:function(){ return Promise.resolve([]); },
       listGlobalAgentsSkills:function(){ return Promise.resolve([]); },
-      readAgentsMd:function(){ return Promise.resolve(''); },
+      readSoulMd:function(){ return Promise.resolve(''); },
       createBot:unsupported('Create bot from gateway not supported yet'),
       createSquad:unsupported('Create squad from gateway not supported yet'),
       updateBot:unsupported('Update bot from gateway not supported yet'),
@@ -522,7 +550,7 @@ export function gatewayBootJs(): string {
       deleteBot:unsupported('Delete bot from gateway not supported yet'),
       updateSquad:unsupported('Update squad from gateway not supported yet'),
       deleteSquad:unsupported('Delete squad from gateway not supported yet'),
-      writeAgentsMd:function(){ return Promise.resolve(true); },
+      writeSoulMd:function(){ return Promise.resolve(true); },
       upsertBotMemory:function(){ return Promise.resolve(true); },
       deleteBotMemory:function(){ return Promise.resolve(true); },
       upsertGlobalMemory:function(){ return Promise.resolve(true); },

@@ -14,16 +14,22 @@ export const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
   { id: 'theme', tab: 'general', labelKey: 'theme', keywords: ['外观', 'appearance', 'dark', 'light'] },
   { id: 'language', tab: 'general', labelKey: 'language', keywords: ['语言', '中文', '英文'] },
   {
+    id: 'timezone',
+    tab: 'general',
+    labelKey: 'timezone',
+    keywords: ['时区', 'timezone', 'tz', 'IANA', 'UTC', '自动检测', 'auto'],
+  },
+  {
+    id: 'translucent',
+    tab: 'general',
+    labelKey: 'translucent',
+    keywords: ['半透明', 'translucent', 'frost', 'vibrancy', '毛玻璃', '透明', 'glass'],
+  },
+  {
     id: 'sidebarDockMagnify',
     tab: 'general',
     labelKey: 'sidebarDockMagnify',
     keywords: ['dock', 'magnify', 'zoom', '缩放', '缩放特效', '放大', '侧边栏', 'sidebar', 'collapsed'],
-  },
-  {
-    id: 'defaultAssistant',
-    tab: 'general',
-    labelKey: 'defaultAssistant',
-    keywords: ['默认助手', 'default assistant', 'default bot', '领袖'],
   },
   { id: 'microphone', tab: 'general', labelKey: 'microphone', keywords: ['mic', '语音', 'voice', 'whisper', '麦克风'] },
   {
@@ -235,7 +241,7 @@ export const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
     labelKey: 'customProviders',
     keywords: ['供应商', 'provider', 'providers', '自定义供应商', '多供应商'],
   },
-  { id: 'baseURL', tab: 'model', labelKey: 'api', keywords: ['BaseURL', 'base url', 'endpoint'] },
+  { id: 'baseURL', tab: 'model', labelKey: 'api', keywords: ['BaseURL', 'base url', 'endpoint', '请求接口', 'request api'] },
   { id: 'apiKey', tab: 'model', labelKey: 'api', keywords: ['API Key', '密钥', 'sk-'] },
   { id: 'apiFormat', tab: 'model', labelKey: 'apiFormat', keywords: ['api format', 'responses', 'completions'] },
   { id: 'modelList', tab: 'model', labelKey: 'modelList', keywords: ['model list', 'models', '模型列表', '最大输出窗口', 'maxTokens', 'max tokens', 'max_output_tokens', '跟随服务商', 'provider default', '默认'] },
@@ -274,12 +280,6 @@ export const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
     labelKey: 'compressSummaryMaxChars',
   },
   {
-    id: 'maxTurns',
-    tab: 'model',
-    labelKey: 'chatMaxTurns',
-    keywords: ['maxTurns', '回合', '单次运行', 'turns'],
-  },
-  {
     id: 'assistantRoleTemplate',
     tab: 'instructions',
     labelKey: 'assistantRoleTemplate',
@@ -310,16 +310,16 @@ export const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
     keywords: ['maxTurns', '队员', 'member'],
   },
   {
-    id: 'agentsMdRefreshSystemPrompt',
+    id: 'soulMdRefreshSystemPrompt',
     tab: 'instructions',
-    labelKey: 'agentsMdRefreshSystemPrompt',
-    keywords: ['AGENTS', 'AGENTS.md', 'system', '模版', '维护', 'refresh', 'agents'],
+    labelKey: 'soulMdRefreshSystemPrompt',
+    keywords: ['SOUL', 'SOUL.md', 'AGENTS', 'system', '模版', '维护', 'refresh', 'soul'],
   },
   {
-    id: 'agentsMdRecentMessageLimit',
+    id: 'soulMdRecentMessageLimit',
     tab: 'instructions',
-    labelKey: 'agentsMdRecentMessageLimit',
-    keywords: ['AGENTS', '最近消息', '条数', 'limit', 'refresh', 'agents'],
+    labelKey: 'soulMdRecentMessageLimit',
+    keywords: ['SOUL', 'SOUL.md', '最近消息', '条数', 'limit', 'refresh', 'soul'],
   },
   {
     id: 'scopeInstruction',
@@ -380,7 +380,6 @@ const ADVANCED_TABS: ReadonlySet<SettingsTab> = new Set<SettingsTab>([
 const ADVANCED_ITEM_IDS: ReadonlySet<string> = new Set([
   'contextCompression',
   'autoTopicCompress',
-  'maxTurns',
 ]);
 
 export function isAdvancedSettingsTab(tab: SettingsTab): boolean {

@@ -210,8 +210,8 @@ export function formatSessionPromptContext(input: FormatSessionPromptContextInpu
   const header = [
     '# OkBot 本轮完整上下文（Session 投影）',
     '',
-    '说明：根据当前 SDK Session 中的会话项，以及**此刻**的系统材料（AGENTS.md / skills 目录 / memories / 会话摘要 / 工具设置）实时重建，',
-    '并非发送当时冻结的历史快照。Skills 正文仅在本轮 read_skill 工具结果中出现；若之后自动维护过 AGENTS.md、skills 或记忆，展示可能与当时模型所见略有差异。',
+    '说明：根据当前 SDK Session 中的会话项，以及**此刻**的系统材料（SOUL.md / skills 目录 / memories / 会话摘要 / 工具设置）实时重建，',
+    '并非发送当时冻结的历史快照。Skills 正文仅在本轮 read_skill 工具结果中出现；若之后自动维护过 SOUL.md、skills 或记忆，展示可能与当时模型所见略有差异。',
     `截断点：含用户消息 id = ${input.messageId} 及之前的 session items（与模型实际可见窗口对齐）。`,
     markerNote,
     ...(emptyTailNote ? [emptyTailNote] : []),

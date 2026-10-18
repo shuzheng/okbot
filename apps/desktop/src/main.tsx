@@ -8,6 +8,9 @@ import './styles/app.css';
 // Early platform hint for CSS / chrome (Windows frameless controls).
 void window.okbot.getAppInfo().then((info) => {
   document.documentElement.dataset.platform = info.platform;
+    if (document.documentElement.dataset.translucent == null) {
+      document.documentElement.dataset.translucent = 'true';
+    }
 });
 
 createRoot(document.getElementById('root')!).render(

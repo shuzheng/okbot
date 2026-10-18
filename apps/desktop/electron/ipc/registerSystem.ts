@@ -71,7 +71,7 @@ export function registerWindowControlIpc(): void {
   app.on('browser-window-created', (_e, win) => attachMaximizedPush(win));
 }
 
-export function registerSystemIpc(_ctx: IpcContext): void {
+export function registerSystemIpc(ctx: IpcContext): void {
   ipcMain.handle(
     IpcChannels.setTrafficLightPosition,
     (_e, pos: { x: number; y: number }) => {
@@ -187,6 +187,79 @@ export function registerSystemIpc(_ctx: IpcContext): void {
     },
   );
 
+
+  ipcMain.handle(
+    IpcChannels.uploadOwnerAttachment,
+    async (
+      _e,
+      payload: {
+        ownerId?: string;
+        name?: string;
+        localPath?: string;
+        dataBase64?: string;
+        mime?: string;
+      },
+    ): Promise<
+      | {
+          ok: true;
+          attachment: {
+            kind: 'image' | 'file';
+            path: string;
+            name: string;
+            size: number;
+            mediaPath: string;
+            assetRel: string;
+          };
+        }
+      | { ok: false; error: string }
+    > => {
+      const ownerId = typeof payload?.ownerId === 'string' ? payload.ownerId.trim() : '';
+      if (!ownerId) return { ok: false, error: 'missing_owner' };
+      const name = typeof payload?.name === 'string' ? payload.name.trim() : '';
+      const mime = typeof payload?.mime === 'string' ? payload.mime.trim() : '';
+      const localPath = typeof payload?.localPath === 'string' ? payload.localPath.trim() : '';
+      const dataBase64 = typeof payload?.dataBase64 === 'string' ? payload.dataBase64.trim() : '';
+      try {
+        let buffer: Buffer;
+        let displayName = name;
+        if (localPath) {
+          const resolved = path.resolve(localPath);
+          const st = await fs.stat(resolved);
+          if (!st.isFile()) return { ok: false, error: 'not_a_file' };
+          if (st.size <= 0) return { ok: false, error: 'empty_upload' };
+          if (st.size > 25 * 1024 * 1024) return { ok: false, error: 'upload_too_large' };
+          buffer = await fs.readFile(resolved);
+          if (!displayName) displayName = path.basename(resolved);
+        } else if (dataBase64) {
+          buffer = Buffer.from(dataBase64, 'base64');
+          if (!buffer.length) return { ok: false, error: 'empty_upload' };
+          if (!displayName) displayName = 'file';
+        } else {
+          return { ok: false, error: 'missing_data' };
+        }
+        const saved = ctx.storage.saveOwnerUpload(ownerId, {
+          name: displayName || 'file',
+          buffer,
+          mime: mime || null,
+        });
+        return {
+          ok: true,
+          attachment: {
+            kind: saved.kind,
+            path: saved.path,
+            name: saved.name,
+            size: saved.size,
+            mediaPath: saved.mediaPath,
+            assetRel: saved.assetRel,
+          },
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { ok: false, error: msg };
+      }
+    },
+  );
+
   /** Resolve ~/.okbot/<owner>/resources images as data URLs when gateway /v1/media is unavailable. */
   ipcMain.handle(
     IpcChannels.readGeneratedAssetDataUrl,
@@ -203,27 +276,28 @@ export function registerSystemIpc(_ctx: IpcContext): void {
       if (!rel || rel.includes('..') || path.isAbsolute(rel)) {
         return { ok: false, error: 'invalid asset path' };
       }
-      // Expect `<ownerId>/resources/<fileName>` (generated media only).
+      // Expect `<ownerId>/{resources|uploads}/<fileName>`.
       const parts = rel.split('/');
+      const subdir = parts[1];
       if (
         parts.length !== 3 ||
-        parts[1] !== 'resources' ||
+        (subdir !== 'resources' && subdir !== 'uploads') ||
         !parts[0] ||
         !parts[2] ||
         parts[0].includes('\\') ||
         parts[2].includes('\\')
       ) {
-        return { ok: false, error: 'asset must be <ownerId>/resources/<file>' };
+        return { ok: false, error: 'asset must be <ownerId>/{resources|uploads}/<file>' };
       }
       const okbotRoot = path.resolve(os.homedir(), '.okbot');
       const filePath = path.resolve(okbotRoot, rel);
       if (filePath !== okbotRoot && !filePath.startsWith(okbotRoot + path.sep)) {
         return { ok: false, error: 'path outside okbot root' };
       }
-      // Must stay inside that owner's resources/ dir.
-      const resourcesDir = path.resolve(okbotRoot, parts[0], 'resources');
-      if (filePath !== resourcesDir && !filePath.startsWith(resourcesDir + path.sep)) {
-        return { ok: false, error: 'path outside owner resources' };
+      // Must stay inside that owner's resources/ or uploads/ dir.
+      const mediaDir = path.resolve(okbotRoot, parts[0], subdir);
+      if (filePath !== mediaDir && !filePath.startsWith(mediaDir + path.sep)) {
+        return { ok: false, error: 'path outside owner media' };
       }
       try {
         const buf = await fs.readFile(filePath);

@@ -23,6 +23,7 @@ function inferBotAvatarSize(className: string): number {
   if (className.includes('bot-mention-chip-avatar')) return 14;
   if (className.includes('squad-role-row') || className.includes('squad-member')) return 28;
   if (className.includes('avatar-preview')) return 36;
+  if (className.includes('bot-avatar-type-preview')) return 36;
   if (className.includes('session-pin-avatar')) return 56;
   if (className.includes('session-avatar')) return 36;
   return 36;
@@ -88,6 +89,9 @@ export function FlatAvatar({
     const hex = color && /^#[0-9A-Fa-f]{6}$/.test(color) ? color : undefined;
     // Working always moves; otherwise respect paused / animate budget.
     const motionPaused = paused === true || (animate === false && !busy);
+    // bot-avatars `paused` freezes the *current* frame (mid-flip). For 静止 we
+    // must force the face-on rest pose via `pose` (see restPose in the lib).
+    const faceOnStill = motionPaused ? ({ yaw: 0 } as const) : undefined;
     return (
       <span
         className={`flat-avatar flat-avatar-bot${markClass} ${className}`.trim()}
@@ -102,6 +106,7 @@ export function FlatAvatar({
           {...(hex ? { color: hex } : {})}
           interactive={false}
           paused={motionPaused}
+          {...(faceOnStill ? { pose: faceOnStill } : {})}
         />
         {mark}
       </span>

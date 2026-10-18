@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import {
   DEFAULT_TOOL_PREFERENCES,
   normalizeContextCompression,
-  normalizeMaxTurns,
   normalizeModelSettings,
   normalizeSecuritySettings,
   normalizeSquadSettings,
@@ -14,6 +13,7 @@ import {
   normalizeComputers,
   normalizeDefaultComputerId,
   normalizeDefaultAssistantId,
+  normalizeTimezone,
   normalizePinnedOwnerIds,
   normalizeHiddenOwnerIds,
   normalizeOwnerGroups,
@@ -111,6 +111,10 @@ export function SettingsModal({
   const [sidebarDockMagnify, setSidebarDockMagnify] = useState(
     settings.sidebarDockMagnify === true,
   );
+  const [translucent, setTranslucent] = useState(settings.translucent !== false);
+  useEffect(() => {
+    setTranslucent(settings.translucent !== false);
+  }, [settings.translucent]);
   const [developerMode, setDeveloperMode] = useState(settings.developerMode === true);
   const [notifications, setNotifications] = useState(settings.notifications !== false);
   const [closeAction, setCloseAction] = useState<CloseAction>(() => normalizeCloseAction(settings.closeAction));
@@ -168,9 +172,10 @@ export function SettingsModal({
   const [defaultComputerId, setDefaultComputerId] = useState(() =>
     normalizeDefaultComputerId(settings.defaultComputerId, normalizeComputers(settings.computers)),
   );
-  const [defaultAssistantId, setDefaultAssistantId] = useState(() =>
-    normalizeDefaultAssistantId(settings.defaultAssistantId, bots),
-  );
+  const [timezone, setTimezone] = useState(() => normalizeTimezone(settings.timezone));
+  useEffect(() => {
+    setTimezone(normalizeTimezone(settings.timezone));
+  }, [settings.timezone]);
 
   const [updaterStatus, setUpdaterStatus] = useState<UpdaterStatus | null>(null);
   const [updaterBusy, setUpdaterBusy] = useState(false);
@@ -214,17 +219,16 @@ export function SettingsModal({
   const [keepRecentMin, setKeepRecentMin] = useState(String(initialCc.keepRecentMin));
   const [summaryMaxChars, setSummaryMaxChars] = useState(String(initialCc.summaryMaxChars));
   const [autoTopicCompress, setAutoTopicCompress] = useState(initialCc.autoTopicCompress !== false);
-  const [maxTurns, setMaxTurns] = useState(String(normalizeMaxTurns(settings.maxTurns)));
   const initialSquad = normalizeSquadSettings(settings.squad);
   const initialInstructions = normalizeInstructionsSettings(settings.instructions);
   const [assistantRoleTemplate, setAssistantRoleTemplate] = useState(
     initialInstructions.assistantRoleTemplate,
   );
-  const [agentsMdRefreshSystemPrompt, setAgentsMdRefreshSystemPrompt] = useState(
-    initialInstructions.agentsMdRefreshSystemPrompt,
+  const [soulMdRefreshSystemPrompt, setSoulMdRefreshSystemPrompt] = useState(
+    initialInstructions.soulMdRefreshSystemPrompt,
   );
-  const [agentsMdRecentMessageLimit, setAgentsMdRecentMessageLimit] = useState(
-    String(initialInstructions.agentsMdRecentMessageLimit),
+  const [soulMdRecentMessageLimit, setSoulMdRecentMessageLimit] = useState(
+    String(initialInstructions.soulMdRecentMessageLimit),
   );
   const [skillsCreateUpdateInstruction, setSkillsCreateUpdateInstruction] = useState(
     initialInstructions.skillsCreateUpdateInstruction,
@@ -335,7 +339,7 @@ export function SettingsModal({
     const id = focusSection;
     if (id === 'assistantRoleTemplate') setInstructionsSubTab('assistant');
     else if (id.startsWith('squad')) setInstructionsSubTab('squad');
-    else if (id.startsWith('agentsMd')) setInstructionsSubTab('agents');
+    else if (id.startsWith('soulMd')) setInstructionsSubTab('soul');
     else if (id === 'scopeInstruction' || id === 'memoryRecentMessageLimit')
       setInstructionsSubTab('memory');
     else if (id.startsWith('skills')) setInstructionsSubTab('skills');
@@ -415,6 +419,7 @@ export function SettingsModal({
         hardwareAcceleration,
         autoUpdate,
         sidebarDockMagnify,
+        translucent,
         developerMode,
         notifications,
         closeAction,
@@ -438,7 +443,9 @@ export function SettingsModal({
         })(),
         computers: normalizeComputers(computersDraft),
         defaultComputerId: normalizeDefaultComputerId(defaultComputerId, normalizeComputers(computersDraft)),
-        defaultAssistantId: normalizeDefaultAssistantId(defaultAssistantId, bots),
+        timezone: normalizeTimezone(timezone),
+        // Keep runtime default-assistant (sidebar star / context menu); not edited in General UI.
+        defaultAssistantId: normalizeDefaultAssistantId(settings.defaultAssistantId, bots),
         pinnedOwnerIds: normalizePinnedOwnerIds(settings.pinnedOwnerIds),
         hiddenOwnerIds: normalizeHiddenOwnerIds(settings.hiddenOwnerIds),
         ownerGroups: normalizeOwnerGroups(settings.ownerGroups),
@@ -463,12 +470,10 @@ export function SettingsModal({
           summaryMaxChars: keptNumber(summaryMaxChars, normalizeContextCompression(settings.contextCompression).summaryMaxChars),
           autoTopicCompress,
         }),
-        // Empty field → default (normalizeMaxTurns treats ''/null as fallback).
-        maxTurns: normalizeMaxTurns(keptNumber(maxTurns, normalizeMaxTurns(settings.maxTurns))),
         instructions: normalizeInstructionsSettings({
           assistantRoleTemplate,
-          agentsMdRefreshSystemPrompt,
-          agentsMdRecentMessageLimit: keptNumber(agentsMdRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).agentsMdRecentMessageLimit),
+          soulMdRefreshSystemPrompt,
+          soulMdRecentMessageLimit: keptNumber(soulMdRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).soulMdRecentMessageLimit),
           skillsCreateUpdateInstruction,
           skillsRecentMessageLimit: keptNumber(skillsRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).skillsRecentMessageLimit),
         }),
@@ -513,6 +518,7 @@ export function SettingsModal({
     hardwareAcceleration,
     autoUpdate,
     sidebarDockMagnify,
+    translucent,
     developerMode,
     notifications,
     closeAction,
@@ -527,8 +533,9 @@ export function SettingsModal({
     localHttpApiServeUi,
     computersDraft,
     defaultComputerId,
-    defaultAssistantId,
+    timezone,
     bots,
+    settings.defaultAssistantId,
     autoApprovalEnabled,
     autoApprovalRules,
     tools,
@@ -545,10 +552,9 @@ export function SettingsModal({
     keepRecentMin,
     summaryMaxChars,
     autoTopicCompress,
-    maxTurns,
     assistantRoleTemplate,
-    agentsMdRefreshSystemPrompt,
-    agentsMdRecentMessageLimit,
+    soulMdRefreshSystemPrompt,
+    soulMdRecentMessageLimit,
     skillsCreateUpdateInstruction,
     skillsRecentMessageLimit,
     scopeInstruction,
@@ -785,12 +791,13 @@ export function SettingsModal({
                 setShowAdvancedSettings={setShowAdvancedSettings}
                 setSidebarDockMagnify={setSidebarDockMagnify}
                 setTheme={setTheme}
+                setTranslucent={setTranslucent}
+                setTimezone={setTimezone}
                 showAdvancedSettings={showAdvancedSettings}
                 sidebarDockMagnify={sidebarDockMagnify}
                 theme={theme}
-                bots={bots}
-                defaultAssistantId={defaultAssistantId}
-                setDefaultAssistantId={setDefaultAssistantId}
+                timezone={timezone}
+                translucent={translucent}
               />
             ) : tab === 'gateway' ? (
               <GatewaySettingsPanel
@@ -970,30 +977,6 @@ export function SettingsModal({
                   </div>
                 </div>
 
-                <div className="settings-section-label" style={{ marginTop: 16 }} data-settings-id="maxTurns">
-                  <span>{t(lang, 'chatMaxTurns')}</span>
-                </div>
-                <div className="settings-card settings-card-model">
-                  <div className="settings-row" data-settings-id="maxTurns">
-                    <span className="settings-row-label">
-                      <span className="settings-row-label-text">{t(lang, 'chatMaxTurns')}</span>
-                      <SettingsHelpTip text={t(lang, 'chatMaxTurnsHint')} />
-                    </span>
-                    <input
-                      spellCheck={false}
-                      className="wide"
-                      type="number"
-                      min={1}
-                      max={100}
-                      step={1}
-                      value={maxTurns}
-                      onChange={(e) => setMaxTurns(e.target.value)}
-                      onBlur={() => {
-                        setMaxTurns(String(normalizeMaxTurns(keptNumber(maxTurns, normalizeMaxTurns(settings.maxTurns)))));
-                      }}
-                    />
-                  </div>
-                </div>
                 </>) : null}
               </div>
 
@@ -1001,8 +984,8 @@ export function SettingsModal({
               <InstructionsSettingsPanel
                 settings={settings}
                 lang={lang}
-                agentsMdRecentMessageLimit={agentsMdRecentMessageLimit}
-                agentsMdRefreshSystemPrompt={agentsMdRefreshSystemPrompt}
+                soulMdRecentMessageLimit={soulMdRecentMessageLimit}
+                soulMdRefreshSystemPrompt={soulMdRefreshSystemPrompt}
                 assistantRoleTemplate={assistantRoleTemplate}
                 captainMaxTurns={captainMaxTurns}
                 captainPersona={captainPersona}
@@ -1010,8 +993,8 @@ export function SettingsModal({
                 memberMaxTurns={memberMaxTurns}
                 memoryRecentMessageLimit={memoryRecentMessageLimit}
                 scopeInstruction={scopeInstruction}
-                setAgentsMdRecentMessageLimit={setAgentsMdRecentMessageLimit}
-                setAgentsMdRefreshSystemPrompt={setAgentsMdRefreshSystemPrompt}
+                setSoulMdRecentMessageLimit={setSoulMdRecentMessageLimit}
+                setSoulMdRefreshSystemPrompt={setSoulMdRefreshSystemPrompt}
                 setAssistantRoleTemplate={setAssistantRoleTemplate}
                 setCaptainMaxTurns={setCaptainMaxTurns}
                 setCaptainPersona={setCaptainPersona}

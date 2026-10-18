@@ -27,9 +27,9 @@ apps/sandbox-agent/    远程电脑 HTTP（shell / fs），不是桌面网关
 | 窗口 IPC、存储、审批、更新安装 | `apps/desktop/electron/ipc/`、`electron/storage/`、`electron/updater.ts`、`electron/macUpdateInstall.ts` |
 | 网关路由、`okbot serve`、附着窗口 | `electron/localHttpApi.ts`、`electron/cli.ts`、`electron/main.ts`、`electron/attachPreload.ts`、`src/bridge/httpOkbot.ts` |
 | 模型调用、工具、电脑路由、压缩 | `packages/agent/src/`（`tools.ts`、`computerSelection.ts`、`executionBackend.ts`、`runAgentChat.ts`、`squad.ts`、`mesh.ts` 私聊 `ask_assistant`） |
-| 定时任务（schedules.json / ticker） | `apps/desktop/electron/storage/schedules.ts`、`ScheduleStore`（经 `FileStorage` 门面）、`scheduleTicker.ts`、工具 `manage_schedule`（默认 allow；create/delete 强制 HITL（含 AAR 不可旁路）；list 不审批）；编辑助手/小队里的 `SchedulesList.tsx`（暂停 / 恢复 / `requestConfirm` 删除） |
+| 定时任务（schedules.jsonl / ticker） | `apps/desktop/electron/storage/schedules.ts`、`ScheduleStore`（经 `FileStorage` 门面）、`scheduleTicker.ts`、工具 `manage_schedule`（默认 allow；create/delete 强制 HITL（含 AAR 不可旁路）；list 不审批）；编辑助手/小队里的 `SchedulesList.tsx`（暂停 / 恢复 / `requestConfirm` 删除） |
 | 网页工具 | `packages/agent/src/webFetch.ts`、`webSearch.ts`；设置 `settings.web`；工具注册在 `tools.ts` |
-| 聊天拖放附件 | Composer / 聊天区 DnD → 与附件选择器同一管线（见 GUIDE §3.4） |
+| 聊天粘贴 / 拖放附件 | Composer 粘贴与聊天区 DnD → 上传到网关 `~/.okbot/<owner>/uploads/`（见 GUIDE §3.4）；文件夹仍为路径引用 |
 | 助手市场（助手 Tab + 连接器 Tab） | 内置 `packages/agent/src/assistantGallery.ts`；URL 解析 `githubAssistantSource.ts`；拉取 `electron/storage/fetchGithubAssistant.ts`；整页 UI `features/bots/AssistantMarketplacePage.tsx`（助手画廊 `AssistantGallery.tsx`；连接器预设 `marketplaceConnectors.ts`）；侧栏底部入口；文案键 `galleryTitle` / `galleryTabAssistants` / `galleryTabConnectors` 等 |
 | 设置字段、IPC 通道名、ChatStartPayload | `packages/shared/src/`（`settings.ts` / `ipc.ts` / `chat.ts` 等；`index.ts` 为 barrel）。改了字段要同时改 `SettingsStore`（经 `FileStorage` 门面）的读写和 normalize；聊天启动字段走 `ChatStartPayload` / `CHAT_START_*_KEYS` |
 | 远程电脑协议 | `apps/sandbox-agent/src/server.ts`。桌面侧探测在 `probeRemoteComputer` |

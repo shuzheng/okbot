@@ -16,11 +16,21 @@ import {
 import { t } from '../../i18n';
 import type { BotFormValues } from '../../types';
 import { FlatAvatar } from '../../components/ui/avatars';
-import { ChevronsRightIcon, ChevronsDownIcon, ChevronsUpIcon } from '../../components/ui/icons';
+import { toast } from '../../components/ui';
+import { ChevronsRightIcon, ChevronsDownIcon, ChevronsUpIcon, ExportAssistantIcon } from '../../components/ui/icons';
+import { formatSystemError } from '../../utils/formatSystemError';
 import { updateScrollFade } from '../../utils/scrollFade';
 import { useDrawerClose } from '../../utils/useDrawerClose';
 import { ModelRefSelect } from '../settings/ModelRefSelect';
-import { BotAdvancedSection } from './BotAdvancedSection';
+import { BotAdvancedSection, BotMemoryPanel, BotSkillsPanel } from './BotAdvancedSection';
+import {
+  OwnerFormTabs,
+  OwnerTasksPanel,
+  OwnerResourcesPanel,
+  BOT_OWNER_FORM_TABS,
+  type OwnerFormTab,
+} from '../owner';
+import { SchedulesList } from '../settings/SchedulesList';
 
 export type { BotFormValues };
 
@@ -70,7 +80,7 @@ export function BotFormModal({
   /** Existing bot id (create flow allocates before opening the modal). */
   botId?: string | null;
   autoApply?: boolean;
-  /** When false, hide description (read-only when shown) and Advanced (AGENTS / memory / skills / schedules). */
+  /** When false, hide Advanced (SOUL.md / 灵魂). Memory & skills are own tabs; schedules under 自动化. */
   showAdvancedSettings?: boolean;
   onCancel: () => void;
   onSave?: (v: BotFormValues) => void;
@@ -108,18 +118,20 @@ export function BotFormModal({
   const [enabledGlobalSkills, setEnabledGlobalSkills] = useState<string[]>(
     Array.isArray(initial.enabledGlobalSkills) ? [...initial.enabledGlobalSkills] : [],
   );
-  const agentsMdRef = useRef({ text: '', touched: false });
+  const soulMdRef = useRef({ text: '', touched: false });
   const [emojiMoreOpen, setEmojiMoreOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [ownerFormTab, setOwnerFormTab] = useState<OwnerFormTab>('details');
   const nameRef = useRef<HTMLInputElement>(null);
   const emojiMoreBtnRef = useRef<HTMLButtonElement>(null);
   const emojiPickerRef = useRef<HTMLDivElement>(null);
   const [emojiPickerPos, setEmojiPickerPos] = useState<{ top: number; left: number } | null>(null);
-  // Hot presets: 2 rows × 7 cols (👑 stays second).
-  const emojiCols = 7;
-  const emojiHotCount = emojiCols * 2;
+  // Match bot-avatar-type-grid: 3 rows × 6 cols; last cell is 「更多」.
+  const emojiCols = 6;
+  const emojiHotCount = emojiCols * 3 - 1; // 17 slots; EMOJI_PRESETS has 17
   const hotEmojis = [...EMOJI_PRESETS].slice(0, emojiHotCount) as string[];
-  if (emoji && !hotEmojis.includes(emoji) && EMOJI_PRESETS.includes(emoji as (typeof EMOJI_PRESETS)[number])) {
+  if (emoji && !hotEmojis.includes(emoji)) {
+    // Keep a non-preset (emoji-mart) selection visible in the last emoji slot.
     hotEmojis[emojiHotCount - 1] = emoji;
   }
   const themeAttr = typeof document !== 'undefined' ? document.documentElement.getAttribute('data-theme') : null;
@@ -270,11 +282,11 @@ export function BotFormModal({
   }, []);
 
   function withAdvanced(base: BotFormValues): BotFormValues {
-    const snap = agentsMdRef.current;
+    const snap = soulMdRef.current;
     return {
       ...base,
-      agentsMd: snap.touched ? snap.text : null,
-      agentsMdTouched: snap.touched,
+      soulMd: snap.touched ? snap.text : null,
+      soulMdTouched: snap.touched,
       useGlobalSkills,
       enabledGlobalSkills,
     };
@@ -329,10 +341,10 @@ export function BotFormModal({
     flushEmit();
   }
 
-  const onAgentsMdChange = useCallback((text: string, touched: boolean) => {
-    agentsMdRef.current = {
+  const onSoulMdChange = useCallback((text: string, touched: boolean) => {
+    soulMdRef.current = {
       text,
-      touched: agentsMdRef.current.touched || touched,
+      touched: soulMdRef.current.touched || touched,
     };
   }, []);
 
@@ -345,8 +357,8 @@ export function BotFormModal({
     if (!autoApply) return;
     onApply?.({
       ...formValues({ name, description, avatarKind, emoji, color, botAvatarType, providerId, modelId }),
-      agentsMd: agentsMdRef.current.touched ? agentsMdRef.current.text : null,
-      agentsMdTouched: agentsMdRef.current.touched,
+      soulMd: soulMdRef.current.touched ? soulMdRef.current.text : null,
+      soulMdTouched: soulMdRef.current.touched,
       useGlobalSkills: next.useGlobalSkills,
       enabledGlobalSkills: next.enabledGlobalSkills,
     });
@@ -387,9 +399,34 @@ export function BotFormModal({
       >
         <div className="modal-head form-drawer-head">
           <h2>{title}</h2>
-          <button type="button" className="modal-close" onClick={requestClose} aria-label={t(lang, 'close')}>
-            <ChevronsRightIcon />
-          </button>
+          <div className="modal-head-actions">
+            {botId ? (
+              <button
+                type="button"
+                className="icon-btn"
+                title={t(lang, 'botExportPackage')}
+                aria-label={t(lang, 'botExportPackage')}
+                onClick={() => {
+                  const id = botId;
+                  void (async () => {
+                    try {
+                      const res = await window.okbot.exportAssistantPackage(id);
+                      if (res && !res.canceled && 'path' in res) {
+                        toast.success(`${t(lang, 'botPackageExported')}: ${res.path}`);
+                      }
+                    } catch (err) {
+                      toast.error(formatSystemError(err));
+                    }
+                  })();
+                }}
+              >
+                <ExportAssistantIcon />
+              </button>
+            ) : null}
+            <button type="button" className="modal-close" onClick={requestClose} aria-label={t(lang, 'close')}>
+              <ChevronsRightIcon />
+            </button>
+          </div>
         </div>
         <div
           className="form-drawer-body scroll-fade"
@@ -401,22 +438,28 @@ export function BotFormModal({
             }
           }}
         >
-        <div className="avatar-preview-row">
+        <div className="avatar-preview-stack">
           <button
             type="button"
             className={`avatar-preview-hit${pickerOpen ? ' open' : ''}`}
-            onClick={() =>
+            onClick={() => {
+              // Avatar picker lives under 详情; switch there when opening from another tab.
+              if (ownerFormTab !== 'details') {
+                setOwnerFormTab('details');
+                setPickerOpen(true);
+                return;
+              }
               setPickerOpen((v) => {
                 const next = !v;
                 if (!next) setEmojiMoreOpen(false);
                 return next;
-              })
-            }
+              });
+            }}
             aria-expanded={pickerOpen}
             aria-label={pickerOpen ? t(lang, 'avatarPickerCollapse') : t(lang, 'avatarPickerExpand')}
           >
             <FlatAvatar
-              className="avatar-preview"
+              className="session-pin-avatar"
               emoji={emoji}
               color={color}
               avatarKind={avatarKind}
@@ -427,12 +470,13 @@ export function BotFormModal({
             </span>
           </button>
           <div className="field field-name">
-            <label htmlFor="okbot-bot-name">{t(lang, 'nameLabel')}</label>
             <input
               spellCheck={false}
               id="okbot-bot-name"
               ref={nameRef}
               value={name}
+              aria-label={t(lang, 'nameLabel')}
+              placeholder={t(lang, 'nameLabel')}
               onChange={(e) => {
                 const v = e.target.value;
                 setName(v);
@@ -465,20 +509,13 @@ export function BotFormModal({
               }}
             />
           </div>
+          {description.trim() ? (
+            <p className="bot-form-description-text">{description}</p>
+          ) : null}
         </div>
-        {showAdvancedSettings ? (
-          <div className="field">
-            <label>{t(lang, 'descriptionLabel')}</label>
-            <textarea
-              spellCheck={false}
-              rows={2}
-              value={description}
-              readOnly
-              aria-readonly="true"
-            />
-            <p className="bot-form-model-hint">{t(lang, 'descriptionAutoHint')}</p>
-          </div>
-        ) : null}
+        <OwnerFormTabs lang={lang} value={ownerFormTab} onChange={setOwnerFormTab} tabs={BOT_OWNER_FORM_TABS} />
+        {ownerFormTab === 'details' ? (
+        <>
         <div className="field bot-form-model-row">
           <label>{t(lang, 'botModel')}</label>
           <ModelRefSelect
@@ -534,35 +571,38 @@ export function BotFormModal({
               <>
                 <div className="field">
                   <label>{t(lang, 'emojiLabel')}</label>
-                  <div className="emoji-picker-row">
-                    <div className="emoji-grid">
-                      {hotEmojis.map((e) => (
-                        <button
-                          key={e}
-                          type="button"
-                          className={emoji === e ? 'active' : ''}
-                          onClick={() => {
-                            setEmoji(e);
-                            setEmojiMoreOpen(false);
-                            emit(
-                              formValues({
-                                name,
-                                description,
-                                avatarKind,
-                                emoji: e,
-                                color,
-                                botAvatarType,
-                                providerId,
-                                modelId,
-                              }),
-                              { immediate: true },
-                            );
-                          }}
-                        >
-                          <span className="emoji-grid-raw">{e}</span>
-                        </button>
-                      ))}
-                    </div>
+                  <div className="emoji-grid">
+                    {hotEmojis.map((e) => (
+                      <button
+                        key={e}
+                        type="button"
+                        className={`emoji-grid-btn${emoji === e ? ' active' : ''}`}
+                        onClick={() => {
+                          setEmoji(e);
+                          setEmojiMoreOpen(false);
+                          emit(
+                            formValues({
+                              name,
+                              description,
+                              avatarKind,
+                              emoji: e,
+                              color,
+                              botAvatarType,
+                              providerId,
+                              modelId,
+                            }),
+                            { immediate: true },
+                          );
+                        }}
+                      >
+                        <FlatAvatar
+                          className="bot-avatar-type-preview"
+                          emoji={e}
+                          color={color}
+                          avatarKind="emoji"
+                        />
+                      </button>
+                    ))}
                     <div className="emoji-more-wrap">
                       <button
                         ref={emojiMoreBtnRef}
@@ -705,7 +745,7 @@ export function BotFormModal({
                           color={color}
                           avatarKind="bot-avatar"
                           botAvatarType={shape}
-                          size={32}
+                          size={36}
                         />
                       </button>
                     ))}
@@ -774,11 +814,32 @@ export function BotFormModal({
           <BotAdvancedSection
             lang={lang}
             botId={botId}
+            onSoulMdChange={onSoulMdChange}
+          />
+        ) : null}
+        </>
+        ) : null}
+        {ownerFormTab === 'tasks' ? (
+          <OwnerTasksPanel lang={lang} ownerId={botId} active={ownerFormTab === 'tasks'} />
+        ) : null}
+        {ownerFormTab === 'automation' ? (
+          <SchedulesList lang={lang} active={ownerFormTab === 'automation'} ownerId={botId} compact />
+        ) : null}
+        {ownerFormTab === 'memory' ? (
+          <BotMemoryPanel lang={lang} botId={botId} active={ownerFormTab === 'memory'} />
+        ) : null}
+        {ownerFormTab === 'skills' ? (
+          <BotSkillsPanel
+            lang={lang}
+            botId={botId}
+            active={ownerFormTab === 'skills'}
             useGlobalSkills={useGlobalSkills}
             enabledGlobalSkills={enabledGlobalSkills}
-            onAgentsMdChange={onAgentsMdChange}
             onGlobalSkillsChange={persistGlobalSkills}
           />
+        ) : null}
+        {ownerFormTab === 'resources' ? (
+          <OwnerResourcesPanel lang={lang} ownerId={botId} active={ownerFormTab === 'resources'} />
         ) : null}
         {!autoApply && (
           <div className="modal-actions">

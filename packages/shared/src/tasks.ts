@@ -79,3 +79,19 @@ export function createUlid(nowMs: number = Date.now()): string {
   }
   return out;
 }
+
+
+/** One file under `~/.okbot/<ownerId>/resources/` (edit 资源 tab). */
+export type OwnerResourceInfo = {
+  name: string;
+  /** Absolute path on disk. */
+  path: string;
+  /** Bytes. */
+  size: number;
+  /** ISO mtime (sort newest→oldest). */
+  createdAt: string;
+  /** MIME guess from extension (image/* for preview). */
+  mime: string;
+  /** `<ownerId>/resources/<name>` for readGeneratedAssetDataUrl / media gateway. */
+  assetRel: string;
+};

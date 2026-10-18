@@ -29,6 +29,10 @@ export const IpcChannels = {
   getMessages: 'okbot:get-messages',
   /** Open (pending/in_progress) tasks for the chat UI above the composer. */
   getTasks: 'okbot:get-tasks',
+  /** All tasks (incl. history) for edit-assistant/squad 任务 tab. */
+  listOwnerTasks: 'okbot:list-owner-tasks',
+  /** Artifacts under ~/.okbot/<owner>/resources/ for 资源 tab. */
+  listOwnerResources: 'okbot:list-owner-resources',
   getMessagesPage: 'okbot:get-messages-page',
   searchMessages: 'okbot:search-messages',
   getPromptContext: 'okbot:get-prompt-context',
@@ -62,8 +66,8 @@ export const IpcChannels = {
   /** Recent error-log lines from ~/.okbot/logs (redacted). */
   getRecentErrorLog: 'okbot:get-recent-error-log',
   clearModelBindingsForProvider: 'okbot:clear-model-bindings-for-provider',
-  readAgentsMd: 'okbot:read-agents-md',
-  writeAgentsMd: 'okbot:write-agents-md',
+  readSoulMd: 'okbot:read-soul-md',
+  writeSoulMd: 'okbot:write-soul-md',
   listBotMemories: 'okbot:list-bot-memories',
   upsertBotMemory: 'okbot:upsert-bot-memory',
   deleteBotMemory: 'okbot:delete-bot-memory',
@@ -76,6 +80,11 @@ export const IpcChannels = {
   listGlobalAgentsSkills: 'okbot:list-global-agents-skills',
   /** Renderer → main: native open-dialog for composer attachments. */
   pickPaths: 'okbot:pick-paths',
+  /**
+   * Renderer → main: copy a local file or base64 blob into
+   * ~/.okbot/<ownerId>/uploads/ on the gateway host.
+   */
+  uploadOwnerAttachment: 'okbot:upload-owner-attachment',
   /** Renderer → main: fallback data URL for ~/.okbot/<owner>/resources/* (prefer gateway /v1/media). */
   readGeneratedAssetDataUrl: 'okbot:read-generated-asset-data-url',
   /** Export assistant install package (folder or .okbot zip). */
@@ -100,7 +109,19 @@ export const IpcChannels = {
   listScheduledJobs: 'okbot:list-scheduled-jobs',
   /** pause | resume | delete one job: { ownerId, jobId, action }. */
   manageScheduledJob: 'okbot:manage-scheduled-job',
+  /**
+   * Main → renderer: tray / shell navigation.
+   * Payload: settings | sessions (legacy) | openSession.
+   */
+  shellNavigate: 'okbot:shell-navigate',
 } as const;
+
+/** Main → renderer shell navigation payload. */
+export type ShellNavigateAction = 'sessions' | 'settings' | 'openSession';
+export type ShellNavigatePayload =
+  | { action: 'sessions' }
+  | { action: 'settings' }
+  | { action: 'openSession'; kind: 'bot' | 'squad'; id: string };
 
 export type PendingToolRequest = {
   requestId: string;

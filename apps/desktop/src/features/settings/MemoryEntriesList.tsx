@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FocusEvent } from 'react';
 import { createId, type MemoryEntry } from '@okbot/shared';
+import { ChevronDownIcon } from '../../components/ui/icons';
 import { t, type UiLang } from '../../i18n';
 import { resolveWheelPassOuter, updateScrollFade } from '../../utils/scrollFade';
 
@@ -67,6 +68,8 @@ export function MemoryEntriesList({
 }: Props) {
   const [editingId, setEditingId] = useState<string | 'new' | null>(null);
   const [draftMemory, setDraftMemory] = useState('');
+  /** Expanded memory ids show full text; collapsed keep single-line ellipsis. */
+  const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const listScrollRef = useRef<HTMLDivElement>(null);
   const lastRequestAdd = useRef(0);
@@ -192,7 +195,7 @@ export function MemoryEntriesList({
   );
 
   return (
-    <div className="settings-aar-inline">
+    <div className="settings-aar-inline list-card">
       <div ref={listScrollRef} className="aar-list-scroll scroll-fade">
         {entries.length === 0 && editingId == null ? (
           <div className="aar-empty">{emptyLabel}</div>
@@ -202,9 +205,24 @@ export function MemoryEntriesList({
           editingId === m.id ? (
             renderEditor(m.id)
           ) : (
-            <div key={m.id} className="aar-item">
+            <div
+              key={m.id}
+              className={`aar-item aar-item-clickable${expandedIds[m.id] ? ' is-expanded' : ''}`}
+              role="button"
+              tabIndex={0}
+              aria-expanded={expandedIds[m.id] === true}
+              onClick={() =>
+                setExpandedIds((prev) => ({ ...prev, [m.id]: !prev[m.id] }))
+              }
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  setExpandedIds((prev) => ({ ...prev, [m.id]: !prev[m.id] }));
+                }
+              }}
+            >
               <div className="aar-item-text">
-                <div className="aar-item-title">{m.memory}</div>
+                <div className={`aar-item-title${expandedIds[m.id] ? ' is-expanded' : ''}`}>{m.memory}</div>
                 {m.expires ? <div className="aar-item-sub">{m.expires}</div> : null}
               </div>
               <div className="aar-item-trailing">
@@ -213,7 +231,8 @@ export function MemoryEntriesList({
                   className="model-icon-btn"
                   title={t(lang, 'botMemoryEdit')}
                   aria-label={t(lang, 'botMemoryEdit')}
-                  onClick={() => {
+                  onClick={(e) => {
+                    e.stopPropagation();
                     setEditingId(m.id);
                     setDraftMemory(m.memory);
                   }}
@@ -225,9 +244,25 @@ export function MemoryEntriesList({
                   className="model-icon-btn"
                   title={t(lang, 'botMemoryDelete')}
                   aria-label={t(lang, 'botMemoryDelete')}
-                  onClick={() => void onDelete(m.id)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void onDelete(m.id);
+                  }}
                 >
                   <TrashIcon />
+                </button>
+                <button
+                  type="button"
+                  className={`model-icon-btn aar-expand-btn${expandedIds[m.id] ? ' expanded' : ''}`}
+                  title={expandedIds[m.id] ? t(lang, 'avatarPickerCollapse') : t(lang, 'avatarPickerExpand')}
+                  aria-label={expandedIds[m.id] ? t(lang, 'avatarPickerCollapse') : t(lang, 'avatarPickerExpand')}
+                  aria-expanded={expandedIds[m.id] === true}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setExpandedIds((prev) => ({ ...prev, [m.id]: !prev[m.id] }));
+                  }}
+                >
+                  <ChevronDownIcon />
                 </button>
               </div>
             </div>

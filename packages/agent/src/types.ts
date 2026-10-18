@@ -15,8 +15,8 @@ import type { ComputerRoute } from './computerSelection.js';
 export interface RunChatInput {
   botName: string;
   botDescription: string;
-  /** Contents of the bot's AGENTS.md (system prompt). */
-  agentsMd?: string;
+  /** Contents of the bot's SOUL.md (system prompt). */
+  soulMd?: string;
   /** Catalog-only skills text (name/slug/when-to-use) for the system prompt. */
   skillsText?: string;
   /** Resolve full skill body by slug for the `read_skill` tool. */
@@ -85,7 +85,7 @@ export interface RunAgentChatInput extends RunChatInput {
   security?: SecuritySettings;
   /** Shared per-run tool circuit breaker (1:1 / squad including nested members). */
   toolRunBudget?: ToolRunBudget;
-  /** Max agent turns for this 1:1 run (settings.maxTurns). */
+  /** Max agent turns for this 1:1 run (defaults to DEFAULT_RUNNER_MAX_TURNS). */
   maxTurns?: number;
   /**
    * SDK Session for model history (tool calls included).
@@ -162,7 +162,7 @@ export interface RunAgentChatInput extends RunChatInput {
 export interface ResumeAgentChatAfterHitlInput {
   botName: string;
   botDescription: string;
-  agentsMd?: string;
+  soulMd?: string;
   skillsText?: string;
   skillLookup?: SkillLookup;
   historySearch?: HistorySearch;
@@ -188,7 +188,7 @@ export interface ResumeAgentChatAfterHitlInput {
   security?: SecuritySettings;
   /** Shared per-run tool circuit breaker. */
   toolRunBudget?: ToolRunBudget;
-  /** Max agent turns for this 1:1 resume run (settings.maxTurns). */
+  /** Max agent turns for this 1:1 resume run (defaults to DEFAULT_RUNNER_MAX_TURNS). */
   maxTurns?: number;
   session?: Session;
   sessionInputCallback?: SessionInputCallback;

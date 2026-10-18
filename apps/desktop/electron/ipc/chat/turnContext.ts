@@ -19,11 +19,32 @@ import type { IpcContext } from '../context';
 /** Alias kept for turn modules — same shape as IpcContext today. */
 export type TurnContext = IpcContext;
 
-export type ChatStartOrigin = 'composer' | 'schedule' | 'api' | 'auto_continue';
+export type ChatStartOrigin =
+  | 'composer'
+  | 'schedule'
+  | 'api'
+  | 'auto_continue'
+  /** Quiet first turn after user skips new-bot onboarding (hidden user row). */
+  | 'onboarding_skip';
 
 /** Synthetic user text for host auto-continue (hidden from UI transcript). */
 export const AUTO_CONTINUE_USER_TEXT =
   '[继续未完成任务] tasks.jsonl 仍有 pending/in_progress 任务。请按添加顺序立刻继续推进并用 manage_task_progress(update) 同步状态；禁止只回复确认、询问是否继续、或「核对/继续/落盘中」等口头表态就结束本轮——本轮必须调用工具推进。';
+
+/**
+ * Quiet seed after onboarding skip — model writes the visible opener.
+ * Keep system-ish so it does not read like a normal user chat turn.
+ * ZH: visible ask must stay ≤50 Chinese characters (scope + collaboration).
+ */
+export const ONBOARDING_SKIP_GREETING_TEXT_ZH =
+  '[新助手开场] 用户跳过了新建偏好。请只输出一句中文开场，用户可见全文必须≤50字，直接问两件事：工作范围、协作方式。可参考：「你好。你希望我主要负责什么？协作上偏好先确认还是直接办？」不要长自我介绍，不要提跳过/问卷/引导，不要列选项。等用户答复后再展开。';
+
+export const ONBOARDING_SKIP_GREETING_TEXT_EN =
+  '[New assistant opener] The user skipped preference setup. Reply in one short English line only: ask (1) what work/scope they want you to own and (2) how they prefer to collaborate (confirm first vs just do it). Keep it brief — two short questions, no long intro. Do not mention skipping, questionnaires, or onboarding; do not list options. Wait for their reply before diving into tasks.';
+
+export function onboardingSkipGreetingText(lang: 'zh' | 'en'): string {
+  return lang === 'en' ? ONBOARDING_SKIP_GREETING_TEXT_EN : ONBOARDING_SKIP_GREETING_TEXT_ZH;
+}
 
 /**
  * Escalated auto-continue after a stall (fingerprint unchanged).
@@ -51,6 +72,11 @@ export type ChatStartPayload = {
    */
   origin?: ChatStartOrigin;
 };
+
+/** True when the user row must stay in the model session but out of the UI transcript. */
+export function isQuietChatOrigin(origin: ChatStartPayload['origin']): boolean {
+  return origin === 'auto_continue' || origin === 'onboarding_skip';
+}
 
 export type ChatStartResult = {
   userMessage: ChatMessage;

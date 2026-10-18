@@ -47,10 +47,10 @@ export async function compressSessionNow(
       providerId: bot.providerId,
       modelId: bot.modelId,
     });
-    const agentsMd = ctx.storage.readAgentsMd(bot.id);
+    const soulMd = ctx.storage.readSoulMd(bot.id);
     const skillsText = ctx.storage.formatSkillsForPrompt(bot.id);
     const memoriesText = ctx.storage.formatMemoriesForPrompt(bot.id);
-    staticText = [agentsMd, skillsText, memoriesText, bot.name, bot.description]
+    staticText = [soulMd, skillsText, memoriesText, bot.name, bot.description]
       .filter(Boolean)
       .join('\n');
   } else {

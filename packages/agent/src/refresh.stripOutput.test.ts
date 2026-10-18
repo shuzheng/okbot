@@ -1,14 +1,14 @@
 /**
  * Generated instruction-like model outputs must drop `<think>` before persist.
- * Mirrors the strip applied in refreshAgentsMd / refreshBotSkills / refreshMemories /
- * compressSessionHistory (and FileStorage writeAgentsMd / writeSkill / memory / summary).
+ * Mirrors the strip applied in refreshSoulMd / refreshBotSkills / refreshMemories /
+ * compressSessionHistory (and FileStorage writeSoulMd / writeSkill / memory / summary).
  */
 import assert from 'node:assert/strict';
 import { stripThinkContent } from '@okbot/shared';
 
 const COT = '<think>内部推理：应写入角色与步骤</think>';
 
-// AGENTS.md style full rewrite
+// SOUL.md style full rewrite
 const agentsRaw = `${COT}\n\n# 角色与目标\n你是打包助手，负责导出指令。\n`;
 const agents = stripThinkContent(agentsRaw).trim();
 assert(!agents.includes('<think>'), 'AGENTS output strips open tag');

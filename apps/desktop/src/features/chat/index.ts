@@ -15,3 +15,5 @@ export { TokenUsagePopover, deriveRoundUsage, formatTokCount } from './TokenUsag
 export { MeshExchangeModal } from './MeshExchangeModal';
 export { OpenTasksPanel } from './OpenTasksPanel';
 export type { OpenTasksPanelProps } from './OpenTasksPanel';
+export { BubbleMoreMenu } from './BubbleMoreMenu';
+export type { BubbleMoreMenuItem } from './BubbleMoreMenu';

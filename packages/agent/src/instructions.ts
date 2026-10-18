@@ -181,7 +181,7 @@ export function buildAgentInstructions(
   botDescription: string,
   history: ChatMessage[],
   prefs: ToolPreferences,
-  agentsMd?: string,
+  soulMd?: string,
   skillsText?: string,
   memoriesText?: string,
   sessionSummary?: string,
@@ -213,15 +213,15 @@ export function buildAgentInstructions(
   void imageCapable;
   const enabled = listEnabledToolIds(prefs);
   const toolLine = formatEnabledLocalToolsLine(prefs);
-  const agentsBlock = agentsMd?.trim()
-    ? `以下是本助手的 AGENTS.md（系统提示，须遵守）：\n\n${agentsMd.trim()}`
+  const agentsBlock = soulMd?.trim()
+    ? `以下是本助手的 SOUL.md（系统提示，须遵守）：\n\n${soulMd.trim()}`
     : '';
   const profileBlock = [
     '## 助手资料（花名册，以这里为准）',
     '',
     `名称：${botName || 'OkBot'}`,
     botDescription?.trim() ? `描述：${botDescription.trim()}` : '描述：（无）',
-    '若与 AGENTS.md 中的称呼或简介不一致，以本段花名册为准。',
+    '若与 SOUL.md 中的称呼或简介不一致，以本段花名册为准。',
   ].join('\n');
 
   const skillsBlock = skillsText?.trim()
