@@ -13,54 +13,61 @@
 [![GitHub stars](https://img.shields.io/github/stars/shuzheng/okbot)](https://github.com/shuzheng/okbot/stargazers)
 [![Downloads](https://img.shields.io/github/downloads/shuzheng/okbot/total)](https://github.com/shuzheng/okbot/releases)
 
-Each assistant is a **person** with a name, avatar, and personality, so conversations feel continuous rather than task-based. Start chatting with almost no setup; squads can collaborate automatically. Your data stays local under `~/.okbot`, with no cloud account required.
+**OkBot is a local-first desktop Personal Agent.**  
+AI as permanent contacts (persona + memory), real tools with human-in-the-loop, schedules, Squad + Mesh multi-agent, a personal gateway (`okbot serve`), and multi-computer execution. Bring your own models. MIT. Privacy under `~/.okbot` is supporting — not the only headline.
+
+<!-- ![OkBot desktop](docs/assets/okbot-hero.gif) -->
+<p align="center">
+  <em>[Screenshot / GIF placeholder — desktop roster + chat]</em>
+</p>
+
+## What is a Personal Agent?
+
+| | Chat tab / web chatbot | Coding harness / CLI plugin | **OkBot (Personal Agent)** |
+| --- | --- | --- | --- |
+| **Shape** | Answers in a box; session fades | Terminal / IDE for software work | Desktop app + optional headless gateway |
+| **Identity** | Generic chat | Repo / task scoped | Named assistants with avatar, `SOUL.md`, memory |
+| **Action** | Mostly text | Repo tools / patches | Shell, fs, web — with **HITL** approvals |
+| **Multi-agent** | Rare | Coding-loop agent teams | **Squads** + **Mesh** (1:1 peer ask) |
+| **Always-on** | Tab must be open | Invoke per task | Schedules + `okbot serve` |
+| **Models** | Vendor locked or BYO | Usually BYO | **BYO** — OkBot hosts no inference |
 
 ## Features
 
-- **Assistants** — Create an assistant as a person: name and avatar, then chat like an IM
-- **Squads** — Group assistants into a team; you assign the task, they collaborate
-- **Shared assistants** — Export and import assistant packs (name, avatar, persona, skills); marketplace ships starters and can import from public GitHub sources
-- **Remote computers** — Connect cloud computers and run on different machines
-- **Private deployment** — Run `okbot serve` without a window, or turn on the LAN gateway and open the same chat in a browser; data stays on your machine
-- **Immersive chat** — Stream replies like an IM window, steer mid-turn, retry a failed send, stay on the latest message
-- **Skills and memory** — Skills open only when needed; important things are remembered across chats
-- **Models** — Connect the providers you already have and pick a model
-- **Voice input** — On-device Whisper transcription (no cloud speech API)
-- **Scheduled tasks** — Ask an assistant to wake on a schedule; review, pause, or delete jobs in Settings → Tools
-- **Web tools** — Fetch public pages and search the web (search needs an API key in Settings)
-- **Drag-and-drop attachments** — Drop files, images, or folders into the chat to attach them
-- **Observability** — Light token stats and run logs
+- **Assistants as contacts** — name, avatar, persona (`SOUL.md`); chat like IM
+- **Squad + Mesh** — squads collaborate on your task; 1:1 peers can ask each other
+- **Shared packs** — export / import `.okbot`; gallery starters; public GitHub import
+- **HITL tools** — shell, filesystem, web, and more, with approvals
+- **Skills & memory** — progressive catalogs, hot-reload, cross-chat memory
+- **Schedules** — wake on a schedule; manage jobs in the product UI
+- **Personal gateway** — `okbot serve` headless, optional LAN Web UI
+- **Remote computers** — `sandbox-agent` HTTP shell / fs on other hosts
+- **BYO models** — connect providers you already use
+- **Voice & observability** — on-device Whisper; light token stats and run logs
 
-## Install
+## Install (3 steps)
 
-Download the latest build for your platform from **[GitHub Releases](https://github.com/shuzheng/okbot/releases/latest)**:
+1. **Download** from **[GitHub Releases](https://github.com/shuzheng/okbot/releases/latest)**:
 
-| Platform | Artifact |
-| -------- | -------- |
-| macOS | `.dmg` / `.zip` (arm64 & x64) |
-| Windows | NSIS installer (x64) |
-| Linux | `.AppImage` (x64) |
+   | Platform | Artifact |
+   | -------- | -------- |
+   | macOS | `.dmg` / `.zip` (arm64 & x64) |
+   | Windows | NSIS installer (x64) |
+   | Linux | `.AppImage` (x64) |
 
-> Early builds may be **unsigned**. macOS Gatekeeper or Windows SmartScreen can warn on first open — allow the app in system settings if you trust the download. Auto-update may be limited until signed builds are available.
+2. **Open** OkBot (single-instance). Early builds may be **unsigned** — allow in system settings if you trust the download.
 
-## Quick start
+3. **Add a model provider**, **create an assistant**, and chat. Approve, remember, or deny tool requests as they appear.
 
-1. Install and open OkBot (single-instance: launching again focuses the existing window).
-2. Add a model provider in **Settings** if prompted, then create an assistant — like adding a contact.
-3. Chat. When a tool needs approval, allow it once, remember the rule, or deny it.
-4. Open advanced settings only when you want them (tools, security, memory, updates, and more).
-
-Data directory: `~/.okbot/` (settings, bots, sessions, memories, logs).
+Data directory: `~/.okbot/` on the gateway host.
 
 ## Documentation
 
-Product behavior, UI details, and developer notes: **[GUIDE.md](./GUIDE.md)**.
+Product behavior and developer notes: **[GUIDE.md](./GUIDE.md)**. Architecture: **[DESIGN.md](./DESIGN.md)** (when present in this release tree).
 
-## Contributing
+## Develop from source
 
-Issues and pull requests are welcome. For architecture, storage layout, IPC, and contribution-oriented detail, start with [GUIDE.md](./GUIDE.md).
-
-To run from source (Node ≥ 22.13, pnpm):
+Requires **Node ≥ 22.13** and **pnpm**:
 
 ```bash
 pnpm install
