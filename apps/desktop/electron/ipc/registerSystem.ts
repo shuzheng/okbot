@@ -1,15 +1,20 @@
 import { BrowserWindow, clipboard, dialog, ipcMain, shell, systemPreferences, app } from 'electron';
-import { claimNotify } from '../notifyClaim';
+import { claimNotify } from '@okbot/gateway';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import { IpcChannels } from '@okbot/shared';
-import type { IpcContext } from './context';
+import type { IpcContext } from '@okbot/gateway';
+import { invokeApplyWindowTranslucent } from '../windowChromeBridge';
 import {
   checkForUpdates,
+  dismissSoftUpdatePrompt,
   downloadUpdate,
+  getChangelogHistory,
   getUpdaterStatus,
+  getWhatsNewIfNeeded,
   installUpdate,
+  markWhatsNewSeen,
 } from '../updater';
 
 let windowControlsRegistered = false;
@@ -55,8 +60,26 @@ export function registerWindowControlIpc(): void {
     return true;
   });
 
+  /** Numeric dock / taskbar badge (macOS & Linux via app.setBadgeCount; Windows may no-op). */
+  ipcMain.handle(IpcChannels.setBadgeCount, (_e, raw: unknown) => {
+    const n = typeof raw === 'number' ? raw : Number(raw);
+    const count = Number.isFinite(n) && n > 0 ? Math.min(Math.floor(n), 99) : 0;
+    try {
+      return app.setBadgeCount(count);
+    } catch (err) {
+      console.error('[okbot] setBadgeCount failed', err);
+      return false;
+    }
+  });
+
   ipcMain.handle(IpcChannels.windowIsMaximized, (e) => {
     return windowFromEvent(e)?.isMaximized() ?? false;
+  });
+
+  // Owner + attach: translucent/vibrancy must work without full entity IPC.
+  ipcMain.handle(IpcChannels.applyWindowTranslucent, (_e, translucent: unknown) => {
+    invokeApplyWindowTranslucent(translucent !== false);
+    return true;
   });
 
   const pushMaximized = (win: BrowserWindow) => {
@@ -339,8 +362,31 @@ export function registerSystemIpc(ctx: IpcContext): void {
     };
   });
 
+  registerUpdaterIpc();
+}
+
+/** Desktop auto-update IPC — owner and attach windows both need these handlers. */
+let updaterIpcRegistered = false;
+export function registerUpdaterIpc(): void {
+  if (updaterIpcRegistered) return;
+  updaterIpcRegistered = true;
   ipcMain.handle(IpcChannels.updaterGetStatus, () => getUpdaterStatus());
   ipcMain.handle(IpcChannels.updaterCheck, () => checkForUpdates(true));
   ipcMain.handle(IpcChannels.updaterDownload, () => downloadUpdate());
   ipcMain.handle(IpcChannels.updaterInstall, () => installUpdate());
+  ipcMain.handle(IpcChannels.updaterGetChangelogHistory, (_e, lang?: unknown) => {
+    const l = lang === 'zh' || lang === 'en' ? lang : undefined;
+    return getChangelogHistory(l);
+  });
+  ipcMain.handle(IpcChannels.updaterGetWhatsNew, (_e, lang?: unknown) => {
+    const l = lang === 'zh' || lang === 'en' ? lang : undefined;
+    return getWhatsNewIfNeeded(l);
+  });
+  ipcMain.handle(IpcChannels.updaterMarkWhatsNewSeen, (_e, version?: unknown) => {
+    markWhatsNewSeen(typeof version === 'string' ? version : undefined);
+    return true;
+  });
+  ipcMain.handle(IpcChannels.updaterDismissUpdatePrompt, (_e, version?: unknown) => {
+    return dismissSoftUpdatePrompt(typeof version === 'string' ? version : undefined);
+  });
 }

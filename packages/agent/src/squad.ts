@@ -10,6 +10,7 @@ import type {
   WebSettings,
 } from '@okbot/shared';
 import {
+  DEFAULT_RUNNER_MAX_TURNS,
   DEFAULT_SECURITY,
   DEFAULT_SQUAD_SETTINGS,
   DEFAULT_TOOL_PREFERENCES,
@@ -45,7 +46,6 @@ export interface SquadMemberAgentSpec {
   botId: string;
   name: string;
   description: string;
-  role: string;
   soulMd?: string;
   /** Catalog-only skills for this member's nested run. */
   skillsText?: string;
@@ -143,11 +143,11 @@ function buildMemberSquadInstructions(
   computerRouting?: string,
   imageCapable?: boolean,
 ): string {
-  const roleLine = `你在《${squadName}》小队中的角色是：${member.role || '成员'}。请严格按该角色完成队长交给你的子任务，直接给出结果，不要扮演队长或调用其他队员。`;
+  const memberLine = `你是《${squadName}》小队的成员。请完成队长交给你的子任务，直接给出结果，不要扮演队长或调用其他队员。`;
   return normalizeMarkdownHeadings(
     [
       `你是「${member.name || 'OkBot'}」，小队成员助手。`,
-      roleLine,
+      memberLine,
       member.description?.trim() ? `对外简介：${member.description.trim()}` : '',
       member.soulMd?.trim()
         ? `以下是本助手的 SOUL.md（系统提示，须遵守）：\n\n${member.soulMd.trim()}`
@@ -194,12 +194,12 @@ export function buildCaptainSquadInstructions(input: {
 }): string {
   const roster = input.members
     .map((m) => {
-      return `- ${m.name}：角色「${m.role || '成员'}」${m.description?.trim() ? ` — ${m.description.trim()}` : ''}`;
+      return `- ${m.name}${m.description?.trim() ? ` — ${m.description.trim()}` : ''}`;
     })
     .join('\n');
   const toolHint = input.members.length
     ? `你可以调用以下队员工具完成子任务（队员之间不会互相通话；无依赖时可在同一轮并行调用多名，有依赖时等返回后再决定下一步）：${input.members
-        .map((m, i) => `${input.askToolNames[i] || `ask_${sanitizeToolName(m.name || m.botId)}`}（参数 task：子任务说明；${m.name} / ${m.role || '成员'}）`)
+        .map((m, i) => `${input.askToolNames[i] || `ask_${sanitizeToolName(m.name || m.botId)}`}（参数 task：子任务说明；${m.name}）`)
         .join('、')}。`
     : '当前没有可调用的队员工具，请亲自回答。';
   const enabled = listEnabledToolIds(input.prefs, { imageCapable: input.imageCapable === true });
@@ -211,7 +211,7 @@ export function buildCaptainSquadInstructions(input: {
       `你是《${input.squadName}》小队的内置虚拟队长（编排者），不是普通助手列表中的助手。`,
       input.squadDescription?.trim() ? `小队简介：${input.squadDescription.trim()}` : '',
       input.persona?.trim() ? `## 队长人设\n\n${input.persona.trim()}` : '',
-      `## 小队花名册与角色\n\n${roster || '（无）'}`,
+      `## 小队花名册\n\n${roster || '（无）'}`,
       input.playbook?.trim() ? `## 协作指引\n\n${input.playbook.trim()}` : '',
       formatSessionSummarySection(input.sessionSummary),
       '星型协作：队员只向你汇报；不要假设队员之间能对话。无依赖的子任务可在同一轮并行调用多名队员工具。',
@@ -276,8 +276,6 @@ function createSquadRuntime(input: RunSquadChatInput & { resumeNote?: string }) 
   const toolPrefs = input.tools ?? DEFAULT_TOOL_PREFERENCES;
   const security = input.security ?? DEFAULT_SECURITY;
   const squadSettings = input.squadSettings ?? DEFAULT_SQUAD_SETTINGS;
-  const captainMaxTurns = squadSettings.captainMaxTurns;
-  const memberMaxTurns = squadSettings.memberMaxTurns;
   const imageApi = {
     baseURL: input.model.baseURL,
     apiKey: input.model.apiKey,
@@ -330,7 +328,7 @@ function createSquadRuntime(input: RunSquadChatInput & { resumeNote?: string }) 
     const runOpts: { stream: true; signal?: AbortSignal; maxTurns: number } = {
       stream: true,
       signal: input.signal,
-      maxTurns: memberMaxTurns,
+      maxTurns: DEFAULT_RUNNER_MAX_TURNS,
     };
     return { agent, runner, runOpts };
   };
@@ -384,7 +382,7 @@ function createSquadRuntime(input: RunSquadChatInput & { resumeNote?: string }) 
     const toolName = askToolNames[i]!;
     return tool({
       name: toolName,
-      description: `向小队成员「${member.name}」咨询（角色：${member.role || '成员'}）。传入清晰的子任务说明；成员会自行作答并返回给你。`,
+      description: `向小队成员「${member.name}」咨询。传入清晰的子任务说明；成员会自行作答并返回给你。`,
       parameters: z.object({
         task: z.string().describe('交给该成员的子任务说明（越具体越好）'),
       }),
@@ -483,7 +481,7 @@ function createSquadRuntime(input: RunSquadChatInput & { resumeNote?: string }) 
   });
 
   const runner = new Runner({ modelProvider: provider, model: input.model.model });
-  const runOpts = { ...buildRunOpts(input), maxTurns: captainMaxTurns };
+  const runOpts = buildRunOpts(input);
   return { captain, runner, runOpts, memberUsageState, askToolNames, buildMember, finishMember };
 }
 

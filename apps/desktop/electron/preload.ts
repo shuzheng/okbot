@@ -5,15 +5,16 @@ import {
   type AppInfo,
   type AppSettings,
   type Bot,
-  type BotOnboardingAnswers,
   type ChatStartOpts,
   type McpServerEntry,
   type RuntimeEvent,
+  type LocalizedChangelogNotes,
   type UpdaterStatus,
   type UsageStats,
   type ScheduledJobInfo,
 } from '@okbot/shared';
 import type { AssistantGalleryItem, McpServerStatus } from '@okbot/agent';
+import type { ClientGatewayEntry, ClientGatewayPrefs } from './clientGatewayPrefs';
 
 const api = {
   getBootstrap: () => ipcRenderer.invoke(IpcChannels.getBootstrap),
@@ -43,14 +44,14 @@ const api = {
       enabledGlobalSkills?: string[];
     },
   ) => ipcRenderer.invoke(IpcChannels.updateBot, id, patch),
-  finishBotOnboarding: (botId: string, answers: BotOnboardingAnswers) =>
-    ipcRenderer.invoke(IpcChannels.finishBotOnboarding, botId, answers),
+  startBotOnboarding: (botId: string): Promise<{ started: boolean }> =>
+    ipcRenderer.invoke(IpcChannels.startBotOnboarding, botId),
   deleteBot: (id: string) => ipcRenderer.invoke(IpcChannels.deleteBot, id),
   listSquads: () => ipcRenderer.invoke(IpcChannels.listSquads),
   createSquad: (input: {
     name: string;
     description?: string;
-    members: Array<{ botId: string; role: string }>;
+    members: Array<{ botId: string }>;
     providerId?: string;
     modelId?: string;
   }) => ipcRenderer.invoke(IpcChannels.createSquad, input),
@@ -59,7 +60,7 @@ const api = {
     patch: {
       name?: string;
       description?: string;
-      members?: Array<{ botId: string; role: string }>;
+      members?: Array<{ botId: string }>;
       providerId?: string;
       modelId?: string;
     },
@@ -118,7 +119,15 @@ const api = {
   getSettings: () => ipcRenderer.invoke(IpcChannels.getSettings),
   getGatewayAccessToken: () =>
     ipcRenderer.invoke(IpcChannels.getGatewayAccessToken) as Promise<string>,
+  getGatewayAdminToken: () =>
+    ipcRenderer.invoke(IpcChannels.getGatewayAdminToken) as Promise<string>,
+  getGatewayApiTokens: () =>
+    ipcRenderer.invoke(IpcChannels.getGatewayApiTokens) as Promise<
+      import('@okbot/shared').GatewayApiTokenEntry[]
+    >,
   saveSettings: (settings: AppSettings) => ipcRenderer.invoke(IpcChannels.saveSettings, settings),
+  applyWindowTranslucent: (translucent: boolean) =>
+    ipcRenderer.invoke(IpcChannels.applyWindowTranslucent, translucent) as Promise<boolean>,
   discoverModels: (payload: { baseURL: string; apiKey: string; providerId?: string }) =>
     ipcRenderer.invoke(IpcChannels.discoverModels, payload) as Promise<{
       ok: boolean;
@@ -186,6 +195,8 @@ const api = {
     }>,
   setChatUnread: (ownerId: string, hasUnread: boolean) =>
     ipcRenderer.invoke(IpcChannels.setChatUnread, { ownerId, hasUnread }) as Promise<boolean>,
+  setBadgeCount: (count: number) =>
+    ipcRenderer.invoke(IpcChannels.setBadgeCount, count) as Promise<boolean>,
   toolRespond: (payload: { requestId: string; approved: boolean; message?: string }) =>
     ipcRenderer.invoke(IpcChannels.toolRespond, payload) as Promise<{ ok: boolean; error?: string }>,
   copyText: (text: string) =>
@@ -194,6 +205,8 @@ const api = {
     ipcRenderer.invoke(IpcChannels.pickPaths, { kind }) as Promise<{
       canceled: boolean;
       paths: string[];
+      /** HTTP bridge / WebUI only — File blobs for dataBase64 upload. */
+      files?: File[];
     }>,
   uploadOwnerAttachment: (payload: {
     ownerId: string;
@@ -269,6 +282,16 @@ const api = {
       cleared: number;
     }>,
   getUsageStats: () => ipcRenderer.invoke(IpcChannels.getUsageStats) as Promise<UsageStats>,
+  getApiTokenUsage: (tokenId: string) =>
+    ipcRenderer.invoke(IpcChannels.getApiTokenUsage, tokenId) as Promise<{
+      ok: boolean;
+      tokenId?: string;
+      name?: string;
+      role?: string;
+      limits?: unknown;
+      usage?: unknown;
+      error?: string;
+    }>,
   listScheduledJobs: () =>
     ipcRenderer.invoke(IpcChannels.listScheduledJobs) as Promise<ScheduledJobInfo[]>,
   manageScheduledJob: (payload: {
@@ -300,6 +323,16 @@ const api = {
   updaterDownload: () =>
     ipcRenderer.invoke(IpcChannels.updaterDownload) as Promise<UpdaterStatus>,
   updaterInstall: () => ipcRenderer.invoke(IpcChannels.updaterInstall) as Promise<void>,
+  updaterGetChangelogHistory: (lang?: 'zh' | 'en') =>
+    ipcRenderer.invoke(IpcChannels.updaterGetChangelogHistory, lang) as Promise<
+      LocalizedChangelogNotes[]
+    >,
+  updaterGetWhatsNew: (lang?: 'zh' | 'en') =>
+    ipcRenderer.invoke(IpcChannels.updaterGetWhatsNew, lang) as Promise<LocalizedChangelogNotes | null>,
+  updaterMarkWhatsNewSeen: (version?: string) =>
+    ipcRenderer.invoke(IpcChannels.updaterMarkWhatsNewSeen, version) as Promise<boolean>,
+  updaterDismissUpdatePrompt: (version?: string) =>
+    ipcRenderer.invoke(IpcChannels.updaterDismissUpdatePrompt, version) as Promise<UpdaterStatus>,
   onRuntimeEvent: (handler: (event: RuntimeEvent) => void): (() => void) => {
     const listener = (_: unknown, event: RuntimeEvent) => handler(event);
     ipcRenderer.on(IpcChannels.chatEvent, listener);
@@ -338,6 +371,27 @@ const api = {
       ipcRenderer.removeListener(IpcChannels.shellNavigate, listener);
     };
   },
+  getClientGatewayPrefs: () =>
+    ipcRenderer.invoke(IpcChannels.getClientGatewayPrefs) as Promise<ClientGatewayPrefs>,
+  setActiveClientGateway: (id: string) =>
+    ipcRenderer.invoke(IpcChannels.setActiveClientGateway, id) as Promise<ClientGatewayPrefs>,
+  switchClientGateway: (id: string) =>
+    ipcRenderer.invoke(IpcChannels.switchClientGateway, id) as Promise<{
+      mode: 'hot' | 'relaunch';
+      prefs: ClientGatewayPrefs;
+      previousActiveId: string;
+      base?: string;
+      token?: string;
+    }>,
+  upsertClientGateway: (entry: ClientGatewayEntry) =>
+    ipcRenderer.invoke(IpcChannels.upsertClientGateway, entry) as Promise<ClientGatewayPrefs>,
+  removeClientGateway: (id: string) =>
+    ipcRenderer.invoke(IpcChannels.removeClientGateway, id) as Promise<ClientGatewayPrefs>,
+  probeClientGateway: (payload: { baseUrl: string; token: string }) =>
+    ipcRenderer.invoke(IpcChannels.probeClientGateway, payload) as Promise<
+      { ok: true } | { ok: false; error: string }
+    >,
+  relaunchApp: () => ipcRenderer.invoke(IpcChannels.relaunchApp) as Promise<boolean>,
 };
 
 contextBridge.exposeInMainWorld('okbot', api);

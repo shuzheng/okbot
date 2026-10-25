@@ -119,6 +119,8 @@ export function createAgentAndRunner(input: {
   assistantRoleTemplate?: string;
   /** User-chosen default assistant (identity hint in system prompt). */
   isDefaultAssistant?: boolean;
+  /** New-assistant onboarding guide while onboarding is incomplete. */
+  onboardingGuide?: string;
   model: ResolvedModelConfig;
   tools?: ToolPreferences;
   security?: SecuritySettings;
@@ -145,7 +147,6 @@ export function createAgentAndRunner(input: {
   meshDepth?: number;
   meshStack?: string[];
   meshCallBudget?: MeshCallBudget;
-  meshMemberMaxTurns?: number;
   onMeshExchange?: HitlLoopHooks['onMeshExchange'];
   /** Pre-built ask_assistant tool (from runAgentChat); depth/roster already applied. */
   meshAskTool?: Tool;
@@ -199,6 +200,7 @@ export function createAgentAndRunner(input: {
       askEnabled,
       input.isDefaultAssistant === true,
       input.taskProgressText,
+      input.onboardingGuide,
     ),
     model: input.model.model,
     ...(typeof input.model.maxTokens === 'number' && input.model.maxTokens >= 1

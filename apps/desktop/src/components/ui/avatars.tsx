@@ -21,7 +21,7 @@ function inferBotAvatarSize(className: string): number {
   if (className.includes('global-search-avatar') || className.includes('bubble-speaker-avatar')) return 28;
   if (className.includes('bot-picker-chip-avatar')) return 20;
   if (className.includes('bot-mention-chip-avatar')) return 14;
-  if (className.includes('squad-role-row') || className.includes('squad-member')) return 28;
+  if (className.includes('squad-member')) return 28;
   if (className.includes('avatar-preview')) return 36;
   if (className.includes('bot-avatar-type-preview')) return 36;
   if (className.includes('session-pin-avatar')) return 56;

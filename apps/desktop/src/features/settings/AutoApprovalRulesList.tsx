@@ -197,15 +197,17 @@ export function AutoApprovalRulesList({ lang, rules, onChange, requestAdd = 0, r
           aria-invalid={isDuplicate}
           aria-label={t(lang, 'autoApprovalWhen')}
         />
-        <select
-          className="tool-mgmt-approval-select"
-          value={draftAction}
-          aria-label={t(lang, 'autoApprovalPolicy')}
-          onChange={(e) => setDraftAction(e.target.value === 'allow' ? 'allow' : 'ask')}
-        >
-          <option value="allow">{t(lang, 'autoApprovalAllow')}</option>
-          <option value="ask">{t(lang, 'autoApprovalAsk')}</option>
-        </select>
+        <span className="settings-select-chevron-host">
+          <select
+            className="tool-mgmt-approval-select"
+            value={draftAction}
+            aria-label={t(lang, 'autoApprovalPolicy')}
+            onChange={(e) => setDraftAction(e.target.value === 'allow' ? 'allow' : 'ask')}
+          >
+            <option value="allow">{t(lang, 'autoApprovalAllow')}</option>
+            <option value="ask">{t(lang, 'autoApprovalAsk')}</option>
+          </select>
+        </span>
         <div className="aar-item-trailing">
           <button
             type="button"
@@ -245,18 +247,20 @@ export function AutoApprovalRulesList({ lang, rules, onChange, requestAdd = 0, r
               <div className="aar-item-text">
                 <div className="aar-item-title">{rule.description}</div>
               </div>
-              <select
-                className="tool-mgmt-approval-select"
-                disabled={readOnly}
-                value={rule.action}
-                aria-label={t(lang, 'autoApprovalPolicy')}
-                onChange={(e) =>
-                  setRuleAction(rule.id, e.target.value === 'allow' ? 'allow' : 'ask')
-                }
-              >
-                <option value="allow">{t(lang, 'autoApprovalAllow')}</option>
-                <option value="ask">{t(lang, 'autoApprovalAsk')}</option>
-              </select>
+              <span className="settings-select-chevron-host">
+                <select
+                  className="tool-mgmt-approval-select"
+                  disabled={readOnly}
+                  value={rule.action}
+                  aria-label={t(lang, 'autoApprovalPolicy')}
+                  onChange={(e) =>
+                    setRuleAction(rule.id, e.target.value === 'allow' ? 'allow' : 'ask')
+                  }
+                >
+                  <option value="allow">{t(lang, 'autoApprovalAllow')}</option>
+                  <option value="ask">{t(lang, 'autoApprovalAsk')}</option>
+                </select>
+              </span>
               <div className="aar-item-trailing">
                 <button
                   type="button"

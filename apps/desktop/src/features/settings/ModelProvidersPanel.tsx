@@ -24,6 +24,8 @@ export type ModelProvidersPanelProps = {
   lang: UiLang;
   value: ModelSettings;
   onChange: (next: ModelSettings) => void;
+  /** User-token / non-admin gateway client: model keys are admin-only over HTTP. */
+  readOnly?: boolean;
 };
 
 function patchProvider(
@@ -42,7 +44,8 @@ function probeErrorText(lang: UiLang, error: unknown): string {
   return raw;
 }
 
-export function ModelProvidersPanel({ lang, value, onChange }: ModelProvidersPanelProps) {
+export function ModelProvidersPanel({ lang, value, onChange: onChangeProp, readOnly = false }: ModelProvidersPanelProps) {
+  const onChange = readOnly ? ((_next: ModelSettings) => {}) : onChangeProp;
   const providers = value.providers;
   const defaultProviderId = value.defaultProviderId;
   const defaultModelId = value.defaultModelId;
@@ -50,13 +53,8 @@ export function ModelProvidersPanel({ lang, value, onChange }: ModelProvidersPan
   const [activeProviderId, setActiveProviderId] = useState(
     () => value.defaultProviderId || value.providers[0]?.id || '',
   );
-  /** Independent expand flags — not accordion. Add/delete must not open/close peers. */
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(
-    () => {
-      const id = value.defaultProviderId || value.providers[0]?.id;
-      return id ? new Set([id]) : new Set();
-    },
-  );
+  /** Independent expand flags — not accordion. First open: all collapsed; add/click still expand. */
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   const [showKey, setShowKey] = useState(false);
   const [discoverStatus, setDiscoverStatus] = useState<{
     kind: 'idle' | 'loading' | 'ok' | 'error';
@@ -341,16 +339,9 @@ export function ModelProvidersPanel({ lang, value, onChange }: ModelProvidersPan
         });
         return;
       }
-      const byId = new Map(modelsSnapshot.map((m) => [m.id, m]));
-      for (const m of res.models!) {
-        const existing = byId.get(m.id);
-        if (existing) {
-          byId.set(m.id, { ...existing, name: existing.name || m.name });
-        } else if (![...byId.values()].some((x) => x.name.trim() === m.name.trim())) {
-          byId.set(m.id, m);
-        }
-      }
-      const models = sortCatalogModels([...byId.values()]);
+      // Successful refresh: fully replace this provider's stored model list with
+      // the fetched set (drop ids gone from remote; do not merge-keep stale rows).
+      const models = sortCatalogModels(res.models!);
       const providersNext = patchProvider(providers, providerId, { models });
       let nextDefaultPid = defaultProviderId;
       let nextDefaultMid = defaultModelId;
@@ -553,11 +544,18 @@ export function ModelProvidersPanel({ lang, value, onChange }: ModelProvidersPan
                       </span>
                     )}
                     <div className="provider-item-actions">
+                      <span
+                        className="model-badge provider-model-count"
+                        title={t(lang, 'providerModelCount', { count: String(p.models.length) })}
+                        aria-label={t(lang, 'providerModelCount', { count: String(p.models.length) })}
+                      >
+                        {p.models.length}
+                      </span>
                       <button
                         type="button"
                         className="model-icon-btn"
-                        title={t(lang, 'providerName')}
-                        aria-label={t(lang, 'providerName')}
+                        title={t(lang, 'providerEdit')}
+                        aria-label={t(lang, 'providerEdit')}
                         onClick={(e) => {
                           e.stopPropagation();
                           setActiveProviderId(p.id);
@@ -619,17 +617,19 @@ export function ModelProvidersPanel({ lang, value, onChange }: ModelProvidersPan
                           <span className="settings-row-label">
                             <span className="settings-row-label-text">{t(lang, 'apiFormat')}</span>
                           </span>
-                          <select
-                            className="settings-row-select"
-                            value={p.apiFormat}
-                            onChange={(e) => {
-                              setActiveProviderId(p.id);
-                              updateProvider(p.id, { apiFormat: e.target.value as ApiFormat });
-                            }}
-                          >
-                            <option value="chat_completions">{t(lang, 'apiFormatChatCompletions')}</option>
-                            <option value="responses">{t(lang, 'apiFormatResponses')}</option>
-                          </select>
+                          <span className="settings-select-chevron-host">
+                            <select
+                              className="settings-row-select"
+                              value={p.apiFormat}
+                              onChange={(e) => {
+                                setActiveProviderId(p.id);
+                                updateProvider(p.id, { apiFormat: e.target.value as ApiFormat });
+                              }}
+                            >
+                              <option value="chat_completions">{t(lang, 'apiFormatChatCompletions')}</option>
+                              <option value="responses">{t(lang, 'apiFormatResponses')}</option>
+                            </select>
+                          </span>
                         </div>
                         <div className="settings-row" data-settings-id="apiKey">
                           <span className="settings-row-label">API Key</span>
@@ -670,9 +670,12 @@ export function ModelProvidersPanel({ lang, value, onChange }: ModelProvidersPan
                               type="button"
                               className="model-list-btn"
                               disabled={
+                                readOnly ||
                                 discoverStatus.kind === 'loading' ||
                                 !p.baseURL.trim() ||
-                                !p.apiKey.trim()
+                                // Gateway blanks apiKey on the wire; discover/probe
+                                // resolve the saved key server-side via providerId.
+                                (!p.apiKey.trim() && !isGatewayClient())
                               }
                               onClick={() => {
                                 setActiveProviderId(p.id);

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
-import { type OrbState } from 'thinking-orbs';
+import { createPortal, flushSync } from 'react-dom';
+import { ThinkingOrb, type OrbState } from 'thinking-orbs';
 import { resolveUiLang, t } from './i18n';
 import { FlatAvatar, SquadAvatar, type SquadAvatarMember } from './components/ui/avatars';
 import {
@@ -24,10 +24,13 @@ import {
   ChevronRightIcon,
 } from './components/ui/icons';
 import { AboutModal } from './features/about';
-import { AssistantMarketplacePage, BotFormModal } from './features/bots';
+import { isGatewayClient, isPureWebUi } from './utils/gatewayClient';
+import { UpdateAvailableModal, WhatsNewModal } from './features/updates';
+import { AssistantMarketplacePage, BotFormModal, NewBotDialog, type NewBotDraft } from './features/bots';
 import { QuickStartPanel } from './features/onboarding';
 import {
   ChatComposer,
+  ChatGatewaySwitcher,
   ChatTranscript,
   ChatWatermark,
   TurnTraceModal,
@@ -57,12 +60,14 @@ import { SquadWizardModal } from './features/squads';
 import { WindowControls } from './features/window';
 import { QuickTip } from './components/ui/QuickTip';
 import { useScrollFade } from './hooks/useScrollFade';
+import { usePhoneLayout, useVisualViewportAppHeight, prefersCoarsePointer } from './hooks/usePhoneLayout';
 import {
   useAttachments,
   useChatEvents,
   useParallelTasks,
   useSessions,
 } from './features/chat/hooks';
+import { countAssistantRepliesAfter } from './features/chat/unreadCounts';
 import { applyTheme, subscribeSystemTheme } from './utils/theme';
 import { mergeSettingsPatch } from './utils/settingsPatch';
 import { updateScrollFade } from './utils/scrollFade';
@@ -75,7 +80,7 @@ import {
 } from './voice';
 import { formatSystemError } from './utils/formatSystemError';
 import { joinMenuSections } from './utils/joinMenuSections';
-import { showSystemNotification, windowIsFocused } from './utils/systemNotify';
+import { showSystemNotification, truncateNotifyBody, windowIsFocused } from './utils/systemNotify';
 import { applyOptimisticSendFailure, rememberReconciledLocalId } from './utils/optimisticSend';
 import {
   formatMessageWithAttachments,
@@ -114,6 +119,7 @@ import {
   resolveModelConfig,
   formatContextWindowBadge,
   randomBotAvatarType,
+  type BotAvatarShape,
   createId,
   createOwnerGroupId,
   UNGROUPED_OWNER_GROUP_ID,
@@ -134,8 +140,14 @@ import {
   type Squad,
   type SquadMember,
   type UpdaterStatus,
+  type LocalizedChangelogNotes,
 } from '@okbot/shared';
 
+
+function resolvedOrbTheme(): 'light' | 'dark' {
+  if (typeof document === 'undefined') return 'dark';
+  return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+}
 
 export function App() {
   const {
@@ -177,6 +189,9 @@ export function App() {
     trace?: MessageTrace;
   }>(null);
   const [updaterStatus, setUpdaterStatus] = useState<UpdaterStatus | null>(null);
+  const [whatsNewNotes, setWhatsNewNotes] = useState<LocalizedChangelogNotes | null>(null);
+  const [updateModalOpen, setUpdateModalOpen] = useState(false);
+  const [updaterModalBusy, setUpdaterModalBusy] = useState(false);
   /** Boot notices fired after `lang` is known (not on the first empty-deps frame). */
   const [bootToast, setBootToast] = useState<null | 'restoreMcp' | 'installFailed' | 'installNoSpace'>(null);
   const [highlightMessageId, setHighlightMessageId] = useState<string | null>(null);
@@ -217,20 +232,26 @@ export function App() {
   const reconciledLocalIdsRef = useRef<Set<string>>(new Set());
   /** In-flight optimistic sends, including ones whose chat is not on screen. */
   const pendingOptimisticRef = useRef<Array<{ ownerId: string; localId: string }>>([]);
-  /** Fine-grained turn footer status while busy (derived from chat events). */
+  /** Fine-grained turn status while busy (member pill + chat events). */
   /** Distinct thinking-orbs state per turn phase (libraries.dev/orbs). */
   const TURN_PHASE_ORB_STATE: Record<TurnPhase, OrbState> = {
-    thinking: 'breathing', // calm face-on ring
-    replying: 'composing', // undulating sash while streaming
-    awaiting_approval: 'shaping', // morphing outline draws attention
-    running_tool: 'working', // particles on tilted orbits
-    running_shell: 'weaving', // three strands — busy, distinct from working
-    wrapping_up: 'solving', // bands settle — post-reply persist / refresh
+    thinking: 'breathing',
+    replying: 'composing',
+    awaiting_approval: 'shaping',
+    running_tool: 'working',
+    running_shell: 'weaving',
+    wrapping_up: 'solving',
   };
   const [turnPhaseByBot, setTurnPhaseByBot] = useState<Record<string, TurnPhase>>({});
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsOpenRef = useRef(false);
+  settingsOpenRef.current = settingsOpen;
+  const openSettingsFreshRef = useRef<
+    (focus?: { tab: SettingsTab; sectionId: string } | null) => Promise<void>
+  >(async () => {});
   const [profileBot, setProfileBot] = useState<Bot | null>(null);
-  const [createTarget, setCreateTarget] = useState<Bot | null>(null);
+  /** 新建助手 dialog seed (random emoji / shape); null = closed. */
+  const [newBotDraft, setNewBotDraft] = useState<{ emoji: string; botAvatarType: BotAvatarShape } | null>(null);
   const [createMenu, setCreateMenu] = useState(false);
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [createMenuPos, setCreateMenuPos] = useState<{ top: number; left: number } | null>(null);
@@ -246,6 +267,24 @@ export function App() {
   const [error, setError] = useState('');
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
   const [immersiveChat, setImmersiveChat] = useState(loadImmersiveChat);
+  const phoneLayout = usePhoneLayout();
+  const [phoneNavOpen, setPhoneNavOpen] = useState(false);
+  useVisualViewportAppHeight();
+
+  // Phone / touch composer focus: Safari pans the layout viewport even with
+  // overflow:hidden. Snap scroll back so --vv-* pinning stays aligned.
+  useEffect(() => {
+    if (!phoneLayout && !prefersCoarsePointer()) return;
+    const onFocusIn = (e: FocusEvent) => {
+      const t = e.target;
+      if (!(t instanceof HTMLElement)) return;
+      if (!t.closest('.composer')) return;
+      window.scrollTo(0, 0);
+      requestAnimationFrame(() => window.scrollTo(0, 0));
+    };
+    document.addEventListener('focusin', onFocusIn);
+    return () => document.removeEventListener('focusin', onFocusIn);
+  }, [phoneLayout]);
 
   const immersiveChatRef = useRef(immersiveChat);
   immersiveChatRef.current = immersiveChat;
@@ -275,17 +314,27 @@ export function App() {
   const newBtnFooterRef = useRef<HTMLButtonElement>(null);
   const sidebarRef = useRef<HTMLElement | null>(null);
   const sidebarWidthRef = useRef(sidebarWidth);
-  sidebarWidthRef.current = sidebarWidth;
+  // During live splitter drag, onMove owns the ref (CSS-only updates). Syncing
+  // from React state here would snap it back on incidental re-renders (stream).
+  if (!resizing) {
+    sidebarWidthRef.current = sidebarWidth;
+  }
+  /** Root .app node — write --sidebar-w here during live drag without React. */
+  const appRef = useRef<HTMLDivElement | null>(null);
   const scrollSessionKeyRef = useRef<string>('');
   /** Shared 1:1 + squad: auto-follow only while the user stays near the bottom. */
   const stickToBottomRef = useRef(true);
   /** True while we programmatically pin scroll — ignore those scroll events for stick release. */
   const pinningScrollRef = useRef(false);
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
-  /** Distance ≤ this ⇒ still "at bottom" (subpixel / layout slack). */
-  const AT_BOTTOM_SLACK_PX = 48;
-  /** Show jump button only when clearly scrolled up past this (hysteresis vs slack). */
-  const JUMP_BUTTON_PX = 80;
+  /** Assistant replies arrived while scrolled up — shown on jump-to-bottom button. */
+  const [unreadBelowFoldCount, setUnreadBelowFoldCount] = useState(0);
+  /** Last message id when the user left the bottom (anchor for below-fold count). */
+  const belowFoldAnchorIdRef = useRef<string | null>(null);
+  /** Distance ≤ this ⇒ at true bottom (subpixel / layout slack only). */
+  const AT_BOTTOM_SLACK_PX = 16;
+  /** Show jump button when scrolled up past this (tight hysteresis vs slack). */
+  const JUMP_BUTTON_PX = 24;
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -444,7 +493,7 @@ export function App() {
   const historyLoadGenRef = useRef(0);
 
   /** Copy a ready SSE curl for a bot/squad local HTTP API endpoint (selection or explicit). */
-  async function copyLocalHttpRequestUrl(target?: { kind: 'bot' | 'squad'; id: string }) {
+  async function copyGatewayHttpRequestUrl(target?: { kind: 'bot' | 'squad'; id: string }) {
     const sel = target ?? (
       selectionRef.current?.kind === 'bot' || selectionRef.current?.kind === 'squad'
         ? { kind: selectionRef.current.kind, id: selectionRef.current.id }
@@ -454,16 +503,11 @@ export function App() {
     const id = sel?.id ?? '';
     if (!kind || !id) return;
 
-    const api = settings?.localHttpApi;
-    if (!api?.enabled) {
-      toast.info(t(lang, 'copyRequestUrlDisabled'));
-      setSettingsFocus({ tab: 'gateway', sectionId: 'localHttpApiEnable' });
-      setSettingsOpen(true);
-      return;
-    }
+    const api = settings?.gatewayHttpApi;
+    const port = api?.port ?? 18765;
 
     const pathKind = kind === 'squad' ? 'squads' : 'bots';
-    const url = `http://127.0.0.1:${api.port}/v1/${pathKind}/${id}/messages`;
+    const url = `http://127.0.0.1:${port}/v1/${pathKind}/${id}/messages`;
     const sampleText = lang === 'en' ? 'Hello' : '你好';
     const body = JSON.stringify({ text: sampleText });
     // Shell-safe one-liner via JSON.stringify quoting; matches GUIDE §6.1 SSE shape.
@@ -514,9 +558,15 @@ export function App() {
 
   /** Unfocused window: system notification for a finished reply or a waiting approval. */
   const notifyUnfocusedRef = useRef<
-    (ownerId: string, kind: 'reply' | 'approval', toolName?: string, eventId?: string) => void
+    (
+      ownerId: string,
+      kind: 'reply' | 'approval',
+      toolName?: string,
+      eventId?: string,
+      replyBody?: string,
+    ) => void
   >(() => {});
-  notifyUnfocusedRef.current = (ownerId, kind, toolName, eventId) => {
+  notifyUnfocusedRef.current = (ownerId, kind, toolName, eventId, replyBody) => {
     if (!ownerId || settings?.notifications === false || windowIsFocused()) return;
     const isSquad = ownerId.startsWith('squad_');
     const name = isSquad
@@ -524,11 +574,12 @@ export function App() {
       : bots.find((b) => b.id === ownerId)?.name;
     // Include the event id so two replies of the same kind within 5s both notify.
     const idPart = (eventId || '').trim().slice(0, 64);
+    const replyText = kind === 'reply' ? truncateNotifyBody(replyBody || '') : '';
     showSystemNotification({
       title: name || 'OkBot',
       body:
         kind === 'reply'
-          ? t(lang, 'notifyReplyDone')
+          ? replyText || t(lang, 'notifyReplyDone')
           : t(lang, 'notifyApprovalWaiting', { tool: toolName || '' }),
       tag: idPart ? `${ownerId}:${kind}:${idPart}` : `${ownerId}:${kind}`,
       onClick: () => {
@@ -716,17 +767,47 @@ export function App() {
     void refreshBootstrap();
   }, [refreshBootstrap]);
 
+  // Hot client-gateway switch: reload roster/settings without app relaunch.
   useEffect(() => {
-    try {
-      localStorage.setItem('okbot.sidebarWidth', String(sidebarWidth));
-    } catch {
-      /* ignore */
-    }
+    const onReconnect = () => {
+      setSelection(null);
+      setMessages([]);
+      void refreshBootstrap();
+    };
+    window.addEventListener('okbot:gateway-reconnected', onReconnect);
+    return () => window.removeEventListener('okbot:gateway-reconnected', onReconnect);
+  }, [refreshBootstrap, setSelection]);
+
+  useEffect(() => {
+    // Debounce: splitter drag used to hit localStorage every mousemove.
+    const t = window.setTimeout(() => {
+      try {
+        localStorage.setItem('okbot.sidebarWidth', String(sidebarWidth));
+      } catch {
+        /* ignore */
+      }
+    }, 180);
+    return () => window.clearTimeout(t);
   }, [sidebarWidth]);
 
   useEffect(() => {
     saveImmersiveChat(immersiveChat);
   }, [immersiveChat]);
+
+  useEffect(() => {
+    if (!phoneLayout) setPhoneNavOpen(false);
+  }, [phoneLayout]);
+
+  useEffect(() => {
+    if (!phoneNavOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      setPhoneNavOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [phoneNavOpen]);
 
   useEffect(() => {
     if (!selection) return;
@@ -757,11 +838,27 @@ export function App() {
     return Math.max(SIDEBAR_MIN, winW - MAIN_COLLAPSE_AT - 5);
   }, []);
 
-  /** Set width; CSS transition on --sidebar-w handles smooth collapse/expand. */
+  /** Write --sidebar-w on the shell without waiting for React.
+   *  Also toggle `.narrow` in the same turn so 置顶成员 names / topbar search+
+   *  (CSS-hidden under `.app.narrow`) track the rail width — not one paint later. */
+  const writeSidebarWidthCss = useCallback((px: number) => {
+    const el = appRef.current;
+    if (!el) return;
+    el.style.setProperty('--sidebar-w', `${px}px`);
+    // phone-layout never uses the icon rail; mirror className logic.
+    const wantNarrow =
+      px <= SIDEBAR_NARROW_AT && !el.classList.contains('phone-layout');
+    el.classList.toggle('narrow', wantNarrow);
+  }, []);
+
+  /** Set width; CSS transition on --sidebar-w handles smooth collapse/expand when idle. */
   const animateSidebarWidth = useCallback((target: number) => {
     const clamped = Math.min(SIDEBAR_MAX, maxSidebarForWindow(), target);
+    if (Math.abs(clamped - sidebarWidthRef.current) < 0.5) return;
+    sidebarWidthRef.current = clamped;
+    writeSidebarWidthCss(clamped);
     setSidebarWidth(clamped);
-  }, [maxSidebarForWindow]);
+  }, [maxSidebarForWindow, writeSidebarWidthCss]);
 
   const readSidebarRenderedWidth = useCallback(() => {
     const el = sidebarRef.current;
@@ -781,6 +878,34 @@ export function App() {
   // Auto-collapse only while expanded (or already auto-collapsed). Never expand after manual collapse.
   useEffect(() => {
     let raf = 0;
+    /** Pending React commit while window-edge drag drives CSS only. */
+    let pendingCommit: number | null = null;
+    const commitWidth = (target: number) => {
+      const clamped = Math.min(SIDEBAR_MAX, maxSidebarForWindow(), target);
+      const prev = sidebarWidthRef.current;
+      if (Math.abs(clamped - prev) < 0.5) return;
+      sidebarWidthRef.current = clamped;
+      writeSidebarWidthCss(clamped);
+      // Same-frame as CSS width: sync React when icon-rail narrow flips so
+      // `.app.narrow` / SessionPinStrip avatar-only chrome track the collapse
+      // (置顶成员). Non-threshold pixel updates still wait for settle.
+      // flushSync: setState alone would paint --sidebar-w one frame before
+      // React removes names / search / + (stutter).
+      const crossedNarrow =
+        (prev <= SIDEBAR_NARROW_AT) !== (clamped <= SIDEBAR_NARROW_AT);
+      if (isWindowResizing() && !crossedNarrow) {
+        pendingCommit = clamped;
+        return;
+      }
+      pendingCommit = null;
+      if (crossedNarrow) {
+        flushSync(() => {
+          setSidebarWidth(clamped);
+        });
+      } else {
+        setSidebarWidth(clamped);
+      }
+    };
     const check = () => {
       if (immersiveChatRef.current) return;
       if (manualCollapsedRef.current) return;
@@ -788,28 +913,41 @@ export function App() {
       const expanded = Math.max(lastExpandedWidthRef.current, SIDEBAR_NARROW_AT + 1);
       const shouldCollapse = winW - expanded - 5 < MAIN_COLLAPSE_AT;
       if (shouldCollapse) {
-        if (sidebarWidthRef.current > SIDEBAR_MIN + 0.5 || autoCollapsedRef.current) {
-          autoCollapsedRef.current = true;
-          animateSidebarWidth(SIDEBAR_MIN);
+        autoCollapsedRef.current = true;
+        // Only commit when leaving expanded — avoid setState every resize frame
+        // while already on the icon rail (React bails, but still costs JS).
+        if (sidebarWidthRef.current > SIDEBAR_MIN + 0.5) {
+          commitWidth(SIDEBAR_MIN);
         }
         return;
       }
       if (autoCollapsedRef.current) {
         autoCollapsedRef.current = false;
-        animateSidebarWidth(expanded);
+        commitWidth(expanded);
       }
     };
     const onResize = () => {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(check);
     };
+    const unsubSettle = subscribeWindowResizeGate(() => {
+      if (pendingCommit == null) return;
+      const w = pendingCommit;
+      pendingCommit = null;
+      if (Math.abs(w - sidebarWidthRef.current) > 0.5) {
+        sidebarWidthRef.current = w;
+        writeSidebarWidthCss(w);
+      }
+      setSidebarWidth(w);
+    });
     check();
     window.addEventListener('resize', onResize);
     return () => {
       window.removeEventListener('resize', onResize);
       cancelAnimationFrame(raf);
+      unsubSettle();
     };
-  }, [animateSidebarWidth]);
+  }, [maxSidebarForWindow, writeSidebarWidthCss]);
 
   const tryExpandSidebar = useCallback(() => {
     const target = Math.min(
@@ -860,31 +998,75 @@ export function App() {
   }, [settings?.theme]);
 
   // Main may persist closeAction / theme (tray) without going through saveSettings IPC.
+  // Gateway WebUI/attach also push via httpOkbot onSettingsChanged (settings_changed SSE).
   useEffect(() => {
     const unsub = window.okbot.onSettingsChanged((next) => {
-      setSettings(next);
+      // Keep client chrome (theme/translucent) in sync even while Settings is open.
       applyTheme(next.theme);
       document.documentElement.dataset.translucent =
         next.translucent !== false ? 'true' : 'false';
+      // Skip replacing App settings while the modal holds unsaved drafts.
+      if (settingsOpenRef.current) return;
+      setSettings(next);
     });
     return unsub;
   }, []);
 
   useEffect(() => {
+    // Desktop Electron (owner + attach). Pure browser WebUI has no auto-updater.
+    if (isPureWebUi()) return;
     let cancelled = false;
-    void window.okbot.updaterGetStatus().then((s) => {
-      if (cancelled) return;
-      setUpdaterStatus(s);
-      if (s?.lastInstallFailed) {
-        setBootToast(s.lastInstallFailed === 'no_space' ? 'installNoSpace' : 'installFailed');
-      }
-    });
-    const off = window.okbot.onUpdaterEvent((s) => setUpdaterStatus(s));
+    const getStatus = window.okbot.updaterGetStatus;
+    if (typeof getStatus === 'function') {
+      void getStatus().then((s) => {
+        if (cancelled) return;
+        setUpdaterStatus(s);
+        if (s?.lastInstallFailed) {
+          setBootToast(s.lastInstallFailed === 'no_space' ? 'installNoSpace' : 'installFailed');
+        }
+        const phase = s?.phase;
+        const showUpdate =
+          !!s?.availableVersion &&
+          (phase === 'available' || phase === 'downloading' || phase === 'downloaded') &&
+          (s.forceUpdate === true || s.updatePromptDismissed !== true);
+        if (showUpdate) setUpdateModalOpen(true);
+      });
+    }
+    const onEvent = window.okbot.onUpdaterEvent;
+    const off =
+      typeof onEvent === 'function'
+        ? onEvent((s) => {
+            setUpdaterStatus(s);
+            const phase = s?.phase;
+            const showUpdate =
+              !!s?.availableVersion &&
+              (phase === 'available' || phase === 'downloading' || phase === 'downloaded') &&
+              (s.forceUpdate === true || s.updatePromptDismissed !== true);
+            if (showUpdate) setUpdateModalOpen(true);
+            else if (s?.updatePromptDismissed) setUpdateModalOpen(false);
+          })
+        : undefined;
     return () => {
       cancelled = true;
-      off();
+      off?.();
     };
   }, []);
+
+  // First open after upgrading: What's New from bundled current-version changelog.
+  // Skip on pure browser WebUI — no Electron updater / bundled changelog host.
+  useEffect(() => {
+    if (isPureWebUi()) return;
+    let cancelled = false;
+    const getWhatsNew = window.okbot.updaterGetWhatsNew;
+    if (typeof getWhatsNew !== 'function') return;
+    void getWhatsNew(lang).then((notes) => {
+      if (cancelled) return;
+      setWhatsNewNotes(notes);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [lang]);
 
   // Resolve toast text at show time so the first-frame language is not locked in.
   useEffect(() => {
@@ -906,6 +1088,8 @@ export function App() {
     markSessionUnread,
     setBots,
     setSquads,
+    setSettings,
+    settingsOpenRef,
     setSelection,
     setMessages,
     setToolCardsByBot,
@@ -923,10 +1107,16 @@ export function App() {
       return;
     }
     pinningScrollRef.current = true;
-    box.scrollTop = box.scrollHeight;
-    requestAnimationFrame(() => {
+    const apply = () => {
       box.scrollTop = box.scrollHeight;
+    };
+    apply();
+    requestAnimationFrame(() => {
+      apply();
       requestAnimationFrame(() => {
+        apply();
+        // Late markdown/image/layout growth: one more snap if still sticky.
+        if (stickToBottomRef.current) apply();
         pinningScrollRef.current = false;
         updateScrollFade(box);
       });
@@ -945,20 +1135,51 @@ export function App() {
     if (switched) {
       stickToBottomRef.current = true;
       setShowJumpToBottom(false);
+      belowFoldAnchorIdRef.current = null;
+      setUnreadBelowFoldCount(0);
       pinMessagesToBottom();
       return;
     }
     // Shared for 1:1 and squad: follow only while pinned near bottom.
-    // Re-pin on messages / busy / turnPhase / toolCards so new assistant bubbles,
-    // wrapping_up chrome, and turn-end layout settle still stick when allowed.
+    // Re-pin on messages / busy / turnPhase / toolCards / open-tasks so new
+    // assistant bubbles, wrapping_up chrome, task chrome, and turn-end layout
+    // settle still stick when allowed.
     if (!stickToBottomRef.current) return;
     pinMessagesToBottom();
-    // Bubble enter (~200ms) + markdown/images can grow after the first paint.
-    const t = window.setTimeout(() => {
-      if (stickToBottomRef.current) pinMessagesToBottom();
-    }, 220);
-    return () => window.clearTimeout(t);
-  }, [messages, busy, turnPhase, selection, toolCards, pinMessagesToBottom]);
+    // Markdown/images/fonts and open-tasks/composer height can settle after paint.
+    const timers = [50, 150, 320].map((ms) =>
+      window.setTimeout(() => {
+        if (stickToBottomRef.current) pinMessagesToBottom();
+      }, ms),
+    );
+    return () => {
+      for (const t of timers) window.clearTimeout(t);
+    };
+  }, [
+    messages,
+    busy,
+    turnPhase,
+    selection,
+    toolCards,
+    openTasksByOwner,
+    chatOwnerId,
+    pinMessagesToBottom,
+  ]);
+
+  // Below-fold unread: count new assistant replies after the leave-bottom anchor.
+  useEffect(() => {
+    if (stickToBottomRef.current) {
+      belowFoldAnchorIdRef.current = null;
+      setUnreadBelowFoldCount(0);
+      return;
+    }
+    if (!belowFoldAnchorIdRef.current && messages.length) {
+      belowFoldAnchorIdRef.current = messages[messages.length - 1]!.id;
+    }
+    setUnreadBelowFoldCount(
+      countAssistantRepliesAfter(messages, belowFoldAnchorIdRef.current),
+    );
+  }, [messages, showJumpToBottom, selection]);
 
   useEffect(() => {
     const el = messagesBoxRef.current;
@@ -973,8 +1194,12 @@ export function App() {
       const nearBottom = distance <= AT_BOTTOM_SLACK_PX;
       stickToBottomRef.current = nearBottom;
       const canScroll = el.scrollHeight > el.clientHeight + 1;
-      // Hysteresis: only show jump when clearly above the slack band.
+      // Hide jump only when truly near bottom; show once past tight hysteresis.
       setShowJumpToBottom(canScroll && distance > JUMP_BUTTON_PX);
+      if (nearBottom) {
+        belowFoldAnchorIdRef.current = null;
+        setUnreadBelowFoldCount(0);
+      }
     };
 
     let pinRaf: number | null = null;
@@ -995,12 +1220,18 @@ export function App() {
         pinRaf = null;
         if (!stickToBottomRef.current || isWindowResizing()) return;
         pinningScrollRef.current = true;
-        el.scrollTop = el.scrollHeight;
-        requestAnimationFrame(() => {
+        const apply = () => {
           el.scrollTop = el.scrollHeight;
+        };
+        apply();
+        requestAnimationFrame(() => {
+          apply();
           requestAnimationFrame(() => {
+            if (stickToBottomRef.current) apply();
             pinningScrollRef.current = false;
             setShowJumpToBottom(false);
+            belowFoldAnchorIdRef.current = null;
+            setUnreadBelowFoldCount(0);
             updateScrollFade(el);
           });
         });
@@ -1020,29 +1251,47 @@ export function App() {
             pinIfSticky();
           })
         : null;
-    ro?.observe(el);
-    if (content instanceof Element && content !== el) ro?.observe(content);
     const mo =
       typeof MutationObserver !== 'undefined'
         ? new MutationObserver(() => {
             pinIfSticky();
           })
         : null;
-    // childList only — characterData storms during streaming are covered by
-    // the content-wrapper ResizeObserver when height grows.
-    mo?.observe(el, { childList: true, subtree: true });
+    const observePin = () => {
+      ro?.observe(el);
+      if (content instanceof Element && content !== el) ro?.observe(content);
+      // childList only — characterData storms during streaming are covered by
+      // the content-wrapper ResizeObserver when height grows.
+      mo?.observe(el, { childList: true, subtree: true });
+    };
+    const disconnectPin = () => {
+      ro?.disconnect();
+      mo?.disconnect();
+    };
+    let pinWatching = !isWindowResizing();
+    if (pinWatching) observePin();
 
     const unsubResize = subscribeWindowResizeGate(() => {
+      if (!pinWatching) {
+        pinWatching = true;
+        observePin();
+      }
       pinIfSticky();
       updateScrollFade(el);
     });
+    const onWinResize = () => {
+      if (!isWindowResizing() || !pinWatching) return;
+      pinWatching = false;
+      disconnectPin();
+    };
+    window.addEventListener('resize', onWinResize);
 
     syncStickFromUserScroll();
     return () => {
       el.removeEventListener('scroll', syncStickFromUserScroll);
+      window.removeEventListener('resize', onWinResize);
       if (pinRaf != null) cancelAnimationFrame(pinRaf);
-      ro?.disconnect();
-      mo?.disconnect();
+      disconnectPin();
       unsubResize();
     };
   }, [chatOwnerId, AT_BOTTOM_SLACK_PX, JUMP_BUTTON_PX]);
@@ -1051,13 +1300,15 @@ export function App() {
 
   useEffect(() => {
     if (!chatOwnerId) return;
-    if (createTarget || profileBot) return;
-    if (selectedBot?.onboardingComplete === false) return;
+    if (newBotDraft || profileBot) return;
+    // Phone: auto-focusing the composer after a session tap opens the keyboard
+    // and lets iOS Safari pan the visual viewport (black gap under the UI).
+    if (phoneLayout || prefersCoarsePointer()) return;
     const id = window.requestAnimationFrame(() => {
-      composerRef.current?.focus();
+      composerRef.current?.focus({ preventScroll: true });
     });
     return () => window.cancelAnimationFrame(id);
-  }, [chatOwnerId, selectedBot?.onboardingComplete, createTarget, profileBot]);
+  }, [chatOwnerId, newBotDraft, profileBot, phoneLayout]);
 
   // Load open multi-task queue for the active chat (UI above composer).
   useEffect(() => {
@@ -1114,7 +1365,7 @@ export function App() {
     };
   }, [chatOwnerId, updateQuoteDraft]);
 
-  useScrollFade(sessionListRef, [bots, squads, sidebarWidth]);
+  useScrollFade(sessionListRef, [bots, squads]);
 
   
   // Keep session context menus inside the window (flip/clamp near edges).
@@ -1179,11 +1430,20 @@ export function App() {
     return () => cleanups.forEach((fn) => fn());
   }, [menu]);
 
+  // Dismiss session context menu on any outside pointerdown (capture), including
+  // sidebar + / search / chrome that stopPropagation on click — otherwise the
+  // create menu can open while the right-click menu stays visible.
   useEffect(() => {
-    const closeMenu = () => setMenu(null);
-    window.addEventListener('click', closeMenu);
-    return () => window.removeEventListener('click', closeMenu);
-  }, []);
+    if (!menu) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const el = e.target as Node | null;
+      if (!el) return;
+      if (menuRef.current?.contains(el)) return;
+      setMenu(null);
+    };
+    document.addEventListener('pointerdown', onPointerDown, true);
+    return () => document.removeEventListener('pointerdown', onPointerDown, true);
+  }, [menu]);
 
   useEffect(() => {
     if (!createMenu) return;
@@ -1222,6 +1482,8 @@ export function App() {
     onSelect: (sel) => {
       selectSession(sel);
       setImmersiveChat(false);
+      hideDockTip();
+      if (phoneLayout) setPhoneNavOpen(false);
     },
   });
 
@@ -1240,9 +1502,17 @@ export function App() {
   useEffect(() => {
     return window.okbot.onShellNavigate((payload) => {
       if (payload.action === 'settings') {
-        setSettingsFocus(null);
-        setSettingsOpen(true);
         setImmersiveChat(false);
+        const tab = typeof payload.tab === 'string' ? payload.tab : '';
+        const sectionId = typeof payload.sectionId === 'string' ? payload.sectionId : '';
+        if (tab || sectionId) {
+          void openSettingsFreshRef.current({
+            tab: (tab || 'general') as SettingsTab,
+            sectionId,
+          });
+        } else {
+          void openSettingsFreshRef.current(null);
+        }
         return;
       }
       if (payload.action === 'openSession') {
@@ -1288,8 +1558,7 @@ export function App() {
         return;
       }
       if (target.kind === 'settings') {
-        setSettingsFocus({ tab: target.tab, sectionId: target.sectionId });
-        setSettingsOpen(true);
+        void openSettingsFreshRef.current({ tab: target.tab, sectionId: target.sectionId });
         return;
       }
       // message
@@ -1463,7 +1732,19 @@ export function App() {
         next = SIDEBAR_MIN;
         drag.pinnedCollapsed = true;
       }
-      setSidebarWidth(next);
+      // Live drag: drive --sidebar-w via CSS only so chat/transcript do not
+      // re-render on every mousemove. Commit to React when the icon-rail band
+      // flips (SessionSidebar narrow layout) or on mouseup.
+      const prev = sidebarWidthRef.current;
+      sidebarWidthRef.current = next;
+      writeSidebarWidthCss(next);
+      const crossed =
+        (prev <= SIDEBAR_NARROW_AT) !== (next <= SIDEBAR_NARROW_AT);
+      if (crossed) {
+        flushSync(() => {
+          setSidebarWidth(next);
+        });
+      }
     };
     const onUp = (e: MouseEvent) => {
       const drag = dragRef.current;
@@ -1514,12 +1795,16 @@ export function App() {
           manualCollapsedRef.current = true;
           autoCollapsedRef.current = false;
           collapseReasonRef.current = 'drag';
+          sidebarWidthRef.current = SIDEBAR_MIN;
+          writeSidebarWidthCss(SIDEBAR_MIN);
           setSidebarWidth(SIDEBAR_MIN);
         } else {
           manualCollapsedRef.current = false;
           autoCollapsedRef.current = false;
           collapseReasonRef.current = null;
           lastExpandedWidthRef.current = w;
+          // Sync React to the live CSS width (may have skipped setState mid-drag).
+          setSidebarWidth(w);
         }
       }
       setResizing(false);
@@ -1535,26 +1820,39 @@ export function App() {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
     };
-  }, [resizing, maxSidebarForWindow]);
+  }, [resizing, maxSidebarForWindow, writeSidebarWidthCss]);
 
-  async function startCreateBot() {
+  function startCreateBot() {
     setCreateMenu(false);
     setCreateMenuPos(null);
-    const name = t(lang, 'defaultBotName');
-    const emoji = EMOJI_PRESETS[Math.floor(Math.random() * EMOJI_PRESETS.length)];
+    // Name + avatar first; the assistant is created only on 「确认」.
+    setNewBotDraft({
+      emoji: EMOJI_PRESETS[Math.floor(Math.random() * EMOJI_PRESETS.length)],
+      botAvatarType: randomBotAvatarType(),
+    });
+  }
+
+  async function confirmCreateBot(draft: NewBotDraft) {
+    let bot: Bot;
     try {
-      const bot = await window.okbot.createBot({
-        name,
+      bot = await window.okbot.createBot({
+        name: draft.name,
         description: '',
-        emoji,
-        // Empty color → bot-avatars library default accent (用户要「默认颜色」).
-        color: '',
-        avatarKind: 'bot-avatar',
-        botAvatarType: randomBotAvatarType(),
+        emoji: draft.emoji,
+        color: draft.color,
+        avatarKind: draft.avatarKind,
+        botAvatarType: draft.botAvatarType,
       });
-      setBots(await window.okbot.listBots());
-      selectSession({ kind: 'bot', id: bot.id });
-      setCreateTarget(bot);
+    } catch (err) {
+      toast.error(formatSystemError(err));
+      throw err;
+    }
+    setNewBotDraft(null);
+    setBots(await window.okbot.listBots());
+    selectSession({ kind: 'bot', id: bot.id });
+    // Model-driven onboarding: the model writes the greeting + first options.
+    try {
+      await window.okbot.startBotOnboarding(bot.id);
     } catch (err) {
       toast.error(formatSystemError(err));
     }
@@ -1582,18 +1880,6 @@ export function App() {
       await window.okbot.writeSoulMd(botId, values.soulMd);
     }
     return updated;
-  }
-
-  async function handleCreateApply(values: BotFormValues) {
-    if (!createTarget) return;
-    try {
-      const updated = await persistBotForm(createTarget.id, values);
-      const latest = await window.okbot.listBots();
-      setBots(latest.length ? latest : [updated]);
-      setCreateTarget(updated);
-    } catch (err) {
-      toast.error(formatSystemError(err));
-    }
   }
 
   async function handleProfileApply(values: BotFormValues) {
@@ -1830,7 +2116,7 @@ export function App() {
     }
     selectSession({ kind: 'bot', id: bot.id });
     toast.success(t(lang, 'galleryInstalled', { name: bot.name }));
-    requestAnimationFrame(() => composerRef.current?.focus());
+    requestAnimationFrame(() => composerRef.current?.focus({ preventScroll: true }));
   }
 
   function openSquadWizard() {
@@ -1841,7 +2127,6 @@ export function App() {
       name: t(lang, 'squadDefaultName'),
       description: '',
       memberIds: [],
-      roles: {},
       providerId: '',
       modelId: '',
     });
@@ -1851,14 +2136,11 @@ export function App() {
     setCreateMenu(false);
     setCreateMenuPos(null);
     setError('');
-    const roles: Record<string, string> = {};
-    for (const m of squad.members) roles[m.botId] = m.role || t(lang, 'squadMemberDefaultRole');
     setSquadWizard({
       id: squad.id,
       name: squad.name,
       description: squad.description || '',
       memberIds: squad.members.map((m) => m.botId),
-      roles,
       providerId: squad.providerId || '',
       modelId: squad.modelId || '',
     });
@@ -1868,18 +2150,15 @@ export function App() {
     if (!squadWizard) return;
     const name = squadWizard.name.trim();
     if (!name) {
-      setError(t(lang, 'squadNeedName'));
+      toast.error(t(lang, 'squadNeedName'));
       return;
     }
     const memberIds = squadWizard.memberIds;
     if (memberIds.length < 2) {
-      setError(t(lang, 'squadNeedMembers'));
+      toast.error(t(lang, 'squadNeedMembers'));
       return;
     }
-    const members: SquadMember[] = memberIds.map((botId) => ({
-      botId,
-      role: (squadWizard.roles[botId] || '').trim() || t(lang, 'squadMemberDefaultRole'),
-    }));
+    const members: SquadMember[] = memberIds.map((botId) => ({ botId }));
     try {
       if (squadWizard.id) {
         await window.okbot.updateSquad(squadWizard.id, {
@@ -1913,10 +2192,7 @@ export function App() {
     if (!values.id) return;
     const name = values.name.trim();
     if (!name) return;
-    const members: SquadMember[] = values.memberIds.map((botId) => ({
-      botId,
-      role: (values.roles[botId] || '').trim() || t(lang, 'squadMemberDefaultRole'),
-    }));
+    const members: SquadMember[] = values.memberIds.map((botId) => ({ botId }));
     try {
       await window.okbot.updateSquad(values.id, {
         name,
@@ -1937,30 +2213,7 @@ export function App() {
     const keep = prev.filter((id) => nextIds.includes(id));
     const added = nextIds.filter((id) => !prev.includes(id));
     const memberIds = [...keep, ...added];
-    const roles = { ...squadWizard.roles };
-    for (const id of Object.keys(roles)) {
-      if (!memberIds.includes(id)) delete roles[id];
-    }
-    for (const id of memberIds) {
-      if (!roles[id]) roles[id] = t(lang, 'squadMemberDefaultRole');
-    }
-    setSquadWizard({ ...squadWizard, memberIds, roles });
-  }
-
-  function removeSquadMember(id: string) {
-    if (!squadWizard) return;
-    syncSquadMembers(squadWizard.memberIds.filter((x) => x !== id));
-  }
-
-  function reorderSquadMember(fromId: string, toId: string) {
-    if (!squadWizard || fromId === toId) return;
-    const ids = [...squadWizard.memberIds];
-    const from = ids.indexOf(fromId);
-    const to = ids.indexOf(toId);
-    if (from < 0 || to < 0) return;
-    ids.splice(from, 1);
-    ids.splice(to, 0, fromId);
-    setSquadWizard({ ...squadWizard, memberIds: ids });
+    setSquadWizard({ ...squadWizard, memberIds });
   }
 
   
@@ -2105,7 +2358,7 @@ export function App() {
         }
       } catch (err) {
         const raw = err instanceof Error ? err.message : String(err);
-        if (raw.includes('settings_not_allowed')) {
+        if (raw.includes('admin_required') || raw === 'forbidden') {
           toast.error(t(lang, 'autoAllowNotOnGateway'));
         } else {
           toast.error(formatSystemError(err));
@@ -2121,14 +2374,20 @@ async function handleSend(retry?: {
     quoteMessageId?: string;
     quotePreview?: string;
     attachments?: ChatMessage['attachments'];
-  }) {
+  }, direct?: string) {
     if (!chatOwnerId) return;
     if (!selectedBot && !selectedSquad) return;
     const ownerId = chatOwnerId;
     const kind = selectedSquad ? 'squad' : 'bot';
     const isRetry = !!retry;
-    const rawBody = isRetry ? retry!.text.trim() : (draftRef.current || draft).trim();
-    const pendingAtts = isRetry ? [] : attachmentsRef.current;
+    /** Quick-choice pick: send this text as-is; keep the composer draft untouched. */
+    const isDirect = !isRetry && typeof direct === 'string';
+    const rawBody = isRetry
+      ? retry!.text.trim()
+      : isDirect
+        ? direct!.trim()
+        : (draftRef.current || draft).trim();
+    const pendingAtts = isRetry || isDirect ? [] : attachmentsRef.current;
     const structuredAtts: ChatMessage['attachments'] = isRetry
       ? retry!.attachments
       : pendingAtts.length
@@ -2142,13 +2401,15 @@ async function handleSend(retry?: {
       ? retry!.quoteMessageId
         ? { messageId: retry!.quoteMessageId, preview: retry!.quotePreview || '' }
         : null
-      : quoteDraftRef.current ?? quoteDraft;
+      : isDirect
+        ? null
+        : quoteDraftRef.current ?? quoteDraft;
     const quoteMessageId = (quote?.messageId || '').trim();
     const quotePreview = (quote?.preview || '').trim();
-    if (!isRetry && (listeningRef.current || mediaRecorderRef.current)) {
+    if (!isRetry && !isDirect && (listeningRef.current || mediaRecorderRef.current)) {
       void stopVoiceRecording(false);
     }
-    if (!isRetry) {
+    if (!isRetry && !isDirect) {
       updateDraft('');
       updateQuoteDraft(null);
       clearAttachments();
@@ -2159,12 +2420,14 @@ async function handleSend(retry?: {
     // Always jump to bottom on send and re-enable stick-to-bottom.
     stickToBottomRef.current = true;
     setShowJumpToBottom(false);
+    belowFoldAnchorIdRef.current = null;
+    setUnreadBelowFoldCount(0);
     requestAnimationFrame(() => pinMessagesToBottom());
     setToolCardsByBot((prev) => ({ ...prev, [ownerId]: [] }));
     sendsInFlightRef.current[ownerId] = (sendsInFlightRef.current[ownerId] || 0) + 1;
     setBusyByBot((prev) => ({ ...prev, [ownerId]: true }));
     setTurnPhaseByBot((prev) => ({ ...prev, [ownerId]: 'thinking' }));
-    requestAnimationFrame(() => composerRef.current?.focus());
+    requestAnimationFrame(() => composerRef.current?.focus({ preventScroll: true }));
     const localId = isRetry ? retry!.localId : `local_${Date.now()}`;
     pendingOptimisticRef.current = pendingOptimisticRef.current.filter((p) => p.localId !== localId);
     pendingOptimisticRef.current.push({ ownerId, localId });
@@ -2288,7 +2551,7 @@ async function handleSend(retry?: {
           return next;
         });
       }
-      requestAnimationFrame(() => composerRef.current?.focus());
+      requestAnimationFrame(() => composerRef.current?.focus({ preventScroll: true }));
     }
   }
 
@@ -2346,7 +2609,7 @@ async function handleSend(retry?: {
         delete next[ownerId];
         return next;
       });
-      requestAnimationFrame(() => composerRef.current?.focus());
+      requestAnimationFrame(() => composerRef.current?.focus({ preventScroll: true }));
     })();
   }
 
@@ -2359,7 +2622,7 @@ async function handleSend(retry?: {
     const preview = clipQuotePreview(forQuote);
     if (!message.id || !preview) return;
     updateQuoteDraft({ messageId: message.id, preview });
-    requestAnimationFrame(() => composerRef.current?.focus());
+    requestAnimationFrame(() => composerRef.current?.focus({ preventScroll: true }));
   }
 
   async function handleCopyMessage(message: ChatMessage): Promise<boolean> {
@@ -2520,7 +2783,7 @@ async function handleSend(retry?: {
         const next = ((draftRef.current || '') + (draftRef.current ? ' ' : '') + text).trim();
         updateDraft(next);
       }
-      requestAnimationFrame(() => composerRef.current?.focus());
+      requestAnimationFrame(() => composerRef.current?.focus({ preventScroll: true }));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setError(t(lang, 'speechRecognizeFailed', { error: msg }));
@@ -2651,6 +2914,12 @@ async function handleSend(retry?: {
   }
 
   function placeDockTipFor(node: HTMLElement, target: DockTipTarget) {
+    // Touch / phone: mouseenter fires on tap and mouseleave often never follows
+    // (sticky hover), so the session card would stay open after switching.
+    if (phoneLayout || prefersCoarsePointer()) {
+      hideDockTip();
+      return;
+    }
     const showNow = () => {
       dockTipTimerRef.current = null;
       dockTipVisibleRef.current = true;
@@ -2670,6 +2939,10 @@ async function handleSend(retry?: {
 
   function openCreateMenu(e: React.MouseEvent) {
     e.stopPropagation();
+    // Always clear session context menu — + click stops propagation so the
+    // window click dismiss never ran; capture pointerdown also clears it, but
+    // keep this explicit when toggling create.
+    setMenu(null);
     // Read the button rect now — e.currentTarget is cleared after the handler,
     // and nesting setState inside another updater is unsafe under StrictMode.
     if (createMenu) {
@@ -2696,15 +2969,26 @@ async function handleSend(retry?: {
   const onOpenSearch = useCallback(() => setSearchOpen(true), []);
   const onToggleImmersiveChat = useCallback(() => setImmersiveChat((v) => !v), []);
   const onStartCreateBot = useCallback(() => {
-    void startCreateBot();
-  }, [lang]);
+    startCreateBot();
+  }, []);
   const onCommitRename = useCallback(() => {
     void commitInlineRename();
   }, [renameTarget, renameValue, bots, squads]);
-  const onOpenSettings = useCallback(() => {
-    setSettingsFocus(null);
+  const openSettingsFresh = useCallback(async (focus?: { tab: SettingsTab; sectionId: string } | null) => {
+    if (focus === undefined) setSettingsFocus(null);
+    else setSettingsFocus(focus);
+    try {
+      const latest = await window.okbot.getSettings();
+      if (latest) setSettings(latest);
+    } catch {
+      /* keep cached settings; modal also refetches on mount */
+    }
     setSettingsOpen(true);
   }, []);
+  openSettingsFreshRef.current = openSettingsFresh;
+  const onOpenSettings = useCallback(() => {
+    void openSettingsFresh(null);
+  }, [openSettingsFresh]);
   const onDockScroll = useCallback(() => {
     const y = lastDockYRef.current;
     if (y != null) updateDockMagnify(y);
@@ -2748,15 +3032,16 @@ async function handleSend(retry?: {
   const onJumpToBottom = useCallback(() => {
     stickToBottomRef.current = true;
     setShowJumpToBottom(false);
+    belowFoldAnchorIdRef.current = null;
+    setUnreadBelowFoldCount(0);
     pinMessagesToBottom();
   }, [pinMessagesToBottom]);
   const onRetrySend = useCallback((message: ChatMessage) => {
     handleRetrySend(message);
   }, [chatOwnerId, selectedBot, selectedSquad, draft, quoteDraft, lang]);
-  const onBotOnboardingDone = useCallback((updated: Bot) => {
-    setBots((prev) => prev.map((b) => (b.id === updated.id ? { ...b, ...updated } : b)));
-    requestAnimationFrame(() => composerRef.current?.focus());
-  }, []);
+  const onQuickChoice = useCallback((text: string) => {
+    void handleSend(undefined, text);
+  }, [chatOwnerId, selectedBot, selectedSquad, draft, quoteDraft, lang]);
   const onApproveTool = useCallback((requestId: string) => {
     void respondTool(requestId, true);
   }, [chatOwnerId, toolCardsByBot, settings]);
@@ -2877,22 +3162,50 @@ async function handleSend(retry?: {
           return;
         }
         if (isDownloading) return;
-        setSettingsFocus({ tab: 'updates', sectionId: 'autoUpdate' });
-        setSettingsOpen(true);
+        void openSettingsFresh({ tab: 'updates', sectionId: 'autoUpdate' });
       },
     };
   }, [updaterStatus, settings?.autoUpdate, lang]);
 
   return (
     <div
-      className={`app ${narrow ? 'narrow' : ''}${resizing ? ' is-resizing' : ''}${immersiveChat ? ' immersive' : ''}`}
-      style={{ ['--sidebar-w' as string]: `${sidebarWidth}px` }}
+      ref={appRef}
+      className={`app ${(!phoneLayout && (narrow || sidebarWidthRef.current <= SIDEBAR_NARROW_AT)) ? 'narrow' : ''}${resizing ? ' is-resizing' : ''}${immersiveChat ? ' immersive' : ''}${phoneLayout ? ' phone-layout' : ''}${phoneLayout && phoneNavOpen ? ' phone-nav-open' : ''}`}
+      style={{
+        // While splitter-dragging, prefer the live ref so incidental re-renders
+        // (stream deltas) do not snap --sidebar-w back to a stale React state.
+        ['--sidebar-w' as string]: `${resizing ? sidebarWidthRef.current : sidebarWidth}px`,
+      }}
       onContextMenu={(e) => e.preventDefault()}
     >
+      {phoneLayout ? (
+        <>
+          {/* Keep mounted so open/close can animate; inert while sheet is open. */}
+          <button
+            type="button"
+            className="phone-nav-toggle"
+            aria-label={t(lang, 'sidebarFabOpen')}
+            aria-expanded={phoneNavOpen}
+            aria-hidden={phoneNavOpen}
+            tabIndex={phoneNavOpen ? -1 : 0}
+            onClick={() => setPhoneNavOpen(true)}
+          >
+            <ChevronRightIcon />
+          </button>
+          <button
+            type="button"
+            className={`phone-nav-backdrop${phoneNavOpen ? ' is-open' : ''}`}
+            aria-label={t(lang, 'sidebarFabClose')}
+            aria-hidden={!phoneNavOpen}
+            tabIndex={phoneNavOpen ? 0 : -1}
+            onClick={() => setPhoneNavOpen(false)}
+          />
+        </>
+      ) : null}
       <SessionSidebar
         sidebarRef={sidebarRef}
         lang={lang}
-        narrow={narrow}
+        narrow={phoneLayout ? false : narrow}
         createMenu={createMenu}
         createMenuPos={createMenuPos}
         sessions={sessions}
@@ -2921,6 +3234,8 @@ async function handleSend(retry?: {
         onSelect={(sel) => {
           setGalleryOpen(false);
           selectSession(sel);
+          hideDockTip();
+          if (phoneLayout) setPhoneNavOpen(false);
         }}
         onOpenSessionMenu={setMenu}
         onRenameValueChange={setRenameValue}
@@ -2958,6 +3273,8 @@ async function handleSend(retry?: {
           // Sync to rendered width so a mid-transition drag starts from the visual position.
           const renderedW = readSidebarRenderedWidth();
           if (Math.abs(renderedW - sidebarWidthRef.current) > 0.5) {
+            sidebarWidthRef.current = renderedW;
+            writeSidebarWidthCss(renderedW);
             setSidebarWidth(renderedW);
           }
           const fromNarrow = renderedW <= SIDEBAR_NARROW_AT;
@@ -2988,8 +3305,7 @@ async function handleSend(retry?: {
             }}
             onOpenMcpSettings={() => {
               setGalleryOpen(false);
-              setSettingsFocus({ tab: 'extensions', sectionId: '' });
-              setSettingsOpen(true);
+              void openSettingsFresh({ tab: 'extensions', sectionId: '' });
             }}
           />
         ) : !selection && settings && bots.length === 0 && squads.length === 0 ? (
@@ -2998,8 +3314,7 @@ async function handleSend(retry?: {
             modelReady={(settings.model?.providers ?? []).some((p) => p.models.length > 0)}
             existingNames={bots.map((b) => b.name)}
             onOpenModelSettings={() => {
-              setSettingsFocus({ tab: 'model', sectionId: '' });
-              setSettingsOpen(true);
+              void openSettingsFresh({ tab: 'model', sectionId: '' });
             }}
             onCreateOwn={onStartCreateBot}
             onInstalled={(bot) => void onGalleryAssistantInstalled(bot)}
@@ -3026,23 +3341,50 @@ async function handleSend(retry?: {
                 <div className="chat-drop-overlay-card">{t(lang, 'attachDropHint')}</div>
               </div>
             ) : null}
-            {selectedBot ? (
+            <div className="chat-header-cluster">
+              <ChatGatewaySwitcher lang={lang} />
+              {selectedBot ? (
               <button
                 type="button"
-                className="chat-member-pill"
+                key={selectedBot.id}
+                className={`chat-member-pill${busy ? ' is-busy' : ''}`}
                 title={t(lang, 'profile')}
                 aria-label={t(lang, 'profile')}
                 onClick={() => setProfileBot(selectedBot)}
               >
-                <FlatAvatar
-                  className="header-avatar"
-                  emoji={selectedBot.emoji}
-                  color={selectedBot.color}
-                  avatarKind={selectedBot.avatarKind}
-                  botAvatarType={selectedBot.botAvatarType}
-                  busy={botIsWorking(selectedBot.id)}
-                />
-                <span className="chat-member-pill-name">{selectedBot.name}</span>
+                <span className="chat-member-pill-main">
+                  <FlatAvatar
+                    key={selectedBot.id}
+                    className="header-avatar"
+                    emoji={selectedBot.emoji}
+                    color={selectedBot.color}
+                    avatarKind={selectedBot.avatarKind}
+                    botAvatarType={selectedBot.botAvatarType}
+                    busy={botIsWorking(selectedBot.id)}
+                  />
+                  <span className="chat-member-pill-name">{selectedBot.name}</span>
+                </span>
+                <span
+                  className="chat-member-pill-status"
+                  aria-live="polite"
+                  aria-hidden={!busy}
+                  aria-label={busy ? turnStatusText : undefined}
+                >
+                  <span className="chat-member-pill-status-inner">
+                    <span className="chat-member-pill-status-row">
+                      <span className="chat-member-pill-status-orb-wrap" aria-hidden>
+                        <ThinkingOrb
+                          className="chat-member-pill-status-orb"
+                          state={TURN_PHASE_ORB_STATE[turnPhase]}
+                          size={20}
+                          theme={resolvedOrbTheme()}
+                          aria-hidden
+                        />
+                      </span>
+                      <span className="chat-member-pill-status-text">{turnStatusText}</span>
+                    </span>
+                  </span>
+                </span>
                 <span className="chat-member-pill-arrow" aria-hidden>
                   <ChevronRightIcon />
                 </span>
@@ -3050,30 +3392,54 @@ async function handleSend(retry?: {
             ) : selectedSquad ? (
               <button
                 type="button"
-                className="chat-member-pill"
+                className={`chat-member-pill${busy ? ' is-busy' : ''}`}
                 title={t(lang, 'squadProfile')}
                 aria-label={t(lang, 'squadProfile')}
                 onClick={() => openSquadEditor(selectedSquad)}
               >
-                <span className="header-avatar">
-                  <SquadAvatar
-                    members={selectedSquad.members
-                      .map((m) => bots.find((b) => b.id === m.botId))
-                      .filter((b): b is Bot => !!b)
-                      .map((b) => ({
-                        emoji: b.emoji,
-                        color: b.color,
-                        avatarKind: b.avatarKind,
-                        botAvatarType: b.botAvatarType,
-                      }))}
-                  />
+                <span className="chat-member-pill-main">
+                  <span className="header-avatar">
+                    <SquadAvatar
+                      members={selectedSquad.members
+                        .map((m) => bots.find((b) => b.id === m.botId))
+                        .filter((b): b is Bot => !!b)
+                        .map((b) => ({
+                          emoji: b.emoji,
+                          color: b.color,
+                          avatarKind: b.avatarKind,
+                          botAvatarType: b.botAvatarType,
+                        }))}
+                    />
+                  </span>
+                  <span className="chat-member-pill-name">{selectedSquad.name}</span>
                 </span>
-                <span className="chat-member-pill-name">{selectedSquad.name}</span>
+                <span
+                  className="chat-member-pill-status"
+                  aria-live="polite"
+                  aria-hidden={!busy}
+                  aria-label={busy ? turnStatusText : undefined}
+                >
+                  <span className="chat-member-pill-status-inner">
+                    <span className="chat-member-pill-status-row">
+                      <span className="chat-member-pill-status-orb-wrap" aria-hidden>
+                        <ThinkingOrb
+                          className="chat-member-pill-status-orb"
+                          state={TURN_PHASE_ORB_STATE[turnPhase]}
+                          size={20}
+                          theme={resolvedOrbTheme()}
+                          aria-hidden
+                        />
+                      </span>
+                      <span className="chat-member-pill-status-text">{turnStatusText}</span>
+                    </span>
+                  </span>
+                </span>
                 <span className="chat-member-pill-arrow" aria-hidden>
                   <ChevronRightIcon />
                 </span>
               </button>
             ) : null}
+            </div>
             <ChatTranscript
               lang={lang}
               messages={messages}
@@ -3082,14 +3448,12 @@ async function handleSend(retry?: {
               selectedBot={selectedBot}
               selectedSquad={selectedSquad}
               busy={busy}
-              turnPhase={turnPhase}
-              turnStatusText={turnStatusText}
-              turnPhaseOrbState={TURN_PHASE_ORB_STATE}
               loadingOlder={loadingOlder}
               messagesLoading={messagesLoading}
               hasMoreOlder={hasMoreOlder}
               highlightMessageId={highlightMessageId}
               showJumpToBottom={showJumpToBottom}
+              unreadBelowFoldCount={unreadBelowFoldCount}
               error={error}
               messagesBoxRef={messagesBoxRef}
               bottomRef={bottomRef}
@@ -3101,7 +3465,7 @@ async function handleSend(retry?: {
               onJumpToQuotedMessage={onJumpToQuotedMessage}
               onJumpToBottom={onJumpToBottom}
               onRetrySend={onRetrySend}
-              onBotOnboardingDone={onBotOnboardingDone}
+              onQuickChoice={onQuickChoice}
               onApproveTool={onApproveTool}
               onDenyTool={onDenyTool}
               onApproveToolForever={onApproveToolForever}
@@ -3112,7 +3476,7 @@ async function handleSend(retry?: {
               immersiveChat={immersiveChat}
               onToggleImmersiveChat={onToggleImmersiveChat}
               showThinking={showThinking}
-              showAdvancedSettings={settings?.showAdvancedSettings === true}
+              developerMode={settings?.developerMode === true}
             />
           </div>
         )}
@@ -3153,7 +3517,7 @@ async function handleSend(retry?: {
       {menu && (
         <div
           ref={menuRef}
-          className="menu"
+          className="menu session-context-menu"
           style={{ left: menu.x, top: menu.y }}
           onClick={(e) => e.stopPropagation()}
         >
@@ -3263,13 +3627,13 @@ async function handleSend(retry?: {
                 ),
               ],
               [
-                settings?.showAdvancedSettings === true ? (
+                settings?.developerMode === true ? (
                   <button
                     type="button"
                     onClick={() => {
                       const bot = menu.bot;
                       setMenu(null);
-                      void copyLocalHttpRequestUrl({ kind: 'bot', id: bot.id });
+                      void copyGatewayHttpRequestUrl({ kind: 'bot', id: bot.id });
                     }}
                   >
                     <span className="menu-item-icon"><CopyRequestUrlIcon /></span>
@@ -3453,13 +3817,13 @@ async function handleSend(retry?: {
                 </button>,
               ],
               [
-                settings?.showAdvancedSettings === true ? (
+                settings?.developerMode === true ? (
                   <button
                     type="button"
                     onClick={() => {
                       const squad = menu.squad;
                       setMenu(null);
-                      void copyLocalHttpRequestUrl({ kind: 'squad', id: squad.id });
+                      void copyGatewayHttpRequestUrl({ kind: 'squad', id: squad.id });
                     }}
                   >
                     <span className="menu-item-icon"><CopyRequestUrlIcon /></span>
@@ -3771,32 +4135,15 @@ async function handleSend(retry?: {
       ) : null}
 
 
-      {createTarget && (
-        <BotFormModal
+      {newBotDraft ? (
+        <NewBotDialog
           lang={lang}
-          title={t(lang, 'createTitle')}
-          autoApply
-          botId={createTarget.id}
-          showAdvancedSettings={settings?.showAdvancedSettings === true}
-          providers={normalizeModelSettings(settings?.model).providers}
-          defaultProviderId={normalizeModelSettings(settings?.model).defaultProviderId}
-          defaultModelId={normalizeModelSettings(settings?.model).defaultModelId}
-          initial={{
-            name: createTarget.name,
-            description: createTarget.description,
-            avatarKind: createTarget.avatarKind || 'bot-avatar',
-            emoji: createTarget.emoji,
-            color: createTarget.color || '',
-            botAvatarType: createTarget.botAvatarType || 'clover',
-            providerId: createTarget.providerId || '',
-            modelId: createTarget.modelId || '',
-            useGlobalSkills: createTarget.useGlobalSkills === true,
-            enabledGlobalSkills: createTarget.enabledGlobalSkills ?? [],
-          }}
-          onCancel={() => setCreateTarget(null)}
-          onApply={(v) => void handleCreateApply(v)}
+          initialEmoji={newBotDraft.emoji}
+          initialBotAvatarType={newBotDraft.botAvatarType}
+          onCancel={() => setNewBotDraft(null)}
+          onConfirm={confirmCreateBot}
         />
-      )}
+      ) : null}
 
       {profileBot && (
         <BotFormModal
@@ -3804,7 +4151,7 @@ async function handleSend(retry?: {
           title={t(lang, 'profile')}
           autoApply
           botId={profileBot.id}
-          showAdvancedSettings={settings?.showAdvancedSettings === true}
+          developerMode={settings?.developerMode === true}
           providers={normalizeModelSettings(settings?.model).providers}
           defaultProviderId={normalizeModelSettings(settings?.model).defaultProviderId}
           defaultModelId={normalizeModelSettings(settings?.model).defaultModelId}
@@ -3831,7 +4178,6 @@ async function handleSend(retry?: {
           bots={bots}
           squads={squads}
           developerMode={settings?.developerMode === true}
-          showAdvancedSettings={settings?.showAdvancedSettings === true}
           onClose={() => setSearchOpen(false)}
           onSelect={handleGlobalSearchSelect}
         />
@@ -3843,7 +4189,6 @@ async function handleSend(retry?: {
           bots={bots}
           value={squadWizard}
           autoApply={Boolean(squadWizard.id)}
-          showAdvancedSettings={settings?.showAdvancedSettings === true}
           providers={normalizeModelSettings(settings?.model).providers}
           defaultProviderId={normalizeModelSettings(settings?.model).defaultProviderId}
           defaultModelId={normalizeModelSettings(settings?.model).defaultModelId}
@@ -3852,8 +4197,6 @@ async function handleSend(retry?: {
           onSubmit={() => void submitSquadWizard()}
           onApply={(v) => void handleSquadApply(v)}
           syncMembers={syncSquadMembers}
-          removeMember={removeSquadMember}
-          reorderMember={reorderSquadMember}
         />
       ) : null}
 
@@ -3869,6 +4212,9 @@ async function handleSend(retry?: {
           onClose={() => {
             setSettingsOpen(false);
             setSettingsFocus(null);
+            void window.okbot.getSettings().then((latest) => {
+              if (latest) setSettings(latest);
+            }).catch(() => {});
           }}
           onSave={async (next) => {
             try {
@@ -3877,6 +4223,10 @@ async function handleSend(retry?: {
               applyTheme(saved.theme);
               document.documentElement.lang = resolveUiLang(saved.language) === 'en' ? 'en' : 'zh-CN';
             } catch (err) {
+              // Access/user clients cannot POST gateway settings; httpOkbot should
+              // swallow this, but ignore stray forbidden toasts if any path still throws.
+              const msg = formatSystemError(err).trim().toLowerCase();
+              if (msg === 'forbidden' || msg.includes('admin_required')) return;
               toast.error(formatSystemError(err));
             }
           }}
@@ -3885,6 +4235,51 @@ async function handleSend(retry?: {
 
       {aboutOpen ? (
         <AboutModal lang={lang} onClose={() => setAboutOpen(false)} />
+      ) : null}
+
+      {updateModalOpen &&
+      updaterStatus &&
+      updaterStatus.availableVersion &&
+      (updaterStatus.phase === 'available' ||
+        updaterStatus.phase === 'downloading' ||
+        updaterStatus.phase === 'downloaded') &&
+      (updaterStatus.forceUpdate === true || updaterStatus.updatePromptDismissed !== true) ? (
+        <UpdateAvailableModal
+          lang={lang}
+          status={updaterStatus}
+          notes={updaterStatus.availableNotes ?? null}
+          force={updaterStatus.forceUpdate === true}
+          busy={updaterModalBusy}
+          onDismiss={() => {
+            if (updaterStatus.forceUpdate === true) return;
+            const v = updaterStatus.availableVersion;
+            setUpdateModalOpen(false);
+            void window.okbot.updaterDismissUpdatePrompt(v).then((s) => setUpdaterStatus(s));
+          }}
+          onDownload={() => {
+            void (async () => {
+              setUpdaterModalBusy(true);
+              try {
+                setUpdaterStatus(await window.okbot.updaterDownload());
+              } finally {
+                setUpdaterModalBusy(false);
+              }
+            })();
+          }}
+          onInstall={() => {
+            void window.okbot.updaterInstall();
+          }}
+        />
+      ) : whatsNewNotes ? (
+        <WhatsNewModal
+          lang={lang}
+          notes={whatsNewNotes}
+          onClose={() => {
+            const v = whatsNewNotes.version;
+            setWhatsNewNotes(null);
+            void window.okbot.updaterMarkWhatsNewSeen(v);
+          }}
+        />
       ) : null}
 
       {turnTraceView ? (

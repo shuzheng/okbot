@@ -816,37 +816,39 @@ export const SessionSidebar = memo(function SessionSidebar({
       className={`sidebar ${createMenu ? 'menu-open' : ''}${footerMenuOpen ? ' fab-open' : ''}`}
     >
       <div className="sidebar-topbar">
-        {!narrow && (
-          <>
-            <QuickTip text={t(lang, 'search')} place="below">
-            <button
-              type="button"
-              className="search-btn"
-              aria-label={t(lang, 'search')}
-              onClick={onOpenSearch}
-            >
-              <SearchIcon />
-            </button>
-            </QuickTip>
-            <QuickTip text={t(lang, 'sidebarNew')} place="below">
-            <button
-              ref={newBtnRef}
-              className="new-btn"
-              onClick={onOpenCreateMenu}
-              aria-label={t(lang, 'sidebarNew')}
-            >
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden>
-                <path
-                  d="M12 5v14M5 12h14"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                />
-              </svg>
-            </button>
-            </QuickTip>
-          </>
-        )}
+        {/* Always mounted: `.app.narrow` / @container hides these with --sidebar-w
+            so collapse does not paint a shrunken strip still showing search/+. */}
+        <QuickTip text={t(lang, 'search')} place="below">
+        <button
+          type="button"
+          className="search-btn"
+          aria-label={t(lang, 'search')}
+          aria-hidden={narrow || undefined}
+          tabIndex={narrow ? -1 : 0}
+          onClick={onOpenSearch}
+        >
+          <SearchIcon />
+        </button>
+        </QuickTip>
+        <QuickTip text={t(lang, 'sidebarNew')} place="below">
+        <button
+          ref={newBtnRef}
+          className="new-btn"
+          aria-label={t(lang, 'sidebarNew')}
+          aria-hidden={narrow || undefined}
+          tabIndex={narrow ? -1 : 0}
+          onClick={onOpenCreateMenu}
+        >
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden>
+            <path
+              d="M12 5v14M5 12h14"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+            />
+          </svg>
+        </button>
+        </QuickTip>
       </div>
 
       {createMenu && (
@@ -1077,6 +1079,7 @@ export const SessionSidebar = memo(function SessionSidebar({
                 <SearchIcon />
               </button>
               </QuickTip>
+              <QuickTip text={t(lang, 'galleryTitle')}>
               <button
                 type="button"
                 className="footer-btn"
@@ -1091,7 +1094,9 @@ export const SessionSidebar = memo(function SessionSidebar({
                   <AssistantGalleryIcon />
                 </span>
               </button>
+              </QuickTip>
               {renderUpdateButton('menuitem')}
+              <QuickTip text={t(lang, 'settings')}>
               <button
                 type="button"
                 className="footer-btn"
@@ -1106,6 +1111,8 @@ export const SessionSidebar = memo(function SessionSidebar({
                   <SettingsIcon />
                 </span>
               </button>
+              </QuickTip>
+              <QuickTip text={t(lang, 'aboutOpen')}>
               <button
                 type="button"
                 className="footer-btn"
@@ -1120,6 +1127,7 @@ export const SessionSidebar = memo(function SessionSidebar({
                   <AboutIcon />
                 </span>
               </button>
+              </QuickTip>
             </div>
             <button
               type="button"

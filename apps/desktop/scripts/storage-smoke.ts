@@ -37,8 +37,8 @@ const squad = s.createSquad({
   name: '小队',
   description: 'd',
   members: [
-    { botId: bot.id, role: '调研' },
-    { botId: bot2.id, role: '打手' },
+    { botId: bot.id },
+    { botId: bot2.id },
   ],
   providerId: '',
   modelId: '',
@@ -82,7 +82,10 @@ if (s.listBots().find((b) => b.id === bot.id)?.name !== '测2') throw new Error(
   if (migrated.defaultModelId !== 'a') throw new Error('legacy migrate default');
   if (!('providers' in migrated)) throw new Error('providers missing');
   // Round-trip via FileStorage should persist providers shape.
-  const raw = JSON.parse(fs.readFileSync(path.join(root, 'settings.json'), 'utf8'));
-  if (!Array.isArray(raw.model?.providers)) throw new Error('settings.json still flat model');
+  const settingsFile = fs.existsSync(path.join(root, 'server.json'))
+    ? path.join(root, 'server.json')
+    : path.join(root, 'settings.json');
+  const raw = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+  if (!Array.isArray(raw.model?.providers)) throw new Error('server.json still flat model');
 }
 console.log('STORAGE_SMOKE_OK');

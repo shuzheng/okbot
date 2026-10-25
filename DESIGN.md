@@ -17,7 +17,7 @@
 Electron main  或  `okbot serve`（二选一，同一数据目录）
     |  都在本进程里调用 startChatTurn / FileStorage
     v
-localHttpApi          网关 HTTP。不是独立服务
+gatewayHttpApi          网关 HTTP。不是独立服务
     |
     +-- packages/agent     模型、工具、小队、压缩
             |  computerSelection
@@ -32,7 +32,7 @@ localHttpApi          网关 HTTP。不是独立服务
 1. **Electron main**（`electron/main.ts`）。单实例锁、窗口、主题、自己拉起或附着网关。拥有服务时注册全部 IPC（`electron/ipc/index.ts` → `registerAllIpc`）。
 2. **附着客户端**。端口上已有 OkBot 时，窗口用 `electron/attachPreload.ts`（构建产物 `out/preload/attach.mjs`），不注册聊天 IPC。渲染进程经 `src/bridge/httpOkbot.ts` 把 `window.okbot` 指到已有网关。
 3. **渲染进程**。React UI。不直接碰 Node fs。本机完整 preload 是 `electron/preload.ts`。
-4. **localHttpApi**（`electron/localHttpApi.ts`）。Electron 拥有服务时跑在 main 里；`okbot serve`（`electron/cli.ts`）跑在 Node 里。两边是同一份实现，不是两个进程各写一套。`server.json` 的 `owner` 为 `electron` 或 `serve`。
+4. **gatewayHttpApi**（`apps/gateway/src/gatewayHttpApi.ts`）。Electron 拥有服务时跑在 main 里；`okbot serve`（`electron/cli.ts`）跑在 Node 里。两边是同一份实现，不是两个进程各写一套。`runtime.json` 的 `owner` 为 `electron` 或 `serve`。
 5. **本机执行**。`packages/agent` 的 `createLocalExecutionBackend`：`run_shell` / `read_file` / `write_file` / `edit_file` 跑在网关所在机器上。不是 OS 沙箱。
 6. **sandbox-agent**（`apps/sandbox-agent`）。另一台电脑或容器上的 HTTP。桌面只把它登记在 `settings.computers`。模型供应商是第三条出站：`@openai/agents` 按 `apiFormat`（`chat_completions` 或 `responses`）打到供应商 `baseURL`。没有 Anthropic `/v1/messages`。
 
@@ -57,30 +57,35 @@ localHttpApi          网关 HTTP。不是独立服务
 
 ## 网关 HTTP
 
-实现：`localHttpApi.ts`。默认绑 `127.0.0.1`；`bindLan` 才绑 `0.0.0.0`。除注明外都要 `Authorization: Bearer`、`X-OkBot-Token`，或浏览器登录留下的 HttpOnly cookie。`GET /v1/media/…` 额外接受查询参数 `?token=`（供聊天 `<img src>`；不要把令牌写进普通 API 文档示例）。
+实现：`gatewayHttpApi.ts`。默认绑 `127.0.0.1`；`bindLan` 才绑 `0.0.0.0`。除注明外都要 `Authorization: Bearer`、`X-OkBot-Token`，或浏览器登录留下的 HttpOnly cookie。`GET /v1/media/…` 额外接受查询参数 `?token=`（供聊天 `<img src>`；不要把令牌写进普通 API 文档示例）。
 
 | 方法与路径 | 作用 |
 | --- | --- |
 | `GET /v1/health` | 无令牌。`{ ok, service: "okbot-local-http-api" }` |
 | `GET /v1/auth-challenge?nonce=` | 无令牌。返回 HMAC-SHA256(token, nonce)，供本机探测 |
-| `GET /v1/gateway-token` | 鉴权后返回本进程正在核对的令牌 |
+| `GET /v1/gateway-token` | 鉴权后返回本次请求所用令牌（含 `role` / `tokenId`） |
+| `GET /v1/api-tokens/:id/usage` | 鉴权后返回该令牌用量（lifetime / daily / 按助手与小队分桶的消息数与 token）；仅本人令牌或超管可读 |
 | `GET /v1/app-info` | 鉴权后返回版本与平台（附着/Web UI 设置页） |
 | `POST /v1/notify-claim` | `{ tag }` → `{ ok, granted }`：同一设备同一事件只放行一条系统通知（`notifyClaim.ts`；本机局域网地址算 local；tag 含事件 id） |
 | `POST /gateway-login` | 校验令牌后设 HttpOnly cookie，302 到 `/`（不进 URL） |
-| `GET /v1/bootstrap` | 花名册 + 设置。`localHttpApi.token` 留空 |
+| `GET /v1/bootstrap` | 花名册 + 设置。`gatewayHttpApi.token` 留空 |
 | `GET /v1/bots`、`GET /v1/squads` | 侧栏花名册 |
 | `GET /v1/bots/:id/messages`、`GET /v1/squads/:id/messages` | 分页。`limit` 缺省 50，最大 200。可用 `beforeMessageId` |
 | `GET /v1/computers` | 本机 `local` 加已登记远程电脑（不含令牌） |
 | `GET /v1/usage` | 与 IPC `getUsageStats` 同一形状 |
-| `GET /v1/media/:ownerId/resources/:file` | 聊天气泡内嵌图：读 `~/.okbot/<ownerId>/resources/<file>`。鉴权除 Bearer / cookie 外，**允许 `?token=`**（`<img>` 无法带 Authorization）。路径必须恰好三段且落在该 owner 的 `resources/` 下；单文件上限 25MB |
-| `GET /v1/media/:ownerId/uploads/:file` | Composer 粘贴 / 上传附件：读 `~/.okbot/<ownerId>/uploads/<file>`。鉴权同 resources（含 `?token=`）；路径规则相同；单文件上限 25MB |
-| `POST /v1/bots/:id/uploads`、`POST /v1/squads/:id/uploads` | `{ name, dataBase64, mime? }` → 写入网关主机 `~/.okbot/<ownerId>/uploads/`，返回 `{ attachment: { kind, path, name, size, mediaPath, assetRel } }`。解码后上限 25MB；JSON 体上限约 40MB |
+| `GET /v1/media/:ownerId/resources/:file` | 聊天气泡内嵌图：读 `~/.okbot/data/<ownerId>/resources/<file>`。鉴权除 Bearer / cookie 外，**允许 `?token=`**（`<img>` 无法带 Authorization）。路径必须恰好三段且落在该 owner 的 `resources/` 下；单文件上限 25MB |
+| `GET /v1/media/:ownerId/uploads/:file` | Composer 粘贴 / 上传附件：读 `~/.okbot/data/<ownerId>/uploads/<file>`。鉴权同 resources（含 `?token=`）；路径规则相同；单文件上限 25MB |
+| `POST /v1/bots/:id/uploads`、`POST /v1/squads/:id/uploads` | `{ name, dataBase64, mime? }` → 写入网关主机 `~/.okbot/data/<ownerId>/uploads/`，返回 `{ attachment: { kind, path, name, size, mediaPath, assetRel } }`。解码后上限 25MB；JSON 体上限约 40MB |
 | `GET /v1/approvals` | 进行中的回合和待审批 |
-| `GET /v1/events` | SSE，只推 `sessions_changed` |
+| `GET /v1/events` | SSE，推 `sessions_changed` / `settings_changed`，并转发回合 RuntimeEvent（与 owner IPC 同形，供附着 / WebUI 同步） |
 | `POST /v1/bots/:id/messages`、`POST /v1/squads/:id/messages` | `{ text, computerId? }`。默认 202；`Accept: text/event-stream` 则 SSE 到本轮结束 |
 | `POST /v1/tool-respond` | `{ requestId, approved, message? }`。成功 200，失败 409 |
 | `POST /v1/bots/:id/abort`、`POST /v1/squads/:id/abort` | 与桌面停止同一条 `abortChatOwner` |
-| `POST /v1/settings` | 只接受 `GATEWAY_SETTINGS_PATCH_KEYS` 里的键。其它键有真实改动则整次 409 `settings_not_allowed` |
+| `POST /v1/settings` | **超管令牌**。可写完整网关主机设置（含 MCP、模型密钥、tools、security、web、computers、gatewayHttpApi 等）；空白密钥按备份同款 `carryOverSecrets` 保留。客户端壳层键忽略。用户令牌 403 `admin_required` |
+| `GET /v1/mcp/status` | **超管令牌**。本机 MCP hub 状态 |
+| `POST /v1/mcp/test` | **超管令牌**。探测一条 MCP 配置（不落盘） |
+| `POST /v1/backup/export` | **超管令牌**。导出网关主机 `.zip`（`application/zip`）。忙时 409 `busy` |
+| `POST /v1/backup/restore` | **超管令牌**。上传 zip（`application/zip` 或 JSON `dataBase64`）恢复后重启宿主。忙时 409 `busy` |
 | `POST /v1/rpc/:op` | 助手/小队增删改、引导、SOUL.md、记忆、技能、助手市场、全局搜索、prompt context、错误日志、模型发现与连通测试、立即压缩。`op` 只认 `gatewayRpc.ts` 的 `GATEWAY_RPC_OPS`，其它 404 `unknown_op`；存储报错 400。成功 `{ ok: true, result }` |
 | `GET /`、静态资源 | 仅 `serveUi`。未登录是令牌页，不是 JSON |
 
@@ -109,26 +114,34 @@ localHttpApi          网关 HTTP。不是独立服务
 产品侧目录一览与备份行为见 [`GUIDE.md` §12](./GUIDE.md#12-数据目录一览)。本节只写架构边界与关键路径角色。
 
 
-`FileStorage` 是薄门面：共享根路径、组装域 Store（`SettingsStore` / `SessionStore` / `RosterStore` / `SkillsStore` / `MemoryStore` / `ScheduleStore` / `PendingHitlStore` / `AssistantPackageStore`），并保持原有调用面。墓碑与 session 写锁集中在 `ownerLifecycle.ts`（`OwnerLifecycle`）；各 Store 的写路径自行调用，不在门面复制。根目录默认 `~/.okbot`（`path.join(homedir, '.okbot')`）。构造时 `chmod` 目录 `0700`。`settings.json` 经 `writeJson(..., { mode: 0o600 })` 写出，并在创建/读到已有文件后再 `chmod` `0600`。`chmod` 失败会 `console.error`，不抛。
+`FileStorage` 是薄门面：共享根路径、组装域 Store（`SettingsStore` / `SessionStore` / `RosterStore` / `SkillsStore` / `MemoryStore` / `ScheduleStore` / `PendingHitlStore` / `AssistantPackageStore`），并保持原有调用面。墓碑与 session 写锁集中在 `ownerLifecycle.ts`（`OwnerLifecycle`）；各 Store 的写路径自行调用，不在门面复制。根目录默认 `~/.okbot`（`path.join(homedir, '.okbot')`）。构造时 `chmod` 目录 `0700`。`server.json`（网关设置）经 `writeJson(..., { mode: 0o600 })` 写出，并在创建/读到已有文件后再 `chmod` `0600`。`chmod` 失败会 `console.error`，不抛。进程锁为同目录下的 `runtime.json`（旧名曾为 `server.json`）。
+
+### 设置所有权（客户端 vs 网关）
+
+- **客户端设置**（主题、语言、半透明、关窗行为、通知、硬件加速、自动更新、侧栏放大、麦克风、高级/开发者模式、窗口位置、网关列表等）：Electron 写在 `~/.okbot/client.json`（`window` / `gateways` 字段分别嵌套原 `window.json` / `gateways.json`）。浏览器 Web UI 用 `localStorage`（`okbot.clientSettings`）。切换网关时客户端半边不变。
+- **网关设置**（时区、模型、工具、安全、压缩、指令、记忆、维护、小队、mesh、gatewayHttpApi、computers、审批、置顶/隐藏/分组、MCP、web、助手市场等）：每台网关主机自己的 `~/.okbot/server.json`。附着远程时从该主机 bootstrap/HTTP 加载；不要把客户端壳层写进远程 `server.json`。
+- UI `getSettings()` 返回**合并视图**（客户端覆盖 + 当前网关）；`saveSettings` 按键拆开写入。升级时若旧的合并设置仍含客户端键，会剥到 `client.json` 并重写网关文件。
+- 网关写入（`resolveGatewaySettingsWrite`）忽略客户端壳层键（不应用、不报错）；权限仅超管 vs 用户，无键级白名单。
 
 ```text
 ~/.okbot/
-  settings.json          0600。模型 API Key、网关令牌、电脑令牌
-  server.json            单实例锁：pid、port、owner
-  window.json
-  usage.json
-  bots.json
-  squads.json
-  memory.md              全局记忆
-  logs/errors-YYYY-MM-DD.jsonl
-  <botId>/  bot.json、SOUL.md、memory.md、skills/、session.jsonl、
-            session-summary.json、pending-hitl/、resources/、
-            schedules.jsonl
-  <squadId>/  session.jsonl、session-summary.json、
-              pending-hitl/、pending-hitl-replies/、resources/、schedules.jsonl
+  client.json            本机客户端（主题/语言/关窗 + nested window + nested gateways）；0600；通常不进网关备份
+  server.json            0600。网关 AppSettings（模型 API Key、网关令牌、电脑令牌等）
+  runtime.json           进程锁：pid、port、owner（旧锁文件名曾为 server.json）
+  data/                  网关持久数据
+    usage.json
+    bots.json
+    squads.json
+    memory.md            全局记忆
+    logs/errors-YYYY-MM-DD.jsonl
+    <botId>/  bot.json、SOUL.md、memory.md、skills/、session.jsonl、
+              session-summary.json、pending-hitl/、resources/、
+              schedules.jsonl
+    <squadId>/  session.jsonl、session-summary.json、
+                pending-hitl/、pending-hitl-replies/、resources/、schedules.jsonl
 ```
 
-定时任务：`~/.okbot/<botId|squadId>/schedules.jsonl`（一行一个任务；新 id 为 ULID；旧 `schedules.json` 在加载时迁移并保留原 id）（`manage_schedule`；默认审批 allow；create/delete 始终 HITL（含 AAR 不可旁路）；list 不审批；编辑助手/小队可 pause/resume/delete）。每 owner 上限 50；`every N m` 要求 N 整除 60；`once` 触发后停用。拥有网关的进程（Electron 或 `okbot serve`）内 `scheduleTicker` 约每 20s 扫描到期任务，调用与 UI 相同的 `startChatTurn`（走并行上限 / Stop / 任务条；审批/预算与交互轮次相同）。进程未运行时不会触发；再次起来后若 `nextRunAt` 已过期则补跑一次并推进下次。同一 job 在途中不会叠跑。
+定时任务：`~/.okbot/data/<botId|squadId>/schedules.jsonl`（一行一个任务；新 id 为 ULID；旧 `schedules.json` 在加载时迁移并保留原 id）（`manage_schedule`；默认审批 allow；create/delete 始终 HITL（含 AAR 不可旁路）；list 不审批；编辑助手/小队可 pause/resume/delete）。每 owner 上限 50；`every N m` 要求 N 整除 60；`once` 触发后停用。拥有网关的进程（Electron 或 `okbot serve`）内 `scheduleTicker` 约每 20s 扫描到期任务，调用与 UI 相同的 `startChatTurn`（走并行上限 / Stop / 任务条；审批/预算与交互轮次相同）。进程未运行时不会触发；再次起来后若 `nextRunAt` 已过期则补跑一次并推进下次。同一 job 在途中不会叠跑。
 
 聊天附件：Composer 支持选择或**拖放**文件 / 图片 / 文件夹；与选择器同一管线。网页工具（`web_fetch` / `web_search`）在桌面主机直接 HTTP（`settings.web`），不经 sandbox-agent。
 
@@ -146,13 +159,13 @@ localHttpApi          网关 HTTP。不是独立服务
 
 ## 网关可写的设置
 
-`gatewaySettingsWrite.ts` 的 `GATEWAY_SETTINGS_PATCH_KEYS`：主题、语言、麦克风、硬件加速、自动更新、侧栏缩放、开发者模式、压缩、instructions、memory、maintenance、squad、`notifications`、`showAdvancedSettings`、`assistantMarketplace`。`autoApprovalEnabled` 和 `autoApprovalRules` 另走 `checkGatewayApprovalWrite`。`closeAction` 与备份一样仅桌面 IPC，网关不可写。
+`POST /v1/settings` 仅超管令牌。`resolveGatewaySettingsWrite` 应用全部非客户端壳层键，并用 `carryOverSecrets` 补回空白密钥。客户端壳层（主题、语言、麦克风、硬件加速、自动更新、侧栏缩放、`notifications`、`developerMode`、`closeAction`、半透明等）在 `client.json` / Web localStorage，网关写入忽略。
 
-网关对自动审批只能做两类改动。一是只会多问的改动：加「询问」规则、删「允许」规则、关掉自动审批。二是工具卡上的「总是允许」：新增或改成「允许」的规则，内容必须正好是一个内置工具名（如 `read_file`）。内置工具名规则只和工具名比较，不和参数比较。宽泛的关键词「允许」规则（比如只写 `a`）、改桌面端规则的说明或内容，都只能在桌面端做；不合规则的写入整体返回 409 `settings_not_allowed`。设置页的规则列表在网关页只读。
+权限粒度粗分：用户/访问令牌无网关端设置写权限（鉴权层 403 `admin_required`）；超管令牌可写全部网关主机设置（含任意自动审批规则，与桌面端相同）。无访问令牌键级白名单或 `settings_not_allowed` 写入路径。用户令牌客户端上设置页的网关端面板保持隐藏/只读。
 
 MCP 工具（名字以 `mcp_` 开头）不经过自动审批：`resolveToolApproval` 对它们总是返回「询问」，工具卡也不显示「总是允许」。
 
-仍只在桌面端改：模型密钥、`tools`（启用与每个工具的审批）、`security`、`computers`、`localHttpApi`、`mcp`、`web`（搜索 API Key / 拉取内网开关）。`mcp` 能起本机子进程，所以不开放给网关。网关响应里 MCP 的 `env` 和 `headers` 的值留空，网页搜索 API Key 同样留空；客户端原样回传这些空值不算改动。`notifications` 和 `showAdvancedSettings` 只影响界面，不给权限。没有令牌的请求在鉴权处就是 401，到不了这里。
+**超管令牌**经 `POST /v1/settings` 可改完整网关主机配置：模型密钥、`tools`、`security`、`computers`、`gatewayHttpApi`、`mcp`、`web` 等（与拥有网关的桌面端等价）。空白密钥字段按 `carryOverSecrets` 从当前配置补回。**用户令牌**不能 POST settings。网关响应里 MCP 的 `env`/`headers` 值与网页搜索 API Key 仍留空。`notifications` 和 `developerMode` 只影响界面（客户端壳层键）。没有令牌的请求在鉴权处就是 401。
 
 模型发现与连通测试经网关调用时，客户端看到的 API Key 是空的。可以只传 `providerId`；服务端只在 `baseURL` 与已保存的一致时才用已保存的密钥（`modelProbe.resolveProbeApiKey`），不会把密钥发到调用方指定的别的地址。网关调用（`gatewayRpc` 的 `PROBE_OPS`）还要求 `baseURL` 是已保存的某个供应商地址，否则 400 `probe_url_not_saved`；这样令牌持有者不能让网关去请求内网任意地址。桌面端 IPC 不受这个限制。
 
@@ -160,18 +173,20 @@ MCP 工具（名字以 `mcp_` 开头）不经过自动审批：`resolveToolAppro
 
 ## 备份
 
-`electron/backup.ts`：`exportDataBackup(root, out, { excludeSecrets })` 用系统 `zip` 打包数据目录，加标记文件 `okbot-backup.json`，跳过 `server.json`、`window.json`。`excludeSecrets` 时 `stripSettingsSecrets` 清空模型 API Key、网关令牌、电脑令牌、MCP `env`/`headers` 的值、URL 凭证，以及 `redactSecretArgs` 清空的参数（词表共用；URL 查询另有复数/子串回退；`pass-through`/`sort-key` 不清），并跳过 `settings.json.*` 副本。`restoreDataBackup(root, archive)` 先列出压缩包内容，拒绝绝对路径、`..` 和链接，解到临时目录，再把现有目录改名为 `<root>-before-restore-<时间>`，换入新目录；备份不含密钥时 `carryOverSecrets` 沿用旧设置里的密钥，但只在端点相同时：模型供应商要求 id 和 `baseURL` 都相同，电脑要求 id、`host`、`port` 相同，MCP 服务器要求 id、连接方式、命令、参数和去掉密钥后的地址相同。恢复后 `mcp.enabled` 一律关掉，要用户自己再打开。解压前用 `unzip -Z -t`（`LC_ALL=C`）检查 zip 声明的未压缩总大小（上限 16 GiB）。导出和恢复在选文件对话框前后都检查有没有助手在工作或等待批准（`busy`）。只有 IPC，网关没有这条路由。网关设置投影（`blankMcpSecrets`）与备份共用同一套 URL / args 清空。
+`apps/gateway/src/backup.ts`：`exportDataBackup(root, out, { excludeSecrets })` 用系统 `zip` 打包**网关主机**数据目录，加标记文件 `okbot-backup.json`，跳过 `runtime.json`、`client.json`、遗留 `gateways.json` / `window.json`（备份以 `data/` + `server.json` 为主；**不含**客户端壳层偏好）。`excludeSecrets` 时 `stripSettingsSecrets` 清空模型 API Key、网关令牌、电脑令牌、MCP `env`/`headers` 的值、URL 凭证，以及 `redactSecretArgs` 清空的参数（词表共用；URL 查询另有复数/子串回退；`pass-through`/`sort-key` 不清），并跳过 `server.json.*` / `settings.json.*` 副本。`restoreDataBackup(root, archive)` 先列出压缩包内容，拒绝绝对路径、`..` 和链接，解到临时目录，再把现有目录改名为 `<root>-before-restore-<时间>`，换入新目录；备份不含密钥时 `carryOverSecrets` 沿用旧设置里的密钥，但只在端点相同时：模型供应商要求 id 和 `baseURL` 都相同，电脑要求 id、`host`、`port` 相同，MCP 服务器要求 id、连接方式、命令、参数和去掉密钥后的地址相同。恢复后 `mcp.enabled` 一律关掉，要用户自己再打开。解压前用 `unzip -Z -t`（`LC_ALL=C`）检查 zip 声明的未压缩总大小（上限 16 GiB）。导出和恢复在选文件对话框前后（HTTP 路径在打包前后）都检查有没有助手在工作或等待批准（`busy`）。拥有网关的桌面走 IPC；远程超管走 `POST /v1/backup/export|restore`（恢复成功后重启宿主进程）。用户令牌不能调用。网关设置投影（`blankMcpSecrets`）与备份共用同一套 URL / args 清空。
 
 ## 令牌
 
-- 只有拥有服务的进程在磁盘上还没有令牌时才 `ensureGatewayToken` 生成并写入。附着到已有服务不会另造一串。规范化不会因为「已启用且为空」就生成。
-- `GET /v1/bootstrap` 和 `POST /v1/settings` 的响应把 `localHttpApi.token` 留空。
-- 要读正在核对的令牌：鉴权后 `GET /v1/gateway-token`。Electron 设置页走 IPC `getGatewayAccessToken`，附着窗口和 Web UI 走这条 HTTP。
+- 网关可创建任意多个 API 令牌，存在 `gatewayHttpApi.apiTokens[]`（每项：`id` / `name` / `role`=`access`|`admin` / `token` / `limits` / 时间戳）。遗留字段 `token` / `adminToken` 仍镜像各自角色的**第一条**，供 attach / CLI / 探测兼容；鉴权匹配列表中每一项。
+- 限额（`limits`）：`dailyMessages` / `totalMessages` / `dailyTokens` / `totalTokens`；**0 = 不限制**。HTTP 聊天回合前按用量门禁；用量落在 `~/.okbot/api-token-usage.json`，按令牌 × 助手/小队累计消息数与 token（input+output+cache）。
+- 只有拥有服务的进程在磁盘上还没有用户/超管令牌时才 `ensureGatewayToken` 生成并写入。附着到已有服务不会另造一串。规范化不会因为「已启用且为空」就生成。
+- `GET /v1/bootstrap` 和 `POST /v1/settings` 的响应把 `gatewayHttpApi.token` / `adminToken` / 各 `apiTokens[].token` 留空。
+- 要读正在核对的令牌：鉴权后 `GET /v1/gateway-token`（回显本次凭据）。本机 Electron 另经 IPC `getGatewayAccessToken` / `getGatewayAdminToken` / `getGatewayApiTokens` 读完整列表；附着窗口和 Web UI 用 HTTP。用量：`GET /v1/api-tokens/:id/usage` 或 IPC `getApiTokenUsage`。
 - 附着窗口的命令行只有 `--okbot-api-base=`。令牌经 `attachGatewayToken` 一次性 IPC 交给 preload，再放进 `window.__okbotAttach.token`。不放在渲染进程命令行。
 - 浏览器 Web UI 登录是 `POST /gateway-login`，服务端设 HttpOnly cookie `okbot_gateway_token`，不把令牌放进 URL 或 `sessionStorage`。API 请求带 `credentials: include`（附着窗口仍用 preload 里的 Bearer）。
-- 健康探测：没有已存令牌时只看 `GET /v1/health`。有令牌时走 `GET /v1/auth-challenge?nonce=`（不发送令牌），用 HMAC-SHA256(token, nonce) 校验；冒名端口无法收割令牌。
+- 健康探测：没有已存令牌时只看 `GET /v1/health`。有令牌时走 `GET /v1/auth-challenge?nonce=`（不发送令牌），对**每一个**已存令牌算 HMAC-SHA256(token, nonce) 并返回 `macs[]`（兼旧字段 `mac`）；冒名端口无法收割令牌。
 
 ## 现在仍成立的缺口
 
-- 附着窗口和浏览器网关不能按文件路径导入、导出助手包（文件在网关那台机器上），也不能备份恢复或改 MCP。更新器在网关模式只读展示 `currentVersion`（来自 `GET /v1/app-info`），不能在附着窗口里下载安装。
+- 附着窗口和浏览器网关不能按文件路径导入、导出助手包（文件在网关那台机器上）。备份/恢复与改 MCP 需要**超管令牌**（HTTP）；用户令牌不行。更新器在网关模式只读展示 `currentVersion`（来自 `GET /v1/app-info`），不能在附着窗口里下载安装。
 - `okbot serve` 启动横幅仍会明文打印访问令牌一次（有意保留，便于本机复制）。

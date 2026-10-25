@@ -55,7 +55,6 @@ function attachMeshAskTool(
     security: input.security,
     toolRunBudget: input.toolRunBudget,
     web: input.web,
-    memberMaxTurns: input.meshMemberMaxTurns,
     ownerId: input.ownerId,
     resourcesDir: input.resourcesDir,
     executionBackend: input.executionBackend,

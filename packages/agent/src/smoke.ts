@@ -1,5 +1,5 @@
 /**
- * Smoke test: read model settings from env or ~/.okbot/settings.json
+ * Smoke test: read model settings from env or ~/.okbot/server.json
  * and send one Chat Completions request. Does NOT read ~/.codex.
  */
 import fs from 'node:fs';
@@ -35,9 +35,11 @@ async function loadSettings() {
       }),
     );
   }
-  const p = path.join(os.homedir(), '.okbot', 'settings.json');
+  const server = path.join(os.homedir(), '.okbot', 'server.json');
+  const legacy = path.join(os.homedir(), '.okbot', 'settings.json');
+  const p = fs.existsSync(server) ? server : legacy;
   if (!fs.existsSync(p)) {
-    console.error('No ~/.okbot/settings.json and no OKBOT_* env. Skip smoke.');
+    console.error('No ~/.okbot/server.json (or settings.json) and no OKBOT_* env. Skip smoke.');
     process.exit(0);
   }
   const raw = JSON.parse(fs.readFileSync(p, 'utf8'));

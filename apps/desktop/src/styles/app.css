@@ -9,8 +9,8 @@
   --muted: #71717a;
   --accent: #3f3f46;
   --accent-soft: rgba(0, 0, 0, 0.06);
-  /* Open/selected session row wash — softer than hover --accent-soft. */
-  --session-active-bg: rgba(0, 0, 0, 0.02);
+  /* Open/selected session row wash — a bit stronger; still under hover --accent-soft. */
+  --session-active-bg: rgba(0, 0, 0, 0.04);
   --danger: #dc2626;
   /* Default-assistant avatar star badge (orange fill + white glyph). */
   --default-assistant-mark: #f59e0b;
@@ -33,8 +33,8 @@
   --mention-chip-bg: var(--accent-soft);
   --mention-chip-fg: var(--text);
   --mention-chip-border: var(--border);
-  --bubble-user: #333333;
-  --bubble-user-text: #fff;
+  --bubble-user: var(--bubble-bot);
+  --bubble-user-text: var(--text);
   --bubble-bot: #f3f3f5;
   /* Attach +/fan chrome; no soft elevation (native border feel). */
   --composer-attach: #ececee;
@@ -76,8 +76,8 @@
   --hairline-color: #4a4a4a;
   /* Darwin transparent window rim (matches Electron roundedCorners clip). */
   --window-radius: 10px;
-  /* Solid rim — light theme default (dark-ish edge). Dark theme overrides below. */
-  --window-rim-color: #a8a8ae;
+  /* Solid rim — light theme default (fainter edge so 0.5px AA reads thinner). Dark overrides below. */
+  --window-rim-color: #e4e4e7;
   font-family:
     -apple-system,
     BlinkMacSystemFont,
@@ -99,9 +99,9 @@
     --muted: #8a8a8a;
     --accent: #f5f5f5;
     --accent-soft: rgba(255, 255, 255, 0.07);
-    --session-active-bg: rgba(255, 255, 255, 0.04);
-    --bubble-user: #2e2e2e;
-    --bubble-user-text: #f5f5f5;
+    --session-active-bg: rgba(255, 255, 255, 0.06);
+    --bubble-user: var(--bubble-bot);
+    --bubble-user-text: var(--text);
     --bubble-bot: #212121;
     --composer-attach: #2e2e2e;
     --composer-attach-text: #f5f5f5;
@@ -113,8 +113,8 @@
     --mention-chip-bg: rgba(255, 255, 255, 0.12);
     --mention-chip-fg: var(--text);
     --mention-chip-border: rgba(255, 255, 255, 0.2);
-    /* Solid light-ish edge on dark frost (no alpha wash). */
-    --window-rim-color: #6e6e73;
+    /* Softer dark rim so 0.5px AA reads thinner (was #6e6e73). */
+    --window-rim-color: #48484a;
   }
 }
 
@@ -128,9 +128,9 @@
   --muted: #8a8a8a;
   --accent: #f5f5f5;
   --accent-soft: rgba(255, 255, 255, 0.07);
-  --session-active-bg: rgba(255, 255, 255, 0.04);
-  --bubble-user: #2e2e2e;
-  --bubble-user-text: #f5f5f5;
+  --session-active-bg: rgba(255, 255, 255, 0.06);
+  --bubble-user: var(--bubble-bot);
+  --bubble-user-text: var(--text);
   --bubble-bot: #212121;
   --composer-attach: #2e2e2e;
   --composer-attach-text: #f5f5f5;
@@ -142,12 +142,12 @@
   --mention-chip-bg: rgba(255, 255, 255, 0.12);
   --mention-chip-fg: var(--text);
   --mention-chip-border: rgba(255, 255, 255, 0.2);
-  --window-rim-color: #6e6e73;
+  --window-rim-color: #48484a;
 }
 
 :root[data-theme='light'] {
   --hairline-color: #a8a8ae;
-  --window-rim-color: #a8a8ae;
+  --window-rim-color: #e4e4e7;
   --bg: #f4f4f5;
   --panel: #E8EAEA;
   --panel-2: #e4e4e7;
@@ -157,9 +157,9 @@
   --muted: #71717a;
   --accent: #3f3f46;
   --accent-soft: rgba(0, 0, 0, 0.06);
-  --session-active-bg: rgba(0, 0, 0, 0.02);
-  --bubble-user: #333333;
-  --bubble-user-text: #fff;
+  --session-active-bg: rgba(0, 0, 0, 0.04);
+  --bubble-user: var(--bubble-bot);
+  --bubble-user-text: var(--text);
   --bubble-bot: #f3f3f5;
   --composer-attach: #ececee;
   --composer-attach-text: #3f3f46;
@@ -170,8 +170,14 @@
 * { box-sizing: border-box; }
 html, body, #root {
   height: 100%;
+  height: 100dvh;
+  max-height: 100%;
+  max-height: 100dvh;
+  width: 100%;
+  max-width: 100%;
   margin: 0;
   overflow: hidden;
+  overflow-x: hidden;
   /* Transparent so macOS BrowserWindow vibrancy can show through the sidebar
      column; .main keeps opaque --chat-bg for the transcript. */
   background: transparent;
@@ -212,11 +218,17 @@ input, textarea { user-select: text; }
   /* Sidebar | splitter | chat. On darwin the window is transparent+vibrancy
      so the sidebar column frosts the desktop; .main stays opaque chat-bg.
      Overlay+padding-left only sampled flat --chat-bg (ineffective frost). */
-  grid-template-columns: var(--sidebar-w) 5px 1fr;
+  /* minmax(0, …) so a persisted wide --sidebar-w or chat min-content cannot
+     expand the layout viewport on ~390px phones (Safari shrink-to-fit loop). */
+  grid-template-columns: minmax(0, var(--sidebar-w)) 5px minmax(0, 1fr);
   height: 100%;
   max-height: 100%;
+  width: 100%;
+  max-width: 100%;
   overflow: hidden;
+  overflow-x: hidden;
   min-height: 0;
+  min-width: 0;
   background: transparent;
   /* Containing block + clip for darwin window rim (::after). Radius matches
      Electron macOS roundedCorners so content/rim follow the system clip. */
@@ -242,16 +254,96 @@ input, textarea { user-select: text; }
   transition: none;
 }
 
-/* Live Electron window resize: drop GPU-heavy effects that recomposite every frame.
-   Class is toggled by windowResizeGate (no React re-render). */
+/* Live window-edge drag: snap --sidebar-w (no 0.22s ease fighting Chromium reflow).
+   Click-collapse / expand while idle keeps the cubic-bezier on .app. */
+html.is-window-resizing .app {
+  transition: none;
+  pointer-events: none;
+}
 html.is-window-resizing .chat-member-pill,
+html.is-window-resizing .chat-gateway-btn,
+html.is-window-resizing .immersive-chat-fab,
+html.is-window-resizing .scroll-to-bottom-btn,
+html.is-window-resizing .footer-btn,
+html.is-window-resizing .session-row,
+html.is-window-resizing .bubble-action-btn {
+  transition: none !important;
+}
+/* Contain layout invalidation to each column while the window is dragged.
+   size+paint avoids sibling layout thrash; content-visibility on bubbles
+   skips painting off-screen transcript rows during the drag only. */
+html.is-window-resizing .sidebar,
+html.is-window-resizing .messages-shell,
+html.is-window-resizing .main {
+  contain: layout paint;
+}
+
+html.is-window-resizing .bubble-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 72px;
+}
+html.is-window-resizing .messages-content {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 400px;
+}
+
+/* Live Electron window resize: drop GPU-heavy effects that recomposite every frame.
+   Class is toggled by windowResizeGate (no React re-render). Keep visual design when
+   idle; during the drag, kill blur/mask and use denser fills so 10% frost does not
+   go see-through. Do not freeze --sidebar-w here — auto-collapse must stay immediate. */
+html.is-window-resizing .chat-member-pill,
+html.is-window-resizing .chat-gateway-btn,
 html.is-window-resizing .immersive-chat-fab,
 html.is-window-resizing .scroll-to-bottom-btn,
 html.is-window-resizing .mesh-exchange-close,
 html.is-window-resizing .sidebar,
-html.is-window-resizing .modal.form-drawer {
+html.is-window-resizing .modal.form-drawer,
+html.is-window-resizing .modal.form-drawer .field input,
+html.is-window-resizing .modal.form-drawer .field textarea,
+html.is-window-resizing .modal.form-drawer .field select,
+html.is-window-resizing .modal.form-drawer .model-ref-select,
+html.is-window-resizing .modal.form-drawer .bot-picker-trigger,
+html.is-window-resizing .modal.form-drawer .aar-policy-select,
+html.is-window-resizing .modal.form-drawer .tool-mgmt-approval-select,
+html.is-window-resizing .modal.form-drawer .settings-row select,
+html.is-window-resizing .open-tasks-list-fold-inner,
+html.is-window-resizing .bubble-more-menu,
+html.is-window-resizing .chat-gateway-menu {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
+}
+/* Opaque-enough stand-ins while blur is off (match translucent=false tone). */
+html.is-window-resizing .chat-member-pill,
+html.is-window-resizing .chat-gateway-btn,
+html.is-window-resizing .immersive-chat-fab,
+html.is-window-resizing .scroll-to-bottom-btn,
+html.is-window-resizing .mesh-exchange-close,
+html.is-window-resizing .open-tasks-list-fold-inner,
+html.is-window-resizing .bubble-more-menu,
+html.is-window-resizing .chat-gateway-menu,
+html.is-window-resizing .modal.form-drawer {
+  background: var(--panel) !important;
+}
+/* Densify sidebar wash during resize. Darwin vibrancy is parked in main
+   during edge drag (attachDarwinResizeVibrancyPark), so solid panel matches. */
+html.is-window-resizing .sidebar {
+  background: var(--panel) !important;
+}
+html.is-window-resizing .modal.form-drawer .field input,
+html.is-window-resizing .modal.form-drawer .field textarea,
+html.is-window-resizing .modal.form-drawer .field select,
+html.is-window-resizing .modal.form-drawer .model-ref-select,
+html.is-window-resizing .modal.form-drawer .bot-picker-trigger,
+html.is-window-resizing .modal.form-drawer .aar-policy-select,
+html.is-window-resizing .modal.form-drawer .tool-mgmt-approval-select,
+html.is-window-resizing .modal.form-drawer .settings-row select {
+  background: var(--input, var(--panel-2)) !important;
+}
+/* Name under avatar stays borderless / unfilled (same as translucent=false). */
+html.is-window-resizing .modal.form-drawer .avatar-preview-stack .field-name input,
+html.is-window-resizing .modal.form-drawer .avatar-preview-stack .field-name input:focus,
+html.is-window-resizing .modal.form-drawer .avatar-preview-stack .field-name input:focus-visible {
+  background: none !important;
 }
 html.is-window-resizing .scroll-fade.fade-top,
 html.is-window-resizing .scroll-fade.fade-bottom,
@@ -332,12 +424,14 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
     border-left-color: color-mix(in srgb, #a8a8ae 42%, transparent);
   }
 }
-/* Dark: fainter splitter than chat/header chrome */
+/* Dark: fainter splitter than chat/header chrome; fill matches middle (--panel #121212) */
 :root[data-theme='dark'] .sidebar-resize {
+  background: #121212;
   border-left-color: color-mix(in srgb, var(--hairline-color) 38%, transparent);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) .sidebar-resize {
+    background: #121212;
     border-left-color: color-mix(in srgb, var(--hairline-color) 38%, transparent);
   }
 }
@@ -357,6 +451,11 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
 .app.narrow .sidebar-topbar {
   justify-content: center;
   padding: 0;
+}
+/* Hide expanded search/+ with the rail class (same signal as --sidebar-w sync). */
+.app.narrow .sidebar-topbar .search-btn,
+.app.narrow .sidebar-topbar .new-btn {
+  display: none;
 }
 /* Collapsed rail: macOS keeps the traffic-light band; Windows/Linux drop the empty pad. */
 :root:not([data-platform='darwin']) .app.narrow .sidebar-topbar {
@@ -452,10 +551,7 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   justify-content: center;
   align-items: flex-start;
   gap: 14px 22px;
-  /* Match session-item-wrap horizontal inset (14px). Top pad must clear
-     bot-avatars 1.5× overscan + rise bias (~0.35×--pin-avatar ≈ 20px) so
-     busy hops aren't clipped by .session-pane { overflow: hidden }. */
-  padding: 24px 14px 12px;
+  padding: 10px;
   flex-shrink: 0;
   overflow: visible;
   position: relative;
@@ -638,11 +734,12 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   z-index: 25;
 }
 
-/* Inset divider — same width as session rows (14px margins). */
+/* Inset divider — same width as session rows (14px margins).
+   Equal block margins (was 2px/8px) so top/bottom air matches. */
 .session-pin-divider {
   height: var(--hairline, 0.5px);
   min-height: 1px;
-  margin: 2px 14px 8px;
+  margin: 8px 14px;
   background: var(--border);
   flex-shrink: 0;
   border: none;
@@ -1072,13 +1169,13 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
    (same idea as other frost-friendly chrome). Light theme unchanged. */
 :root[data-theme='dark'] .app.narrow .session-hidden-header::before,
 :root[data-theme='dark'] .app.narrow .session-owner-group-header:not(.renaming)::before,
-:root[data-theme='dark'] .app.narrow .session-pin-divider {
+:root[data-theme='dark'] .app.narrow .session-pin-divider::before {
   background: color-mix(in srgb, #ffffff 16%, transparent);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) .app.narrow .session-hidden-header::before,
   :root:not([data-theme='light']) .app.narrow .session-owner-group-header:not(.renaming)::before,
-  :root:not([data-theme='light']) .app.narrow .session-pin-divider {
+  :root:not([data-theme='light']) .app.narrow .session-pin-divider::before {
     background: color-mix(in srgb, #ffffff 16%, transparent);
   }
 }
@@ -1217,6 +1314,12 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
 .session-pane:has(> .session-pin-strip) .session-list > .empty-side:first-child {
   margin-top: 0;
 }
+/* Narrow + pins + custom groups (no .session-pin-divider): cancel sticky's
+   -2px pull into the pin strip. */
+.app.narrow .session-pane:has(> .session-pin-strip):not(:has(> .session-pin-divider))
+  .session-list > .session-owner-group:first-child > .session-group-sticky {
+  margin-top: 0;
+}
 
 /* Collapsed rail: pins use normal session avatar size, stacked like dock rows. */
 .app.narrow .session-pin-strip {
@@ -1255,9 +1358,14 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
 .app.narrow .session-pin-avatar-shell.unread::after {
   border-radius: 12px;
 }
-.app.narrow .session-pin-item .session-avatar {
+.app.narrow .session-pin-item .session-avatar,
+.app.narrow .session-pin-item .session-pin-avatar {
   width: var(--rail-avatar);
   height: var(--rail-avatar);
+  min-width: var(--rail-avatar);
+  min-height: var(--rail-avatar);
+  max-width: var(--rail-avatar);
+  max-height: var(--rail-avatar);
   border-radius: 10px;
   font-size: var(--rail-avatar);
   transform-origin: center center;
@@ -1272,10 +1380,30 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   width: var(--rail-avatar);
   max-width: var(--rail-avatar);
 }
+/* Match collapsed group/hidden hairlines: 16px chrome with centered line.
+   margin-block 8px (was 0) — pin strip is a sibling with no pane gap, so without
+   it pin→hairline is only half-chrome (~8px) while group hairlines sit 16px apart.
+   Equal top/bottom outer margins match inter-group divider rhythm. */
 .app.narrow .session-pin-divider {
   width: var(--rail-avatar);
-  margin: 6px auto 8px;
+  height: 16px;
+  min-height: 16px;
+  margin: 8px auto;
   align-self: center;
+  background: transparent;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.app.narrow .session-pin-divider::before {
+  content: '';
+  display: block;
+  width: 100%;
+  height: var(--hairline, 0.5px);
+  min-height: 1px;
+  background: var(--border);
+  border-radius: 1px;
 }
 
 .session-item {
@@ -1521,7 +1649,6 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
 .global-search-avatar .flat-avatar-emoji,
 .bubble-speaker-avatar .flat-avatar-emoji,
 .squad-member-row .flat-avatar-emoji,
-.squad-role-row .flat-avatar-emoji,
 .bot-picker-chip-avatar .flat-avatar-emoji,
 .bot-avatar-type-preview .flat-avatar-emoji {
   font-size: 0.889em;
@@ -2034,6 +2161,17 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
     gap: 0;
   }
 }
+/* Icon-rail threshold (SIDEBAR_NARROW_AT = 128): hide pin names + topbar search/+
+   from the same container width pass as the grid column — no React-frame lag. */
+@container sidebar (max-width: 128px) {
+  .sidebar-topbar .search-btn,
+  .sidebar-topbar .new-btn {
+    display: none;
+  }
+  .session-pin-item:not(.renaming) .session-pin-name-edit {
+    display: none;
+  }
+}
 .sidebar-footer {
   flex-shrink: 0;
   /* horizontal 14px matches .session-list so settings aligns with session rows */
@@ -2070,6 +2208,10 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
 .footer-btn:hover {
   background: var(--accent-soft);
   color: var(--text);
+}
+/* Expanded sidebar: settings/market — no hover wash (collapsed rail keeps bg). */
+.sidebar-footer-row .footer-btn:hover {
+  background: transparent;
 }
 .footer-btn .ico {
   width: 20px;
@@ -2325,6 +2467,15 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   position: relative;
   box-sizing: border-box;
 }
+/* Dark: match middle panel / splitter fill (--panel #121212); light stays --chat-bg */
+:root[data-theme='dark'] .main {
+  background: #121212;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .main {
+    background: #121212;
+  }
+}
 .main-topdrag {
   position: absolute;
   top: 0;
@@ -2335,20 +2486,43 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   z-index: 1;
   pointer-events: none;
 }
-/* Floating conversation member pill (top-center overlay; replaces full-width chat header). */
-.chat-member-pill {
+/* Top-center cluster: gateway circle + member pill (replaces full-width chat header). */
+.chat-header-cluster {
   position: absolute;
   top: 10px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 12;
-  display: inline-flex;
-  align-items: center;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  /* Grow with member name — no hard cap that forces ellipsis. */
+  max-width: min(96vw, 100%);
+  -webkit-app-region: no-drag;
+}
+
+/* Floating conversation member pill.
+   Column layout: main row (avatar+name) stays top-aligned; busy status opens below;
+   hover chevron is absolutely centered on the full pill height. */
+.chat-member-pill {
+  position: relative;
+  top: auto;
+  left: auto;
+  transform: none;
+  z-index: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
   gap: 0;
-  max-width: min(72%, 360px);
+  width: max-content;
+  max-width: none;
   min-width: 0;
   margin: 0;
-  padding: 8px 18px 8px 16px;
+  /* Extra right padding reserved so hover chevron can fade in without a layout jump. */
+  --chat-member-pill-pad-right: 18px;
+  --chat-member-pill-pad-right-hover: 34px;
+  padding: 8px var(--chat-member-pill-pad-right) 8px 16px;
   /* Very thin light edge; --hairline is 0.5px. */
   border: var(--hairline) solid color-mix(in srgb, #ffffff 18%, transparent);
   border-radius: 999px;
@@ -2363,10 +2537,13 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   -webkit-backdrop-filter: blur(10px);
   box-shadow: none;
   -webkit-app-region: no-drag;
+  /* Animate hover width (via padding) and allow width:max-content to interpolate where supported. */
+  interpolate-size: allow-keywords;
   transition:
     background 0.15s ease,
     border-color 0.15s ease,
-    padding 0.15s ease;
+    padding 0.22s ease,
+    width 0.22s ease;
 }
 :root[data-theme='light'] .chat-member-pill {
   background: color-mix(in srgb, var(--panel) 10%, transparent);
@@ -2380,16 +2557,19 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
     box-shadow: none;
   }
 }
-.chat-member-pill:hover {
-  /* Slightly denser frost on hover. */
+.chat-member-pill:hover,
+.chat-member-pill:focus-visible {
+  /* Slightly denser frost on hover; widen right pad for absolute chevron. */
   background: color-mix(in srgb, var(--panel) 16%, transparent);
-  padding-right: 16px;
+  padding-right: var(--chat-member-pill-pad-right-hover);
 }
-:root[data-theme='light'] .chat-member-pill:hover {
+:root[data-theme='light'] .chat-member-pill:hover,
+:root[data-theme='light'] .chat-member-pill:focus-visible {
   background: color-mix(in srgb, var(--panel) 16%, transparent);
 }
 @media (prefers-color-scheme: light) {
-  :root:not([data-theme='dark']) .chat-member-pill:hover {
+  :root:not([data-theme='dark']) .chat-member-pill:hover,
+  :root:not([data-theme='dark']) .chat-member-pill:focus-visible {
     background: color-mix(in srgb, var(--panel) 16%, transparent);
   }
 }
@@ -2397,33 +2577,156 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   outline: 2px solid color-mix(in srgb, var(--accent, #6366f1) 55%, transparent);
   outline-offset: 2px;
 }
+/* Top row: avatar + name — same geometry idle and busy (status grows below). */
+.chat-member-pill-main {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0;
+  min-width: 0;
+  width: 100%;
+}
 .chat-member-pill-name {
   font-size: 14px;
   font-weight: 650;
   line-height: 1.2;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* Always show full member name — never truncate / ellipsis. */
+  overflow: visible;
+  text-overflow: clip;
   white-space: nowrap;
   color: var(--text);
   min-width: 0;
   margin-left: 7px;
+  flex: 0 0 auto;
 }
+/* Busy status row under the card: grid 0fr→1fr grows/shrinks height; width:0/min-width:100%
+   keeps status from forcing the pill wider than the main row (smooth, no jump). */
+.chat-member-pill-status {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  width: 0;
+  min-width: 100%;
+  transition:
+    grid-template-rows 0.22s ease,
+    opacity 0.18s ease;
+  pointer-events: none;
+  user-select: none;
+}
+.chat-member-pill.is-busy .chat-member-pill-status {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+.chat-member-pill-status-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+.chat-member-pill-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  margin-top: 4px;
+  min-width: 0;
+}
+/* OrbSize only ships 20|64 — scale the 20px preset down for the tiny status row. */
+.chat-member-pill-status-orb-wrap {
+  position: relative;
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+}
+.chat-member-pill-status-orb {
+  position: absolute !important;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) scale(0.6);
+  transform-origin: center center;
+}
+.chat-member-pill-status-text {
+  display: block;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  line-height: 1.15;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  /* Reuse shimmer language of the old bottom turn status. */
+  background-image: linear-gradient(
+    100deg,
+    var(--muted) 0%,
+    var(--muted) 40%,
+    color-mix(in srgb, var(--text) 92%, #fff) 50%,
+    var(--muted) 60%,
+    var(--muted) 100%
+  );
+  background-size: 200% 100%;
+  background-position: 100% 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+.chat-member-pill.is-busy .chat-member-pill-status-text {
+  animation: okbot-status-shimmer 2.4s linear infinite;
+}
+:root[data-theme='light'] .chat-member-pill-status-text {
+  background-image: linear-gradient(
+    100deg,
+    var(--muted) 0%,
+    var(--muted) 40%,
+    color-mix(in srgb, var(--text) 78%, #fff) 50%,
+    var(--muted) 60%,
+    var(--muted) 100%
+  );
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .chat-member-pill-status-text {
+    background-image: linear-gradient(
+      100deg,
+      var(--muted) 0%,
+      var(--muted) 40%,
+      color-mix(in srgb, var(--text) 78%, #fff) 50%,
+      var(--muted) 60%,
+      var(--muted) 100%
+    );
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-member-pill {
+    transition: background 0.15s ease, border-color 0.15s ease;
+  }
+  .chat-member-pill-status {
+    transition: none;
+  }
+  .chat-member-pill-status-text {
+    animation: none;
+    background-image: none;
+    color: var(--muted);
+    -webkit-text-fill-color: var(--muted);
+  }
+  .chat-member-pill-arrow {
+    transition: opacity 0.14s ease;
+  }
+}
+/* Chevron: absolute, vertically centered on the full (possibly taller) pill. */
 .chat-member-pill-arrow {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  transform: translateY(-50%);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
-  width: 0;
-  max-width: 0;
-  margin-left: 0;
+  width: 14px;
+  height: 14px;
   opacity: 0;
-  overflow: hidden;
+  pointer-events: none;
   color: var(--muted);
-  transition:
-    opacity 0.14s ease,
-    width 0.14s ease,
-    max-width 0.14s ease,
-    margin-left 0.14s ease;
+  transition: opacity 0.18s ease;
 }
 .chat-member-pill-arrow svg {
   width: 14px;
@@ -2432,11 +2735,139 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
 }
 .chat-member-pill:hover .chat-member-pill-arrow,
 .chat-member-pill:focus-visible .chat-member-pill-arrow {
-  width: 14px;
-  max-width: 14px;
-  margin-left: 4px;
   opacity: 1;
   color: var(--text);
+}
+
+/* Gateway circle — same resting height as .chat-member-pill (8+24+8 = 40). */
+.chat-gateway-switcher {
+  position: relative;
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  -webkit-app-region: no-drag;
+}
+.chat-gateway-btn {
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+  border: var(--hairline) solid color-mix(in srgb, #ffffff 18%, transparent);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--panel) 10%, transparent);
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  box-sizing: border-box;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: none;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.chat-gateway-btn svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+:root[data-theme='light'] .chat-gateway-btn {
+  background: color-mix(in srgb, var(--panel) 10%, transparent);
+  border-color: color-mix(in srgb, #000000 10%, transparent);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .chat-gateway-btn {
+    background: color-mix(in srgb, var(--panel) 10%, transparent);
+    border-color: color-mix(in srgb, #000000 10%, transparent);
+  }
+}
+.chat-gateway-btn:hover,
+.chat-gateway-btn:focus-visible,
+.chat-gateway-switcher.is-open .chat-gateway-btn {
+  color: var(--text);
+  background: color-mix(in srgb, var(--panel) 18%, transparent);
+}
+:root[data-theme='light'] .chat-gateway-btn:hover,
+:root[data-theme='light'] .chat-gateway-btn:focus-visible,
+:root[data-theme='light'] .chat-gateway-switcher.is-open .chat-gateway-btn {
+  background: color-mix(in srgb, var(--panel) 22%, transparent);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .chat-gateway-btn:hover,
+  :root:not([data-theme='dark']) .chat-gateway-btn:focus-visible,
+  :root:not([data-theme='dark']) .chat-gateway-switcher.is-open .chat-gateway-btn {
+    background: color-mix(in srgb, var(--panel) 22%, transparent);
+  }
+}
+.chat-gateway-btn:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent, #6366f1) 55%, transparent);
+  outline-offset: 2px;
+}
+.chat-gateway-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+/* Invisible hit bridge so hover can travel from circle → menu without closing. */
+.chat-gateway-switcher.is-open::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  width: 100%;
+  top: 100%;
+  height: 10px;
+}
+/* .chat-gateway-menu panel chrome lives after .menu (see near .bubble-more-menu)
+   so frost/position beat the shared .menu opaque fixed chrome. */
+.chat-gateway-menu button {
+  justify-content: space-between;
+  gap: 10px;
+}
+.chat-gateway-menu button.is-active {
+  color: var(--text);
+}
+/* One row: name + kind + check (kind muted, same labels as Settings → 网关列表). */
+.chat-gateway-menu-main {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.chat-gateway-menu-name {
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  max-width: 140px;
+}
+.chat-gateway-menu-kind {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+  line-height: 1.25;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.chat-gateway-menu-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  margin-left: 4px;
+  color: #22c55e;
+}
+.chat-gateway-menu-check svg {
+  width: 15px;
+  height: 15px;
+}
+/* Thicker than shared CheckIcon (1.8) so the active gateway mark reads clearly. */
+.chat-gateway-menu-check svg path {
+  stroke-width: 2.75;
 }
 
 /* Chat column: floating pill overlay + transcript + composer. */
@@ -2444,10 +2875,23 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   position: relative;
   flex: 1 1 0;
   min-height: 0;
-  min-width: 400px;
+  /* Default 0 — NEVER gate this behind max-width media. A default of 400px plus
+     sidebar+splitter made content ≥485–805px; iOS Safari expanded the layout
+     viewport and scaled the page down, so max-width:720/520 never matched
+     (tiny UI + no phone half-disk). Wide desktop floor is min-width:721px below.
+     Session edge-button/sheet stays ≤520 (usePhoneLayout). */
+  min-width: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+/* Desktop-wide only: keep a readable chat column floor when the window is broad.
+   Inverted from the old default-400 + ≤720 override (chicken-egg with Safari). */
+@media (min-width: 721px) {
+  .chat-pane {
+    min-width: 400px;
+  }
 }
 
 /* File / folder drag-and-drop affordance over the chat column. */
@@ -2734,7 +3178,6 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  --chat-turn-status-space: 48px;
 }
 .messages-shell .messages {
   flex: 1 1 0;
@@ -2783,6 +3226,20 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   background: color-mix(in srgb, #fff 92%, transparent);
   box-shadow: none;
 }
+.scroll-to-bottom-btn.has-unread-label {
+  width: auto;
+  min-width: 36px;
+  padding: 0 12px 0 10px;
+  gap: 6px;
+  border-radius: 999px;
+}
+.scroll-to-bottom-btn .scroll-to-bottom-label {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  color: inherit;
+}
 .messages {
   flex: 1 1 0;
   min-height: 0;
@@ -2793,6 +3250,8 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
+  /* Prefer our stick-to-bottom pin over browser scroll anchoring when replies append. */
+  overflow-anchor: none;
   /* Top pad clears the floating member pill (~40px + 10px top). */
   padding: 56px var(--chat-gutter-x) 18px;
   display: flex;
@@ -2882,6 +3341,7 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
 }
 .bubble-row:hover .bubble-actions,
 .bubble-row:focus-within .bubble-actions,
+.bubble-row.is-actions-open .bubble-actions,
 .bubble-row .bubble-actions:has(.is-active),
 .bubble-actions.is-pinned {
   opacity: 1;
@@ -3028,6 +3488,8 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   background: var(--bubble-user);
   color: var(--bubble-user-text);
   position: relative;
+  /* Send: square top-right (tail toward sender side). */
+  border-radius: 16px 0 16px 16px;
 }
 /* Assistant accent set: wash user send bubbles toward chat surface (readable via --text). */
 .messages.has-user-bubble-tint {
@@ -3046,18 +3508,6 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   opacity: 0.78;
   /* pulse-outside rides the child's edge; keep a faint hairline while sending. */
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bubble-user-text) 16%, transparent);
-}
-/* BorderBeam wrapper for optimistic outbound user bubbles. */
-.bubble-send-beam {
-  flex: 0 1 auto;
-  width: fit-content;
-  max-width: min(var(--bubble-max), 100%);
-  overflow: visible;
-  display: block;
-  box-sizing: border-box;
-}
-.bubble-send-beam > .bubble {
-  max-width: 100%;
 }
 .bubble.user.send-failed {
   /* Room for the bottom-right retry control inside the bubble. */
@@ -3094,8 +3544,8 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
 .bubble.assistant {
   align-self: flex-start;
   background: var(--bubble-bot);
-}
-.bubble.assistant {
+  /* Reply: square top-left (tail toward assistant side). */
+  border-radius: 0 16px 16px 16px;
   white-space: normal;
 }
 .bubble .md {
@@ -3488,9 +3938,38 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   font-weight: 650;
   background: rgba(127, 127, 127, 0.12);
 }
-.bubble .md img {
-  max-width: 100%;
+.bubble .md img,
+.bubble .md .md-chat-thumb {
+  max-width: min(220px, 100%);
+  max-height: 160px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
   border-radius: 8px;
+  display: block;
+}
+.bubble .md .md-chat-image-btn {
+  display: inline-block;
+  margin: 4px 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
+  border-radius: 8px;
+  line-height: 0;
+  max-width: 100%;
+}
+.bubble .md .md-chat-image-btn:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent, #6366f1) 55%, transparent);
+  outline-offset: 2px;
+}
+button.message-attach-image {
+  cursor: zoom-in;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  text-align: inherit;
 }
 
 /* Open multi-task dump above the composer — same width as .composer-inner
@@ -3757,7 +4236,7 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   max-width: var(--chat-column-max);
   margin-inline: auto;
   box-sizing: border-box;
-  padding: 10px var(--chat-gutter-x) 14px;
+  padding: 10px var(--chat-gutter-x) calc(14px + env(safe-area-inset-bottom, 0px));
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -4077,7 +4556,7 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   padding: 6px 10px;
 }
 .bubble.user.bubble-attach-only:empty {
-  /* Keep a tiny target for pending BorderBeam when attachments-only. */
+  /* Keep a tiny target for pending attach-only sends. */
   padding: 10px 14px;
 }
 
@@ -4274,6 +4753,32 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
     transition: none;
   }
 }
+/*
+ * Phone / touch WebUI: iOS Safari zooms focused controls when computed font-size
+ * is < 16px and often sticks zoomed (pinch may not recover). Prefer ≥16px on
+ * narrow/touch viewports over viewport maximum-scale=1 so pinch-zoom stays usable.
+ * ChatComposer auto-grow reads computed line-height (must stay in sync here).
+ */
+@media (max-width: 768px), ((hover: none) and (pointer: coarse)) {
+  .composer-inner textarea {
+    font-size: 16px;
+    line-height: 22px;
+    /* 5 lines × 22px + 5+5 vertical padding (matches ChatComposer padPx) */
+    max-height: calc(5 * 22px + 10px);
+  }
+  .settings-row select,
+  .settings-row input,
+  .settings-paths-textarea,
+  .modal .field input,
+  .modal .field textarea,
+  .modal .field select,
+  .modal input[type='text'],
+  .modal input:not([type]),
+  .modal textarea,
+  .session-rename-input {
+    font-size: 16px;
+  }
+}
 /* Multi-line (>1 line): textarea full width on top; +/orb left and mic+send
    right on a bottom action row — removes side gutters beside wrapped text.
    Single-line keeps the compact side-by-side row (no class). */
@@ -4450,7 +4955,11 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
 .form-drawer-body {
   flex: 1 1 0;
   min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
   padding: 12px 14px 16px;
 }
 .form-drawer .modal-actions {
@@ -4461,6 +4970,7 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
 .modal {
   width: min(380px, calc(100vw - 32px));
   max-height: calc(100vh - 48px);
+  max-height: calc(100dvh - 48px);
   overflow-y: auto;
   background: #111;
   border: 1px solid var(--border);
@@ -4637,8 +5147,6 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
 .modal.form-drawer .field select,
 .modal.form-drawer .model-ref-select,
 .modal.form-drawer .bot-picker-trigger,
-.modal.form-drawer .bot-picker-menu,
-.modal.form-drawer .bot-picker-search,
 .modal.form-drawer .aar-policy-select,
 .modal.form-drawer .tool-mgmt-approval-select,
 .modal.form-drawer .settings-row select {
@@ -4651,8 +5159,6 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
 :root[data-theme='light'] .modal.form-drawer .field select,
 :root[data-theme='light'] .modal.form-drawer .model-ref-select,
 :root[data-theme='light'] .modal.form-drawer .bot-picker-trigger,
-:root[data-theme='light'] .modal.form-drawer .bot-picker-menu,
-:root[data-theme='light'] .modal.form-drawer .bot-picker-search,
 :root[data-theme='light'] .modal.form-drawer .aar-policy-select,
 :root[data-theme='light'] .modal.form-drawer .tool-mgmt-approval-select,
 :root[data-theme='light'] .modal.form-drawer .settings-row select {
@@ -4664,17 +5170,42 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   :root:not([data-theme='dark']) .modal.form-drawer .field select,
   :root:not([data-theme='dark']) .modal.form-drawer .model-ref-select,
   :root:not([data-theme='dark']) .modal.form-drawer .bot-picker-trigger,
-  :root:not([data-theme='dark']) .modal.form-drawer .bot-picker-menu,
-  :root:not([data-theme='dark']) .modal.form-drawer .bot-picker-search,
   :root:not([data-theme='dark']) .modal.form-drawer .aar-policy-select,
   :root:not([data-theme='dark']) .modal.form-drawer .tool-mgmt-approval-select,
   :root:not([data-theme='dark']) .modal.form-drawer .settings-row select {
     background: color-mix(in srgb, var(--panel) 14%, transparent);
   }
 }
+/* Selection panel sits above frosted drawer — solid fill (no stacked vibrancy). */
 .modal.form-drawer .bot-picker-menu {
-  border-color: color-mix(in srgb, var(--border) 70%, transparent);
-  box-shadow: none;
+  background: #1f1f1f;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-color: var(--border);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+:root[data-theme='light'] .modal.form-drawer .bot-picker-menu {
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .modal.form-drawer .bot-picker-menu {
+    background: #fff;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  }
+}
+.modal.form-drawer .bot-picker-search {
+  background: #2a2a2a;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+:root[data-theme='light'] .modal.form-drawer .bot-picker-search {
+  background: #f3f3f5;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .modal.form-drawer .bot-picker-search {
+    background: #f3f3f5;
+  }
 }
 
 /* Name under avatar: borderless, no frost fill (background none). */
@@ -4870,16 +5401,38 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
 .menu {
   position: fixed;
   z-index: 60;
-  background: #1c1c1c;
-  border: 1px solid var(--border);
+  /* Dark: slightly lighter fill/edge (一点点). Light overrides below. */
+  background: #242424;
+  border: 0.5px solid #3f3f46;
   border-radius: 10px;
   min-width: 160px;
   padding: 4px;
   box-shadow: none;
 }
-:root[data-theme='light'] .menu { background: #fff; }
+:root[data-theme='light'] .menu {
+  background: #fff;
+  border-color: #e4e4e7;
+}
 @media (prefers-color-scheme: light) {
-  :root:not([data-theme='dark']) .menu { background: #fff; }
+  :root:not([data-theme='dark']) .menu {
+    background: #fff;
+    border-color: #e4e4e7;
+  }
+}
+
+/* Light: sidebar 右键 (+ submenu) use #FAFAFA; bubble more keeps .menu #fff.
+   Light borders slightly fainter (#e4e4e7) via .menu / .create-menu rules. */
+:root[data-theme='light'] .session-context-menu,
+:root[data-theme='light'] .session-context-menu .menu-submenu {
+  background: #fafafa;
+  border-color: #e4e4e7;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .session-context-menu,
+  :root:not([data-theme='dark']) .session-context-menu .menu-submenu {
+    background: #fafafa;
+    border-color: #e4e4e7;
+  }
 }
 .menu button {
   display: flex;
@@ -4889,8 +5442,8 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   text-align: left;
   padding: 8px 10px;
   border-radius: 8px;
-  font-size: 14px;
-  line-height: 1.35;
+  font-size: 13px;
+  line-height: 1.3;
 }
 .menu button .menu-item-icon {
   display: inline-flex;
@@ -4949,16 +5502,22 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   /* left/top set by JS clamp (fixed); fallback absolute for no-JS */
   position: fixed;
   z-index: 61;
-  background: #1c1c1c;
-  border: 1px solid var(--border);
+  background: #242424;
+  border: 0.5px solid #3f3f46;
   border-radius: 10px;
   min-width: 148px;
   padding: 4px;
   box-shadow: none;
 }
-:root[data-theme='light'] .menu-submenu { background: #fff; }
+:root[data-theme='light'] .menu-submenu {
+  background: #fff;
+  border-color: #e4e4e7;
+}
 @media (prefers-color-scheme: light) {
-  :root:not([data-theme='dark']) .menu-submenu { background: #fff; }
+  :root:not([data-theme='dark']) .menu-submenu {
+    background: #fff;
+    border-color: #e4e4e7;
+  }
 }
 .menu-item-submenu:hover > .menu-submenu,
 .menu-item-submenu:focus-within > .menu-submenu,
@@ -4973,8 +5532,8 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   text-align: left;
   padding: 8px 10px;
   border-radius: 8px;
-  font-size: 14px;
-  line-height: 1.35;
+  font-size: 13px;
+  line-height: 1.3;
   border: none;
   background: transparent;
   color: inherit;
@@ -5007,21 +5566,23 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   right: 10px;
   top: calc(var(--traffic-pad) + 2px);
   z-index: 50;
-  background: #1c1c1c;
+  background: #242424;
   color: var(--text);
-  border: 1px solid var(--border);
+  border: 0.5px solid #3f3f46;
   border-radius: 12px;
   padding: 4px;
   min-width: 160px;
   box-shadow: none;
 }
 :root[data-theme='light'] .create-menu {
-  background: #fff;
+  background: #fafafa;
+  border-color: #e4e4e7;
   box-shadow: none;
 }
 @media (prefers-color-scheme: light) {
   :root:not([data-theme='dark']) .create-menu {
-    background: #fff;
+    background: #fafafa;
+    border-color: #e4e4e7;
     box-shadow: none;
   }
 }
@@ -5040,9 +5601,10 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   gap: 8px;
   width: 100%;
   text-align: left;
-  padding: 10px 12px;
+  padding: 9px 12px;
   border-radius: 8px;
-  font-size: 13.5px;
+  font-size: 13px;
+  line-height: 1.3;
 }
 .create-menu button .create-menu-icon {
   display: inline-flex;
@@ -5160,31 +5722,7 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   line-height: 0;
 }
 
-/* In-flow turn status (orb + shimmer) sits below the last bubble while busy.
-   margin-top:auto pins it to the viewport bottom when the transcript is short. */
-.chat-turn-status {
-  position: relative;
-  z-index: 1;
-  width: 100%;
-  max-width: none;
-  margin: auto 0 0;
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 0 4px;
-  pointer-events: none;
-  user-select: none;
-  background: transparent;
-  flex-shrink: 0;
-}
-/* Keep jump / immersive FABs clear of the in-flow status row when pinned to bottom. */
-.messages-shell:has(.chat-turn-status) .scroll-to-bottom-btn {
-  bottom: calc(12px + var(--chat-turn-status-space, 48px));
-}
-.messages-shell:has(.chat-turn-status) .immersive-chat-fab {
-  bottom: calc(16px + var(--chat-turn-status-space, 48px));
-}
+/* Shimmer label shared by history-loading placeholder (and formerly bottom turn status). */
 .chat-turn-status-text {
   font-size: 13px;
   font-weight: 500;
@@ -5296,10 +5834,16 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
 
 
 /* Settings shell (GrokBot-like) */
+.modal-backdrop:has(> .settings-shell) {
+  /* Settings scroll must not chain to the page behind the scrim. */
+  overscroll-behavior: contain;
+}
 .settings-shell {
   width: min(1080px, calc(100vw - 48px));
   height: min(760px, calc(100vh - 64px));
+  height: min(760px, calc(100dvh - 64px));
   max-height: calc(100vh - 64px);
+  max-height: calc(100dvh - 64px);
   display: grid;
   grid-template-columns: 200px 1fr;
   background: #0c0c0c;
@@ -5308,6 +5852,7 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   overflow: hidden;
   box-shadow: none;
   padding: 0;
+  overscroll-behavior: contain;
 }
 :root[data-theme='light'] .settings-shell {
   background: #f4f4f5;
@@ -5321,6 +5866,7 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   }
 }
 .settings-nav {
+  position: relative;
   background: #080808;
   /* Fainter than default --hairline-color (match .sidebar-resize). */
   border-right: var(--hairline) solid color-mix(in srgb, var(--hairline-color) 38%, transparent);
@@ -5328,6 +5874,55 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.settings-nav-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin: 10px 0 2px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+}
+.settings-nav-group:first-of-type {
+  margin-top: 0;
+}
+.settings-nav-group:hover {
+  background: color-mix(in srgb, var(--accent-soft, rgba(99,102,241,0.12)) 55%, transparent);
+  color: var(--text);
+}
+.settings-nav-group-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-nav-group .session-owner-group-chevron {
+  opacity: 0.55;
+  visibility: visible;
+  margin-left: auto;
+}
+.settings-nav-group:hover .session-owner-group-chevron,
+.settings-nav-group:focus-visible .session-owner-group-chevron {
+  opacity: 0.85;
+}
+.settings-nav-group.expanded .session-owner-group-chevron {
+  transform: rotate(0deg);
 }
 :root[data-theme='light'] .settings-nav {
   background: var(--panel);
@@ -5345,17 +5940,21 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   }
 }
 .settings-nav-item {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   gap: 10px;
   width: 100%;
   padding: 9px 10px;
-  border-radius: 10px;
-  /* Same text color as .active; only background/indicator may differ. */
+  border-radius: 6px;
+  border: none;
+  background: transparent;
   color: var(--text);
   font-size: 13px;
   font-weight: 500;
   text-align: left;
+  cursor: pointer;
 }
 .settings-nav-item .ico {
   width: 18px;
@@ -5369,20 +5968,21 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   height: 16px;
   display: block;
 }
+/* Active only — no hover pill / sliding highlight. */
 .settings-nav-item:hover {
-  background: var(--accent-soft);
+  background: transparent;
   color: var(--text);
 }
 .settings-nav-item.active {
-  background: rgba(255,255,255,0.1);
+  background: rgba(255, 255, 255, 0.1);
   color: var(--text);
 }
 :root[data-theme='light'] .settings-nav-item.active {
-  background: rgba(0,0,0,0.08);
+  background: rgba(0, 0, 0, 0.08);
 }
 @media (prefers-color-scheme: light) {
   :root:not([data-theme='dark']) .settings-nav-item.active {
-    background: rgba(0,0,0,0.08);
+    background: rgba(0, 0, 0, 0.08);
   }
 }
 .settings-main {
@@ -5390,6 +5990,7 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  overflow-x: hidden;
   background: #111;
 }
 :root[data-theme='light'] .settings-main {
@@ -5426,10 +6027,279 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   background: var(--accent-soft);
   color: var(--text);
 }
+
+/*
+ * Settings modal responsive nav (settings-shell only — not full WebUI).
+ * Breakpoints (viewport; shell ≈ 100vw − 48px):
+ *   >768px  — full labeled side nav (200px column, unchanged)
+ *   ≤768px  — icon-only rail: column width = desktop sidebar min (80px / SIDEBAR_MIN);
+ *             labels hidden; 客户端/网关端 groups keep chevron toggles + remembered expand
+ *   ≤640px  — hamburger: hide rail; top-bar MenuIcon (v1 chrome); labeled
+ *             drawer slides in (transform ~200ms); picking a section closes the drawer
+ */
+.settings-nav-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-nav-hamburger {
+  display: none;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  margin-right: 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  place-items: center;
+  cursor: pointer;
+}
+.settings-nav-hamburger:hover {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.settings-nav-hamburger svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+.settings-nav-backdrop {
+  display: none;
+}
+.settings-main-head h2 {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+@media (max-width: 768px) {
+  .settings-shell {
+    /* Icon rail ≈ SIDEBAR_MIN (80); free width goes to content pane. */
+    grid-template-columns: 80px 1fr;
+  }
+  .settings-nav {
+    padding: 14px 8px;
+    align-items: center;
+  }
+  .settings-nav-group {
+    justify-content: center;
+    gap: 0;
+    padding: 4px 0;
+    margin: 10px 0 2px;
+  }
+  .settings-nav-group:first-of-type {
+    margin-top: 0;
+  }
+  .settings-nav-group-label {
+    /* Icon-rail: hide 客户端/网关端 text; chevron still toggles remembered expand. */
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+  .settings-nav-group .session-owner-group-chevron {
+    margin-left: 0;
+  }
+  .settings-nav-item {
+    justify-content: center;
+    gap: 0;
+    padding: 9px 0;
+    width: 100%;
+  }
+  .settings-nav-item .settings-nav-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .settings-shell {
+    position: relative;
+    grid-template-columns: 1fr;
+    width: min(1080px, calc(100vw - 24px));
+    height: min(760px, calc(100vh - 24px));
+    max-height: calc(100vh - 24px);
+    overflow-x: hidden;
+  }
+  .settings-nav-hamburger {
+    display: grid;
+  }
+  /*
+   * Drawer stays mounted for transform animation (no display toggle).
+   * Closed: off-canvas left; open: slide in. Same easing as footer-fab bars.
+   */
+  .settings-nav {
+    display: flex;
+    position: absolute;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 3;
+    width: min(280px, 82vw);
+    max-width: 100%;
+    padding: 14px 10px;
+    align-items: stretch;
+    border-right: var(--hairline) solid color-mix(in srgb, var(--hairline-color) 38%, transparent);
+    transform: translate3d(-100%, 0, 0);
+    visibility: hidden;
+    pointer-events: none;
+    transition:
+      transform 0.2s cubic-bezier(0.22, 1, 0.36, 1),
+      visibility 0s linear 0.2s;
+    /* Labeled drawer (override icon-rail rules) even while off-canvas. */
+  }
+  .settings-shell.nav-menu-open .settings-nav {
+    transform: translate3d(0, 0, 0);
+    visibility: visible;
+    pointer-events: auto;
+    transition:
+      transform 0.2s cubic-bezier(0.22, 1, 0.36, 1),
+      visibility 0s linear 0s;
+  }
+  .settings-nav-group {
+    justify-content: flex-start;
+    gap: 6px;
+    padding: 4px 8px;
+  }
+  .settings-nav-group-label {
+    position: static;
+    width: auto;
+    height: auto;
+    padding: 0;
+    margin: 0;
+    overflow: hidden;
+    clip: auto;
+    white-space: nowrap;
+    border: 0;
+    flex: 1 1 auto;
+    min-width: 0;
+    text-overflow: ellipsis;
+  }
+  .settings-nav-group .session-owner-group-chevron {
+    margin-left: auto;
+  }
+  .settings-nav-item {
+    justify-content: flex-start;
+    gap: 10px;
+    padding: 9px 10px;
+  }
+  .settings-nav-item .settings-nav-label {
+    position: static;
+    width: auto;
+    height: auto;
+    padding: 0;
+    margin: 0;
+    overflow: hidden;
+    clip: auto;
+    white-space: nowrap;
+    border: 0;
+    text-overflow: ellipsis;
+  }
+  .settings-nav-backdrop {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    border: none;
+    padding: 0;
+    margin: 0;
+    background: color-mix(in srgb, #000 42%, transparent);
+    cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+  }
+  .settings-shell.nav-menu-open .settings-nav-backdrop {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  :root[data-theme='light'] .settings-nav-backdrop {
+    background: color-mix(in srgb, #000 28%, transparent);
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme='dark']) .settings-nav-backdrop {
+      background: color-mix(in srgb, #000 28%, transparent);
+    }
+  }
+  /* No horizontal scrollbar; keep vertical scroll inside settings only. */
+  .settings-main,
+  .settings-body {
+    overflow-x: hidden;
+    max-width: 100%;
+  }
+  .settings-body {
+    overscroll-behavior: contain;
+  }
+  .settings-row select,
+  .settings-row input {
+    min-width: 0;
+    max-width: 100%;
+  }
+  .settings-card-model .settings-row {
+    grid-template-columns: minmax(0, 96px) minmax(0, 1fr);
+    gap: 8px;
+  }
+  .settings-card-model .settings-row-label {
+    width: auto;
+    max-width: 96px;
+  }
+  .provider-item-body .settings-card-model .settings-row {
+    grid-template-columns: minmax(0, 72px) minmax(0, 1fr);
+  }
+  .provider-item-body .settings-card-model .settings-row-label {
+    width: auto;
+    max-width: 72px;
+  }
+  .provider-list-card,
+  .provider-item,
+  .provider-item-body,
+  .provider-nested-card,
+  .settings-card,
+  .model-list-card {
+    min-width: 0;
+    max-width: 100%;
+  }
+  .model-list-head {
+    flex-wrap: wrap;
+    min-width: 0;
+  }
+  .model-list-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    min-width: 0;
+  }
+  .model-list-scroll,
+  .aar-list-scroll {
+    overscroll-behavior: contain;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .settings-nav,
+    .settings-shell.nav-menu-open .settings-nav,
+    .settings-nav-backdrop {
+      transition: none;
+    }
+  }
+}
+
 .settings-body {
   flex: 1 1 0;
   min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 6px 16px 16px;
   display: flex;
   flex-direction: column;
@@ -5440,7 +6310,20 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   font-weight: 600;
   color: var(--muted);
   margin: 0 0 6px 2px;
+  /* Same label→? gap as .settings-row-label / .settings-section-label-with-help. */
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
+
+.settings-section-label .settings-scope-tag {
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 500;
+  opacity: 0.65;
+  vertical-align: middle;
+}
+
 .settings-card {
   background: #1a1a1a;
   border-radius: 14px;
@@ -5516,6 +6399,79 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   max-width: none;
 }
 
+/* Shared dropdown chevron: native <select> + timezone combobox trigger. */
+.settings-select-chevron-host {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  max-width: 280px;
+}
+.settings-select-chevron-host > select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 22px;
+  width: 100%;
+  min-width: 120px;
+  max-width: 280px;
+}
+.settings-select-chevron-host::after {
+  content: '';
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  transform: translateY(-50%);
+  pointer-events: none;
+  opacity: 0.65;
+  background-color: var(--muted);
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='m4 6 4 4 4-4' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='m4 6 4 4 4-4' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+}
+/* Compact approval selects keep their fixed width. */
+.settings-select-chevron-host:has(> .tool-mgmt-approval-select) {
+  max-width: none;
+  flex-shrink: 0;
+}
+.settings-select-chevron-host > .tool-mgmt-approval-select {
+  min-width: 0;
+  max-width: none;
+  width: 108px;
+}
+/* Wide / full-bleed selects stretch with the row. */
+.settings-select-chevron-host:has(> select.wide),
+.settings-select-chevron-host:has(> .model-ref-select),
+.settings-select-chevron-host:has(> .settings-row-select) {
+  flex: 1;
+  min-width: 0;
+  max-width: none;
+  width: 100%;
+}
+.settings-select-chevron-host > select.wide,
+.settings-select-chevron-host > .model-ref-select,
+.settings-select-chevron-host > .settings-row-select {
+  min-width: 0;
+  max-width: none;
+}
+.bot-form-model-row .settings-select-chevron-host {
+  display: flex;
+  width: 100%;
+  max-width: none;
+}
+.settings-timezone-combo-trigger.settings-select-chevron-host {
+  max-width: 320px;
+  padding-right: 22px;
+}
+.settings-timezone-combo-trigger.settings-select-chevron-host::after {
+  right: 10px;
+}
+
 /* Searchable timezone combobox (General settings). */
 .settings-timezone-combo {
   position: relative;
@@ -5555,12 +6511,6 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.settings-timezone-combo-caret {
-  flex: 0 0 auto;
-  color: var(--muted);
-  font-size: 10px;
-  line-height: 1;
 }
 .settings-timezone-combo-panel {
   display: flex;
@@ -5688,6 +6638,7 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
 }
 
 .settings-section-label-with-help {
+  /* Alias kept for call sites; base .settings-section-label already has the gap. */
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -5792,10 +6743,48 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   display: flex;
   align-items: center;
 }
+/* Match .settings-row input even when secret sits in provider-item-head
+   (GatewayApiTokensPanel User/Admin rows) — same height, radius, fill, border. */
 .settings-secret input {
   width: 100%;
-  padding-right: 36px;
   max-width: none;
+  min-width: 0;
+  box-sizing: border-box;
+  background: #2a2a2a;
+  border: none;
+  border-radius: 8px;
+  padding: 5px 36px 5px 10px;
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+  /* Avoid native macOS focus ring (blue) that screenshot showed. */
+  box-shadow: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.settings-secret input:focus,
+.settings-secret input:focus-visible {
+  outline: none;
+  box-shadow: none;
+  border: none;
+}
+:root[data-theme='light'] .settings-secret input {
+  background: #fff;
+  border: 1px solid var(--border);
+}
+:root[data-theme='light'] .settings-secret input:focus,
+:root[data-theme='light'] .settings-secret input:focus-visible {
+  border: 1px solid var(--border);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .settings-secret input {
+    background: #fff;
+    border: 1px solid var(--border);
+  }
+  :root:not([data-theme='dark']) .settings-secret input:focus,
+  :root:not([data-theme='dark']) .settings-secret input:focus-visible {
+    border: 1px solid var(--border);
+  }
 }
 .settings-eye {
   appearance: none;
@@ -6226,13 +7215,41 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   min-height: 0;
   min-width: 0;
 }
-/* Floating A → B pill: same surface as .chat-member-pill; read-only (not a button). */
+/* Floating A → B pill: same frost surface as .chat-member-pill; read-only.
+   Base .chat-member-pill is column (busy status); restore row + top-center float
+   (absolute pos moved to .chat-header-cluster for the single-member path). */
 .mesh-exchange-member-pill {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 26;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  width: max-content;
   /* Wider than single-member pill to fit avatar+name → avatar+name. */
   max-width: min(88%, 420px);
+  /* No hover-chevron pad reserve — dual-member card is not a button. */
+  padding: 8px 16px;
   cursor: default;
   pointer-events: none;
   gap: 0;
+}
+.mesh-exchange-member-pill:hover,
+.mesh-exchange-member-pill:focus-visible,
+:root[data-theme='light'] .mesh-exchange-member-pill:hover,
+:root[data-theme='light'] .mesh-exchange-member-pill:focus-visible {
+  padding: 8px 16px;
+  background: color-mix(in srgb, var(--panel) 10%, transparent);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .mesh-exchange-member-pill:hover,
+  :root:not([data-theme='dark']) .mesh-exchange-member-pill:focus-visible {
+    padding: 8px 16px;
+    background: color-mix(in srgb, var(--panel) 10%, transparent);
+  }
 }
 .mesh-exchange-pill-arrow {
   flex-shrink: 0;
@@ -6351,33 +7368,17 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
 
 
 
-/* Reveal message clock (HH:MM): user rows translate left → time from right; assistant fixed. */
-@keyframes okbot-bubble-in {
-  from {
-    opacity: 0;
-    transform: translateY(10px) scaleY(0.9);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scaleY(1);
-  }
-}
+/* Reveal message clock (HH:MM): user rows translate left → time from right; assistant fixed.
+   No bubble-enter motion/scale — rows appear at final layout immediately. */
 .bubble-swipe-host {
   position: relative;
   align-self: stretch;
   width: 100%;
   box-sizing: border-box;
-  /* pan-y: vertical scroll free; time reveal via wheel/trackpad only (pointer = text select). */
+  /* pan-y: vertical scroll free; horizontal left to JS (touch swipe + wheel). */
   touch-action: pan-y;
   /* No overflow:hidden — that would become a scrollport and break sticky actions. */
   cursor: default;
-  transform-origin: center bottom;
-  animation: okbot-bubble-in 0.2s cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-@media (prefers-reduced-motion: reduce) {
-  .bubble-swipe-host {
-    animation: none;
-  }
 }
 .bubble-swipe-time {
   position: absolute;
@@ -6645,6 +7646,31 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   font-size: 12px;
   color: var(--muted);
 }
+.settings-aar-inline .aar-item-sub {
+  font-size: 11px;
+}
+.memory-expiry-editor-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+}
+.memory-expiry-editor-row .settings-select-chevron-host {
+  flex: 1;
+  min-width: 0;
+  max-width: 200px;
+}
+.memory-expiry-editor-row .tool-mgmt-approval-select {
+  width: 100%;
+}
+.aar-list-add-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px 0;
+}
+
 /* Match .tool-mgmt-approval-select exactly so rule rows look like tool rows */
 .aar-item-action {
   /* unused if rows use tool-mgmt-approval-select; keep as alias */
@@ -6910,116 +7936,164 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
 
 
 
-/* Bot onboarding */
-.onboard-card {
-  margin: 12px 16px 8px;
-  padding: 16px;
-  border-radius: 16px;
-  background: var(--panel);
-  border: var(--hairline) solid var(--hairline-color);
+/* New assistant dialog (name + avatar before create) */
+.modal-backdrop.new-bot-backdrop {
+  background: rgba(0, 0, 0, 0.32);
 }
-.onboard-hint {
-  font-size: 12px;
-  color: var(--muted);
-  margin: 0 0 10px;
-  line-height: 1.4;
-}
-.onboard-kicker {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--muted);
-  margin-bottom: 6px;
-}
-.onboard-title {
-  font-size: 16px;
-  font-weight: 650;
-  margin-bottom: 12px;
-  line-height: 1.35;
-}
-.onboard-sub {
-  font-size: 13px;
-  color: var(--muted);
-  margin: -4px 0 12px;
-}
-.onboard-options {
+.modal.new-bot-dialog {
+  width: min(400px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
+  box-sizing: border-box;
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  flex-direction: column;
+  overflow: hidden;
+  border: var(--hairline) solid var(--hairline-color);
+  background: color-mix(in srgb, var(--panel) 10%, transparent);
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
 }
-.onboard-chip {
-  border: none;
-  border-radius: 999px;
-  padding: 6px 10px;
-  background: rgba(255,255,255,0.06);
-  color: var(--text);
-  font-size: 12px;
-  cursor: pointer;
-}
-.onboard-chip.on {
-  background: #3b82f6;
-  color: #fff;
-}
-:root[data-theme='light'] .onboard-chip {
-  background: rgba(0,0,0,0.06);
-  color: var(--text);
-}
-:root[data-theme='light'] .onboard-chip.on {
-  background: #2563eb;
-  color: #fff;
+:root[data-theme='light'] .modal.new-bot-dialog {
+  background: color-mix(in srgb, var(--panel) 10%, transparent);
 }
 @media (prefers-color-scheme: light) {
-  :root:not([data-theme='dark']) .onboard-chip {
-    background: rgba(0,0,0,0.06);
-    color: var(--text);
-  }
-  :root:not([data-theme='dark']) .onboard-chip.on {
-    background: #2563eb;
-    color: #fff;
+  :root:not([data-theme='dark']) .modal.new-bot-dialog {
+    background: color-mix(in srgb, var(--panel) 10%, transparent);
   }
 }
-.onboard-input {
-  width: 100%;
-  margin-top: 12px;
-  box-sizing: border-box;
-  border: 1px solid transparent;
-  border-radius: 12px;
-  padding: 10px 12px;
-  background: var(--input);
-  color: var(--text);
-  font-size: 14px;
-  outline: none;
+.new-bot-dialog-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
-:root[data-theme='light'] .onboard-input {
-  border-color: var(--border);
-}
-.onboard-actions {
+.new-bot-identity {
   display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 14px;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  margin-bottom: 12px;
 }
-.onboard-actions button {
-  border: none;
-  border-radius: 8px;
-  padding: 6px 12px;
-  background: rgba(255,255,255,0.08);
-  color: var(--text);
-  font-size: 12px;
+.new-bot-identity .session-pin-avatar {
+  flex: 0 0 auto;
+}
+.new-bot-identity .field-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-bottom: 0;
+}
+.new-bot-identity .field-name input {
+  width: 100%;
+  box-sizing: border-box;
+}
+.new-bot-dialog .modal-actions {
+  flex: 0 0 auto;
+  margin-top: 12px;
+}
+
+/* Quick-choice card (model `ask_choice` payload under the latest reply) */
+.quick-choice {
+  align-self: flex-start;
+  width: min(420px, 100%);
+  max-width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 2px 0 4px;
+}
+.quick-choice-card {
+  background: var(--input);
+  border: var(--hairline) solid color-mix(in srgb, var(--hairline-color) 60%, transparent);
+  border-radius: 14px;
+  padding: 12px 12px 10px;
+  min-width: 0;
+}
+.quick-choice-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.quick-choice-question {
+  flex: 1 1 auto;
+  min-width: 0;
   font-weight: 600;
+  font-size: 14px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.quick-choice-close {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
   cursor: pointer;
 }
-.onboard-actions button.primary {
-  background: #3b82f6;
-  color: #fff;
+.quick-choice-close:hover {
+  background: var(--accent-soft);
+  color: var(--text);
 }
-.onboard-actions button:disabled {
-  opacity: 0.4;
+.quick-choice-close svg {
+  width: 14px;
+  height: 14px;
+}
+.quick-choice-options {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.quick-choice-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  padding: 7px 6px;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.quick-choice-option:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+.quick-choice-option:disabled {
+  opacity: 0.55;
   cursor: default;
 }
-.onboard-error {
-  margin-top: 10px;
-  color: #ef4444;
-  font-size: 13px;
+.quick-choice-badge {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.quick-choice-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.quick-choice-hint {
+  padding-left: 4px;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .settings-row-trailing {
@@ -7461,8 +8535,12 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
 .settings-card-security .settings-row-label-text {
   min-width: 0;
 }
-.settings-card-security .settings-row select {
+.settings-card-security .settings-row select,
+.settings-card-security .settings-row .settings-select-chevron-host {
   justify-self: end;
+  max-width: 200px;
+}
+.settings-card-security .settings-row .settings-select-chevron-host > select {
   max-width: 200px;
 }
 .settings-card-security .settings-toggle {
@@ -7518,7 +8596,11 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   justify-content: flex-end;
 }
 .settings-shell-patterns-inline {
+  /* Nested under .settings-row (already 12px padded); drop list-card side
+     margins so width:100% does not overflow/clip on the right. */
   width: 100%;
+  margin-left: 0;
+  margin-right: 0;
 }
 .shell-pattern-edit-fields {
   flex: 1;
@@ -7718,11 +8800,16 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   vertical-align: middle;
 }
 
-/* User bubbles (dark fill in light theme / tinted): keep chips readable on bubble bg. */
+/* User-bubble @chips: derive from bubble fill/text so light (#dedede) and dark fills both read. */
 .bubble.user .bot-mention-chip {
-  --mention-chip-bg: color-mix(in srgb, var(--bubble-user-text) 16%, transparent);
+  --mention-chip-bg: color-mix(in srgb, var(--bubble-user-text) 12%, var(--bubble-user));
   --mention-chip-fg: var(--bubble-user-text);
-  --mention-chip-border: color-mix(in srgb, var(--bubble-user-text) 28%, transparent);
+  --mention-chip-border: color-mix(in srgb, var(--bubble-user-text) 22%, transparent);
+}
+.bubble.assistant .bot-mention-chip {
+  --mention-chip-bg: color-mix(in srgb, var(--text) 8%, var(--bubble-bot));
+  --mention-chip-fg: var(--text);
+  --mention-chip-border: color-mix(in srgb, var(--text) 16%, transparent);
 }
 
 /* Searchable bot picker (create-squad) */
@@ -7791,10 +8878,17 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   cursor: pointer;
 }
 .bot-picker-chip-x:hover { opacity: 1; }
+.bot-picker-trigger.settings-select-chevron-host {
+  max-width: none;
+  width: 100%;
+  display: flex;
+  padding-right: 28px;
+}
+.bot-picker-trigger.settings-select-chevron-host::after {
+  right: 10px;
+}
 .bot-picker-caret {
-  margin-left: auto;
-  color: var(--muted);
-  font-size: 11px;
+  display: none;
 }
 .bot-picker-menu {
   position: absolute;
@@ -7804,7 +8898,10 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   top: calc(100% + 4px);
   border: 1px solid var(--border);
   border-radius: 10px;
+  /* Opaque popover — never frosted (drawer already has vibrancy). */
   background: var(--panel);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   box-shadow: none;
   padding: 8px;
   display: flex;
@@ -7978,116 +9075,12 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   border-radius: 8px;
   flex-shrink: 0;
 }
-.squad-role-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  max-height: 240px;
-  overflow: auto;
-}
-.squad-role-row {
-  display: grid;
-  grid-template-columns: 14px 28px minmax(48px, 72px) minmax(0, 1fr) auto auto;
-  gap: 8px;
-  align-items: center;
-  padding: 4px 6px;
-  border-radius: 8px;
-  border: 1px solid transparent;
-}
-.squad-role-row:hover {
-  background: var(--accent-soft);
-}
-.squad-role-row.dragging {
-  opacity: 0.55;
-  cursor: grabbing;
-}
-.squad-role-row.is-leader {
-  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
-  background: color-mix(in srgb, var(--accent-soft) 70%, transparent);
-}
-.squad-role-grip {
-  color: var(--muted);
-  font-size: 10px;
-  letter-spacing: -2px;
-  user-select: none;
-  line-height: 1;
-  text-align: center;
-  cursor: grab;
-}
-.squad-role-grip:active {
-  cursor: grabbing;
-}
-.squad-role-row .flat-avatar {
-  width: 28px;
-  height: 28px;
-  font-size: 28px;
-  border-radius: 8px;
-}
-.squad-role-name {
-  font-size: 12px;
-  color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-}
-.squad-role-row input[type='text'],
-.squad-role-row > input {
-  width: 100%;
-  box-sizing: border-box;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 6px 8px;
-  background: var(--panel-2);
-  outline: none;
-  font-size: 13px;
-  color: var(--text);
-  min-width: 0;
-}
-.squad-captain-radio {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  color: var(--muted);
-  white-space: nowrap;
-  cursor: pointer;
-  user-select: none;
-  margin: 0;
-}
-.squad-captain-radio input {
-  margin: 0;
-  accent-color: var(--accent);
-  width: auto;
-  padding: 0;
-  border: none;
-  background: transparent;
-}
 .squad-members-hint {
   font-size: 12px;
   color: var(--muted);
   padding: 6px 2px 2px;
 }
-.squad-role-remove {
-  width: 22px;
-  height: 22px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 16px;
-  line-height: 1;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  flex-shrink: 0;
-}
-.squad-role-remove:hover {
-  background: color-mix(in srgb, var(--danger, #ef4444) 16%, transparent);
-  color: var(--danger, #ef4444);
-}
+
 .bot-picker-add .bot-picker-trigger {
   min-height: 36px;
 }
@@ -8159,6 +9152,14 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   align-items: center;
   gap: 2px;
   flex-shrink: 0;
+}
+.provider-item-actions .provider-model-count {
+  min-width: 18px;
+  justify-content: center;
+  margin-right: 4px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  user-select: none;
 }
 /* Cascade: 接口 + 模型列表 nested under the expanded provider row. */
 .provider-item-body {
@@ -8246,7 +9247,8 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   color: inherit;
 }
 
-.settings-card-model .settings-row-select {
+.settings-card-model .settings-row-select,
+.settings-card-model .settings-select-chevron-host:has(> .settings-row-select) {
   width: 100%;
   max-width: none;
   min-width: 0;
@@ -8297,7 +9299,12 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
 .aar-list-scroll {
   max-height: 200px;
   overflow-y: auto;
-  overscroll-behavior: auto;
+  /* Stay inside settings; JS still forwards edge wheel to .settings-body. */
+  overscroll-behavior: contain;
+}
+/* Settings → 全局记忆: page is sparse; give the list ~2× default scroll height. */
+.settings-memory-panel .aar-list-scroll {
+  max-height: 400px;
 }
 .model-list-empty {
   padding: 12px 14px 8px;
@@ -8564,17 +9571,31 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
     box-shadow: none;
   }
 }
-.toast-error {
-  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
-  background: color-mix(in srgb, var(--danger) 12%, var(--panel-2));
+/* Variants share default panel/border surface; only text color changes.
+   info (切换中 / neutral): inverted text vs toast surface (= theme --text).
+   success / error: dark green / dark red (not neon); slightly lifted on dark theme for contrast. */
+.toast-info {
+  color: var(--text);
 }
 .toast-success {
-  border-color: color-mix(in srgb, #16a34a 40%, var(--border));
-  background: color-mix(in srgb, #16a34a 10%, var(--panel-2));
+  color: #166534;
 }
-.toast-info {
-  border-color: color-mix(in srgb, #3b82f6 35%, var(--border));
-  background: color-mix(in srgb, #3b82f6 10%, var(--panel-2));
+.toast-error {
+  color: #991b1b;
+}
+:root[data-theme='dark'] .toast-success {
+  color: #16a34a;
+}
+:root[data-theme='dark'] .toast-error {
+  color: #dc2626;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .toast-success {
+    color: #16a34a;
+  }
+  :root:not([data-theme='light']) .toast-error {
+    color: #dc2626;
+  }
 }
 .toast-message {
   flex: 1;
@@ -8731,10 +9752,75 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   color: var(--text);
 }
 
-/* Bubble ··· overflow — same chrome as sidebar .menu; fixed via portal. */
+/* Bubble ··· overflow — frosted glass matching .modal.form-drawer / gateway menu. */
 .bubble-more-menu {
   z-index: 70;
   min-width: 148px;
+  background: color-mix(in srgb, var(--panel) 10%, transparent);
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+  border: var(--hairline) solid var(--border);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+}
+:root[data-theme='light'] .bubble-more-menu {
+  background: color-mix(in srgb, var(--panel) 10%, transparent);
+  border-color: color-mix(in srgb, #000000 10%, transparent);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.10);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .bubble-more-menu {
+    background: color-mix(in srgb, var(--panel) 10%, transparent);
+    border-color: color-mix(in srgb, #000000 10%, transparent);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.10);
+  }
+}
+:root[data-theme='dark'] .bubble-more-menu {
+  border-color: color-mix(in srgb, var(--text) 22%, transparent);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .bubble-more-menu {
+    border-color: color-mix(in srgb, var(--text) 22%, transparent);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
+  }
+}
+
+/* Gateway switcher dropdown — must follow .menu so frost + absolute positioning
+   override shared .menu { position:fixed; background:#242424/#fff }. */
+.chat-gateway-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 220px;
+  max-width: min(320px, 80vw);
+  z-index: 30;
+  background: color-mix(in srgb, var(--panel) 10%, transparent);
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+  border: var(--hairline) solid var(--border);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+}
+:root[data-theme='light'] .chat-gateway-menu {
+  background: color-mix(in srgb, var(--panel) 10%, transparent);
+  border-color: color-mix(in srgb, #000000 10%, transparent);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.10);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .chat-gateway-menu {
+    background: color-mix(in srgb, var(--panel) 10%, transparent);
+    border-color: color-mix(in srgb, #000000 10%, transparent);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.10);
+  }
+}
+:root[data-theme='dark'] .chat-gateway-menu {
+  border-color: color-mix(in srgb, var(--text) 22%, transparent);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .chat-gateway-menu {
+    border-color: color-mix(in srgb, var(--text) 22%, transparent);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
+  }
 }
 
 
@@ -9440,7 +10526,7 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   }
 }
 .turn-trace-modal {
-  width: min(640px, calc(100vw - 32px));
+  width: min(720px, calc(100vw - 32px));
   max-height: min(80vh, 720px);
   display: flex;
   flex-direction: column;
@@ -9448,61 +10534,190 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
 }
 .turn-trace-summary {
   margin-top: 4px;
+  margin-bottom: 8px;
+}
+/* Aggregated 模型 / 工具 timeline header */
+.turn-trace-agg {
   margin-bottom: 10px;
+  padding: 8px 10px 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+}
+/* Dark: soften card wash (less heavy than near-solid --panel #121212). */
+:root[data-theme='dark'] .turn-trace-agg,
+:root[data-theme='dark'] .turn-trace-list {
+  background: #1a1a1a;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .turn-trace-agg,
+  :root:not([data-theme='light']) .turn-trace-list {
+    background: #1a1a1a;
+  }
+}
+.turn-trace-agg-axis {
+  position: relative;
+  height: 16px;
+  margin-left: 92px;
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.turn-trace-agg-tick {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+.turn-trace-agg-tick:first-child { transform: translateX(0); }
+.turn-trace-agg-tick:last-child { transform: translateX(-100%); }
+.turn-trace-agg-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.turn-trace-agg-row {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+.turn-trace-agg-label {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.2;
+}
+.turn-trace-agg-kind { font-weight: 600; color: inherit; opacity: 0.9; }
+.turn-trace-agg-total {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+.turn-trace-agg-track {
+  position: relative;
+  height: 18px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--muted) 12%, transparent);
+  overflow: hidden;
+}
+.turn-trace-agg-seg {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  border-radius: 3px;
+  min-width: 2px;
+  box-sizing: border-box;
+  border-right: 1px solid color-mix(in srgb, var(--panel) 88%, transparent);
+  cursor: pointer;
+}
+.turn-trace-agg-seg.kind-model {
+  background: color-mix(in srgb, #7dd3fc 82%, #38bdf8);
+}
+.turn-trace-agg-seg.kind-model.alt {
+  background: color-mix(in srgb, #4ade80 78%, #86efac);
+}
+.turn-trace-agg-seg.kind-tool {
+  background: color-mix(in srgb, #3b82f6 88%, #60a5fa);
+}
+.turn-trace-agg-seg.st-error,
+.turn-trace-agg-seg.st-denied {
+  background: color-mix(in srgb, var(--danger, #ef4444) 75%, white);
 }
 .turn-trace-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 0;
   overflow: auto;
-  padding-right: 2px;
   flex: 1;
   min-height: 0;
-}
-.turn-trace-row {
+  /* Shared card chrome — match .turn-trace-agg above */
   border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
   border-radius: 10px;
-  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+}
+/* Match chat .messages thin translucent scrollbar via .scroll-fade */
+.turn-trace-list.scroll-fade {
+  --scroll-fade: color-mix(in srgb, var(--panel) 94%, transparent);
+}
+:root[data-theme='dark'] .turn-trace-list.scroll-fade {
+  --scroll-fade: #1a1a1a;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .turn-trace-list.scroll-fade {
+    --scroll-fade: #1a1a1a;
+  }
+}
+.turn-trace-row {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.turn-trace-row.is-highlight .turn-trace-row-main {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  transition: background 0.2s ease;
+}
+/* Settings-list style: 0.5px inset hairline between rows */
+.turn-trace-row + .turn-trace-row {
+  position: relative;
+}
+.turn-trace-row + .turn-trace-row::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 10px;
+  right: 10px;
+  height: var(--hairline);
+  background: var(--hairline-color);
+  opacity: 0.55;
+  pointer-events: none;
+  z-index: 1;
 }
 .turn-trace-row-main {
   width: 100%;
-  display: grid;
-  grid-template-columns: minmax(120px, 1.1fr) minmax(80px, 1.4fr) 64px;
-  gap: 8px;
+  display: flex;
+  flex-direction: row;
   align-items: center;
-  padding: 8px 10px;
+  gap: 8px;
+  padding: 5px 8px;
   border: 0;
   background: transparent;
   color: inherit;
   text-align: left;
   cursor: pointer;
-  border-radius: 10px;
+  border-radius: 0;
+  min-height: 28px;
 }
 .turn-trace-row-main:hover,
 .turn-trace-row-main:focus-visible {
   background: color-mix(in srgb, var(--accent) 8%, transparent);
   outline: none;
 }
-.turn-trace-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
 .turn-trace-kind {
+  flex: 0 0 52px;
   font-size: 11px;
   opacity: 0.65;
+  white-space: nowrap;
 }
 .turn-trace-name {
-  font-size: 13px;
-  font-weight: 600;
+  flex: 0 1 140px;
+  font-size: 12px;
+  font-weight: 550;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
 .turn-trace-status {
+  flex: 0 0 48px;
   font-size: 11px;
   opacity: 0.8;
+  text-align: right;
+  white-space: nowrap;
 }
 .turn-trace-status.st-error,
 .turn-trace-status.st-denied { color: var(--danger, #ef4444); }
@@ -9511,7 +10726,9 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
 .turn-trace-status.st-running { opacity: 0.7; }
 .turn-trace-bar-track {
   position: relative;
-  height: 14px;
+  flex: 1 1 80px;
+  min-width: 48px;
+  height: 8px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--muted) 18%, transparent);
   overflow: hidden;
@@ -9528,10 +10745,12 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
 .turn-trace-bar.kind-wait_approval { background: color-mix(in srgb, #f59e0b 80%, white); }
 .turn-trace-bar.kind-system { background: color-mix(in srgb, #94a3b8 80%, white); }
 .turn-trace-dur {
-  font-size: 12px;
+  flex: 0 0 56px;
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
   text-align: right;
-  opacity: 0.85;
+  opacity: 0.75;
+  white-space: nowrap;
 }
 .turn-trace-detail {
   padding: 0 10px 10px;
@@ -9937,6 +11156,130 @@ button.owner-task-row:hover {
 
 /* 资源 tab: square thumb + filename.
    Wrapped in .settings-aar-inline.list-card — match memory card padding/dividers. */
+
+/* Image preview lightbox: default absolute over parent; --cover = fixed fullscreen
+   (portaled to body so drawer backdrop-filter cannot trap it).
+   Instant open/close — no FLIP / WAAPI / opacity morph (user preference: reliability). */
+.chat-image-lightbox {
+  position: absolute;
+  inset: 0;
+  z-index: 28;
+  display: flex;
+  flex-direction: column;
+  background: transparent;
+  min-height: 0;
+  min-width: 0;
+  /* Escape .main-topdrag so chrome stays clickable when portaled. */
+  -webkit-app-region: no-drag;
+}
+.chat-image-lightbox-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: var(--chat-bg);
+  opacity: 1;
+  pointer-events: auto;
+  cursor: zoom-out;
+}
+.chat-image-lightbox--cover {
+  position: fixed;
+  inset: 0;
+  z-index: 10050;
+}
+.chat-image-lightbox-toolbar {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  -webkit-app-region: no-drag;
+  opacity: 1;
+  pointer-events: auto;
+}
+.chat-image-lightbox-stage {
+  flex: 1 1 0;
+  min-height: 0;
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 56px 24px 24px;
+  box-sizing: border-box;
+}
+.chat-image-lightbox-img {
+  max-width: min(92%, 960px);
+  max-height: min(82vh, 100%);
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 10px;
+  transform-origin: center center;
+  /* User zoom only — no open/close morph. */
+  transition: transform 0.12s ease;
+  user-select: none;
+  -webkit-user-drag: none;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.28);
+  backface-visibility: hidden;
+}
+.chat-image-lightbox-zoom {
+  position: absolute;
+  left: 50%;
+  top: 12px;
+  transform: translateX(-50%);
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+  opacity: 1;
+}
+.chat-image-lightbox-btn {
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--text) 14%, transparent);
+  background: color-mix(in srgb, var(--panel, #1c1c1e) 92%, transparent);
+  color: var(--text);
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  -webkit-app-region: no-drag;
+}
+.chat-image-lightbox-btn:hover {
+  background: color-mix(in srgb, var(--panel, #1c1c1e) 98%, var(--accent, #6366f1) 8%);
+}
+.chat-image-lightbox-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.chat-image-lightbox-btn:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent, #6366f1) 55%, transparent);
+  outline-offset: 2px;
+}
+.chat-image-lightbox-btn svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+.chat-image-lightbox-zoom-btn {
+  pointer-events: auto;
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-image-lightbox-img {
+    transition: none;
+  }
+}
+
 .owner-resources-list {
   list-style: none;
   margin: 0;
@@ -9971,6 +11314,31 @@ button.owner-task-row:hover {
 }
 :root[data-theme='light'] .owner-resource-row:hover {
   background: rgba(0, 0, 0, 0.04);
+}
+
+.owner-resources-panel {
+  position: relative;
+  min-height: 160px;
+}
+.owner-resource-row-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: zoom-in;
+  min-width: 0;
+}
+.owner-resource-row-btn:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent, #6366f1) 55%, transparent);
+  outline-offset: -2px;
+  border-radius: 8px;
 }
 .owner-resource-thumb {
   flex: 0 0 auto;
@@ -10047,7 +11415,8 @@ button.owner-task-row:hover {
 
 /* === translucent OFF (settings.translucent === false) ===
    Kill frost/glass everywhere: opaque fills, no backdrop-filter.
-   Darwin window vibrancy is cleared in main via setVibrancy(null). */
+   Darwin: createWindow skips transparent+vibrancy when frost is off; live
+   toggle recreates the window (see applyWindowTranslucent). */
 :root[data-translucent='false'] html,
 :root[data-translucent='false'] body,
 :root[data-translucent='false'] #root {
@@ -10074,25 +11443,48 @@ button.owner-task-row:hover {
     background: var(--panel) !important;
   }
 }
+:root[data-translucent='false'] .modal.new-bot-dialog,
+:root[data-translucent='false'][data-theme='light'] .modal.new-bot-dialog,
 :root[data-translucent='false'] .modal.form-drawer,
 :root[data-translucent='false'][data-theme='light'] .modal.form-drawer {
   background: var(--panel) !important;
 }
 @media (prefers-color-scheme: light) {
+  :root[data-translucent='false']:not([data-theme='dark']) .modal.new-bot-dialog,
   :root[data-translucent='false']:not([data-theme='dark']) .modal.form-drawer {
     background: var(--panel) !important;
   }
 }
 :root[data-translucent='false'] .chat-member-pill,
 :root[data-translucent='false'] .chat-member-pill:hover,
+:root[data-translucent='false'] .chat-gateway-btn,
+:root[data-translucent='false'] .chat-gateway-btn:hover,
 :root[data-translucent='false'][data-theme='light'] .chat-member-pill,
-:root[data-translucent='false'][data-theme='light'] .chat-member-pill:hover {
+:root[data-translucent='false'][data-theme='light'] .chat-member-pill:hover,
+:root[data-translucent='false'][data-theme='light'] .chat-gateway-btn,
+:root[data-translucent='false'][data-theme='light'] .chat-gateway-btn:hover {
   background: var(--panel) !important;
 }
 @media (prefers-color-scheme: light) {
   :root[data-translucent='false']:not([data-theme='dark']) .chat-member-pill,
-  :root[data-translucent='false']:not([data-theme='dark']) .chat-member-pill:hover {
+  :root[data-translucent='false']:not([data-theme='dark']) .chat-member-pill:hover,
+  :root[data-translucent='false']:not([data-theme='dark']) .chat-gateway-btn,
+  :root[data-translucent='false']:not([data-theme='dark']) .chat-gateway-btn:hover {
     background: var(--panel) !important;
+  }
+}
+:root[data-translucent='false'] .chat-gateway-menu,
+:root[data-translucent='false'] .bubble-more-menu,
+:root[data-translucent='false'][data-theme='light'] .chat-gateway-menu,
+:root[data-translucent='false'][data-theme='light'] .bubble-more-menu {
+  background: var(--panel) !important;
+  box-shadow: none;
+}
+@media (prefers-color-scheme: light) {
+  :root[data-translucent='false']:not([data-theme='dark']) .chat-gateway-menu,
+  :root[data-translucent='false']:not([data-theme='dark']) .bubble-more-menu {
+    background: var(--panel) !important;
+    box-shadow: none;
   }
 }
 :root[data-translucent='false'] .open-tasks-list-fold-inner,
@@ -10116,11 +11508,578 @@ button.owner-task-row:hover {
 :root[data-translucent='false'] .modal.form-drawer .field select,
 :root[data-translucent='false'] .modal.form-drawer .model-ref-select,
 :root[data-translucent='false'] .modal.form-drawer .bot-picker-trigger,
-:root[data-translucent='false'] .modal.form-drawer .bot-picker-menu,
-:root[data-translucent='false'] .modal.form-drawer .bot-picker-search,
 :root[data-translucent='false'] .modal.form-drawer .aar-policy-select,
 :root[data-translucent='false'] .modal.form-drawer .tool-mgmt-approval-select,
-:root[data-translucent='false'] .modal.form-drawer .settings-row select,
-:root[data-translucent='false'] .modal.form-drawer .avatar-preview-stack .field-name input {
+:root[data-translucent='false'] .modal.form-drawer .settings-row select {
   background: var(--input, var(--panel-2)) !important;
+}
+:root[data-translucent='false'] .modal.form-drawer .bot-picker-menu {
+  background: var(--panel) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+:root[data-translucent='false'] .modal.form-drawer .bot-picker-search {
+  background: var(--input, var(--panel-2)) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+/* Name under avatar stays borderless / unfilled when frost is off (do not inherit --input). */
+:root[data-translucent='false'] .modal.form-drawer .avatar-preview-stack .field-name input,
+:root[data-translucent='false'] .modal.form-drawer .avatar-preview-stack .field-name input:focus,
+:root[data-translucent='false'] .modal.form-drawer .avatar-preview-stack .field-name input:focus-visible {
+  background: none !important;
+}
+
+/* —— Changelog / What's New / force-update modals —— */
+.changelog-modal {
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+}
+.changelog-force-backdrop {
+  /* Force update: no dismiss via backdrop */
+  pointer-events: auto;
+}
+.changelog-version-meta {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.changelog-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.changelog-notes.compact {
+  gap: 8px;
+  margin-bottom: 0;
+}
+.changelog-highlights {
+  margin: 0;
+  padding-left: 1.2em;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  line-height: 1.45;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.changelog-highlights li::marker {
+  color: var(--accent, #3b82f6);
+}
+.changelog-body {
+  /* Match chat .messages thin translucent scrollbar via .scroll-fade */
+  --scroll-fade: var(--panel);
+  font-size: 12px;
+  line-height: 1.65;
+  max-height: min(42vh, 360px);
+  overflow-y: auto;
+  padding-right: 4px;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+.changelog-body .md {
+  font-size: inherit;
+  line-height: inherit;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.changelog-progress {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.changelog-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+.changelog-history-card {
+  padding: 0;
+  overflow: hidden;
+}
+.changelog-history-empty {
+  margin: 0;
+  padding: 12px 14px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.changelog-history-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 8px 0 4px;
+  position: relative;
+}
+.changelog-history-timeline::before {
+  content: '';
+  position: absolute;
+  left: 22px;
+  top: 18px;
+  bottom: 18px;
+  width: 2px;
+  background: color-mix(in srgb, var(--border) 85%, transparent);
+  border-radius: 1px;
+}
+.changelog-history-item {
+  position: relative;
+}
+.changelog-history-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px 10px 12px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+}
+.changelog-history-toggle:hover {
+  background: transparent;
+}
+.changelog-history-dot {
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  margin-left: 6px;
+  margin-right: 4px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--muted) 55%, transparent);
+  border: 2px solid var(--panel, #111);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--border) 90%, transparent);
+  z-index: 1;
+}
+.changelog-history-item.open .changelog-history-dot {
+  background: var(--accent, #8b5cf6);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent, #8b5cf6) 55%, transparent);
+}
+.changelog-history-version {
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.changelog-history-title {
+  flex: 1;
+  min-width: 0;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.changelog-history-expand {
+  flex-shrink: 0;
+  pointer-events: none;
+}
+.changelog-history-body {
+  padding: 0 14px 12px 40px;
+}
+
+/* =============================================================================
+   Narrow WebUI overflow safety (≤720px)
+   Defense-in-depth: shell width clamp + .chat-pane min-width:0 (also the
+   default now; wide floor is only ≥721). Desktop narrow keeps the docked
+   sidebar grid (auto-collapse → icon rail). Session edge-button / left sheet
+   is ≤520 only (see below). Settings ≤768/≤640 hamburger drawer is left alone.
+   ============================================================================= */
+@media (max-width: 720px) {
+  html, body, #root {
+    height: var(--app-height, 100dvh);
+    max-height: var(--app-height, 100dvh);
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  .app {
+    height: var(--app-height, 100dvh);
+    max-height: var(--app-height, 100dvh);
+    width: 100%;
+    max-width: 100%;
+    /* Keep sidebar | splitter | main grid so desktop-narrow icon rail stays
+       docked. Single-column is .app.phone-layout only (≤520). */
+    overscroll-behavior: none;
+    overflow-x: hidden;
+  }
+
+  .chat-pane {
+    min-width: 0;
+  }
+
+  .main-topdrag {
+    display: none;
+  }
+
+  .modal.form-drawer,
+  .form-drawer {
+    width: min(420px, 100%);
+    max-width: 100%;
+  }
+
+  .prompt-context-overlay {
+    padding: 12px;
+    align-items: stretch;
+  }
+  .prompt-context-modal {
+    max-height: calc(var(--app-height, 100dvh) - 24px);
+    border-radius: 12px;
+  }
+
+  /* Composer chrome (send / attach / mic) keeps desktop 28–30px sizes across
+     wide → narrow → phone. Do not bump min-height here — a taller sibling
+     (e.g. former mic 44px) stretches .composer-inner and looks misaligned. */
+}
+
+/* =============================================================================
+   Phone session sheet — matches usePhoneLayout PHONE_LAYOUT_MQ
+   Layout max-width:520 for shrunk desktop windows; max-device-width + coarse
+   pointer for real phones whose layout viewport Safari expanded past 520
+   (icon-rail / tiny-UI chicken-egg). Single-column chat; session list opens
+   as a left sheet via left-edge half-disk (chevron-right), not a hamburger.
+   Desktop 521–720 keeps the docked icon rail (this MQ does not match).
+   ============================================================================= */
+@media (max-width: 520px), ((max-device-width: 520px) and (hover: none) and (pointer: coarse)) {
+  /* Same height lock as ≤720, but keyed on PHONE_LAYOUT_MQ so a phone whose
+     layout viewport Safari expanded past 720 still pins to visualViewport
+     (useVisualViewportAppHeight). Without this, focus-pan leaves a black gap. */
+  html, body, #root {
+    height: var(--app-height, 100dvh);
+    max-height: var(--app-height, 100dvh);
+    width: 100%;
+    max-width: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
+  .app.phone-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr;
+    --chat-gutter-x: 12px;
+    --chat-column-max: 100%;
+    --bubble-side-gutter: 12px;
+    --bubble-actions-rail: 0px;
+    /* Pin the shell to the visual viewport. iOS Safari pans offsetTop / scrollY
+       when the composer is focused; height-only (≤720 block) still slides up. */
+    position: fixed;
+    top: var(--vv-offset-top, 0px);
+    left: 0;
+    right: 0;
+    width: 100%;
+    max-width: 100%;
+    height: var(--app-height, 100dvh);
+    max-height: var(--app-height, 100dvh);
+    border-radius: 0;
+    overscroll-behavior: none;
+  }
+
+  /* Single-column: main owns the only grid cell. Sidebar is a fixed sheet. */
+  .app.phone-layout > .main {
+    grid-area: 1 / 1;
+    min-width: 0;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .app.phone-layout > .sidebar-resize {
+    display: none !important;
+  }
+
+  /* Phone sheet stays mounted (off-canvas when closed) so open/close can animate.
+     Do not use display:none — that kills the exit transition.
+     Frost matches .modal.form-drawer / menus (~10% panel + blur 28px). Slide via
+     margin (not transform): Chromium skips backdrop-filter while transform is
+     non-none (same solid→frost flash as drawers). Half-disk toggle stays
+     unfrosted (see .phone-nav-toggle). data-translucent=false → solid --panel. */
+  .app.phone-layout > .sidebar {
+    display: flex !important;
+    grid-area: 1 / 1;
+    position: fixed;
+    top: var(--vv-offset-top, 0px);
+    left: 0;
+    bottom: auto;
+    width: min(320px, 86vw);
+    height: var(--app-height, 100dvh);
+    max-height: var(--app-height, 100dvh);
+    z-index: 40;
+    background: color-mix(in srgb, var(--panel) 10%, transparent);
+    backdrop-filter: blur(28px);
+    -webkit-backdrop-filter: blur(28px);
+    border-right: var(--hairline) solid var(--hairline-color);
+    /* Soft right-edge depth — mirror .modal.form-drawer left shadow (sign flipped). */
+    box-shadow: 6px 0 18px rgba(0, 0, 0, 0.14);
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    -webkit-app-region: no-drag;
+    /* % margin is of the containing block (viewport) — hides the sheet fully. */
+    margin-inline-start: -100%;
+    transform: none;
+    visibility: hidden;
+    pointer-events: none;
+    transition:
+      margin-inline-start 0.24s cubic-bezier(0.22, 1, 0.36, 1),
+      visibility 0s linear 0.24s;
+  }
+  :root[data-theme='light'] .app.phone-layout > .sidebar,
+  :root[data-platform='darwin'] .app.phone-layout > .sidebar,
+  :root[data-platform='darwin'][data-theme='light'] .app.phone-layout > .sidebar {
+    background: color-mix(in srgb, var(--panel) 10%, transparent);
+    backdrop-filter: blur(28px);
+    -webkit-backdrop-filter: blur(28px);
+    border-right-color: color-mix(in srgb, #000000 10%, transparent);
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme='dark']) .app.phone-layout > .sidebar,
+    :root[data-platform='darwin']:not([data-theme='dark']) .app.phone-layout > .sidebar {
+      background: color-mix(in srgb, var(--panel) 10%, transparent);
+      backdrop-filter: blur(28px);
+      -webkit-backdrop-filter: blur(28px);
+      border-right-color: color-mix(in srgb, #000000 10%, transparent);
+    }
+  }
+  :root[data-theme='dark'] .app.phone-layout > .sidebar {
+    border-right-color: color-mix(in srgb, var(--text) 22%, transparent);
+    /* Strengthen right shadow — same tokens as .modal.form-drawer dark left edge. */
+    box-shadow: 8px 0 28px rgba(0, 0, 0, 0.55);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']) .app.phone-layout > .sidebar {
+      border-right-color: color-mix(in srgb, var(--text) 22%, transparent);
+      box-shadow: 8px 0 28px rgba(0, 0, 0, 0.55);
+    }
+  }
+
+  .app.phone-layout.phone-nav-open > .sidebar {
+    margin-inline-start: 0;
+    visibility: visible;
+    pointer-events: auto;
+    transition:
+      margin-inline-start 0.24s cubic-bezier(0.22, 1, 0.36, 1),
+      visibility 0s linear 0s;
+  }
+
+  .app.phone-layout .sidebar-topbar {
+    height: 48px;
+    justify-content: flex-end;
+    padding: 4px 10px 0;
+  }
+
+  /* Hit-target only (tap outside sheet to dismiss). No visible dim/scrim —
+     light theme looked muddy/black over chat + frost sheet (黑不溜秋).
+     Matches .modal-backdrop.drawer-backdrop: transparent, keep pointer-events. */
+  .phone-nav-backdrop {
+    position: fixed;
+    top: var(--vv-offset-top, 0px);
+    left: 0;
+    right: 0;
+    width: 100%;
+    height: var(--app-height, 100dvh);
+    z-index: 35;
+    margin: 0;
+    padding: 0;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    -webkit-app-region: no-drag;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.24s ease;
+  }
+  .phone-nav-backdrop.is-open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* Left-edge mid-height half-disk: only the right semicircle peeks in.
+     Hover/focus grows width from the left so more disk is revealed while the
+     flat cut stays flush to the screen edge (no translateX gap). */
+  .phone-nav-toggle {
+    position: fixed;
+    top: calc(var(--vv-offset-top, 0px) + 50%);
+    left: env(safe-area-inset-left, 0px);
+    transform: translateY(-50%);
+    /* Below sheet (40) / backdrop (35) so close slide covers it cleanly. */
+    z-index: 30;
+    /* Larger visible half-disk + tap target (was 28×48). Peek grows width from
+       the left edge only — do not translateX or the flat cut leaves a gap. */
+    width: 36px;
+    height: 64px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 4px 0 0;
+    box-sizing: border-box;
+    border: var(--hairline) solid var(--hairline-color);
+    border-left: none;
+    border-radius: 0 32px 32px 0;
+    background: color-mix(in srgb, var(--panel) 92%, transparent);
+    color: var(--text);
+    cursor: pointer;
+    -webkit-app-region: no-drag;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 1px 10px color-mix(in srgb, #000 18%, transparent);
+    transition:
+      width 0.22s ease,
+      background 0.15s ease,
+      box-shadow 0.22s ease;
+  }
+  .phone-nav-toggle:hover,
+  .phone-nav-toggle:focus-visible {
+    width: 48px;
+    background: color-mix(in srgb, var(--panel) 98%, transparent);
+    box-shadow: 0 2px 14px color-mix(in srgb, #000 22%, transparent);
+  }
+  .phone-nav-toggle:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--accent, #6366f1) 55%, transparent);
+    outline-offset: 2px;
+  }
+  /* Invisible pad beyond the painted disk for a comfortable touch hit area. */
+  .phone-nav-toggle::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 0;
+    width: 56px;
+    height: 72px;
+    transform: translateY(-50%);
+  }
+  .phone-nav-toggle svg {
+    width: 22px;
+    height: 22px;
+    display: block;
+    position: relative;
+    z-index: 1;
+    /* Nudge chevron into the visible half-disk. */
+    margin-left: 2px;
+  }
+
+  .app.phone-layout.phone-nav-open .phone-nav-toggle {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .app.phone-layout > .sidebar,
+    .phone-nav-backdrop {
+      transition: none;
+    }
+  }
+
+  /* Immersive FAB is redundant with the phone sheet toggle. */
+  .app.phone-layout .immersive-chat-fab {
+    display: none !important;
+  }
+
+  /* Safe-area on the whole cluster so gateway + member stay one horizontal row
+     (same as desktop). Do not offset only .chat-member-pill — that misaligns them.
+     Give the cluster a definite width cap: parent was shrink-to-fit, so the old
+     pill max-width:78% never constrained and long names spilled out of the pill. */
+  .app.phone-layout .chat-header-cluster {
+    top: calc(10px + env(safe-area-inset-top, 0px));
+    align-items: center;
+    /* Cap the centered cluster; keep width:fit-content so short names stay tight. */
+    max-width: min(calc(100vw - 56px), 360px);
+    min-width: 0;
+    box-sizing: border-box;
+  }
+  .app.phone-layout .chat-member-pill {
+    /* vw-based cap (not % of shrink-to-fit parent — that never constrained).
+       Ellipsis keeps the label inside the frosted pill. Desktop still shows full
+       names (overflow:visible); sidebar/hover cards unchanged. */
+    /* 40px gateway + 8px gap + side gutters / half-disk peek ≈ 104px reserve. */
+    max-width: min(calc(100vw - 104px), 280px);
+    width: auto; /* override width:max-content so max-width can shrink the pill */
+    min-width: 0;
+    overflow: hidden;
+    top: auto;
+  }
+  .app.phone-layout .chat-member-pill-main {
+    min-width: 0;
+  }
+  .app.phone-layout .chat-member-pill-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  /* Right profile/squad drawer: narrower than near-full 420px, pin to visualViewport,
+     and keep .form-drawer-body as the vertical scrollport on phone. */
+  .app.phone-layout .modal-backdrop.drawer-backdrop {
+    top: var(--vv-offset-top, 0px);
+    right: 0;
+    bottom: auto;
+    left: 0;
+    width: 100%;
+    height: var(--app-height, 100dvh);
+    max-height: var(--app-height, 100dvh);
+  }
+  .app.phone-layout .modal.form-drawer,
+  .app.phone-layout .form-drawer {
+    width: min(320px, 86vw);
+    max-width: 86vw;
+    height: var(--app-height, 100dvh);
+    max-height: var(--app-height, 100dvh);
+  }
+  .app.phone-layout .form-drawer-body {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
+  }
+}
+
+/* Touch phones: pin shell to visualViewport even if .phone-layout class is
+   missing (layout-viewport chicken-egg still showing icon rail). Desktop
+   fine-pointer narrow windows are unaffected. */
+@media (max-width: 720px) and (hover: none) and (pointer: coarse) {
+  html, body, #root {
+    height: var(--app-height, 100dvh);
+    max-height: var(--app-height, 100dvh);
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+  .app {
+    position: fixed;
+    top: var(--vv-offset-top, 0px);
+    left: 0;
+    right: 0;
+    width: 100%;
+    max-width: 100%;
+    height: var(--app-height, 100dvh);
+    max-height: var(--app-height, 100dvh);
+    border-radius: 0;
+    overscroll-behavior: none;
+  }
+}
+
+/* Touch / coarse pointer: larger hit targets; bubble FABs stay hidden until
+   tap (.is-actions-open) / focus-within / pinned — do not force-show (phone).
+   Desktop fine-pointer still uses :hover. Immersive FAB + md-copy stay visible. */
+@media (pointer: coarse) {
+  .bubble-action-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 9px;
+  }
+  .bubble-action-btn svg {
+    width: 16px;
+    height: 16px;
+  }
+  .messages-shell .immersive-chat-fab {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  /* md copy buttons often sit behind hover */
+  .bubble .md-copy-btn {
+    opacity: 1;
+  }
 }

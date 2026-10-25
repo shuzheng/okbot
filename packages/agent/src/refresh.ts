@@ -10,7 +10,9 @@ import {
   clampOwnerDescription,
   sanitizeOwnerDescriptionDuties,
   clampSoulMd,
-  isAcceptableMemoryFact,
+  isMemoryExpired,
+  MEMORY_EXPIRES_INSTRUCTION_LINES,
+  normalizeMemoryExpires,
   normalizeMaxTurns,
   normalizeSkillDescription,
   stripThinkContent,
@@ -35,7 +37,7 @@ export async function refreshSoulMd(input: {
   recentMessages: ChatMessage[];
   /** Full system prompt; blank / missing → DEFAULT_SOUL_MD_REFRESH_SYSTEM_PROMPT. */
   systemPrompt?: string;
-  /** Recent user/assistant window; missing / invalid → 12; clamp 1–100. */
+  /** Recent user/assistant window; missing / invalid → DEFAULT_SOUL_MD_RECENT_MESSAGE_LIMIT (5); clamp 1–100. */
   recentMessageLimit?: number;
   signal?: AbortSignal;
 }): Promise<string | null> {
@@ -118,7 +120,7 @@ export async function refreshBotSkills(input: {
   recentMessages: ChatMessage[];
   /** Create/update decision line; blank / missing → DEFAULT_SKILLS_CREATE_UPDATE_INSTRUCTION. */
   createUpdateInstruction?: string;
-  /** Recent user/assistant window; missing / invalid → 20; clamp 1–100. */
+  /** Recent user/assistant window; missing / invalid → maintenance-aligned default; clamp 1–100. */
   recentMessageLimit?: number;
   signal?: AbortSignal;
 }): Promise<SkillRefreshResult> {
@@ -164,7 +166,7 @@ export async function refreshBotSkills(input: {
     '若已有 skill 覆盖同一场景，应更新该 skill，而不是另起同义 slug。',
     '只输出 JSON，不要 markdown 围栏，不要解释。',
     '无更新时输出：{"action":"none"}',
-    '有更新时输出：{"action":"upsert","skill":{"slug":"okbot-kebab-case","name":"okbot-kebab-case","description":"从…提取…。何时使用：…。勿用于：…。","body":"1. …\n2. …"}}',
+    '有更新时输出：{"action":"upsert","skill":{"slug":"okbot-kebab-case","name":"okbot-kebab-case","description":"从…提取…（描述何时使用）。","body":"# Okbot-kebab-case 技能\n\n## 何时使用此技能\n当需要…时使用此技能。\n\n## 工作原理\n1. …\n2. …\n\n## 示例\n…\n\n## 注意事项\n…"}}',
     'slug / name 均须以 okbot- 开头，只用小写字母数字和连字符；技能落盘为 skills/<slug>/SKILL.md。',
   ].join('\n');
 
@@ -234,7 +236,8 @@ export type MemoryRefreshResult =
 
 /**
  * Extract durable memories: auto-inferred facts + explicit "请记住".
- * Caller writes memory.md (global / bot); next turn reloads into context.
+ * Model owns create/skip/merge/quality against the existing list in the prompt.
+ * Caller persists returned entries as-is (only empty/whitespace rows are dropped).
  */
 export async function refreshMemories(input: {
   model: ResolvedModelConfig;
@@ -245,7 +248,7 @@ export async function refreshMemories(input: {
   recentMessages: ChatMessage[];
   /** Scope classification line; blank / missing → DEFAULT_MEMORY_SCOPE_INSTRUCTION. */
   scopeInstruction?: string;
-  /** Recent user/assistant window; missing / invalid → 20; clamp 1–100. */
+  /** Recent user/assistant window; missing / invalid → maintenance-aligned default; clamp 1–100. */
   recentMessageLimit?: number;
   signal?: AbortSignal;
 }): Promise<MemoryRefreshResult> {
@@ -283,13 +286,15 @@ export async function refreshMemories(input: {
 
   const system = [
     '你负责为桌面助手抽取长期记忆。',
-    '两类都要写：1) 对话中值得长期记住的稳定事实/偏好；2) 用户明确要求记住的内容。',
+    '是否写入、写什么、质量与去重/合并，全部由你决定；程序会原样持久化你返回的非空 entries，不做长度/碎屑/工具名等质量过滤，也不做字符串包含去重。',
+    '两类都要写：1) 对话中值得长期记住的稳定事实/偏好；2) 用户明确要求记住的内容（如「记住」「别忘了」「remember」）。',
     '每条 memory 必须是完整、可独立理解的持久事实（含对象与偏好/约定，例如「用户偏好中文回复」）。',
     '禁止只写单词、裸 UI 标签、单独工具名、任务碎屑（如「删除」「定时任务」「设置」「web_search」）。',
     '不要写一次性任务细节、密钥、临时验证码、冗长日志。',
     scopeLine,
-    'expires：默认 null；若用户说「记住 N 天」等，给 ISO 时间；否则 null。',
-    '与已有记忆重复则不要再输出。',
+    ...MEMORY_EXPIRES_INSTRUCTION_LINES,
+    '对照「已有记忆」：完全重复或已被覆盖则不要再输出；若需合并成更完整的一条，只输出合并后的新条目。',
+    '无新内容时输出 {"action":"none"}。',
     '只输出 JSON，不要围栏：{"action":"none"} 或 {"action":"upsert","entries":[{"scope":"global"|"bot","memory":"...","expires":null}]}',
   ].join('\n');
 
@@ -334,13 +339,12 @@ export async function refreshMemories(input: {
     const entries: Array<{ scope: 'global' | 'bot'; memory: string; expires: string | null }> = [];
     for (const e of parsed.entries) {
       const memory = stripThinkContent(String(e.memory || '')).trim();
-      if (!isAcceptableMemoryFact(memory)) continue;
+      // Storage invariant only: never write empty rows. Quality is the model's job.
+      if (!memory) continue;
       const scope = e.scope === 'global' ? 'global' : 'bot';
-      let expires: string | null = null;
-      if (e.expires != null && String(e.expires).trim()) {
-        const ts = Date.parse(String(e.expires));
-        expires = Number.isFinite(ts) ? new Date(ts).toISOString() : null;
-      }
+      const expires = normalizeMemoryExpires(e.expires);
+      // Skip already-expired rows (lazy purge would drop them on next load anyway).
+      if (isMemoryExpired(expires)) continue;
       entries.push({ scope, memory, expires });
     }
     if (!entries.length) return { action: 'none' };
@@ -418,7 +422,7 @@ export async function refreshOwnerDescription(input: {
   recentMessages?: ChatMessage[];
   /** When set, allows refresh with empty chat (onboarding seed). */
   seed?: OwnerDescriptionSeed;
-  /** Recent user/assistant window; missing / invalid → 12; clamp 1–100. */
+  /** Recent user/assistant window; missing / invalid → DEFAULT_SOUL_MD_RECENT_MESSAGE_LIMIT (5); clamp 1–100. */
   recentMessageLimit?: number;
   signal?: AbortSignal;
 }): Promise<OwnerDescriptionRefreshResult> {

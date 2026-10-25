@@ -1,12 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
-import data from '@emoji-mart/data';
-import i18nZh from '@emoji-mart/data/i18n/zh.json';
-import { init as emojiMartInit, Picker as EmojiMartPicker } from 'emoji-mart';
 import {
-  AVATAR_COLORS,
-  BOT_AVATAR_TYPES,
-  EMOJI_PRESETS,
   normalizeBotAvatarKind,
   normalizeBotAvatarType,
   type BotAvatarKind,
@@ -22,6 +15,7 @@ import { formatSystemError } from '../../utils/formatSystemError';
 import { updateScrollFade } from '../../utils/scrollFade';
 import { useDrawerClose } from '../../utils/useDrawerClose';
 import { ModelRefSelect } from '../settings/ModelRefSelect';
+import { AvatarPicker } from './AvatarPicker';
 import { BotAdvancedSection, BotMemoryPanel, BotSkillsPanel } from './BotAdvancedSection';
 import {
   OwnerFormTabs,
@@ -65,7 +59,7 @@ export function BotFormModal({
   defaultModelId,
   botId = null,
   autoApply = false,
-  showAdvancedSettings = false,
+  developerMode = false,
   onCancel,
   onSave,
   onApply,
@@ -81,7 +75,7 @@ export function BotFormModal({
   botId?: string | null;
   autoApply?: boolean;
   /** When false, hide Advanced (SOUL.md / 灵魂). Memory & skills are own tabs; schedules under 自动化. */
-  showAdvancedSettings?: boolean;
+  developerMode?: boolean;
   onCancel: () => void;
   onSave?: (v: BotFormValues) => void;
   onApply?: (v: BotFormValues) => void;
@@ -119,36 +113,9 @@ export function BotFormModal({
     Array.isArray(initial.enabledGlobalSkills) ? [...initial.enabledGlobalSkills] : [],
   );
   const soulMdRef = useRef({ text: '', touched: false });
-  const [emojiMoreOpen, setEmojiMoreOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [ownerFormTab, setOwnerFormTab] = useState<OwnerFormTab>('details');
   const nameRef = useRef<HTMLInputElement>(null);
-  const emojiMoreBtnRef = useRef<HTMLButtonElement>(null);
-  const emojiPickerRef = useRef<HTMLDivElement>(null);
-  const [emojiPickerPos, setEmojiPickerPos] = useState<{ top: number; left: number } | null>(null);
-  // Match bot-avatar-type-grid: 3 rows × 6 cols; last cell is 「更多」.
-  const emojiCols = 6;
-  const emojiHotCount = emojiCols * 3 - 1; // 17 slots; EMOJI_PRESETS has 17
-  const hotEmojis = [...EMOJI_PRESETS].slice(0, emojiHotCount) as string[];
-  if (emoji && !hotEmojis.includes(emoji)) {
-    // Keep a non-preset (emoji-mart) selection visible in the last emoji slot.
-    hotEmojis[emojiHotCount - 1] = emoji;
-  }
-  const themeAttr = typeof document !== 'undefined' ? document.documentElement.getAttribute('data-theme') : null;
-  const emojiMartTheme =
-    themeAttr === 'light' ? 'light' : themeAttr === 'dark' ? 'dark' : 'auto';
-  // Keep latest form values for picker onEmojiSelect without remounting on every keystroke.
-  const formSnapRef = useRef({
-    name,
-    description,
-    avatarKind,
-    color,
-    botAvatarType,
-    providerId,
-    modelId,
-  });
-  formSnapRef.current = { name, description, avatarKind, color, botAvatarType, providerId, modelId };
-
   useEffect(() => {
     const el = nameRef.current;
     if (!el) return;
@@ -162,114 +129,6 @@ export function BotFormModal({
     if ((el as HTMLInputElement & { composing?: boolean }).composing) return;
     if (document.activeElement === el) el.select();
   }, []);
-
-  useEffect(() => {
-    if (!emojiMoreOpen) {
-      setEmojiPickerPos(null);
-      return;
-    }
-    const place = () => {
-      const btn = emojiMoreBtnRef.current;
-      if (!btn) return;
-      const r = btn.getBoundingClientRect();
-      const width = 352;
-      const left = Math.min(Math.max(8, r.left), Math.max(8, window.innerWidth - width - 8));
-      const top = Math.min(r.bottom + 6, Math.max(8, window.innerHeight - 440));
-      setEmojiPickerPos({ top: Math.max(8, top), left });
-    };
-    place();
-    const onPointerDown = (ev: PointerEvent) => {
-      const path = typeof ev.composedPath === 'function' ? ev.composedPath() : [];
-      if (emojiMoreBtnRef.current && path.includes(emojiMoreBtnRef.current)) return;
-      if (emojiPickerRef.current && path.includes(emojiPickerRef.current)) return;
-      const t = ev.target as Node | null;
-      if (t && emojiMoreBtnRef.current?.contains(t)) return;
-      if (t && emojiPickerRef.current?.contains(t)) return;
-      setEmojiMoreOpen(false);
-    };
-    const onKey = (ev: KeyboardEvent) => {
-      if (ev.key === 'Escape') setEmojiMoreOpen(false);
-    };
-    window.addEventListener('resize', place);
-    document.addEventListener('pointerdown', onPointerDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      window.removeEventListener('resize', place);
-      document.removeEventListener('pointerdown', onPointerDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [emojiMoreOpen]);
-
-  useEffect(() => {
-    if (!emojiMoreOpen || !emojiPickerPos) return;
-    const host = emojiPickerRef.current;
-    if (!host) return;
-    let cancelled = false;
-    const locale = lang === 'en' ? 'en' : 'zh';
-    const i18n = locale === 'zh' ? i18nZh : undefined;
-
-    void (async () => {
-      try {
-        await emojiMartInit({ data, locale, i18n });
-      } catch {
-        /* init may already be done; still try to mount */
-      }
-      if (cancelled) return;
-      host.innerHTML = '';
-      const picker = new EmojiMartPicker({
-        data,
-        i18n,
-        parent: host,
-        theme: emojiMartTheme,
-        locale,
-        previewPosition: 'none',
-        skinTonePosition: 'search',
-        maxFrequentRows: 1,
-        perLine: 9,
-        emojiSize: 24,
-        emojiButtonSize: 36,
-        onEmojiSelect: (sel: { native?: string }) => {
-          const next = sel?.native;
-          if (!next) return;
-          const snap = formSnapRef.current;
-          setEmoji(next);
-          setEmojiMoreOpen(false);
-          emit(
-            formValues({
-              name: snap.name,
-              description: snap.description,
-              avatarKind: snap.avatarKind,
-              emoji: next,
-              color: snap.color,
-              botAvatarType: snap.botAvatarType,
-              providerId: snap.providerId,
-              modelId: snap.modelId,
-            }),
-            { immediate: true },
-          );
-        },
-      }) as unknown as HTMLElement;
-      const el = (picker instanceof HTMLElement ? picker : host.querySelector('em-emoji-picker')) as
-        | HTMLElement
-        | null;
-      if (el) {
-        el.style.setProperty('width', '352px', 'important');
-        el.style.setProperty('min-width', '352px', 'important');
-        el.style.setProperty('height', '435px', 'important');
-        el.style.setProperty('min-height', '435px', 'important');
-        el.style.display = 'flex';
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      try {
-        host.innerHTML = '';
-      } catch {
-        /* ignore */
-      }
-    };
-  }, [emojiMoreOpen, emojiPickerPos, emojiMartTheme, lang]);
 
   const composingRef = useRef(false);
   const emitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -364,26 +223,6 @@ export function BotFormModal({
     });
   }
 
-  function switchKind(next: BotAvatarKind) {
-    setAvatarKind(next);
-    setEmojiMoreOpen(false);
-    // Preserve color (including '' 「默认」). Do not invent a hash color when
-    // leaving bot-avatar default for emoji — emoji default is transparent.
-    emit(
-      formValues({
-        name,
-        description,
-        avatarKind: next,
-        emoji,
-        color,
-        botAvatarType,
-        providerId,
-        modelId,
-      }),
-      { immediate: true },
-    );
-  }
-
   return (
     <div
       className={`modal-backdrop drawer-backdrop${closing ? ' closing' : ''}`}
@@ -443,17 +282,7 @@ export function BotFormModal({
             type="button"
             className={`avatar-preview-hit${pickerOpen ? ' open' : ''}`}
             onClick={() => {
-              // Avatar picker lives under 详情; switch there when opening from another tab.
-              if (ownerFormTab !== 'details') {
-                setOwnerFormTab('details');
-                setPickerOpen(true);
-                return;
-              }
-              setPickerOpen((v) => {
-                const next = !v;
-                if (!next) setEmojiMoreOpen(false);
-                return next;
-              });
+              setPickerOpen((v) => !v);
             }}
             aria-expanded={pickerOpen}
             aria-label={pickerOpen ? t(lang, 'avatarPickerCollapse') : t(lang, 'avatarPickerExpand')}
@@ -513,6 +342,25 @@ export function BotFormModal({
             <p className="bot-form-description-text">{description}</p>
           ) : null}
         </div>
+        {pickerOpen ? (
+          <AvatarPicker
+            lang={lang}
+            value={{ avatarKind, emoji, color, botAvatarType }}
+            onChange={(patch) => {
+              const next = {
+                avatarKind: patch.avatarKind ?? avatarKind,
+                emoji: patch.emoji ?? emoji,
+                color: patch.color ?? color,
+                botAvatarType: patch.botAvatarType ?? botAvatarType,
+              };
+              if (patch.avatarKind !== undefined) setAvatarKind(next.avatarKind);
+              if (patch.emoji !== undefined) setEmoji(next.emoji);
+              if (patch.color !== undefined) setColor(next.color);
+              if (patch.botAvatarType !== undefined) setBotAvatarType(next.botAvatarType);
+              emit(formValues({ name, description, ...next, providerId, modelId }), { immediate: true });
+            }}
+          />
+        ) : null}
         <OwnerFormTabs lang={lang} value={ownerFormTab} onChange={setOwnerFormTab} tabs={BOT_OWNER_FORM_TABS} />
         {ownerFormTab === 'details' ? (
         <>
@@ -546,271 +394,7 @@ export function BotFormModal({
           />
           <p className="bot-form-model-hint">{t(lang, 'botModelHint')}</p>
         </div>
-        {pickerOpen ? (
-          <>
-            <div className="field">
-              <label>{t(lang, 'avatarKindLabel')}</label>
-              <div className="avatar-kind-toggle" role="group" aria-label={t(lang, 'avatarKindLabel')}>
-                <button
-                  type="button"
-                  className={avatarKind === 'bot-avatar' ? 'active' : ''}
-                  onClick={() => switchKind('bot-avatar')}
-                >
-                  {t(lang, 'avatarKindBotAvatar')}
-                </button>
-                <button
-                  type="button"
-                  className={avatarKind === 'emoji' ? 'active' : ''}
-                  onClick={() => switchKind('emoji')}
-                >
-                  {t(lang, 'avatarKindEmoji')}
-                </button>
-              </div>
-            </div>
-            {avatarKind === 'emoji' ? (
-              <>
-                <div className="field">
-                  <label>{t(lang, 'emojiLabel')}</label>
-                  <div className="emoji-grid">
-                    {hotEmojis.map((e) => (
-                      <button
-                        key={e}
-                        type="button"
-                        className={`emoji-grid-btn${emoji === e ? ' active' : ''}`}
-                        onClick={() => {
-                          setEmoji(e);
-                          setEmojiMoreOpen(false);
-                          emit(
-                            formValues({
-                              name,
-                              description,
-                              avatarKind,
-                              emoji: e,
-                              color,
-                              botAvatarType,
-                              providerId,
-                              modelId,
-                            }),
-                            { immediate: true },
-                          );
-                        }}
-                      >
-                        <FlatAvatar
-                          className="bot-avatar-type-preview"
-                          emoji={e}
-                          color={color}
-                          avatarKind="emoji"
-                        />
-                      </button>
-                    ))}
-                    <div className="emoji-more-wrap">
-                      <button
-                        ref={emojiMoreBtnRef}
-                        type="button"
-                        className={`emoji-more-btn${emojiMoreOpen ? ' open' : ''}`}
-                        aria-expanded={emojiMoreOpen}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (emojiMoreOpen) {
-                            setEmojiMoreOpen(false);
-                            setEmojiPickerPos(null);
-                            return;
-                          }
-                          const btn = emojiMoreBtnRef.current;
-                          if (btn) {
-                            const r = btn.getBoundingClientRect();
-                            const width = 352;
-                            const left = Math.min(
-                              Math.max(8, r.left),
-                              Math.max(8, window.innerWidth - width - 8),
-                            );
-                            const top = Math.min(r.bottom + 6, Math.max(8, window.innerHeight - 440));
-                            setEmojiPickerPos({ top: Math.max(8, top), left });
-                          }
-                          setEmojiMoreOpen(true);
-                        }}
-                      >
-                        {t(lang, 'more')}
-                      </button>
-                      {emojiMoreOpen && emojiPickerPos
-                        ? createPortal(
-                            <div
-                              ref={emojiPickerRef}
-                              className="emoji-mart-portal"
-                              style={{
-                                top: emojiPickerPos.top,
-                                left: emojiPickerPos.left,
-                                width: 352,
-                                minWidth: 352,
-                                minHeight: 435,
-                              }}
-                              role="dialog"
-                              aria-label={t(lang, 'more')}
-                              onPointerDown={(e) => e.stopPropagation()}
-                              onClick={(e) => e.stopPropagation()}
-                            />,
-                            document.body,
-                          )
-                        : null}
-                    </div>
-                  </div>
-                </div>
-                <div className="field">
-                  <label>{t(lang, 'colorLabel')}</label>
-                  <div className="color-picker-row">
-                    <div className="color-grid color-grid-one-row">
-                      <button
-                        type="button"
-                        className={`color-swatch color-swatch-default${!color ? ' active' : ''}`}
-                        title={t(lang, 'colorPaletteDefault')}
-                        onClick={() => {
-                          setColor('');
-                          emit(
-                            formValues({
-                              name,
-                              description,
-                              avatarKind,
-                              emoji,
-                              color: '',
-                              botAvatarType,
-                              providerId,
-                              modelId,
-                            }),
-                            { immediate: true },
-                          );
-                        }}
-                      >
-                        {t(lang, 'colorPaletteDefault')}
-                      </button>
-                      {AVATAR_COLORS.map((c) => (
-                        <button
-                          key={c}
-                          type="button"
-                          className={`color-swatch${c.toUpperCase() === '#FFFFFF' ? ' color-swatch-white' : ''}${color.toLowerCase() === c.toLowerCase() ? ' active' : ''}`}
-                          style={{ background: c }}
-                          title={c}
-                          onClick={() => {
-                            setColor(c);
-                            emit(
-                              formValues({
-                                name,
-                                description,
-                                avatarKind,
-                                emoji,
-                                color: c,
-                                botAvatarType,
-                                providerId,
-                                modelId,
-                              }),
-                            { immediate: true },
-                            );
-                          }}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="field">
-                  <label>{t(lang, 'botAvatarTypeLabel')}</label>
-                  <div className="bot-avatar-type-grid">
-                    {BOT_AVATAR_TYPES.map((shape) => (
-                      <button
-                        key={shape}
-                        type="button"
-                        className={`bot-avatar-type-btn${botAvatarType === shape ? ' active' : ''}`}
-                        title={shape}
-                        onClick={() => {
-                          setBotAvatarType(shape);
-                          emit(
-                            formValues({
-                              name,
-                              description,
-                              avatarKind,
-                              emoji,
-                              color,
-                              botAvatarType: shape,
-                              providerId,
-                              modelId,
-                            }),
-                          { immediate: true },
-                          );
-                        }}
-                      >
-                        <FlatAvatar
-                          className="bot-avatar-type-preview"
-                          emoji={emoji}
-                          color={color}
-                          avatarKind="bot-avatar"
-                          botAvatarType={shape}
-                          size={36}
-                        />
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="field">
-                  <label>{t(lang, 'colorOverrideLabel')}</label>
-                  <div className="color-picker-row">
-                    <div className="color-grid color-grid-one-row">
-                      <button
-                        type="button"
-                        className={`color-swatch color-swatch-default${!color ? ' active' : ''}`}
-                        title={t(lang, 'colorPaletteDefault')}
-                        onClick={() => {
-                          setColor('');
-                          emit(
-                            formValues({
-                              name,
-                              description,
-                              avatarKind,
-                              emoji,
-                              color: '',
-                              botAvatarType,
-                              providerId,
-                              modelId,
-                            }),
-                          { immediate: true },
-                          );
-                        }}
-                      >
-                        {t(lang, 'colorPaletteDefault')}
-                      </button>
-                      {AVATAR_COLORS.map((c) => (
-                        <button
-                          key={c}
-                          type="button"
-                          className={`color-swatch${c.toUpperCase() === '#FFFFFF' ? ' color-swatch-white' : ''}${color.toLowerCase() === c.toLowerCase() ? ' active' : ''}`}
-                          style={{ background: c }}
-                          title={c}
-                          onClick={() => {
-                            setColor(c);
-                            emit(
-                              formValues({
-                                name,
-                                description,
-                                avatarKind,
-                                emoji,
-                                color: c,
-                                botAvatarType,
-                                providerId,
-                                modelId,
-                              }),
-                            { immediate: true },
-                          );
-                          }}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </>
-            )}
-          </>
-        ) : null}
-        {showAdvancedSettings ? (
+        {developerMode ? (
           <BotAdvancedSection
             lang={lang}
             botId={botId}

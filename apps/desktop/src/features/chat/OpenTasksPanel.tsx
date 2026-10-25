@@ -31,10 +31,12 @@ function statusLabel(lang: UiLang, status: TaskStatus): string {
  * All unfinished (pending/in_progress) tasks above the composer — not just the current one.
  * Header stays in flow (default collapsed). Expanding the list opens an absolute overlay
  * upward above the header so chat messages are not pushed; list/steps use drawer frost glass.
- * Each task expands/collapses its steps (default collapsed); per-task chevron matches sidebar.
+ * Each task expands/collapses its steps (default expanded when the list is shown);
+ * per-task chevron matches sidebar.
  */
 export const OpenTasksPanel = memo(function OpenTasksPanel({ lang, tasks }: OpenTasksPanelProps) {
   const [listOpen, setListOpen] = useState(false);
+  /** Per-task steps: missing key = expanded (default). Explicit false = user collapsed. */
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const listRef = useRef<HTMLUListElement>(null);
   useScrollFade(listRef, [tasks, expanded, listOpen]);
@@ -44,7 +46,10 @@ export const OpenTasksPanel = memo(function OpenTasksPanel({ lang, tasks }: Open
   }, []);
 
   const toggle = useCallback((id: string) => {
-    setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
+    setExpanded((prev) => {
+      const isOpen = prev[id] !== false;
+      return { ...prev, [id]: !isOpen };
+    });
   }, []);
 
   if (!tasks.length) return null;
@@ -70,7 +75,7 @@ export const OpenTasksPanel = memo(function OpenTasksPanel({ lang, tasks }: Open
         <div className="open-tasks-list-fold-inner">
           <ul ref={listRef} className="open-tasks-list scroll-fade">
             {tasks.map((task) => {
-              const open = expanded[task.id] === true;
+              const open = expanded[task.id] !== false;
               const label = task.title?.trim() || t(lang, 'openTaskUntitled');
               return (
                 <li key={task.id} className={`open-task-item status-${task.status}`}>

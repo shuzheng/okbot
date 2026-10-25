@@ -1,5 +1,5 @@
 import { memo, useMemo } from 'react';
-import { parseThinkContent } from '@okbot/shared';
+import { parseThinkContent, stripInternalImageStorageHints } from '@okbot/shared';
 import { t, type UiLang } from '../../i18n';
 import type { MentionBotRef } from '../../utils/botMentions';
 import { MarkdownContent } from './MarkdownContent';
@@ -11,6 +11,8 @@ export type AssistantContentProps = {
   showThinking?: boolean;
   /** Roster for `@助手` mention chips inside markdown. */
   bots?: readonly MentionBotRef[];
+  /** Open-session owner id — duplicate names resolve to this bot's profile. */
+  preferBotId?: string;
 };
 
 /**
@@ -26,13 +28,17 @@ export const AssistantContent = memo(function AssistantContent({
   content,
   showThinking = false,
   bots = [],
+  preferBotId,
 }: AssistantContentProps) {
-  const parsed = useMemo(() => parseThinkContent(content || ''), [content]);
+  const parsed = useMemo(
+    () => parseThinkContent(stripInternalImageStorageHints(content || '')),
+    [content],
+  );
 
   if (!showThinking) {
     if (!parsed.answer) return null;
     return (
-      <MarkdownContent lang={lang} bots={bots}>
+      <MarkdownContent lang={lang} bots={bots} preferBotId={preferBotId}>
         {parsed.answer}
       </MarkdownContent>
     );
@@ -42,7 +48,7 @@ export const AssistantContent = memo(function AssistantContent({
     // Use parsed.answer (not raw content) so mid-stream `<think` prefixes stay held.
     if (!parsed.answer) return null;
     return (
-      <MarkdownContent lang={lang} bots={bots}>
+      <MarkdownContent lang={lang} bots={bots} preferBotId={preferBotId}>
         {parsed.answer}
       </MarkdownContent>
     );
@@ -56,7 +62,7 @@ export const AssistantContent = memo(function AssistantContent({
           <div className="md-thinking-body">
             {parsed.thinking.map((block, i) => (
               <div key={i} className="md-thinking-block">
-                <MarkdownContent lang={lang} bots={bots}>
+                <MarkdownContent lang={lang} bots={bots} preferBotId={preferBotId}>
                   {block}
                 </MarkdownContent>
               </div>
@@ -65,7 +71,7 @@ export const AssistantContent = memo(function AssistantContent({
         </details>
       ) : null}
       {parsed.answer ? (
-        <MarkdownContent lang={lang} bots={bots}>
+        <MarkdownContent lang={lang} bots={bots} preferBotId={preferBotId}>
           {parsed.answer}
         </MarkdownContent>
       ) : null}

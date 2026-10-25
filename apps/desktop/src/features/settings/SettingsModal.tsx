@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactElement } from 'react';
 import {
   DEFAULT_TOOL_PREFERENCES,
   normalizeContextCompression,
@@ -9,7 +9,7 @@ import {
   normalizeMemorySettings,
   normalizeMaintenanceSettings,
   normalizeMeshSettings,
-  normalizeLocalHttpApiSettings,
+  normalizeGatewayHttpApiSettings,
   normalizeComputers,
   normalizeDefaultComputerId,
   normalizeDefaultAssistantId,
@@ -22,6 +22,7 @@ import {
   normalizeMcpSettings,
   normalizeWebSettings,
   normalizeAssistantMarketplaceSettings,
+  normalizeSettingsNavTab,
   type McpSettings,
   type WebSettings,
   type ComputerEntry,
@@ -37,19 +38,21 @@ import {
   type UpdaterStatus,
   type Bot,
   type Squad,
+  type GatewayAuthRole,
+  type GatewayApiTokenEntry,
 } from '@okbot/shared';
 import { resolveUiLang, t } from '../../i18n';
 import { CompressRatioSlider } from './CompressRatioSlider';
 import type { InstructionsSubTab, SettingsTab } from './types';
-import { SettingsIcon, ModelNavIcon, SecurityNavIcon, InstructionsNavIcon, MemoryNavIcon, DownloadUpdateIcon, ExtensionsNavIcon } from '../../components/ui/icons';
+import { SettingsIcon, ModelNavIcon, SecurityNavIcon, InstructionsNavIcon, MemoryNavIcon, DownloadUpdateIcon, ExtensionsNavIcon, ChevronDownIcon, GatewayIcon, MenuIcon } from '../../components/ui/icons';
 import { updateScrollFade } from '../../utils/scrollFade';
 import { formatSystemError } from '../../utils/formatSystemError';
 import { toast } from '../../components/ui';
+import { QuickTip } from '../../components/ui/QuickTip';
 import { SettingsHelpTip } from './SettingsHelpTip';
 import { SettingsToggle } from './SettingsToggle';
 import { ModelProvidersPanel } from './ModelProvidersPanel';
 import { UsagePanel } from './UsagePanel';
-import { ComputersSettingsPanel } from './ComputersSettingsPanel';
 import { McpSettingsPanel } from './McpSettingsPanel';
 import { UpdatesSettingsPanel } from './UpdatesSettingsPanel';
 import { MemorySettingsPanel } from './MemorySettingsPanel';
@@ -57,10 +60,19 @@ import { InstructionsSettingsPanel } from './InstructionsSettingsPanel';
 import { SecuritySettingsPanel } from './SecuritySettingsPanel';
 import { ToolsSettingsPanel } from './ToolsSettingsPanel';
 import { GatewaySettingsPanel } from './GatewaySettingsPanel';
+import { ClientGatewaysPanel } from './ClientGatewaysPanel';
 import { GeneralSettingsPanel } from './GeneralSettingsPanel';
-import { isAdvancedSettingsTab } from './settingsSearch';
-import { isGatewayClient } from '../../utils/gatewayClient';
-import { omitGatewayDesktopOnlySettings } from '../../utils/settingsPatch';
+import { SETTINGS_TAB_LABEL_KEYS } from './settingsSearch';
+import {
+  isGatewayClient,
+  isGatewaySideSettingsTab,
+  isLocalHostElectronAttach,
+  isPureWebUi,
+  readAttachPresentedToken,
+  resolveClientGatewayAuthRole,
+  shouldHideGatewaySideSettings,
+} from '../../utils/gatewayClient';
+import { applyTheme } from '../../utils/theme';
 import { requestConfirm } from '../../components/ui';
 
 
@@ -87,19 +99,54 @@ export function SettingsModal({
   onClose: () => void;
   onSave: (s: AppSettings) => void | Promise<void>;
 }) {
-  /* esc-close-modal */
+  const [navMenuOpen, setNavMenuOpen] = useState(false);
+
+  /* esc: close settings nav drawer first, then modal */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       e.preventDefault();
+      if (navMenuOpen) {
+        setNavMenuOpen(false);
+        return;
+      }
       onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, navMenuOpen]);
+
+  /* Drop hamburger drawer when leaving the ≤640px settings breakpoint. */
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 640px)');
+    const onChange = () => {
+      if (!mq.matches) setNavMenuOpen(false);
+    };
+    onChange();
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
+  /* Icon-rail (≤768): labels clipped — use QuickTip. Skip when hamburger drawer shows labels. */
+  const [railNarrow, setRailNarrow] = useState(() =>
+    typeof window !== 'undefined' ? window.matchMedia('(max-width: 768px)').matches : false,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 768px)');
+    const onChange = () => setRailNarrow(mq.matches);
+    onChange();
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
 
 
-  const [tab, setTab] = useState<SettingsTab>(initialTab ?? 'general');
+  const CLIENT_NAV_TABS: SettingsTab[] = ['general', 'gateways', 'updates'];
+  const isClientNavTab = (id: SettingsTab) => CLIENT_NAV_TABS.includes(id);
+  const resolveStartTab = (): SettingsTab => {
+    if (initialTab) return normalizeSettingsNavTab(initialTab) as SettingsTab;
+    return normalizeSettingsNavTab(settings.settingsNavTab) as SettingsTab;
+  };
+  const [tab, setTab] = useState<SettingsTab>(resolveStartTab);
   const [theme, setTheme] = useState<ThemeMode>(settings.theme);
   const [language, setLanguage] = useState<LanguageCode>(settings.language);
   const [microphoneId, setMicrophoneId] = useState(settings.microphoneId);
@@ -118,54 +165,180 @@ export function SettingsModal({
   const [developerMode, setDeveloperMode] = useState(settings.developerMode === true);
   const [notifications, setNotifications] = useState(settings.notifications !== false);
   const [closeAction, setCloseAction] = useState<CloseAction>(() => normalizeCloseAction(settings.closeAction));
-  const [showAdvancedSettings, setShowAdvancedSettings] = useState(settings.showAdvancedSettings === true);
-  // A direct jump to an advanced tab (e.g. from a toast) shows advanced tabs for this
-  // dialog only. It does not change the saved preference.
-  const [revealAdvanced, setRevealAdvanced] = useState(
-    initialTab != null && isAdvancedSettingsTab(initialTab),
+  const [clientNavExpanded, setClientNavExpanded] = useState(
+    () => settings.settingsClientGroupExpanded !== false,
   );
-  const advancedVisible = showAdvancedSettings || revealAdvanced;
+  const [gatewayNavExpanded, setGatewayNavExpanded] = useState(
+    () => settings.settingsGatewayGroupExpanded === true,
+  );
+
+  useEffect(() => {
+    // Keep the group that owns the active tab open when selection changes.
+    if (isClientNavTab(tab)) setClientNavExpanded(true);
+    else setGatewayNavExpanded(true);
+  }, [tab]);
+
   const [mcpDraft, setMcpDraft] = useState<McpSettings>(() => normalizeMcpSettings(settings.mcp));
   const [webDraft, setWebDraft] = useState<WebSettings>(() => normalizeWebSettings(settings.web));
   const [showWebSearchKey, setShowWebSearchKey] = useState(false);
   const [backupExcludeSecrets, setBackupExcludeSecrets] = useState(true);
   const [backupBusy, setBackupBusy] = useState(false);
   const gatewayClient = isGatewayClient();
+  // Pure browser WebUI has no desktop updater; Electron attach still shows 自动更新.
+  const pureWebUi = isPureWebUi();
+  // Remote client with user/access token: hide 网关端. Pending until admin is proven.
+  // Local-host Electron attach always keeps 网关端 (see shouldHideGatewaySideSettings).
+  const [clientGatewayRole, setClientGatewayRole] = useState<GatewayAuthRole | 'pending' | null>(
+    () => (isGatewayClient() ? 'pending' : null),
+  );
+  useEffect(() => {
+    if (pureWebUi && tab === 'updates') setTab('general');
+  }, [pureWebUi, tab]);
   useEffect(() => {
     if (!developerMode && tab === 'instructions') setTab('general');
   }, [developerMode, tab]);
-  useEffect(() => {
-    if (!advancedVisible && isAdvancedSettingsTab(tab)) setTab('general');
-  }, [advancedVisible, tab]);
   // Main may remember closeAction via the close dialog while this modal is open.
   useEffect(() => {
     setCloseAction(normalizeCloseAction(settings.closeAction));
   }, [settings.closeAction]);
-  const initialLocalHttpApi = normalizeLocalHttpApiSettings(settings.localHttpApi);
-  const [localHttpApiEnabled, setLocalHttpApiEnabled] = useState(initialLocalHttpApi.enabled);
-  const [localHttpApiPort, setLocalHttpApiPort] = useState(String(initialLocalHttpApi.port));
-  const [localHttpApiToken, setLocalHttpApiToken] = useState(initialLocalHttpApi.token);
-  // Bootstrap / settings JSON blanks the token on the wire. Prefer the live value from
-  // getGatewayAccessToken (and any already-hydrated settings.localHttpApi.token).
+  const initialGatewayHttpApi = normalizeGatewayHttpApiSettings(settings.gatewayHttpApi);
+  const [gatewayHttpApiPort, setGatewayHttpApiPort] = useState(String(initialGatewayHttpApi.port));
+  const [gatewayHttpApiToken, setGatewayHttpApiToken] = useState(initialGatewayHttpApi.token);
+  const [gatewayHttpApiAdminToken, setGatewayHttpApiAdminToken] = useState(initialGatewayHttpApi.adminToken || '');
+  const [gatewayApiTokens, setGatewayApiTokens] = useState<GatewayApiTokenEntry[]>(
+    () => initialGatewayHttpApi.apiTokens || [],
+  );
+
+  const applyGatewayApiTokens = (next: GatewayApiTokenEntry[]) => {
+    const normalized = normalizeGatewayHttpApiSettings({
+      ...normalizeGatewayHttpApiSettings(settings.gatewayHttpApi),
+      apiTokens: next,
+      token: '',
+      adminToken: '',
+    });
+    setGatewayApiTokens(normalized.apiTokens);
+    setGatewayHttpApiToken(normalized.token);
+    setGatewayHttpApiAdminToken(normalized.adminToken);
+  };
+
+  // Bootstrap / settings JSON blanks tokens on the wire. Prefer live values from
+  // getGatewayAccessToken / getGatewayAdminToken (and hydrated settings fields).
   useEffect(() => {
-    const fromSettings = settings.localHttpApi?.token;
-    if (typeof fromSettings === 'string' && fromSettings) {
-      setLocalHttpApiToken((prev) => (prev === fromSettings ? prev : fromSettings));
+    const fromList = settings.gatewayHttpApi?.apiTokens;
+    if (Array.isArray(fromList) && fromList.length > 0 && fromList.some((e) => e.token)) {
+      applyGatewayApiTokens(fromList);
+    } else {
+      const fromSettings = settings.gatewayHttpApi?.token;
+      if (typeof fromSettings === 'string' && fromSettings) {
+        setGatewayHttpApiToken((prev) => (prev === fromSettings ? prev : fromSettings));
+      }
+      const fromAdmin = settings.gatewayHttpApi?.adminToken;
+      if (typeof fromAdmin === 'string' && fromAdmin) {
+        setGatewayHttpApiAdminToken((prev) => (prev === fromAdmin ? prev : fromAdmin));
+      }
     }
-    const bridge = window.okbot as { getGatewayAccessToken?: () => Promise<string> };
-    if (typeof bridge.getGatewayAccessToken !== 'function') return;
+    const bridge = window.okbot as {
+      getGatewayAccessToken?: () => Promise<string>;
+      getGatewayAdminToken?: () => Promise<string>;
+      getGatewayApiTokens?: () => Promise<GatewayApiTokenEntry[]>;
+    };
     let cancelled = false;
-    void bridge.getGatewayAccessToken().then((token) => {
-      if (cancelled || typeof token !== 'string' || !token) return;
-      setLocalHttpApiToken((prev) => (prev === token ? prev : token));
-    }).catch(() => {});
+    if (typeof bridge.getGatewayApiTokens === 'function') {
+      void bridge.getGatewayApiTokens().then((list) => {
+        if (cancelled || !Array.isArray(list) || list.length === 0) return;
+        if (!list.some((e) => e && e.token)) return;
+        applyGatewayApiTokens(list);
+      }).catch(() => {});
+    }
+    if (typeof bridge.getGatewayAccessToken === 'function') {
+      void bridge.getGatewayAccessToken().then((token) => {
+        if (cancelled || typeof token !== 'string' || !token) return;
+        setGatewayHttpApiToken((prev) => (prev === token ? prev : token));
+        setGatewayApiTokens((list) => {
+          if (list.some((e) => e.token === token)) return list;
+          // Hydrate primary access secret into first access entry when wire was blank.
+          const idx = list.findIndex((e) => e.role === 'access');
+          if (idx < 0) return list;
+          const next = [...list];
+          next[idx] = { ...next[idx]!, token };
+          return next;
+        });
+      }).catch(() => {});
+    }
+    if (typeof bridge.getGatewayAdminToken === 'function') {
+      void bridge.getGatewayAdminToken().then((token) => {
+        if (cancelled || typeof token !== 'string' || !token) return;
+        setGatewayHttpApiAdminToken((prev) => (prev === token ? prev : token));
+        setGatewayApiTokens((list) => {
+          if (list.some((e) => e.token === token)) return list;
+          const idx = list.findIndex((e) => e.role === 'admin');
+          if (idx < 0) return list;
+          const next = [...list];
+          next[idx] = { ...next[idx]!, token };
+          return next;
+        });
+      }).catch(() => {});
+    }
     return () => {
       cancelled = true;
     };
-  }, [settings.localHttpApi?.token]);
-  const [showLocalHttpApiToken, setShowLocalHttpApiToken] = useState(false);
-  const [localHttpApiBindLan, setLocalHttpApiBindLan] = useState(initialLocalHttpApi.bindLan === true);
-  const [localHttpApiServeUi, setLocalHttpApiServeUi] = useState(initialLocalHttpApi.serveUi === true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- hydrate from settings snapshot
+  }, [settings.gatewayHttpApi?.token, settings.gatewayHttpApi?.adminToken, settings.gatewayHttpApi?.apiTokens]);
+
+  useEffect(() => {
+    if (!gatewayClient) {
+      setClientGatewayRole(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      let serverRole: GatewayAuthRole | null = null;
+      try {
+        const bridge = window.okbot as {
+          getGatewayAuthRole?: () => Promise<GatewayAuthRole | null>;
+        };
+        // Prefer the role of the credential in use (Bearer / cookie). Do not infer
+        // admin from getGatewayAdminToken() — local attach can read both tokens
+        // from disk even when the window presents user_/access.
+        if (typeof bridge.getGatewayAuthRole === 'function') {
+          const role = await bridge.getGatewayAuthRole();
+          if (role === 'admin' || role === 'access') serverRole = role;
+        }
+      } catch {
+        /* prefix fallback below */
+      }
+      const presented = readAttachPresentedToken();
+      if (cancelled) return;
+      const role = resolveClientGatewayAuthRole({
+        serverRole,
+        // Prefix fallback: presented attach Bearer only (not form fields that may
+        // show the disk admin token while Bearer is still user_).
+        presentedToken: presented,
+      });
+      setClientGatewayRole(role ?? 'pending');
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [gatewayClient, gatewayHttpApiToken, gatewayHttpApiAdminToken]);
+
+  // Local loopback Electron attach keeps 网关端 even before admin role resolves.
+  const localHostAttach = isLocalHostElectronAttach();
+  const hideGatewaySideNav = shouldHideGatewaySideSettings({
+    gatewayClient,
+    role: clientGatewayRole,
+    localHost: localHostAttach,
+  });
+  // Remote/Web attach: only super-admin may edit host config (all gateway-side keys:
+  // MCP / tools / security / model / web / computers / backup / …). User token keeps
+  // panels hidden; local-host attach may still show 网关端 but keeps writes read-only.
+  const gatewayHostReadOnly = gatewayClient && clientGatewayRole !== 'admin';
+  useEffect(() => {
+    if (hideGatewaySideNav && isGatewaySideSettingsTab(tab)) setTab('general');
+  }, [hideGatewaySideNav, tab]);
+
+  const [gatewayHttpApiBindLan, setGatewayHttpApiBindLan] = useState(initialGatewayHttpApi.bindLan === true);
+  const [gatewayHttpApiServeUi, setGatewayHttpApiServeUi] = useState(initialGatewayHttpApi.serveUi === true);
   const [computersDraft, setComputersDraft] = useState<ComputerEntry[]>(() =>
     normalizeComputers(settings.computers),
   );
@@ -173,9 +346,6 @@ export function SettingsModal({
     normalizeDefaultComputerId(settings.defaultComputerId, normalizeComputers(settings.computers)),
   );
   const [timezone, setTimezone] = useState(() => normalizeTimezone(settings.timezone));
-  useEffect(() => {
-    setTimezone(normalizeTimezone(settings.timezone));
-  }, [settings.timezone]);
 
   const [updaterStatus, setUpdaterStatus] = useState<UpdaterStatus | null>(null);
   const [updaterBusy, setUpdaterBusy] = useState(false);
@@ -218,6 +388,9 @@ export function SettingsModal({
   const [keepRecentMax, setKeepRecentMax] = useState(String(initialCc.keepRecentMax));
   const [keepRecentMin, setKeepRecentMin] = useState(String(initialCc.keepRecentMin));
   const [summaryMaxChars, setSummaryMaxChars] = useState(String(initialCc.summaryMaxChars));
+  const [estimateSafetyFactor, setEstimateSafetyFactor] = useState(
+    String(initialCc.estimateSafetyFactor),
+  );
   const [autoTopicCompress, setAutoTopicCompress] = useState(initialCc.autoTopicCompress !== false);
   const initialSquad = normalizeSquadSettings(settings.squad);
   const initialInstructions = normalizeInstructionsSettings(settings.instructions);
@@ -227,57 +400,109 @@ export function SettingsModal({
   const [soulMdRefreshSystemPrompt, setSoulMdRefreshSystemPrompt] = useState(
     initialInstructions.soulMdRefreshSystemPrompt,
   );
-  const [soulMdRecentMessageLimit, setSoulMdRecentMessageLimit] = useState(
-    String(initialInstructions.soulMdRecentMessageLimit),
-  );
   const [skillsCreateUpdateInstruction, setSkillsCreateUpdateInstruction] = useState(
     initialInstructions.skillsCreateUpdateInstruction,
   );
-  const [skillsRecentMessageLimit, setSkillsRecentMessageLimit] = useState(
-    String(initialInstructions.skillsRecentMessageLimit),
-  );
   const initialMemory = normalizeMemorySettings(settings.memory);
   const [scopeInstruction, setScopeInstruction] = useState(initialMemory.scopeInstruction);
-  const [memoryRecentMessageLimit, setMemoryRecentMessageLimit] = useState(
-    String(initialMemory.recentMessageLimit),
-  );
   const [globalMemories, setGlobalMemories] = useState<MemoryEntry[]>([]);
   const [globalMemAddRequest, setGlobalMemAddRequest] = useState(0);
   const [instructionsSubTab, setInstructionsSubTab] = useState<InstructionsSubTab>('assistant');
   const [captainPersona, setCaptainPersona] = useState(initialSquad.captainPersona);
   const [squadPlaybook, setSquadPlaybook] = useState(initialSquad.playbook);
-  const [captainMaxTurns, setCaptainMaxTurns] = useState(String(initialSquad.captainMaxTurns));
-  const [memberMaxTurns, setMemberMaxTurns] = useState(String(initialSquad.memberMaxTurns));
   const [_showKey, _setShowKey] = useState(false);
-  const skipFirstSave = useRef(true);
+  /** Block autosave until mount hydrate from getSettings finishes (avoids clobbering). */
+  const allowAutosaveRef = useRef(false);
   const onSaveRef = useRef(onSave);
   onSaveRef.current = onSave;
   const saveTimerRef = useRef<number | null>(null);
   const pendingSaveRef = useRef<(() => void | Promise<void>) | null>(null);
 
   useEffect(() => {
+    if (pureWebUi) return;
     let cancelled = false;
-    void window.okbot.updaterGetStatus().then((s) => {
-      if (!cancelled) setUpdaterStatus(s);
-    });
-    const off = window.okbot.onUpdaterEvent((s) => setUpdaterStatus(s));
+    const getStatus = window.okbot.updaterGetStatus;
+    if (typeof getStatus === 'function') {
+      void getStatus().then((s) => {
+        if (!cancelled) setUpdaterStatus(s);
+      });
+    }
+    const onEvent = window.okbot.onUpdaterEvent;
+    const off = typeof onEvent === 'function' ? onEvent((s) => setUpdaterStatus(s)) : undefined;
     return () => {
       cancelled = true;
-      off();
+      off?.();
     };
-  }, []);
+  }, [pureWebUi]);
 
-  // Re-read model providers from disk on open so a stale parent `settings`
-  // snapshot cannot overwrite a newer key via autosave.
+  // Every open: reload latest merged settings so gateway edits from other clients show up.
+  // Autosave stays blocked until this finishes so we do not write a stale hybrid payload.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
         const latest = await window.okbot.getSettings();
         if (cancelled || !latest) return;
+        setTheme(latest.theme);
+        applyTheme(latest.theme);
+        document.documentElement.dataset.translucent =
+          latest.translucent !== false ? 'true' : 'false';
+        setLanguage(latest.language);
+        setMicrophoneId(latest.microphoneId);
+        setHardwareAcceleration(latest.hardwareAcceleration !== false);
+        setAutoUpdate(latest.autoUpdate !== false);
+        setSidebarDockMagnify(latest.sidebarDockMagnify === true);
+        setTranslucent(latest.translucent !== false);
+        setDeveloperMode(latest.developerMode === true);
+        setNotifications(latest.notifications !== false);
+        setCloseAction(normalizeCloseAction(latest.closeAction));
+        setClientNavExpanded(latest.settingsClientGroupExpanded !== false);
+        setGatewayNavExpanded(latest.settingsGatewayGroupExpanded === true);
+        setMcpDraft(normalizeMcpSettings(latest.mcp));
+        setWebDraft(normalizeWebSettings(latest.web));
+        const api = normalizeGatewayHttpApiSettings(latest.gatewayHttpApi);
+        setGatewayHttpApiPort(String(api.port));
+        setGatewayHttpApiToken(api.token);
+        setGatewayHttpApiAdminToken(api.adminToken || '');
+        setGatewayApiTokens(api.apiTokens || []);
+        setGatewayHttpApiBindLan(api.bindLan === true);
+        setGatewayHttpApiServeUi(api.serveUi === true);
+        const computers = normalizeComputers(latest.computers);
+        setComputersDraft(computers);
+        setDefaultComputerId(normalizeDefaultComputerId(latest.defaultComputerId, computers));
+        setTimezone(normalizeTimezone(latest.timezone));
+        setAutoApprovalEnabled(latest.autoApprovalEnabled === true);
+        setAutoApprovalRules(latest.autoApprovalRules ?? []);
+        setTools(latest.tools ?? DEFAULT_TOOL_PREFERENCES);
+        const security = normalizeSecuritySettings(latest.security);
+        setSecurityEnabled(security.enabled);
+        setRestrictToHome(security.restrictToHome);
+        setAllowedPathsText(security.allowedPathPrefixes.join('\n'));
+        setDeniedPathsText(security.deniedPathPrefixes.join('\n'));
+        setShellPatternsEnabled(security.shellPatternsEnabled);
+        setShellPatterns(security.shellPatterns);
+        setBlockMode(security.blockMode);
         setModelSettings(normalizeModelSettings(latest.model));
+        const cc = normalizeContextCompression(latest.contextCompression);
+        setCompressRatioPct(String(Math.round(cc.ratio * 100)));
+        setKeepRecentMax(String(cc.keepRecentMax));
+        setKeepRecentMin(String(cc.keepRecentMin));
+        setSummaryMaxChars(String(cc.summaryMaxChars));
+        setEstimateSafetyFactor(String(cc.estimateSafetyFactor));
+        setAutoTopicCompress(cc.autoTopicCompress !== false);
+        const instructions = normalizeInstructionsSettings(latest.instructions);
+        setAssistantRoleTemplate(instructions.assistantRoleTemplate);
+        setSoulMdRefreshSystemPrompt(instructions.soulMdRefreshSystemPrompt);
+        setSkillsCreateUpdateInstruction(instructions.skillsCreateUpdateInstruction);
+        const memory = normalizeMemorySettings(latest.memory);
+        setScopeInstruction(memory.scopeInstruction);
+        const squad = normalizeSquadSettings(latest.squad);
+        setCaptainPersona(squad.captainPersona);
+        setSquadPlaybook(squad.playbook);
       } catch {
         /* keep props-initialized state */
+      } finally {
+        if (!cancelled) allowAutosaveRef.current = true;
       }
     })();
     return () => {
@@ -302,36 +527,26 @@ export function SettingsModal({
   }, [tab]);
 
   const lang = resolveUiLang(language);
-  const title =
-    tab === 'general'
-      ? t(lang, 'general')
-      : tab === 'gateway'
-        ? t(lang, 'gateway')
-        : tab === 'computers'
-          ? t(lang, 'computers')
-          : tab === 'extensions'
-            ? t(lang, 'extensionsTab')
-          : tab === 'tools'
-        ? t(lang, 'tools')
-        : tab === 'security'
-          ? t(lang, 'security')
-          : tab === 'model'
-            ? t(lang, 'model')
-            : tab === 'instructions'
-              ? t(lang, 'instructions')
-              : tab === 'memory'
-                ? t(lang, 'memoryTab')
-                : tab === 'usage'
-                  ? t(lang, 'usageTab')
-                  : tab === 'updates'
-                    ? t(lang, 'updatesTab')
-                    : t(lang, 'general');
+  const title = t(lang, SETTINGS_TAB_LABEL_KEYS[tab] ?? 'general');
+  const selectTab = (id: SettingsTab) => {
+    setTab(id);
+    setNavMenuOpen(false);
+  };
+  /* Tip only while icon-rail labels are hidden (not labeled hamburger drawer). */
+  const showNavTips = railNarrow && !navMenuOpen;
+  function navTip(label: string, node: ReactElement<any>) {
+    if (!showNavTips) return node;
+    return (
+      <QuickTip text={label} place="right">
+        {node}
+      </QuickTip>
+    );
+  }
   const needsHwRestart = hardwareAcceleration !== hwAccelActive;
 
   useEffect(() => {
     if (!initialTab) return;
-    if (isAdvancedSettingsTab(initialTab)) setShowAdvancedSettings(true);
-    setTab(initialTab);
+    setTab(normalizeSettingsNavTab(initialTab) as SettingsTab);
   }, [initialTab]);
 
   useEffect(() => {
@@ -340,7 +555,7 @@ export function SettingsModal({
     if (id === 'assistantRoleTemplate') setInstructionsSubTab('assistant');
     else if (id.startsWith('squad')) setInstructionsSubTab('squad');
     else if (id.startsWith('soulMd')) setInstructionsSubTab('soul');
-    else if (id === 'scopeInstruction' || id === 'memoryRecentMessageLimit')
+    else if (id === 'scopeInstruction')
       setInstructionsSubTab('memory');
     else if (id.startsWith('skills')) setInstructionsSubTab('skills');
     let tries = 0;
@@ -389,8 +604,7 @@ export function SettingsModal({
   }, [lang]);
 
   useEffect(() => {
-    if (skipFirstSave.current) {
-      skipFirstSave.current = false;
+    if (!allowAutosaveRef.current) {
       return;
     }
     const persist = async () => {
@@ -423,21 +637,30 @@ export function SettingsModal({
         developerMode,
         notifications,
         closeAction,
-        showAdvancedSettings,
+        settingsNavTab: normalizeSettingsNavTab(tab),
+        settingsClientGroupExpanded: clientNavExpanded,
+        settingsGatewayGroupExpanded: gatewayNavExpanded,
         mcp: normalizeMcpSettings(mcpDraft),
         web: normalizeWebSettings(webDraft),
         assistantMarketplace: normalizeAssistantMarketplaceSettings(settings.assistantMarketplace),
-        localHttpApi: (() => {
-          const nextApi = normalizeLocalHttpApiSettings({
-            enabled: localHttpApiEnabled,
-            port: keptNumber(localHttpApiPort, normalizeLocalHttpApiSettings(settings.localHttpApi).port),
-            token: localHttpApiToken,
-            bindLan: localHttpApiBindLan,
-            serveUi: localHttpApiServeUi,
+        gatewayHttpApi: (() => {
+          const nextApi = normalizeGatewayHttpApiSettings({
+            enabled: true,
+            port: keptNumber(gatewayHttpApiPort, normalizeGatewayHttpApiSettings(settings.gatewayHttpApi).port),
+            apiTokens: gatewayApiTokens,
+            token: '',
+            adminToken: '',
+            bindLan: gatewayHttpApiBindLan,
+            serveUi: gatewayHttpApiServeUi,
           });
-          if (nextApi.token !== localHttpApiToken) {
-            setLocalHttpApiToken(nextApi.token);
-            if (nextApi.token) toast.info(t(lang, 'localHttpApiTokenSynced'));
+          if (
+            nextApi.token !== gatewayHttpApiToken ||
+            nextApi.adminToken !== gatewayHttpApiAdminToken ||
+            nextApi.apiTokens.length !== gatewayApiTokens.length
+          ) {
+            setGatewayHttpApiToken(nextApi.token);
+            setGatewayHttpApiAdminToken(nextApi.adminToken);
+            setGatewayApiTokens(nextApi.apiTokens);
           }
           return nextApi;
         })(),
@@ -468,18 +691,19 @@ export function SettingsModal({
           keepRecentMax: keptNumber(keepRecentMax, normalizeContextCompression(settings.contextCompression).keepRecentMax),
           keepRecentMin: keptNumber(keepRecentMin, normalizeContextCompression(settings.contextCompression).keepRecentMin),
           summaryMaxChars: keptNumber(summaryMaxChars, normalizeContextCompression(settings.contextCompression).summaryMaxChars),
+          estimateSafetyFactor: keptNumber(
+            estimateSafetyFactor,
+            normalizeContextCompression(settings.contextCompression).estimateSafetyFactor,
+          ),
           autoTopicCompress,
         }),
         instructions: normalizeInstructionsSettings({
           assistantRoleTemplate,
           soulMdRefreshSystemPrompt,
-          soulMdRecentMessageLimit: keptNumber(soulMdRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).soulMdRecentMessageLimit),
           skillsCreateUpdateInstruction,
-          skillsRecentMessageLimit: keptNumber(skillsRecentMessageLimit, normalizeInstructionsSettings(settings.instructions).skillsRecentMessageLimit),
         }),
         memory: normalizeMemorySettings({
           scopeInstruction,
-          recentMessageLimit: keptNumber(memoryRecentMessageLimit, normalizeMemorySettings(settings.memory).recentMessageLimit),
           promptMaxEntries: settings.memory.promptMaxEntries,
           promptMaxChars: settings.memory.promptMaxChars,
         }),
@@ -487,15 +711,12 @@ export function SettingsModal({
         squad: normalizeSquadSettings({
           captainPersona,
           playbook: squadPlaybook,
-          captainMaxTurns: keptNumber(captainMaxTurns, normalizeSquadSettings(settings.squad).captainMaxTurns),
-          memberMaxTurns: keptNumber(memberMaxTurns, normalizeSquadSettings(settings.squad).memberMaxTurns),
         }),
       };
-      // Gateway must not patch closeAction (Electron shell only); omit so a stale
-      // value cannot 409 against resolveGatewaySettingsWrite.
-      await onSaveRef.current(
-        gatewayClient ? (omitGatewayDesktopOnlySettings(payload) as AppSettings) : payload,
-      );
+      // Full merged payload: Electron saveUiSettings / httpOkbot.saveSettings split
+      // client chrome (~/.okbot/client.json / localStorage) from gateway ~/.okbot/server.json.
+      // Gateway write path ignores client keys (no 409).
+      await onSaveRef.current(payload);
     };
     pendingSaveRef.current = persist;
     if (saveTimerRef.current != null) window.clearTimeout(saveTimerRef.current);
@@ -522,15 +743,18 @@ export function SettingsModal({
     developerMode,
     notifications,
     closeAction,
+    tab,
+    clientNavExpanded,
+    gatewayNavExpanded,
     gatewayClient,
-    showAdvancedSettings,
     mcpDraft,
     webDraft,
-    localHttpApiEnabled,
-    localHttpApiPort,
-    localHttpApiToken,
-    localHttpApiBindLan,
-    localHttpApiServeUi,
+    gatewayHttpApiPort,
+    gatewayHttpApiToken,
+    gatewayHttpApiAdminToken,
+    gatewayApiTokens,
+    gatewayHttpApiBindLan,
+    gatewayHttpApiServeUi,
     computersDraft,
     defaultComputerId,
     timezone,
@@ -551,18 +775,14 @@ export function SettingsModal({
     keepRecentMax,
     keepRecentMin,
     summaryMaxChars,
+    estimateSafetyFactor,
     autoTopicCompress,
     assistantRoleTemplate,
     soulMdRefreshSystemPrompt,
-    soulMdRecentMessageLimit,
     skillsCreateUpdateInstruction,
-    skillsRecentMessageLimit,
     scopeInstruction,
-    memoryRecentMessageLimit,
     captainPersona,
     squadPlaybook,
-    captainMaxTurns,
-    memberMaxTurns,
   ]);
 
   // Flush ≤350ms debounced edits when the settings modal unmounts (close).
@@ -616,138 +836,252 @@ export function SettingsModal({
   return (
     <>
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="settings-shell" onClick={(e) => e.stopPropagation()}>
-        <nav className="settings-nav" aria-label={t(lang, 'settings')}>
-          <button
-            type="button"
-            className={`settings-nav-item${tab === 'general' ? ' active' : ''}`}
-            onClick={() => setTab('general')}
-          >
-            <span className="ico" aria-hidden>
-              <SettingsIcon />
-            </span>
-            {t(lang, 'general')}
-          </button>
-          <button
-            type="button"
-            className={`settings-nav-item${tab === 'model' ? ' active' : ''}`}
-            onClick={() => setTab('model')}
-          >
-            <span className="ico" aria-hidden>
-              <ModelNavIcon />
-            </span>
-            {t(lang, 'model')}
-          </button>
-          <button
-            type="button"
-            className={`settings-nav-item${tab === 'tools' ? ' active' : ''}`}
-            onClick={() => setTab('tools')}
-          >
-            <span className="ico" aria-hidden>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z" />
-              </svg>
-            </span>
-            {t(lang, 'tools')}
-          </button>
-          {advancedVisible ? (
+      <div
+        className={`settings-shell${navMenuOpen ? ' nav-menu-open' : ''}`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          type="button"
+          className="settings-nav-backdrop"
+          aria-label={t(lang, 'sidebarFabClose')}
+          aria-hidden={!navMenuOpen}
+          tabIndex={navMenuOpen ? 0 : -1}
+          onClick={() => setNavMenuOpen(false)}
+        />
+        <nav
+          className="settings-nav"
+          aria-label={t(lang, 'settings')}
+        >
+          {navTip(
+            t(lang, 'settingsNavClientGroup'),
+            <button
+              type="button"
+              className={`settings-nav-group${clientNavExpanded ? ' expanded' : ''}`}
+              aria-expanded={clientNavExpanded}
+              onClick={() => setClientNavExpanded((v) => !v)}
+            >
+              <span className="settings-nav-group-label">{t(lang, 'settingsNavClientGroup')}</span>
+              <span className="session-owner-group-chevron" aria-hidden>
+                <ChevronDownIcon />
+              </span>
+            </button>,
+          )}
+          {clientNavExpanded ? (
             <>
-            <button
-              type="button"
-              className={`settings-nav-item${tab === 'security' ? ' active' : ''}`}
-              onClick={() => setTab('security')}
-            >
-              <span className="ico" aria-hidden>
-                <SecurityNavIcon />
-              </span>
-              {t(lang, 'security')}
-            </button>
-            <button
-              type="button"
-              className={`settings-nav-item${tab === 'gateway' ? ' active' : ''}`}
-              onClick={() => setTab('gateway')}
-            >
-              <span className="ico" aria-hidden>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                  <path d="M4 8h16M4 16h16M8 4v4M16 16v4" strokeLinecap="round" />
-                  <circle cx="12" cy="12" r="2" />
-                </svg>
-              </span>
-              {t(lang, 'gateway')}
-            </button>
-            <button
-              type="button"
-              className={`settings-nav-item${tab === 'computers' ? ' active' : ''}`}
-              onClick={() => setTab('computers')}
-            >
-              <span className="ico" aria-hidden>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                  <rect x="3" y="4" width="18" height="12" rx="2" />
-                  <path d="M8 20h8M12 16v4" strokeLinecap="round" />
-                </svg>
-              </span>
-              {t(lang, 'computers')}
-            </button>
-            <button
-              type="button"
-              className={`settings-nav-item${tab === 'extensions' ? ' active' : ''}`}
-              onClick={() => setTab('extensions')}
-            >
-              <span className="ico" aria-hidden>
-                <ExtensionsNavIcon />
-              </span>
-              {t(lang, 'extensionsTab')}
-            </button>
+              {navTip(
+                t(lang, 'general'),
+                <button
+                  type="button"
+                  className={`settings-nav-item${tab === 'general' ? ' active' : ''}`}
+                  aria-label={t(lang, 'general')}
+                  aria-current={tab === 'general' ? 'page' : undefined}
+                  onClick={() => selectTab('general')}
+                >
+                  <span className="ico" aria-hidden>
+                    <SettingsIcon />
+                  </span>
+                  <span className="settings-nav-label">{t(lang, 'general')}</span>
+                </button>,
+              )}
+              {navTip(
+                t(lang, 'gatewaysTab'),
+                <button
+                  type="button"
+                  className={`settings-nav-item${tab === 'gateways' ? ' active' : ''}`}
+                  aria-label={t(lang, 'gatewaysTab')}
+                  aria-current={tab === 'gateways' ? 'page' : undefined}
+                  onClick={() => selectTab('gateways')}
+                >
+                  <span className="ico" aria-hidden>
+                    <GatewayIcon />
+                  </span>
+                  <span className="settings-nav-label">{t(lang, 'gatewaysTab')}</span>
+                </button>,
+              )}
+              {!pureWebUi ? (
+                navTip(
+                  t(lang, 'updatesTab'),
+                  <button
+                    type="button"
+                    className={`settings-nav-item${tab === 'updates' ? ' active' : ''}`}
+                    aria-label={t(lang, 'updatesTab')}
+                    aria-current={tab === 'updates' ? 'page' : undefined}
+                    onClick={() => selectTab('updates')}
+                  >
+                    <span className="ico" aria-hidden>
+                      <DownloadUpdateIcon />
+                    </span>
+                    <span className="settings-nav-label">{t(lang, 'updatesTab')}</span>
+                  </button>,
+                )
+              ) : null}
             </>
           ) : null}
-          <button
-            type="button"
-            className={`settings-nav-item${tab === 'memory' ? ' active' : ''}`}
-            onClick={() => setTab('memory')}
-          >
-            <span className="ico" aria-hidden>
-              <MemoryNavIcon />
-            </span>
-            {t(lang, 'memoryTab')}
-          </button>
-          <button
-            type="button"
-            className={`settings-nav-item${tab === 'usage' ? ' active' : ''}`}
-            onClick={() => setTab('usage')}
-          >
-            <span className="ico" aria-hidden>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                <path d="M4 19V5M4 19h16" strokeLinecap="round" />
-                <path d="M8 15v-4M12 15V8M16 15v-7" strokeLinecap="round" />
-              </svg>
-            </span>
-            {t(lang, 'usageTab')}
-          </button>
-          <button
-            type="button"
-            className={`settings-nav-item${tab === 'updates' ? ' active' : ''}`}
-            onClick={() => setTab('updates')}
-          >
-            <span className="ico" aria-hidden>
-              <DownloadUpdateIcon />
-            </span>
-            {t(lang, 'updatesTab')}
-          </button>
-          {developerMode ? (
+
+          {!hideGatewaySideNav ? (
+          navTip(
+            t(lang, 'settingsNavGatewayGroup'),
             <button
               type="button"
-              className={`settings-nav-item${tab === 'instructions' ? ' active' : ''}`}
-              onClick={() => setTab('instructions')}
+              className={`settings-nav-group${gatewayNavExpanded ? ' expanded' : ''}`}
+              aria-expanded={gatewayNavExpanded}
+              onClick={() => setGatewayNavExpanded((v) => !v)}
             >
-              <span className="ico" aria-hidden>
-                <InstructionsNavIcon />
+              <span className="settings-nav-group-label">{t(lang, 'settingsNavGatewayGroup')}</span>
+              <span className="session-owner-group-chevron" aria-hidden>
+                <ChevronDownIcon />
               </span>
-              {t(lang, 'instructions')}
-            </button>
+            </button>,
+          )
+          ) : null}
+          {!hideGatewaySideNav && gatewayNavExpanded ? (
+            <>
+              {navTip(
+                t(lang, 'model'),
+                <button
+                  type="button"
+                  className={`settings-nav-item${tab === 'model' ? ' active' : ''}`}
+                  aria-label={t(lang, 'model')}
+                  aria-current={tab === 'model' ? 'page' : undefined}
+                  onClick={() => selectTab('model')}
+                >
+                  <span className="ico" aria-hidden>
+                    <ModelNavIcon />
+                  </span>
+                  <span className="settings-nav-label">{t(lang, 'model')}</span>
+                </button>,
+              )}
+              {navTip(
+                t(lang, 'tools'),
+                <button
+                  type="button"
+                  className={`settings-nav-item${tab === 'tools' ? ' active' : ''}`}
+                  aria-label={t(lang, 'tools')}
+                  aria-current={tab === 'tools' ? 'page' : undefined}
+                  onClick={() => selectTab('tools')}
+                >
+                  <span className="ico" aria-hidden>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                      <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z" />
+                    </svg>
+                  </span>
+                  <span className="settings-nav-label">{t(lang, 'tools')}</span>
+                </button>,
+              )}
+              {navTip(
+                t(lang, 'security'),
+                <button
+                  type="button"
+                  className={`settings-nav-item${tab === 'security' ? ' active' : ''}`}
+                  aria-label={t(lang, 'security')}
+                  aria-current={tab === 'security' ? 'page' : undefined}
+                  onClick={() => selectTab('security')}
+                >
+                  <span className="ico" aria-hidden>
+                    <SecurityNavIcon />
+                  </span>
+                  <span className="settings-nav-label">{t(lang, 'security')}</span>
+                </button>,
+              )}
+              {navTip(
+                t(lang, 'gateway'),
+                <button
+                  type="button"
+                  className={`settings-nav-item${tab === 'gateway' ? ' active' : ''}`}
+                  aria-label={t(lang, 'gateway')}
+                  aria-current={tab === 'gateway' ? 'page' : undefined}
+                  onClick={() => selectTab('gateway')}
+                >
+                  <span className="ico" aria-hidden>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                      <rect x="3" y="4" width="18" height="6" rx="1.5" />
+                      <rect x="3" y="14" width="18" height="6" rx="1.5" />
+                      <path d="M7 7h.01M7 17h.01" strokeLinecap="round" />
+                    </svg>
+                  </span>
+                  <span className="settings-nav-label">{t(lang, 'gateway')}</span>
+                </button>,
+              )}
+              {navTip(
+                t(lang, 'extensionsTab'),
+                <button
+                  type="button"
+                  className={`settings-nav-item${tab === 'extensions' ? ' active' : ''}`}
+                  aria-label={t(lang, 'extensionsTab')}
+                  aria-current={tab === 'extensions' ? 'page' : undefined}
+                  onClick={() => selectTab('extensions')}
+                >
+                  <span className="ico" aria-hidden>
+                    <ExtensionsNavIcon />
+                  </span>
+                  <span className="settings-nav-label">{t(lang, 'extensionsTab')}</span>
+                </button>,
+              )}
+              {navTip(
+                t(lang, 'memoryTab'),
+                <button
+                  type="button"
+                  className={`settings-nav-item${tab === 'memory' ? ' active' : ''}`}
+                  aria-label={t(lang, 'memoryTab')}
+                  aria-current={tab === 'memory' ? 'page' : undefined}
+                  onClick={() => selectTab('memory')}
+                >
+                  <span className="ico" aria-hidden>
+                    <MemoryNavIcon />
+                  </span>
+                  <span className="settings-nav-label">{t(lang, 'memoryTab')}</span>
+                </button>,
+              )}
+              {navTip(
+                t(lang, 'usageTab'),
+                <button
+                  type="button"
+                  className={`settings-nav-item${tab === 'usage' ? ' active' : ''}`}
+                  aria-label={t(lang, 'usageTab')}
+                  aria-current={tab === 'usage' ? 'page' : undefined}
+                  onClick={() => selectTab('usage')}
+                >
+                  <span className="ico" aria-hidden>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                      <path d="M4 19V5M4 19h16" strokeLinecap="round" />
+                      <path d="M8 15v-4M12 15V8M16 15v-7" strokeLinecap="round" />
+                    </svg>
+                  </span>
+                  <span className="settings-nav-label">{t(lang, 'usageTab')}</span>
+                </button>,
+              )}
+              {developerMode ? (
+                navTip(
+                  t(lang, 'instructions'),
+                  <button
+                    type="button"
+                    className={`settings-nav-item${tab === 'instructions' ? ' active' : ''}`}
+                    aria-label={t(lang, 'instructions')}
+                    aria-current={tab === 'instructions' ? 'page' : undefined}
+                    onClick={() => selectTab('instructions')}
+                  >
+                    <span className="ico" aria-hidden>
+                      <InstructionsNavIcon />
+                    </span>
+                    <span className="settings-nav-label">{t(lang, 'instructions')}</span>
+                  </button>,
+                )
+              ) : null}
+            </>
           ) : null}
         </nav>
         <div className="settings-main">
           <div className="settings-main-head">
+            <button
+              type="button"
+              className="settings-nav-hamburger"
+              title={navMenuOpen ? t(lang, 'sidebarFabClose') : t(lang, 'sidebarFabOpen')}
+              aria-label={navMenuOpen ? t(lang, 'sidebarFabClose') : t(lang, 'sidebarFabOpen')}
+              aria-expanded={navMenuOpen}
+              onClick={() => setNavMenuOpen((v) => !v)}
+            >
+              <MenuIcon />
+            </button>
             <h2>{title}</h2>
             <button type="button" className="settings-close" onClick={onClose} aria-label={t(lang, 'close')}>
               ×
@@ -767,12 +1101,7 @@ export function SettingsModal({
               <GeneralSettingsPanel
                 gatewayClient={gatewayClient}
                 needsHwRestart={needsHwRestart}
-                dataDir={dataDir}
-                exportBackup={exportBackup}
-                restoreBackup={restoreBackup}
                 lang={lang}
-                backupBusy={backupBusy}
-                backupExcludeSecrets={backupExcludeSecrets}
                 closeAction={closeAction}
                 developerMode={developerMode}
                 hardwareAcceleration={hardwareAcceleration}
@@ -780,61 +1109,59 @@ export function SettingsModal({
                 micOptions={micOptions}
                 microphoneId={microphoneId}
                 notifications={notifications}
-                setBackupExcludeSecrets={setBackupExcludeSecrets}
                 setCloseAction={setCloseAction}
                 setDeveloperMode={setDeveloperMode}
                 setHardwareAcceleration={setHardwareAcceleration}
                 setLanguage={setLanguage}
                 setMicrophoneId={setMicrophoneId}
                 setNotifications={setNotifications}
-                setRevealAdvanced={setRevealAdvanced}
-                setShowAdvancedSettings={setShowAdvancedSettings}
                 setSidebarDockMagnify={setSidebarDockMagnify}
                 setTheme={setTheme}
                 setTranslucent={setTranslucent}
                 setTimezone={setTimezone}
-                showAdvancedSettings={showAdvancedSettings}
                 sidebarDockMagnify={sidebarDockMagnify}
                 theme={theme}
                 timezone={timezone}
                 translucent={translucent}
               />
+            ) : tab === 'gateways' ? (
+              <ClientGatewaysPanel lang={lang} />
             ) : tab === 'gateway' ? (
               <GatewaySettingsPanel
-                saveTimerRef={saveTimerRef}
-                pendingSaveRef={pendingSaveRef}
                 lang={lang}
-                localHttpApiBindLan={localHttpApiBindLan}
-                localHttpApiEnabled={localHttpApiEnabled}
-                localHttpApiPort={localHttpApiPort}
-                localHttpApiServeUi={localHttpApiServeUi}
-                localHttpApiToken={localHttpApiToken}
-                setLocalHttpApiBindLan={setLocalHttpApiBindLan}
-                setLocalHttpApiEnabled={setLocalHttpApiEnabled}
-                setLocalHttpApiPort={setLocalHttpApiPort}
-                setLocalHttpApiServeUi={setLocalHttpApiServeUi}
-                setLocalHttpApiToken={setLocalHttpApiToken}
-                setShowLocalHttpApiToken={setShowLocalHttpApiToken}
-                showLocalHttpApiToken={showLocalHttpApiToken}
-              />
-            ) : tab === 'computers' ? (
-              <ComputersSettingsPanel
-                lang={lang}
+                gatewayHttpApiBindLan={gatewayHttpApiBindLan}
+                gatewayHttpApiPort={gatewayHttpApiPort}
+                gatewayHttpApiServeUi={gatewayHttpApiServeUi}
+                gatewayHttpApiToken={gatewayHttpApiToken}
+                gatewayApiTokens={gatewayApiTokens}
+                setGatewayHttpApiBindLan={setGatewayHttpApiBindLan}
+                setGatewayHttpApiPort={setGatewayHttpApiPort}
+                setGatewayHttpApiServeUi={setGatewayHttpApiServeUi}
+                onGatewayApiTokensChange={applyGatewayApiTokens}
                 computers={computersDraft}
                 defaultComputerId={defaultComputerId}
-                onChange={setComputersDraft}
+                onComputersChange={setComputersDraft}
                 onDefaultComputerIdChange={setDefaultComputerId}
+                gatewayClient={gatewayHostReadOnly}
+                dataDir={dataDir}
+                backupBusy={backupBusy}
+                backupExcludeSecrets={backupExcludeSecrets}
+                setBackupExcludeSecrets={setBackupExcludeSecrets}
+                exportBackup={exportBackup}
+                restoreBackup={restoreBackup}
+                bots={bots}
+                squads={squads}
               />
             ) : tab === 'extensions' ? (
               <McpSettingsPanel
                 lang={lang}
                 value={mcpDraft}
                 onChange={setMcpDraft}
-                readOnly={gatewayClient}
+                readOnly={gatewayHostReadOnly}
               />
             ) : tab === 'tools' ? (
               <ToolsSettingsPanel
-                gatewayClient={gatewayClient}
+                gatewayClient={gatewayHostReadOnly}
                 lang={lang}
                 aarAddRequest={aarAddRequest}
                 autoApprovalEnabled={autoApprovalEnabled}
@@ -852,6 +1179,7 @@ export function SettingsModal({
             ) : tab === 'security' ? (
               <SecuritySettingsPanel
                 lang={lang}
+                readOnly={gatewayHostReadOnly}
                 allowedPathsText={allowedPathsText}
                 blockMode={blockMode}
                 deniedPathsText={deniedPathsText}
@@ -875,9 +1203,9 @@ export function SettingsModal({
                   lang={lang}
                   value={modelSettings}
                   onChange={setModelSettings}
+                  readOnly={gatewayHostReadOnly}
                 />
 
-                {advancedVisible ? (<>
                 <div className="settings-section-label" style={{ marginTop: 16 }} data-settings-id="contextCompression">
                   <span>{t(lang, 'contextCompression')}</span>
                 </div>
@@ -920,6 +1248,11 @@ export function SettingsModal({
                           keepRecentMax: keptNumber(keepRecentMax, normalizeContextCompression(settings.contextCompression).keepRecentMax),
                           keepRecentMin: keptNumber(keepRecentMin, normalizeContextCompression(settings.contextCompression).keepRecentMin),
                           summaryMaxChars: keptNumber(summaryMaxChars, normalizeContextCompression(settings.contextCompression).summaryMaxChars),
+                          estimateSafetyFactor: keptNumber(
+                            estimateSafetyFactor,
+                            normalizeContextCompression(settings.contextCompression).estimateSafetyFactor,
+                          ),
+                          autoTopicCompress,
                         });
                         setKeepRecentMax(String(cc.keepRecentMax));
                         setKeepRecentMin(String(cc.keepRecentMin));
@@ -945,6 +1278,11 @@ export function SettingsModal({
                           keepRecentMax: keptNumber(keepRecentMax, normalizeContextCompression(settings.contextCompression).keepRecentMax),
                           keepRecentMin: keptNumber(keepRecentMin, normalizeContextCompression(settings.contextCompression).keepRecentMin),
                           summaryMaxChars: keptNumber(summaryMaxChars, normalizeContextCompression(settings.contextCompression).summaryMaxChars),
+                          estimateSafetyFactor: keptNumber(
+                            estimateSafetyFactor,
+                            normalizeContextCompression(settings.contextCompression).estimateSafetyFactor,
+                          ),
+                          autoTopicCompress,
                         });
                         setKeepRecentMax(String(cc.keepRecentMax));
                         setKeepRecentMin(String(cc.keepRecentMin));
@@ -970,43 +1308,67 @@ export function SettingsModal({
                           keepRecentMax: keptNumber(keepRecentMax, normalizeContextCompression(settings.contextCompression).keepRecentMax),
                           keepRecentMin: keptNumber(keepRecentMin, normalizeContextCompression(settings.contextCompression).keepRecentMin),
                           summaryMaxChars: keptNumber(summaryMaxChars, normalizeContextCompression(settings.contextCompression).summaryMaxChars),
+                          estimateSafetyFactor: keptNumber(
+                            estimateSafetyFactor,
+                            normalizeContextCompression(settings.contextCompression).estimateSafetyFactor,
+                          ),
+                          autoTopicCompress,
                         });
                         setSummaryMaxChars(String(cc.summaryMaxChars));
                       }}
                     />
                   </div>
+                  <div className="settings-row" data-settings-id="estimateSafetyFactor">
+                    <span className="settings-row-label">
+                      <span className="settings-row-label-text">{t(lang, 'estimateSafetyFactor')}</span>
+                      <SettingsHelpTip text={t(lang, 'estimateSafetyFactorHint')} />
+                    </span>
+                    <input
+                      spellCheck={false}
+                      className="wide"
+                      type="number"
+                      min={1}
+                      max={3}
+                      step={0.1}
+                      value={estimateSafetyFactor}
+                      onChange={(e) => setEstimateSafetyFactor(e.target.value)}
+                      onBlur={() => {
+                        const cc = normalizeContextCompression({
+                          ratio: Number(compressRatioPct) / 100,
+                          keepRecentMax: keptNumber(keepRecentMax, normalizeContextCompression(settings.contextCompression).keepRecentMax),
+                          keepRecentMin: keptNumber(keepRecentMin, normalizeContextCompression(settings.contextCompression).keepRecentMin),
+                          summaryMaxChars: keptNumber(summaryMaxChars, normalizeContextCompression(settings.contextCompression).summaryMaxChars),
+                          estimateSafetyFactor: keptNumber(
+                            estimateSafetyFactor,
+                            normalizeContextCompression(settings.contextCompression).estimateSafetyFactor,
+                          ),
+                          autoTopicCompress,
+                        });
+                        setEstimateSafetyFactor(String(cc.estimateSafetyFactor));
+                      }}
+                    />
+                  </div>
                 </div>
 
-                </>) : null}
               </div>
 
             ) : tab === 'instructions' ? (
               <InstructionsSettingsPanel
                 settings={settings}
                 lang={lang}
-                soulMdRecentMessageLimit={soulMdRecentMessageLimit}
                 soulMdRefreshSystemPrompt={soulMdRefreshSystemPrompt}
                 assistantRoleTemplate={assistantRoleTemplate}
-                captainMaxTurns={captainMaxTurns}
                 captainPersona={captainPersona}
                 instructionsSubTab={instructionsSubTab}
-                memberMaxTurns={memberMaxTurns}
-                memoryRecentMessageLimit={memoryRecentMessageLimit}
                 scopeInstruction={scopeInstruction}
-                setSoulMdRecentMessageLimit={setSoulMdRecentMessageLimit}
                 setSoulMdRefreshSystemPrompt={setSoulMdRefreshSystemPrompt}
                 setAssistantRoleTemplate={setAssistantRoleTemplate}
-                setCaptainMaxTurns={setCaptainMaxTurns}
                 setCaptainPersona={setCaptainPersona}
                 setInstructionsSubTab={setInstructionsSubTab}
-                setMemberMaxTurns={setMemberMaxTurns}
-                setMemoryRecentMessageLimit={setMemoryRecentMessageLimit}
                 setScopeInstruction={setScopeInstruction}
                 setSkillsCreateUpdateInstruction={setSkillsCreateUpdateInstruction}
-                setSkillsRecentMessageLimit={setSkillsRecentMessageLimit}
                 setSquadPlaybook={setSquadPlaybook}
                 skillsCreateUpdateInstruction={skillsCreateUpdateInstruction}
-                skillsRecentMessageLimit={skillsRecentMessageLimit}
                 squadPlaybook={squadPlaybook}
                 tab={tab}
               />
@@ -1020,7 +1382,7 @@ export function SettingsModal({
               />
             ) : tab === 'usage' ? (
               <UsagePanel lang={lang} bots={bots} squads={squads} />
-            ) : tab === 'updates' ? (
+            ) : tab === 'updates' && !pureWebUi ? (
               <UpdatesSettingsPanel
                 lang={lang}
                 autoUpdate={autoUpdate}

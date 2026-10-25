@@ -11,15 +11,24 @@ const explicit = mergeSettingsPatch(disk, { closeAction: 'ask' });
 assert.equal(explicit.closeAction, 'ask');
 
 {
-  const patch = { theme: 'light' as const, closeAction: 'quit' as const, notifications: false };
+  const patch = {
+    theme: 'light' as const,
+    closeAction: 'quit' as const,
+    notifications: false,
+    language: 'en' as const,
+    timezone: 'Asia/Shanghai',
+  };
   const stripped = omitGatewayDesktopOnlySettings(patch);
   assert.equal('closeAction' in stripped, false);
-  assert.equal(stripped.theme, 'light');
-  assert.equal(stripped.notifications, false);
-  // Merging the stripped patch must not overwrite disk closeAction.
+  assert.equal('theme' in stripped, false);
+  assert.equal('notifications' in stripped, false);
+  assert.equal('language' in stripped, false);
+  assert.equal(stripped.timezone, 'Asia/Shanghai');
+  // Merging the stripped patch must not overwrite disk client chrome.
   const next = mergeSettingsPatch(disk, stripped);
   assert.equal(next.closeAction, 'tray');
-  assert.equal(next.theme, 'light');
+  assert.equal(next.theme, 'dark');
+  assert.equal(next.timezone, 'Asia/Shanghai');
 }
 
 console.log('settingsPatch.test.ts: ok');

@@ -1,6 +1,7 @@
 /**
- * Hard gate for memory upserts (LLM refresh + summary-fact paths).
- * Rejects empty / too-short crumbs and bare UI/tool labels before write.
+ * Legacy quality heuristics (length / bare UI·tool labels).
+ * Not applied on the LLM memory write path — model owns quality; keep for
+ * tests and any non-write callers (e.g. unused legacy dedupeMemoryFacts).
  */
 
 /** Min significance units (~1 per CJK; 0.5 per Latin). 8 ≈ 「用户偏好中文回复」. */
@@ -59,9 +60,8 @@ const BARE_UI_OR_TOOL_LABELS = new Set([
 ]);
 
 /**
- * True when `text` is worth writing to memory.md.
- * Empty, whitespace-only, too-short fragments, and bare UI/tool nouns fail.
- * Callers still apply dedupe and expired-skip separately.
+ * Legacy predicate: empty / too-short / bare UI·tool labels fail.
+ * Do not use to filter model-returned memory entries on the write path.
  */
 export function isAcceptableMemoryFact(text: string): boolean {
   const trimmed = text.trim();

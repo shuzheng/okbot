@@ -12,13 +12,11 @@ const members: SquadMemberAgentSpec[] = [
     botId: 'bot_a',
     name: 'Alice',
     description: 'research',
-    role: '调研',
   },
   {
     botId: 'bot_b',
     name: 'Bob',
     description: 'code',
-    role: '工程',
   },
 ];
 

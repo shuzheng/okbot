@@ -17,3 +17,6 @@ export { OpenTasksPanel } from './OpenTasksPanel';
 export type { OpenTasksPanelProps } from './OpenTasksPanel';
 export { BubbleMoreMenu } from './BubbleMoreMenu';
 export type { BubbleMoreMenuItem } from './BubbleMoreMenu';
+export { ChatGatewaySwitcher } from './ChatGatewaySwitcher';
+export { ImageLightbox } from './ImageLightbox';
+export type { ImageLightboxTarget } from './ImageLightbox';

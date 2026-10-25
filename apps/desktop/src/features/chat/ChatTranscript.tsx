@@ -1,6 +1,5 @@
 import { Fragment, memo, useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
-import { BorderBeam } from 'border-beam';
-import { ThinkingOrb, type OrbState } from 'thinking-orbs';
+import { ThinkingOrb } from 'thinking-orbs';
 import {
   SQUAD_CAPTAIN_SPEAKER_ID,
   stripThinkContent,
@@ -11,7 +10,7 @@ import {
 } from '@okbot/shared';
 import { t, type UiLang } from '../../i18n';
 import { QuickTip } from '../../components/ui/QuickTip';
-import type { ToolCard, TurnPhase } from '../../types';
+import type { ToolCard } from '../../types';
 import { FlatAvatar } from '../../components/ui/avatars';
 import { BotMentionChip } from '../../components/ui/BotMentionChip';
 import {
@@ -40,7 +39,7 @@ import {
   formatSessionUpdatedAt,
   shouldShowMessageTimeDivider,
 } from '../../utils/formatSessionUpdatedAt';
-import { BotOnboarding } from '../bots/BotOnboarding';
+import { QuickChoiceCard } from './QuickChoiceCard';
 import { AssistantContent } from './AssistantContent';
 import { MentionsText } from './MentionsText';
 import { ToolCardView } from './ToolCardView';
@@ -49,7 +48,10 @@ import { OpenTasksPanel } from './OpenTasksPanel';
 import type { TaskRecord } from '@okbot/shared';
 import { TokenUsagePopover } from './TokenUsagePopover';
 import { BubbleSwipeRow, useMessagesSwipeReveal } from './BubbleSwipeRow';
+import { prefersCoarsePointer } from '../../hooks/usePhoneLayout';
 import { MeshExchangeModal } from './MeshExchangeModal';
+import { ImageLightbox, type ImageLightboxTarget } from './ImageLightbox';
+import { ImagePreviewProvider, useOpenImagePreview } from './ImagePreviewContext';
 import {
   buildMeshReceivedCollapse,
   isMeshReceived,
@@ -64,15 +66,14 @@ export type ChatTranscriptProps = {
   selectedBot: Bot | null;
   selectedSquad: Squad | null;
   busy: boolean;
-  turnPhase: TurnPhase;
-  turnStatusText: string;
-  turnPhaseOrbState: Record<TurnPhase, OrbState>;
   loadingOlder: boolean;
   /** True while switching sessions until history fetch settles. */
   messagesLoading: boolean;
   hasMoreOlder: boolean;
   highlightMessageId: string | null;
   showJumpToBottom: boolean;
+  /** New assistant replies below the fold since the user left bottom; 0 hides label. */
+  unreadBelowFoldCount?: number;
   error: string;
   messagesBoxRef: RefObject<HTMLDivElement | null>;
   bottomRef: RefObject<HTMLDivElement | null>;
@@ -85,7 +86,8 @@ export type ChatTranscriptProps = {
   onJumpToQuotedMessage: (messageId: string) => void;
   onJumpToBottom: () => void;
   onRetrySend: (message: ChatMessage) => void;
-  onBotOnboardingDone: (updated: Bot) => void;
+  /** Quick-choice card pick: send the option text as the user's reply. */
+  onQuickChoice: (text: string) => void;
   onApproveTool: (requestId: string) => void;
   onDenyTool: (requestId: string) => void;
   onApproveToolForever: (card: ToolCard) => void;
@@ -100,7 +102,7 @@ export type ChatTranscriptProps = {
   /** Per resolved model: show `<think>` as collapsible (default false). */
   showThinking?: boolean;
   /** When false, hide view-context / usage / turn-trace bubble actions. */
-  showAdvancedSettings?: boolean;
+  developerMode?: boolean;
 };
 
 
@@ -152,19 +154,19 @@ function BubbleUsageFromMenu({
 function UserBubbleActions({
   lang,
   message,
-  showAdvancedSettings,
+  developerMode,
   onCopyMessage,
   onOpenPromptContext,
   onQuoteMessage,
 }: {
   lang: UiLang;
   message: ChatMessage;
-  showAdvancedSettings: boolean;
+  developerMode: boolean;
   onCopyMessage: (message: ChatMessage) => boolean | Promise<boolean>;
   onOpenPromptContext: (messageId: string) => void;
   onQuoteMessage: (message: ChatMessage) => void;
 }) {
-  const moreItems = showAdvancedSettings
+  const moreItems = developerMode
     ? [
         {
           id: 'prompt-context',
@@ -196,7 +198,7 @@ function UserBubbleActions({
 function AssistantBubbleActions({
   lang,
   message,
-  showAdvancedSettings,
+  developerMode,
   usageModelRef,
   onCopyMessage,
   onQuoteMessage,
@@ -204,7 +206,7 @@ function AssistantBubbleActions({
 }: {
   lang: UiLang;
   message: ChatMessage;
-  showAdvancedSettings: boolean;
+  developerMode: boolean;
   usageModelRef?: string;
   onCopyMessage: (message: ChatMessage) => boolean | Promise<boolean>;
   onQuoteMessage: (message: ChatMessage) => void;
@@ -212,7 +214,7 @@ function AssistantBubbleActions({
 }) {
   const moreBtnRef = useRef<HTMLButtonElement | null>(null);
   const [usageOpen, setUsageOpen] = useState(false);
-  const moreItems = showAdvancedSettings
+  const moreItems = developerMode
     ? [
         {
           id: 'token-usage',
@@ -333,17 +335,23 @@ function MessageAttachImage({
       </div>
     );
   }
+  const openPreview = useOpenImagePreview();
   return (
-    <a
+    <button
+      type="button"
       className="message-attach-image"
-      href={src}
-      target="_blank"
-      rel="noreferrer"
       role="listitem"
       title={attachment.name}
+      onClick={() => {
+        openPreview?.({
+          src,
+          alt: attachment.name,
+          fileName: attachment.name,
+        });
+      }}
     >
       <img src={src} alt={attachment.name} loading="lazy" />
-    </a>
+    </button>
   );
 }
 
@@ -390,14 +398,12 @@ export const ChatTranscript = memo(function ChatTranscript({
   selectedBot,
   selectedSquad,
   busy,
-  turnPhase,
-  turnStatusText,
-  turnPhaseOrbState,
   loadingOlder,
   messagesLoading,
   hasMoreOlder,
   highlightMessageId,
   showJumpToBottom,
+  unreadBelowFoldCount = 0,
   error,
   messagesBoxRef,
   bottomRef,
@@ -409,7 +415,7 @@ export const ChatTranscript = memo(function ChatTranscript({
   onJumpToQuotedMessage,
   onJumpToBottom,
   onRetrySend,
-  onBotOnboardingDone,
+  onQuickChoice,
   onApproveTool,
   onDenyTool,
   onApproveToolForever,
@@ -420,13 +426,107 @@ export const ChatTranscript = memo(function ChatTranscript({
   immersiveChat,
   onToggleImmersiveChat,
   showThinking = false,
-  showAdvancedSettings = false,
+  developerMode = false,
 }: ChatTranscriptProps) {
+  const unreadBelowFoldLabel =
+    unreadBelowFoldCount > 0
+      ? t(lang, 'unreadBelowFold', { count: String(unreadBelowFoldCount) })
+      : '';
   const [meshViewMessage, setMeshViewMessage] = useState<ChatMessage | null>(null);
+  const [imagePreview, setImagePreview] = useState<ImageLightboxTarget | null>(null);
+  /** Quick-choice cards the user closed with × (this window session only). */
+  const [dismissedChoiceIds, setDismissedChoiceIds] = useState<ReadonlySet<string>>(() => new Set());
+  // Card shows only under the latest visible reply; any later message retires it.
+  let choiceTargetId: string | null = null;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const row = messages[i]!;
+    if (row.role === 'assistant' && !stripThinkContent(row.content || '').trim() && !row.choice) continue;
+    if (row.role === 'assistant' && row.choice && !row.meshExchange && !dismissedChoiceIds.has(row.id)) {
+      choiceTargetId = row.id;
+    }
+    break;
+  }
+  /** Phone/coarse: which bubble shows floating actions (tap-to-reveal; hover stays desktop). */
+  const [actionsOpenId, setActionsOpenId] = useState<string | null>(null);
+  const actionsTapRef = useRef<{ id: string | null; x: number; y: number; pointerId: number }>({
+    id: null,
+    x: 0,
+    y: 0,
+    pointerId: -1,
+  });
   // Close assistant-to-assistant overlay when the user switches sessions.
   useEffect(() => {
     setMeshViewMessage(null);
+    setImagePreview(null);
   }, [selectedBot?.id, selectedSquad?.id]);
+  // Clear tap-open actions when switching chats.
+  useEffect(() => {
+    setActionsOpenId(null);
+  }, [selectedBot?.id, selectedSquad?.id]);
+
+  // Phone / coarse pointer: tap a message bubble to show FABs; tap elsewhere to hide.
+  // Desktop fine-pointer keeps CSS :hover. Ignore moves that look like a swipe.
+  useEffect(() => {
+    if (!prefersCoarsePointer()) return;
+    const host = messagesBoxRef.current;
+    if (!host) return;
+    const TAP_SLOP_PX = 12; // > AXIS_LOCK_PX so a claimed time-swipe is never a FAB tap
+
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.pointerType === 'mouse') return;
+      const target = e.target;
+      if (!(target instanceof Element)) return;
+      // Keep open while interacting with the action rail / menus.
+      if (target.closest('.bubble-actions, .bubble-more-menu, .token-usage-popover')) {
+        actionsTapRef.current = { id: null, x: 0, y: 0, pointerId: -1 };
+        return;
+      }
+      const row = target.closest('.bubble-swipe-host[data-message-id], .bubble-row[data-message-id]');
+      const id = row?.getAttribute('data-message-id') ?? null;
+      actionsTapRef.current = { id, x: e.clientX, y: e.clientY, pointerId: e.pointerId };
+    };
+
+    const onPointerUp = (e: PointerEvent) => {
+      const tap = actionsTapRef.current;
+      if (tap.pointerId !== e.pointerId) return;
+      actionsTapRef.current = { id: null, x: 0, y: 0, pointerId: -1 };
+      const dx = e.clientX - tap.x;
+      const dy = e.clientY - tap.y;
+      if (Math.hypot(dx, dy) > TAP_SLOP_PX) return; // swipe / scroll — not a tap
+      if (tap.id) {
+        setActionsOpenId((prev) => (prev === tap.id ? null : tap.id));
+      } else {
+        setActionsOpenId(null);
+      }
+    };
+
+    const onPointerCancel = (e: PointerEvent) => {
+      if (actionsTapRef.current.pointerId === e.pointerId) {
+        actionsTapRef.current = { id: null, x: 0, y: 0, pointerId: -1 };
+      }
+    };
+
+    // Outside the messages scroller (composer, chrome): dismiss.
+    const onWinPointerDown = (e: PointerEvent) => {
+      if (e.pointerType === 'mouse') return;
+      const target = e.target;
+      if (!(target instanceof Element)) return;
+      if (host.contains(target)) return;
+      if (target.closest('.bubble-more-menu, .token-usage-popover')) return;
+      setActionsOpenId(null);
+    };
+
+    host.addEventListener('pointerdown', onPointerDown);
+    host.addEventListener('pointerup', onPointerUp);
+    host.addEventListener('pointercancel', onPointerCancel);
+    window.addEventListener('pointerdown', onWinPointerDown, true);
+    return () => {
+      host.removeEventListener('pointerdown', onPointerDown);
+      host.removeEventListener('pointerup', onPointerUp);
+      host.removeEventListener('pointercancel', onPointerCancel);
+      window.removeEventListener('pointerdown', onWinPointerDown, true);
+    };
+  }, [messagesBoxRef]);
   const sessionOwnerId = selectedSquad ? undefined : selectedBot?.id;
   const meshRecvCollapse = buildMeshReceivedCollapse(messages, sessionOwnerId);
   // Squad has no squad-level color; tint only when 1:1 bot accent is set.
@@ -451,7 +551,8 @@ export const ChatTranscript = memo(function ChatTranscript({
   );
 
   return (
-    <>
+    <ImagePreviewProvider value={(target) => setImagePreview(target)}>
+      <>
       <div className="messages-shell">
         <div
           className={`messages scroll-fade${userBubbleAccent ? ' has-user-bubble-tint' : ''}`}
@@ -464,9 +565,7 @@ export const ChatTranscript = memo(function ChatTranscript({
           ) : hasMoreOlder ? (
             <div className="messages-page-hint">{t(lang, 'scrollLoadEarlier')}</div>
           ) : null}
-          {selectedBot && selectedBot.onboardingComplete === false ? (
-            <BotOnboarding lang={lang} bot={selectedBot} onDone={onBotOnboardingDone} />
-          ) : messagesLoading ? (
+          {messagesLoading ? (
             <div
               className="placeholder messages-history-loading"
               aria-busy="true"
@@ -593,7 +692,9 @@ export const ChatTranscript = memo(function ChatTranscript({
                     role={m.role === 'user' ? 'user' : 'assistant'}
                     className={`bubble-row ${m.role === 'user' ? 'user' : 'assistant'}${
                       highlightMessageId === m.id ? ' message-highlight' : ''
-                    }${showMemberAvatar ? ' has-speaker' : ''}`}
+                    }${showMemberAvatar ? ' has-speaker' : ''}${
+                      actionsOpenId === m.id ? ' is-actions-open' : ''
+                    }`}
                   >
                     {showMemberAvatar ? (
                       <FlatAvatar
@@ -625,36 +726,22 @@ export const ChatTranscript = memo(function ChatTranscript({
                           <UserBubbleActions
                             lang={lang}
                             message={m}
-                            showAdvancedSettings={showAdvancedSettings}
+                            developerMode={developerMode}
                             onCopyMessage={onCopyMessage}
                             onOpenPromptContext={onOpenPromptContext}
                             onQuoteMessage={onQuoteMessage}
                           />
-                          {m.sendStatus === 'pending' ? (
-                            <BorderBeam
-                              className="bubble-send-beam"
-                              size="pulse-outside"
-                              theme={resolvedOrbTheme()}
-                              colorVariant="ocean"
-                              strength={0.8}
-                              borderRadius={16}
-                              active
-                            >
-                              <div
-                                className={`bubble user send-pending${
-                                  hasUserBody ? '' : ' bubble-attach-only'
-                                }`}
-                              >
-                                {hasUserBody ? <MentionsText text={userBody} bots={bots} /> : null}
-                              </div>
-                            </BorderBeam>
-                          ) : hasUserBody || m.sendStatus === 'failed' ? (
+                          {m.sendStatus === 'pending' ||
+                          hasUserBody ||
+                          m.sendStatus === 'failed' ? (
                             <div
                               className={`bubble user${
-                                m.sendStatus === 'failed' ? ' send-failed' : ''
-                              }${hasUserBody ? '' : ' bubble-attach-only'}`}
+                                m.sendStatus === 'pending' ? ' send-pending' : ''
+                              }${m.sendStatus === 'failed' ? ' send-failed' : ''}${
+                                hasUserBody ? '' : ' bubble-attach-only'
+                              }`}
                             >
-                              {hasUserBody ? <MentionsText text={userBody} bots={bots} /> : null}
+                              {hasUserBody ? <MentionsText text={userBody} bots={bots} preferBotId={sessionOwnerId} /> : null}
                               {m.sendStatus === 'failed' ? (
                                 <button
                                   type="button"
@@ -694,12 +781,13 @@ export const ChatTranscript = memo(function ChatTranscript({
                             content={m.content}
                             showThinking={showThinking}
                             bots={bots}
+                            preferBotId={speakerId || sessionOwnerId}
                           />
                         </div>
                         <AssistantBubbleActions
                           lang={lang}
                           message={m}
-                          showAdvancedSettings={showAdvancedSettings}
+                          developerMode={developerMode}
                           usageModelRef={usageModelRef}
                           onCopyMessage={onCopyMessage}
                           onQuoteMessage={onQuoteMessage}
@@ -709,6 +797,17 @@ export const ChatTranscript = memo(function ChatTranscript({
                     )}
                   </BubbleSwipeRow>
                 )}
+                {m.id === choiceTargetId && m.choice ? (
+                  <QuickChoiceCard
+                    lang={lang}
+                    choice={m.choice}
+                    disabled={busy}
+                    onPick={onQuickChoice}
+                    onDismiss={() =>
+                      setDismissedChoiceIds((prev) => new Set(prev).add(m.id))
+                    }
+                  />
+                ) : null}
               </Fragment>
             );
           })}
@@ -719,31 +818,32 @@ export const ChatTranscript = memo(function ChatTranscript({
                 !messages.some((m) => m.id === c.messageId),
             )
             .map((card) => renderToolCard(card))}
-          {busy ? (
-            <div className="chat-turn-status" aria-live="polite" aria-label={turnStatusText}>
-              <ThinkingOrb
-                state={turnPhaseOrbState[turnPhase]}
-                size={20}
-                theme={resolvedOrbTheme()}
-                aria-hidden
-              />
-              <span className="chat-turn-status-text">{turnStatusText}</span>
-            </div>
-          ) : null}
           <div ref={bottomRef} />
           </div>
         </div>
         {showJumpToBottom ? (
-          <QuickTip text={t(lang, 'scrollToBottom')}>
+          unreadBelowFoldLabel ? (
             <button
               type="button"
-              className="scroll-to-bottom-btn"
-              aria-label={t(lang, 'scrollToBottom')}
+              className="scroll-to-bottom-btn has-unread-label"
+              aria-label={unreadBelowFoldLabel}
               onClick={onJumpToBottom}
             >
               <ChevronDownIcon />
+              <span className="scroll-to-bottom-label">{unreadBelowFoldLabel}</span>
             </button>
-          </QuickTip>
+          ) : (
+            <QuickTip text={t(lang, 'scrollToBottom')}>
+              <button
+                type="button"
+                className="scroll-to-bottom-btn"
+                aria-label={t(lang, 'scrollToBottom')}
+                onClick={onJumpToBottom}
+              >
+                <ChevronDownIcon />
+              </button>
+            </QuickTip>
+          )
         ) : null}
         <button
           type="button"
@@ -771,7 +871,16 @@ export const ChatTranscript = memo(function ChatTranscript({
           onClose={() => setMeshViewMessage(null)}
         />
       ) : null}
+      {imagePreview ? (
+        <ImageLightbox
+          lang={lang}
+          target={imagePreview}
+          onClose={() => setImagePreview(null)}
+          variant="cover"
+        />
+      ) : null}
     </>
+    </ImagePreviewProvider>
   );
 });function resolvedOrbTheme(): 'light' | 'dark' {
   if (typeof document === 'undefined') return 'dark';

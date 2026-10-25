@@ -2,6 +2,7 @@ import { useEffect, type Dispatch, type MutableRefObject, type SetStateAction } 
 import {
   plainTextFromMarkdown,
   stripThinkContent,
+  type AppSettings,
   type Bot,
   type ChatMessage,
   type Squad,
@@ -35,11 +36,20 @@ export type ChatEventsDeps = {
   reconciledLocalIdsRef: MutableRefObject<Set<string>>;
   sendsInFlightRef: MutableRefObject<Record<string, number>>;
   notifyUnfocusedRef: MutableRefObject<
-    (ownerId: string, kind: 'reply' | 'approval', toolName?: string, eventId?: string) => void
+    (
+      ownerId: string,
+      kind: 'reply' | 'approval',
+      toolName?: string,
+      eventId?: string,
+      replyBody?: string,
+    ) => void
   >;
   markSessionUnread: (ownerId: string, hasUnread: boolean) => void;
   setBots: Dispatch<SetStateAction<Bot[]>>;
   setSquads: Dispatch<SetStateAction<Squad[]>>;
+  /** Gateway settings (server.json overlays). Skip while Settings modal has unsaved drafts. */
+  setSettings: Dispatch<SetStateAction<AppSettings | null>>;
+  settingsOpenRef: MutableRefObject<boolean>;
   setSelection: Dispatch<SetStateAction<Selection>>;
   setMessages: Dispatch<SetStateAction<ChatMessage[]>>;
   setToolCardsByBot: Dispatch<SetStateAction<Record<string, ToolCard[]>>>;
@@ -65,6 +75,8 @@ export function useChatEvents(deps: ChatEventsDeps): void {
     markSessionUnread,
     setBots,
     setSquads,
+    setSettings,
+    settingsOpenRef,
     setSelection,
     setMessages,
     setToolCardsByBot,
@@ -208,10 +220,77 @@ export function useChatEvents(deps: ChatEventsDeps): void {
     }, 120);
   };
 
+  /** Reload the open transcript when another client wrote messages (owner IPC → attach). */
+  let transcriptRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  let transcriptRefreshSeq = 0;
+  const scheduleActiveTranscriptRefresh = (ownerId: string) => {
+    const id = (ownerId || '').trim();
+    if (!id) return;
+    if (transcriptRefreshTimer != null) clearTimeout(transcriptRefreshTimer);
+    transcriptRefreshTimer = setTimeout(() => {
+      transcriptRefreshTimer = null;
+      const sel = selectionRef.current;
+      if (!sel || (sel.kind !== 'bot' && sel.kind !== 'squad') || sel.id !== id) return;
+      if (typeof window.okbot.getMessagesPage !== 'function') return;
+      const ticket = ++transcriptRefreshSeq;
+      void window.okbot
+        .getMessagesPage(id, { limit: 50 })
+        .then((page) => {
+          if (ticket !== transcriptRefreshSeq) return;
+          const sel2 = selectionRef.current;
+          if (!sel2 || sel2.id !== id) return;
+          const incoming = page && Array.isArray(page.messages) ? (page.messages as ChatMessage[]) : [];
+          if (!incoming.length) return;
+          // Append only — keep older pages the user already scrolled in; turn
+          // events may have already painted some rows (dedupe by id).
+          setMessages((prev) => {
+            const seen = new Set(prev.map((m) => m.id));
+            const missing = incoming.filter((m) => !seen.has(m.id));
+            return missing.length ? [...prev, ...missing] : prev;
+          });
+        })
+        .catch((err) => {
+          console.error('[okbot] active transcript refresh failed', err);
+        });
+    }, 160);
+  };
+
+  let settingsRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  let settingsRefreshSeq = 0;
+  const scheduleSettingsRefresh = () => {
+    // Do not overwrite SettingsModal drafts mid-edit; open/close paths refetch.
+    if (settingsOpenRef.current) return;
+    if (settingsRefreshTimer != null) clearTimeout(settingsRefreshTimer);
+    settingsRefreshTimer = setTimeout(() => {
+      settingsRefreshTimer = null;
+      const ticket = ++settingsRefreshSeq;
+      void window.okbot
+        .getSettings()
+        .then((next) => {
+          if (ticket !== settingsRefreshSeq) return;
+          if (settingsOpenRef.current) return;
+          if (next) setSettings(next);
+        })
+        .catch((err) => {
+          console.error('[okbot] settings refresh failed', err);
+        });
+    }, 120);
+  };
+
   const off = window.okbot.onRuntimeEvent((event) => {
     // Other window (Electron or gateway) changed the shared ~/.okbot roster.
     if (event.type === 'sessions_changed') {
       scheduleSessionsRefresh();
+      // Turn events on /v1/events paint live deltas when isActive; also refetch the
+      // open transcript on message roster pings so owner→attach cannot stay stale
+      // if a turn event was missed, filtered, or raced with history load.
+      if (event.reason === 'message' && event.botId) {
+        scheduleActiveTranscriptRefresh(event.botId);
+      }
+      return;
+    }
+    if (event.type === 'settings_changed') {
+      scheduleSettingsRefresh();
       return;
     }
 
@@ -490,7 +569,8 @@ export function useChatEvents(deps: ChatEventsDeps): void {
           }, 400);
         }
         if (event.type === 'done') {
-          notifyUnfocusedRef.current(event.botId, 'reply', undefined, event.messageId);
+          const replyBody = plainTextFromMarkdown(stripThinkContent(event.content || ''));
+          notifyUnfocusedRef.current(event.botId, 'reply', undefined, event.messageId, replyBody);
         }
       }
     }
@@ -514,7 +594,6 @@ export function useChatEvents(deps: ChatEventsDeps): void {
             ? {
                 ...b,
                 lastReplyPreview: text,
-                ...(event.aborted ? {} : { onboardingComplete: true }),
               }
             : b,
         ),
@@ -557,6 +636,7 @@ export function useChatEvents(deps: ChatEventsDeps): void {
               createdAt: new Date().toISOString(),
               ...(event.usage ? { usage: event.usage } : {}),
               ...(event.trace ? { trace: event.trace } : {}),
+              ...(event.choice ? { choice: event.choice } : {}),
             },
           ];
         }
@@ -589,6 +669,7 @@ export function useChatEvents(deps: ChatEventsDeps): void {
           content: nextContent,
           ...(event.type === 'done' && event.usage ? { usage: event.usage } : {}),
           ...(event.type === 'done' && event.trace ? { trace: event.trace } : {}),
+          ...(event.type === 'done' && event.choice ? { choice: event.choice } : {}),
         };
         return next;
       }
@@ -598,6 +679,8 @@ export function useChatEvents(deps: ChatEventsDeps): void {
   return () => {
     off();
     if (refreshTimer != null) clearTimeout(refreshTimer);
+    if (settingsRefreshTimer != null) clearTimeout(settingsRefreshTimer);
+    if (transcriptRefreshTimer != null) clearTimeout(transcriptRefreshTimer);
     if (pending.raf != null) {
       cancelAnimationFrame(pending.raf);
       pending.raf = null;

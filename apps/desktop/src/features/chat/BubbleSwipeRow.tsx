@@ -24,8 +24,13 @@ const WHEEL_IDLE_MS = 280;
 /** Minimum |deltaX| (px, after deltaMode scale) to treat as horizontal. */
 const WHEEL_EPS = 0.08;
 
+/** Pointer travel before axis lock (px). Short moves stay scroll/tap; then claim. */
+const AXIS_LOCK_PX = 8;
+
 /** Gesture owner id when the chat messages area owns the swipe (not a bubble row). */
 const MESSAGES_GESTURE_OWNER = '__messages__';
+
+type AxisMode = 'idle' | 'pending' | 'horizontal' | 'vertical';
 
 type RowHandle = {
   id: string;
@@ -205,15 +210,18 @@ function sharedMaxReveal(fallbackEl?: HTMLElement | null): number {
 }
 
 /**
- * Bind wheel/trackpad swipe-to-reveal on the **entire** messages scroll
- * container (including gaps between bubbles). Left-button pointer drag is
- * intentionally left alone so native text/box selection works.
- * Keeps 跟手 progress, opacity, swipe-out, and idle auto-close. Broadcasts
- * offset to every mounted BubbleSwipeRow time column.
+ * Bind swipe-to-reveal on the **entire** messages scroll container (gaps
+ * included). Wheel/trackpad always; touch/pen pointer drag on phone (mouse
+ * left-button stays native text selection — see 2436f5e).
+ * Keeps 跟手 progress, opacity, swipe-out, and idle/release auto-close.
+ * Broadcasts offset to every mounted BubbleSwipeRow time column.
  */
 export function useMessagesSwipeReveal(
   containerRef: RefObject<HTMLElement | null>,
 ): void {
+  const modeRef = useRef<AxisMode>('idle');
+  const startRef = useRef({ x: 0, y: 0, pointerId: -1, offset: 0 });
+
   useEffect(() => {
     const host = containerRef.current;
     if (!host) return;
@@ -221,6 +229,9 @@ export function useMessagesSwipeReveal(
     const onWheel = (e: WheelEvent) => {
       if (isInteractiveTarget(e.target)) return;
       if (isOverNestedScrollable(e.target, host)) return;
+      // Pointer owns from pointerdown (pending) through claimed horizontal — ignore
+      // wheel so an idle timer scheduled here cannot finishAll mid-drag.
+      if (modeRef.current === 'pending' || modeRef.current === 'horizontal') return;
 
       const { dx, dy } = wheelDeltaPx(e);
       let horiz = dx;
@@ -274,10 +285,103 @@ export function useMessagesSwipeReveal(
       scheduleWheelSpringBack();
     };
 
+    const onPointerDown = (e: PointerEvent) => {
+      // Mouse drag = text select (desktop). Touch/pen = swipe-to-reveal time.
+      if (e.pointerType !== 'touch' && e.pointerType !== 'pen') return;
+      if (e.button !== 0) return;
+      if (isInteractiveTarget(e.target)) return;
+      if (isOverNestedScrollable(e.target, host)) return;
+      // Pause wheel spring-back while the pointer may take over; if we never claim
+      // horizontal, endPointer reschedules it (do not finishAll on tap).
+      clearWheelIdleTimer();
+      modeRef.current = 'pending';
+      startRef.current = {
+        x: e.clientX,
+        y: e.clientY,
+        pointerId: e.pointerId,
+        offset: currentOffset(),
+      };
+    };
+
+    const onPointerMove = (e: PointerEvent) => {
+      if (modeRef.current === 'idle' || modeRef.current === 'vertical') return;
+      if (startRef.current.pointerId !== e.pointerId) return;
+
+      const dx = e.clientX - startRef.current.x;
+      const dy = e.clientY - startRef.current.y;
+
+      if (modeRef.current === 'pending') {
+        const adx = Math.abs(dx);
+        const ady = Math.abs(dy);
+        const alreadyOpen = startRef.current.offset > 0;
+        // Already open: claim on the first horizontal pixel so tiny reverse is 跟手,
+        // not a no-op pending move that later collapsed via finishAll on release.
+        const lockPx = alreadyOpen ? 1 : AXIS_LOCK_PX;
+        if (adx < lockPx && ady < lockPx) return;
+        const horizWins = adx > ady * HORIZ_DOMINANCE;
+        // Closed: only finger-left claims open. Open: either direction 跟手 (滑入/滑出).
+        const claim = horizWins && (alreadyOpen || dx < 0);
+        if (claim) {
+          modeRef.current = 'horizontal';
+          claimGesture(MESSAGES_GESTURE_OWNER);
+          host.setPointerCapture(e.pointerId);
+          window.getSelection()?.removeAllRanges();
+          // Keep pointerdown x/offset so axis-lock travel counts 跟手 from first contact.
+        } else {
+          modeRef.current = 'vertical';
+          return;
+        }
+      }
+
+      if (modeRef.current !== 'horizontal') return;
+      e.preventDefault();
+      const max = sharedMaxReveal(host);
+      // Finger left (dx < 0) → reveal increases; finger right → 跟手滑出.
+      const next = Math.min(max, Math.max(0, startRef.current.offset - dx));
+      scheduleSharedOffset(next, true);
+    };
+
+    const endPointer = (e: PointerEvent) => {
+      if (startRef.current.pointerId !== e.pointerId && modeRef.current !== 'horizontal') {
+        return;
+      }
+      // Snapshot + clear mode before releasePointerCapture so onLostPointerCapture
+      // (sync) does not double-finishAll.
+      const wasHorizontal = modeRef.current === 'horizontal';
+      modeRef.current = 'idle';
+      if (host.hasPointerCapture(e.pointerId)) {
+        host.releasePointerCapture(e.pointerId);
+      }
+      // Only after a claimed horizontal swipe: release → animate fully closed.
+      if (wasHorizontal) {
+        finishAll();
+      } else if (currentOffset() > 0) {
+        // Pointer never claimed: restore wheel idle dismiss.
+        scheduleWheelSpringBack();
+      }
+    };
+
+    const onLostPointerCapture = () => {
+      // endPointer already snapshotted & handled when it releases capture.
+      if (modeRef.current !== 'horizontal') return;
+      modeRef.current = 'idle';
+      finishAll();
+    };
+
     host.addEventListener('wheel', onWheel, { passive: false, capture: true });
+    host.addEventListener('pointerdown', onPointerDown);
+    host.addEventListener('pointermove', onPointerMove);
+    host.addEventListener('pointerup', endPointer);
+    host.addEventListener('pointercancel', endPointer);
+    host.addEventListener('lostpointercapture', onLostPointerCapture);
 
     return () => {
       host.removeEventListener('wheel', onWheel, { capture: true });
+      host.removeEventListener('pointerdown', onPointerDown);
+      host.removeEventListener('pointermove', onPointerMove);
+      host.removeEventListener('pointerup', endPointer);
+      host.removeEventListener('pointercancel', endPointer);
+      host.removeEventListener('lostpointercapture', onLostPointerCapture);
       if (gestureOwnerId === MESSAGES_GESTURE_OWNER) {
         finishAll();
       }
@@ -301,10 +405,11 @@ export type BubbleSwipeRowProps = {
  * so gaps between bubbles also trigger reveal. This row only paints the shared
  * offset onto its time column / user slide.
  *
- * - Wheel / trackpad only: macOS natural-scroll deltaX — finger left (positive
+ * - Wheel / trackpad: macOS natural-scroll deltaX — finger left (positive
  *   deltaX) opens; finger right closes (跟手滑出). Idle after last horizontal
- *   wheel spring-closes. Left-button drag never claims swipe — native text
- *   selection only.
+ *   wheel spring-closes.
+ * - Touch / pen pointer: same 跟手 open/close with axis lock; release spring-
+ *   closes. Mouse left-button never claims swipe — native text selection only.
  * - 跟手: swipePx accumulates 1:1 both ways (no gain on open OR close).
  *   progress = clamp(swipePx / timeColumnWidthPx, 0, 1) where timeColumnWidthPx
  *   is `--bubble-swipe-reveal` (fallback 52). Opacity and translateX both use progress.

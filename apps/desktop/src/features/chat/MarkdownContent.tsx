@@ -1,4 +1,5 @@
 import { memo, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { ChatImageFx } from './ChatImageFx';
 import { resolveUiLang, t, type UiLang } from '../../i18n';
 import {
   isOkbotAssetSrc,
@@ -210,6 +211,12 @@ function isInlineCode(
   return true;
 }
 
+
+/** Thumbnail in bubble; plain img + lightbox click. */
+function ChatThumbImage({ src, alt }: { src: string; alt?: string }) {
+  return <ChatImageFx src={src} alt={alt} />;
+}
+
 /** Load ~/.okbot/<owner>/resources images via gateway /v1/media (CSP: no file:// / https). */
 const OkbotAssetImage = memo(function OkbotAssetImage({
   src,
@@ -269,10 +276,7 @@ const OkbotAssetImage = memo(function OkbotAssetImage({
       </span>
     );
   }
-  if (!imgSrc) {
-    return <span className="md-asset-loading">{alt || 'image'}…</span>;
-  }
-  return <img src={imgSrc} alt={alt || ''} />;
+  return <ChatImageFx src={imgSrc} alt={alt} loading={!imgSrc} />;
 });
 
 /**
@@ -292,14 +296,20 @@ export const MarkdownContent = memo(function MarkdownContent({
   children,
   lang,
   bots = [],
+  preferBotId,
 }: {
   children: string;
   lang?: UiLang;
   /** Roster for resolving `@助手名` / `@id` mention chips. */
   bots?: readonly MentionBotRef[];
+  /** Open-session owner id — duplicate names resolve to this bot's profile. */
+  preferBotId?: string;
 }) {
   const uiLang = lang ?? resolveUiLang(undefined);
-  const source = useMemo(() => linkifyBotMentions(children, bots), [children, bots]);
+  const source = useMemo(
+    () => linkifyBotMentions(children, bots, preferBotId ? { preferBotId } : undefined),
+    [children, bots, preferBotId],
+  );
   const botsById = useMemo(() => {
     const map = new Map<string, MentionBotRef>();
     for (const b of bots) map.set(b.id, b);
@@ -336,7 +346,7 @@ export const MarkdownContent = memo(function MarkdownContent({
               return <OkbotAssetImage src={src || ''} alt={alt} lang={uiLang} />;
             }
             if (src && isSafeDataImageSrc(src)) {
-              return <img src={src} alt={alt || ''} />;
+              return <ChatThumbImage src={src} alt={alt} />;
             }
             if (src && /^https?:/i.test(src)) {
               return (
@@ -353,7 +363,8 @@ export const MarkdownContent = memo(function MarkdownContent({
                 </span>
               );
             }
-            return <img src={src} alt={alt || ''} />;
+            if (src) return <ChatThumbImage src={src} alt={alt} />;
+            return null;
           },
           code: ({ className, children: codeChildren, node }) => {
             const text = String(codeChildren).replace(/\n$/, '');

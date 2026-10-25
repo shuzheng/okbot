@@ -1,7 +1,6 @@
 import type { MemoryEntry } from '@okbot/shared';
 import { t, type UiLang } from '../../i18n';
 import { MemoryEntriesList } from './MemoryEntriesList';
-import { SettingsHelpTip } from './SettingsHelpTip';
 import { toast } from '../../components/ui';
 import { formatSystemError } from '../../utils/formatSystemError';
 
@@ -20,13 +19,9 @@ export function MemorySettingsPanel({
 }) {
   return (
 
-    <div>
-      <div
-        className="settings-section-label settings-section-label-with-help"
-        data-settings-id="globalMemories"
-      >
-        <span>{t(lang, 'globalMemoriesManage')}</span>
-        <SettingsHelpTip text={t(lang, 'globalMemoriesManageHint')} />
+    <div className="settings-memory-panel">
+      <div className="settings-section-label" data-settings-id="globalMemories">
+        {t(lang, 'globalMemoriesManage')}
       </div>
       <div className="settings-card">
         <div className="settings-row">

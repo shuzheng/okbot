@@ -45,38 +45,40 @@ export function ModelRefSelect({
   const value = encodeModelRefValue(providerId, modelId);
 
   return (
-    <select
-      id={id}
-      className="model-ref-select"
-      value={value}
-      onChange={(e) => onChange(decodeModelRefValue(e.target.value))}
-    >
-      {emptyLabel != null ? <option value="">{emptyLabel}</option> : null}
-      {providers.map((p) => {
-        const models = sortCatalogModels(
-          p.models.filter(
-            (m) => m.enabled || (p.id === providerId && m.id === modelId),
-          ),
-        );
-        if (!models.length) return null;
-        const groupLabel = p.name.trim() || p.id;
-        return (
-          <optgroup key={p.id} label={groupLabel}>
-            {models.map((m) => {
-              const isDefault =
-                p.id === defaultProviderId && m.id === defaultModelId;
-              const label = `${groupLabel} / ${m.name || m.id}${
-                isDefault ? ` · ${t(lang, 'modelDefaultBadge')}` : ''
-              } (${formatContextWindowBadge(m.contextWindow)})`;
-              return (
-                <option key={`${p.id}:${m.id}`} value={encodeModelRefValue(p.id, m.id)}>
-                  {label}
-                </option>
-              );
-            })}
-          </optgroup>
-        );
-      })}
-    </select>
+    <span className="settings-select-chevron-host">
+      <select
+        id={id}
+        className="model-ref-select"
+        value={value}
+        onChange={(e) => onChange(decodeModelRefValue(e.target.value))}
+      >
+        {emptyLabel != null ? <option value="">{emptyLabel}</option> : null}
+        {providers.map((p) => {
+          const models = sortCatalogModels(
+            p.models.filter(
+              (m) => m.enabled || (p.id === providerId && m.id === modelId),
+            ),
+          );
+          if (!models.length) return null;
+          const groupLabel = p.name.trim() || p.id;
+          return (
+            <optgroup key={p.id} label={groupLabel}>
+              {models.map((m) => {
+                const isDefault =
+                  p.id === defaultProviderId && m.id === defaultModelId;
+                const label = `${groupLabel} / ${m.name || m.id}${
+                  isDefault ? ` · ${t(lang, 'modelDefaultBadge')}` : ''
+                } (${formatContextWindowBadge(m.contextWindow)})`;
+                return (
+                  <option key={`${p.id}:${m.id}`} value={encodeModelRefValue(p.id, m.id)}>
+                    {label}
+                  </option>
+                );
+              })}
+            </optgroup>
+          );
+        })}
+      </select>
+    </span>
   );
 }

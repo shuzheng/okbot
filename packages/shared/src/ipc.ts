@@ -1,7 +1,7 @@
 /** IPC channel names and runtime transport vocabulary. */
 
-import type { Bot, Squad, AppSettings } from './settings.js';
-import type { ChatMessage } from './chat.js';
+import type { Bot, Squad, AppSettings, SettingsNavTab } from './settings.js';
+import type { ChatMessage, QuickChoice } from './chat.js';
 import type { TokenUsage } from './usage.js';
 import type { MessageTrace } from './trace.js';
 import type { TaskRecord } from './tasks.js';
@@ -10,7 +10,7 @@ export const IpcChannels = {
   getBootstrap: 'okbot:get-bootstrap',
   listBots: 'okbot:list-bots',
   createBot: 'okbot:create-bot',
-  finishBotOnboarding: 'okbot:finish-bot-onboarding',
+  startBotOnboarding: 'okbot:start-bot-onboarding',
   updateBot: 'okbot:update-bot',
   deleteBot: 'okbot:delete-bot',
   listSquads: 'okbot:list-squads',
@@ -20,9 +20,18 @@ export const IpcChannels = {
   getSettings: 'okbot:get-settings',
   /** Live gateway access token this process checks (or the saved one when owning the server). */
   getGatewayAccessToken: 'okbot:get-gateway-access-token',
+  /** Live gateway super-admin token (owner process / desktop only; blank for access-only clients). */
+  getGatewayAdminToken: 'okbot:get-gateway-admin-token',
   /** One-shot: attach preload reads the gateway token. Never put it on the command line. */
   attachGatewayToken: 'okbot:attach-gateway-token',
+  /**
+   * Local-host Electron attach only: merge gatewayHttpApi into ~/.okbot/server.json
+   * when local-host attach prefers IPC so the HTTP server is not restarted mid-response.
+   */
+  saveLocalGatewayHttpApi: 'okbot:save-local-gateway-http-api',
   saveSettings: 'okbot:save-settings',
+  /** Live Darwin vibrancy/bg without waiting for debounced settings save. */
+  applyWindowTranslucent: 'okbot:apply-window-translucent',
   discoverModels: 'okbot:discover-models',
   testModelConnection: 'okbot:test-model-connection',
   probeComputer: 'okbot:probe-computer',
@@ -42,6 +51,8 @@ export const IpcChannels = {
   compressSessionNow: 'okbot:compress-session-now',
   chatEvent: 'okbot:chat-event',
   setChatUnread: 'okbot:set-chat-unread',
+  /** Desktop: macOS/Linux dock/taskbar badge count (Electron app.setBadgeCount). */
+  setBadgeCount: 'okbot:set-badge-count',
   toolRespond: 'okbot:tool-respond',
   copyText: 'okbot:copy-text',
   setTrafficLightPosition: 'okbot:set-traffic-light-position',
@@ -62,7 +73,17 @@ export const IpcChannels = {
   updaterDownload: 'okbot:updater-download',
   updaterInstall: 'okbot:updater-install',
   updaterEvent: 'okbot:updater-event',
+  /** Bundled changelog history (newest first), localized. */
+  updaterGetChangelogHistory: 'okbot:updater-get-changelog-history',
+  /** Current-version What's New when not yet acknowledged. */
+  updaterGetWhatsNew: 'okbot:updater-get-whats-new',
+  updaterMarkWhatsNewSeen: 'okbot:updater-mark-whats-new-seen',
+  /** Soft-update only: dismiss the update-available prompt for a version. */
+  updaterDismissUpdatePrompt: 'okbot:updater-dismiss-update-prompt',
+  getGatewayApiTokens: 'okbot:get-gateway-api-tokens',
   getUsageStats: 'okbot:get-usage-stats',
+  /** Per gateway API token usage (messages + tokens by assistant/squad). */
+  getApiTokenUsage: 'okbot:get-api-token-usage',
   /** Recent error-log lines from ~/.okbot/logs (redacted). */
   getRecentErrorLog: 'okbot:get-recent-error-log',
   clearModelBindingsForProvider: 'okbot:clear-model-bindings-for-provider',
@@ -114,13 +135,31 @@ export const IpcChannels = {
    * Payload: settings | sessions (legacy) | openSession.
    */
   shellNavigate: 'okbot:shell-navigate',
+  /** Desktop-only: ~/.okbot/gateways.json (not gateway HTTP). */
+  getClientGatewayPrefs: 'okbot:get-client-gateway-prefs',
+  setActiveClientGateway: 'okbot:set-active-client-gateway',
+  upsertClientGateway: 'okbot:upsert-client-gateway',
+  removeClientGateway: 'okbot:remove-client-gateway',
+  /** Probe remote/local gateway baseUrl + token (challenge). */
+  probeClientGateway: 'okbot:probe-client-gateway',
+  /** Electron userData client chrome (theme, language, …) — never gateway ~/.okbot. */
+  getClientSettings: 'okbot:get-client-settings',
+  saveClientSettings: 'okbot:save-client-settings',
+  /** app.relaunch() + quit so remote/local attach path re-runs in main. */
+  relaunchApp: 'okbot:relaunch-app',
+  /**
+   * Switch active client gateway. Prefer hot reconnect when already in attach mode
+   * (same preload); returns mode 'relaunch' when the window must restart (e.g. own local).
+   */
+  switchClientGateway: 'okbot:switch-client-gateway',
 } as const;
 
-/** Main → renderer shell navigation payload. */
 export type ShellNavigateAction = 'sessions' | 'settings' | 'openSession';
+/** Main → renderer shell navigation. `settings.tab` focuses a Settings sidebar id;
+ * optional `sectionId` scrolls to `[data-settings-id]` (e.g. frost recreate restore). */
 export type ShellNavigatePayload =
   | { action: 'sessions' }
-  | { action: 'settings' }
+  | { action: 'settings'; tab?: SettingsNavTab; sectionId?: string }
   | { action: 'openSession'; kind: 'bot' | 'squad'; id: string };
 
 export type PendingToolRequest = {
@@ -146,6 +185,8 @@ export type RuntimeEvent =
       content: string;
       usage?: TokenUsage;
       trace?: MessageTrace;
+      /** Quick-choice card attached to this reply (model `ask_choice`). */
+      choice?: QuickChoice;
       aborted?: boolean;
       runId?: string;
     }
@@ -197,6 +238,15 @@ export type RuntimeEvent =
       reason: SessionsChangedReason;
     }
   | {
+      /**
+       * Gateway `server.json` (and merged UI settings) changed.
+       * Clients refetch getSettings. Not a chat-turn event.
+       * Client chrome (theme / client.json / localStorage) stays local.
+       */
+      type: 'settings_changed';
+      at: string;
+    }
+  | {
       /** Multi-task queue changed on disk; UI refreshes open tasks above composer. */
       type: 'tasks_changed';
       botId: string;
@@ -227,6 +277,34 @@ export type UpdaterPhase =
   | 'downloaded'
   | 'error';
 
+/** Locale key for changelog notes (UI language; falls back to en). */
+export type ChangelogLang = 'en' | 'zh';
+
+export type ChangelogLocaleNotes = {
+  title: string;
+  highlights: string[];
+  bodyMarkdown: string;
+};
+
+/** One version's changelog.json (bundled or remote release asset). */
+export type ChangelogEntry = {
+  version: string;
+  releasedAt: string;
+  forceUpdate: boolean;
+  notes: {
+    en: ChangelogLocaleNotes;
+    zh?: ChangelogLocaleNotes;
+  };
+};
+
+/** Notes already resolved for the active UI language. */
+export type LocalizedChangelogNotes = ChangelogLocaleNotes & {
+  version: string;
+  releasedAt: string;
+  forceUpdate: boolean;
+  lang: ChangelogLang;
+};
+
 export interface UpdaterStatus {
   phase: UpdaterPhase;
   currentVersion: string;
@@ -238,6 +316,12 @@ export interface UpdaterStatus {
    * example `no_space`, `not_writable`). Set on the next launch so the UI can tell the user.
    */
   lastInstallFailed?: string;
+  /** Localized notes for availableVersion (remote changelog.json when fetch succeeds). */
+  availableNotes?: LocalizedChangelogNotes;
+  /** From remote changelog; missing/offline → false (soft). */
+  forceUpdate?: boolean;
+  /** Soft only: user dismissed the update prompt for availableVersion. */
+  updatePromptDismissed?: boolean;
 }
 
 export interface BootstrapPayload {

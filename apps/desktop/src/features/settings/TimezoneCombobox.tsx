@@ -101,7 +101,7 @@ export function TimezoneCombobox({
       <button
         ref={triggerRef}
         type="button"
-        className="settings-timezone-combo-trigger"
+        className="settings-timezone-combo-trigger settings-select-chevron-host"
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={t(lang, 'timezone')}
@@ -111,9 +111,6 @@ export function TimezoneCombobox({
         }}
       >
         <span className="settings-timezone-combo-trigger-text">{triggerLabel}</span>
-        <span className="settings-timezone-combo-caret" aria-hidden>
-          ▾
-        </span>
       </button>
       {open ? (
         <div className="settings-timezone-combo-panel" role="listbox" style={panelStyle}>

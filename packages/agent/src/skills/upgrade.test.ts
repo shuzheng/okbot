@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { upgradeSkillFormat } from './upgrade.js';
 import { parseSkillMarkdown, formatSkillMarkdown } from './parse.js';
 
-// Trigger-only ZH → capability + 何时使用
+// Trigger-only ZH → capability + 何时使用 in description; body reshaped to template
 {
   const r = upgradeSkillFormat({
     slug: 'okbot-explain-code',
@@ -11,13 +11,17 @@ import { parseSkillMarkdown, formatSkillMarkdown } from './parse.js';
     body: '1. 用一句话说这段代码或报错在做什么。\n2. 按执行顺序说明。',
   });
   assert.equal(r.changed, true);
+  assert.equal(r.reshapedBody, true);
   assert.match(r.skill.description, /何时使用/);
-  assert.match(r.skill.description, /用一句话说这段代码/);
-  assert.doesNotMatch(r.skill.description, /时使用。$/);
+  assert.match(r.skill.body, /## 何时使用此技能/);
+  assert.match(r.skill.body, /## 工作原理/);
+  assert.match(r.skill.body, /用一句话说这段代码/);
+  assert.match(r.skill.body, /## 示例/);
+  assert.match(r.skill.body, /## 注意事项/);
   assert.ok(r.skill.description.length <= 1024);
 }
 
-// Trigger-only EN → capability + Use when
+// Trigger-only EN → Use when; English template headings
 {
   const r = upgradeSkillFormat({
     slug: 'okbot-fix-bug',
@@ -26,11 +30,14 @@ import { parseSkillMarkdown, formatSkillMarkdown } from './parse.js';
     body: '1. Restate the symptom.\n2. Give a fix.',
   });
   assert.equal(r.changed, true);
+  assert.equal(r.reshapedBody, true);
   assert.match(r.skill.description, /Use when/i);
-  assert.match(r.skill.description, /Restate the symptom/);
+  assert.match(r.skill.body, /## When to use this skill/i);
+  assert.match(r.skill.body, /## How it works/i);
+  assert.match(r.skill.body, /Restate the symptom/);
 }
 
-// Move ## 何时使用 from body into description
+// Keep ## 何时使用 in body (do NOT move into description-only)
 {
   const r = upgradeSkillFormat({
     slug: 'okbot-demo',
@@ -47,72 +54,87 @@ import { parseSkillMarkdown, formatSkillMarkdown } from './parse.js';
       '2. 回报变更。',
     ].join('\n'),
   });
-  assert.equal(r.movedWhenFromBody, true);
-  assert.match(r.skill.description, /何时使用/);
-  assert.match(r.skill.description, /RCA/);
-  assert.doesNotMatch(r.skill.body, /何时使用/);
+  assert.equal(r.reshapedBody, true);
+  assert.match(r.skill.body, /## 何时使用此技能/);
+  assert.match(r.skill.body, /RCA/);
   assert.match(r.skill.body, /改 yaml/);
+  assert.match(r.skill.body, /## 工作原理/);
 }
 
-// Move ## When from body
+// Already professional template — no reshape
 {
-  const r = upgradeSkillFormat({
-    slug: 'okbot-rca',
-    name: 'okbot-rca',
-    description: 'Run screenshot RCA.',
-    body: '## When\n\nUser reports headless timeout.\n\n## Steps\n\n1. Pull logs.',
-  });
-  assert.equal(r.movedWhenFromBody, true);
-  assert.match(r.skill.description, /Use when/i);
-  assert.doesNotMatch(r.skill.body, /^## When/m);
-  assert.match(r.skill.body, /Pull logs/);
-}
-
-// Already good — no change (aside from normalize)
-{
-  const desc =
-    '从日志提取错误。何时使用：用户贴报错。勿用于：闲聊。';
+  const body = [
+    '# Okbot-good 技能',
+    '',
+    '## 何时使用此技能',
+    '当用户贴报错时使用。',
+    '',
+    '## 工作原理',
+    '1. 拉日志。',
+    '2. 写结论。',
+    '',
+    '## 示例',
+    '用户：「这段报错怎么修？」',
+    '',
+    '## 注意事项',
+    '不要覆盖未确认的配置。',
+  ].join('\n');
+  const desc = '从日志提取错误。何时使用：用户贴报错。';
   const r = upgradeSkillFormat({
     slug: 'okbot-good',
     name: 'okbot-good',
     description: desc,
-    body: '1. 拉日志。\n2. 写结论。',
+    body,
   });
-  assert.equal(r.movedWhenFromBody, false);
+  assert.equal(r.reshapedBody, false);
   assert.equal(r.skill.description, desc);
+  assert.equal(r.skill.body, body);
   assert.equal(r.changed, false);
 }
 
-// Round-trip via format/parse
+// Round-trip via format/parse keeps when section in body
 {
   const md = formatSkillMarkdown({
     slug: 'okbot-x',
     name: 'okbot-x',
-    description: '用户要整理下载文件夹时使用。',
-    body: '## 何时使用\n整理桌面时。\n\n1. 列出文件。',
+    description: '整理本机下载文件夹。',
+    body: [
+      '# Okbot-x 技能',
+      '',
+      '## 何时使用此技能',
+      '当用户要整理下载文件夹时使用。',
+      '',
+      '## 工作原理',
+      '1. 列出文件。',
+      '',
+      '## 示例',
+      '用户：「帮我整理下载」。',
+      '',
+      '## 注意事项',
+      '不要删除文件。',
+    ].join('\n'),
   });
   const parsed = parseSkillMarkdown('okbot-x', md);
   const r = upgradeSkillFormat(parsed);
-  assert.equal(r.changed, true);
-  assert.match(r.skill.description, /何时使用/);
-  assert.doesNotMatch(r.skill.body, /何时使用/);
+  assert.equal(r.reshapedBody, false);
+  assert.match(r.skill.body, /## 何时使用此技能/);
   const again = upgradeSkillFormat(r.skill);
   assert.equal(again.changed, false);
 }
 
-
-// Body was only ## When — keep when-text in body (still enrich description)
+// Plain steps only → full template
 {
   const r = upgradeSkillFormat({
     slug: 'okbot-when-only',
     name: 'okbot-when-only',
     description: 'Runs a pack.',
-    body: '## When\nnew body',
+    body: '1. Unpack.\n2. Report.',
   });
-  assert.equal(r.movedWhenFromBody, true);
-  assert.match(r.skill.body, /new body/);
-  assert.doesNotMatch(r.skill.body, /^## When/m);
-  assert.match(r.skill.description, /Use when|何时使用|new body/i);
+  assert.equal(r.reshapedBody, true);
+  assert.match(r.skill.body, /## When to use this skill/i);
+  assert.match(r.skill.body, /Unpack/);
+  assert.match(r.skill.body, /## Examples/i);
+  assert.match(r.skill.body, /## Notes/i);
 }
 
 console.log('upgrade.test.ts: ok');

@@ -14,7 +14,7 @@ import {
   buildChatStartPayload,
   pickChatStartFields,
 } from '@okbot/shared';
-import { gatewayBootJs } from './gatewayLoginPage';
+import { gatewayBootJs } from '@okbot/gateway';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
@@ -101,8 +101,8 @@ assert.match(boot, /function buildChatStartBody\s*\(/);
 assert.match(boot, /chatStart:function\(botId,\s*text,\s*opts\)\{\s*return postChat\([^,]+,\s*buildChatStartBody\(text,\s*opts\)\)/);
 assert.match(boot, /chatStartSquad:function\(squadId,\s*text,\s*opts\)\{\s*return postChat\([^,]+,\s*buildChatStartBody\(text,\s*opts\)\)/);
 
-// localHttpApi must parse via normalizeChatStartPayload.
-const localApi = readFileSync(join(root, 'electron/localHttpApi.ts'), 'utf8');
-assert.match(localApi, /normalizeChatStartPayload\(parsed\)/);
+// gatewayHttpApi must parse via normalizeChatStartPayload.
+const gatewayApi = readFileSync(join(root, '../gateway/src/gatewayHttpApi.ts'), 'utf8');
+assert.match(gatewayApi, /normalizeChatStartPayload\(parsed\)/);
 
 console.log('chatStartPayload.contract.test.ts: ok');

@@ -46,6 +46,8 @@ export interface RunChatInput {
   assistantRoleTemplate?: string;
   /** User-chosen default assistant (identity hint in system prompt). */
   isDefaultAssistant?: boolean;
+  /** New-assistant onboarding guide (system prompt) while onboarding is incomplete. */
+  onboardingGuide?: string;
   model: ResolvedModelConfig;
   /** Recent UI transcript; ignored for model history when `session` is provided. */
   history?: ChatMessage[];
@@ -123,8 +125,6 @@ export interface RunAgentChatInput extends RunChatInput {
   meshStack?: string[];
   /** @deprecated Call caps removed; optional leftover counter. */
   meshCallBudget?: import('./mesh.js').MeshCallBudget;
-  /** Nested ask_assistant maxTurns; prefer settings.squad.memberMaxTurns. */
-  meshMemberMaxTurns?: number;
   /** Surface mesh ask/reply bubbles in the current 1:1 session. */
   onMeshExchange?: (info: {
     kind: 'ask' | 'reply';
@@ -183,6 +183,8 @@ export interface ResumeAgentChatAfterHitlInput {
   assistantRoleTemplate?: string;
   /** User-chosen default assistant (identity hint in system prompt). */
   isDefaultAssistant?: boolean;
+  /** New-assistant onboarding guide (system prompt) while onboarding is incomplete. */
+  onboardingGuide?: string;
   model: ResolvedModelConfig;
   tools?: ToolPreferences;
   security?: SecuritySettings;
@@ -208,7 +210,6 @@ export interface ResumeAgentChatAfterHitlInput {
   meshDepth?: number;
   meshStack?: string[];
   meshCallBudget?: import('./mesh.js').MeshCallBudget;
-  meshMemberMaxTurns?: number;
   onMeshExchange?: (info: {
     kind: 'ask' | 'reply';
     exchangeId: string;

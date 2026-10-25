@@ -1,8 +1,8 @@
 import { Agent, OpenAIProvider, Runner, tool, type Tool } from '@openai/agents';
 import { z } from 'zod';
 import {
+  DEFAULT_RUNNER_MAX_TURNS,
   DEFAULT_SECURITY,
-  DEFAULT_SQUAD_SETTINGS,
   DEFAULT_TOOL_PREFERENCES,
   createId,
   emptyTokenUsage,
@@ -61,7 +61,6 @@ export type BuildAskAssistantToolInput = HitlLoopHooks & {
   security?: SecuritySettings;
   toolRunBudget?: ToolRunBudget;
   web?: WebSettings;
-  memberMaxTurns?: number;
   ownerId: string;
   resourcesDir: string;
   executionBackend?: ExecutionBackend;
@@ -80,7 +79,6 @@ export function buildAskAssistantTool(input: BuildAskAssistantToolInput): Tool |
   }
   const toolPrefs = input.tools ?? DEFAULT_TOOL_PREFERENCES;
   const security = input.security ?? DEFAULT_SECURITY;
-  const memberMaxTurns = input.memberMaxTurns ?? DEFAULT_SQUAD_SETTINGS.memberMaxTurns;
   const imageApi = {
     baseURL: input.model.baseURL,
     apiKey: input.model.apiKey,
@@ -202,7 +200,7 @@ export function buildAskAssistantTool(input: BuildAskAssistantToolInput): Tool |
         const runOpts: { stream: true; signal?: AbortSignal; maxTurns: number } = {
           stream: true,
           signal: input.signal,
-          maxTurns: memberMaxTurns,
+          maxTurns: DEFAULT_RUNNER_MAX_TURNS,
         };
 
         const first = await runModelSegment(input, async () => {

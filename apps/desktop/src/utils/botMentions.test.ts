@@ -113,3 +113,42 @@ assert.equal(isBotMentionHref('https://example.com'), false);
 }
 
 console.log('botMentions.test.ts: ok');
+
+{
+  // Duplicate display names: without preferBotId, do not bind name → first roster hit.
+  const a: MentionBotRef = {
+    id: 'bot_a',
+    name: '新建助手',
+    emoji: '🅰️',
+    color: '#aa0000',
+    avatarKind: 'bot-avatar',
+    botAvatarType: 'clover',
+  };
+  const b: MentionBotRef = {
+    id: 'bot_b',
+    name: '新建助手',
+    emoji: '🅱️',
+    color: '#0000aa',
+    avatarKind: 'bot-avatar',
+    botAvatarType: 'cloud',
+  };
+  const ambiguous = splitBotMentions('我是「新建助手」', [a, b]);
+  assert.equal(
+    ambiguous.every((s) => s.kind === 'text'),
+    true,
+    'ambiguous same-name must not chip to the first bot',
+  );
+
+  const preferB = splitBotMentions('我是「新建助手」', [a, b], { preferBotId: 'bot_b' });
+  assert.equal(preferB.length, 2);
+  assert.equal(preferB[0]?.kind === 'text' && preferB[0].text, '我是');
+  assert.equal(preferB[1]?.kind === 'mention' && preferB[1].bot.id, 'bot_b');
+  assert.equal(preferB[1]?.kind === 'mention' && preferB[1].bot.botAvatarType, 'cloud');
+
+  const byId = splitBotMentions('看 @bot_b', [a, b]);
+  assert.equal(byId.some((s) => s.kind === 'mention' && s.bot.id === 'bot_b'), true);
+
+  const linked = linkifyBotMentions('我是「新建助手」', [a, b], { preferBotId: 'bot_b' });
+  assert.match(linked, /okbot-mention:bot_b/);
+  assert.doesNotMatch(linked, /okbot-mention:bot_a/);
+}

@@ -28,6 +28,17 @@ export type {
 } from './types.js';
 
 export { buildAgentInstructions } from './instructions.js';
+export {
+  ASK_CHOICE_TOOL_NAME,
+  ONBOARDING_PROFILE_TOOL_NAME,
+  buildAskChoiceTool,
+  buildOnboardingInstruction,
+  buildOnboardingProfileTool,
+  onboardingSeedText,
+  type OnboardingProfileApply,
+  type OnboardingProfileUpdate,
+  type QuickChoiceApply,
+} from './onboarding.js';
 export { runAgentChat, resumeAgentChatAfterHitl, resumeAgentChatFromCheckpoint } from './runAgentChat.js';
 export {
   runSquadChat,
@@ -179,6 +190,7 @@ export {
   parseOwnerResourceMarkdownSrc,
   normalizeMediaMarkdownSrc,
   normalizeReplyMediaMarkdown,
+  stripInternalImageStorageHints,
   ownerResourceAssetRel,
   ownerResourcesDir,
   GENERATE_IMAGE_UNSUPPORTED_MESSAGE,

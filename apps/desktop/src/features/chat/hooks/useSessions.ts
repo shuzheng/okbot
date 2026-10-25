@@ -3,6 +3,7 @@ import type { Bot, Squad } from '@okbot/shared';
 import type { Selection, SessionItem } from '../../../types';
 import { saveLastSelection } from '../../sidebar';
 import { SESSION_AVATAR_IDLE_MS } from '../../../utils/sessionAvatarMotion';
+import { countUnreadSessions } from '../unreadCounts';
 
 /**
  * Roster + selection + unread helpers.
@@ -82,6 +83,13 @@ export function useSessions() {
     },
     [bots, squads],
   );
+
+  // Dock / taskbar badge: total sessions with unread (boolean flags → session count).
+  useEffect(() => {
+    const count = countUnreadSessions(bots, squads);
+    const fn = window.okbot?.setBadgeCount;
+    if (typeof fn === 'function') void fn(count);
+  }, [bots, squads]);
 
   // Sort key is owner.updatedAt, which touchBot/touchSquad bump on chat messages only.
   // Profile edits must not change updatedAt (see RosterStore.updateBot/updateSquad).

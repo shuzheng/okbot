@@ -84,6 +84,166 @@ export function formatDurationMs(ms: number): string {
   return s > 0 ? `${m} m ${s} s` : `${m} m`;
 }
 
+/** Compact duration for aggregated timeline totals: `250ms`, `1.5s`, `18m 04s`. */
+export function formatCompactDurationMs(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return '—';
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 60_000) {
+    const s = ms / 1000;
+    return `${s >= 10 ? s.toFixed(0) : s.toFixed(1)}s`;
+  }
+  const m = Math.floor(ms / 60_000);
+  const s = Math.round((ms % 60_000) / 1000);
+  return `${m}m ${String(s).padStart(2, '0')}s`;
+}
+
+/** Axis tick label: `0s`, `10m`, `35m`, `1m 30s`. */
+export function formatAxisTickMs(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return '0s';
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
+  const m = Math.floor(ms / 60_000);
+  const s = Math.round((ms % 60_000) / 1000);
+  if (s === 0) return `${m}m`;
+  return `${m}m ${String(s).padStart(2, '0')}s`;
+}
+
+const AXIS_STEP_CANDIDATES_MS = [
+  1_000, 2_000, 5_000, 10_000, 15_000, 30_000, 60_000, 120_000, 300_000, 600_000, 900_000,
+  1_800_000, 3_600_000,
+];
+
+export type TimelineTick = {
+  offsetMs: number;
+  /** 0–100 position on the shared axis. */
+  pct: number;
+  label: string;
+};
+
+/** Nice ticks across a turn window (~4–6 marks including ends). */
+export function computeTimelineTicks(windowMs: number): TimelineTick[] {
+  const w = Math.max(1, windowMs);
+  let step = AXIS_STEP_CANDIDATES_MS[AXIS_STEP_CANDIDATES_MS.length - 1];
+  for (const candidate of AXIS_STEP_CANDIDATES_MS) {
+    if (w / candidate <= 5) {
+      step = candidate;
+      break;
+    }
+  }
+  const ticks: TimelineTick[] = [{ offsetMs: 0, pct: 0, label: formatAxisTickMs(0) }];
+  for (let t = step; t < w * 0.92; t += step) {
+    ticks.push({ offsetMs: t, pct: (t / w) * 100, label: formatAxisTickMs(t) });
+  }
+  const endLabel = formatAxisTickMs(w);
+  if (ticks[ticks.length - 1]?.label !== endLabel) {
+    ticks.push({ offsetMs: w, pct: 100, label: endLabel });
+  } else {
+    ticks[ticks.length - 1] = { offsetMs: w, pct: 100, label: endLabel };
+  }
+  return ticks;
+}
+
+export type KindTimelineKind = 'model' | 'tool';
+
+export type KindTimelineRow = {
+  kind: KindTimelineKind;
+  /** Sum of per-span durations for this kind (not wall-clock union). */
+  totalMs: number;
+  segments: WaterfallBar[];
+};
+
+export type KindTimeline = {
+  windowMs: number;
+  ticks: TimelineTick[];
+  rows: KindTimelineRow[];
+};
+
+/**
+ * Subtract `cutters` from `bases` on the wall-clock axis.
+ * Used so the 模型 row shows idle gaps while tools / approvals run inside a
+ * wrapping model span (runner.run nests auto-allow tools inside one model segment).
+ */
+function subtractBarIntervals(bases: WaterfallBar[], cutters: WaterfallBar[], windowMs: number): WaterfallBar[] {
+  const w = Math.max(1, windowMs);
+  const cuts = cutters
+    .map((c) => ({ start: c.offsetMs, end: c.offsetMs + c.durationMs }))
+    .filter((c) => c.end > c.start)
+    .sort((a, b) => a.start - b.start || a.end - b.end);
+  const out: WaterfallBar[] = [];
+  for (const base of bases) {
+    let pieces: Array<{ start: number; end: number }> = [
+      { start: base.offsetMs, end: base.offsetMs + base.durationMs },
+    ];
+    for (const cut of cuts) {
+      const next: Array<{ start: number; end: number }> = [];
+      for (const p of pieces) {
+        if (cut.end <= p.start || cut.start >= p.end) {
+          next.push(p);
+          continue;
+        }
+        if (cut.start > p.start) next.push({ start: p.start, end: cut.start });
+        if (cut.end < p.end) next.push({ start: cut.end, end: p.end });
+      }
+      pieces = next;
+    }
+    for (const p of pieces) {
+      const durationMs = Math.max(0, p.end - p.start);
+      if (durationMs <= 0) continue;
+      const offsetMs = Math.max(0, p.start);
+      const leftPct = Math.min(100, Math.max(0, (offsetMs / w) * 100));
+      const rawWidth = (durationMs / w) * 100;
+      const widthPct = Math.min(100 - leftPct, Math.max(0.5, rawWidth));
+      out.push({ span: base.span, offsetMs, durationMs, leftPct, widthPct });
+    }
+  }
+  return out;
+}
+
+/**
+ * Aggregated 模型 / 工具 header rows: same time axis as waterfall bars.
+ * Only `model` and `tool` spans appear as segments; other kinds stay in the list.
+ * Omit the 工具 row when tools were not used (totalMs === 0 / no tool spans).
+ *
+ * Model spans from the recorder wrap `runner.run()` (tools nest inside). For the
+ * visual track, carve tool + wait_approval intervals out of model so idle gaps
+ * show; totals remain the sum of raw per-span durations.
+ */
+export function computeKindTimeline(trace: MessageTrace): KindTimeline {
+  const bars = computeWaterfallBars(trace);
+  let windowMs = 1;
+  for (const bar of bars) {
+    windowMs = Math.max(windowMs, bar.offsetMs + bar.durationMs);
+  }
+  if (trace.endedAt) {
+    const a = Date.parse(trace.startedAt);
+    const b = Date.parse(trace.endedAt);
+    if (Number.isFinite(a) && Number.isFinite(b)) windowMs = Math.max(windowMs, b - a);
+  }
+  const modelBars = bars.filter((b) => b.span.kind === 'model');
+  const toolBars = bars.filter((b) => b.span.kind === 'tool');
+  const cutters = bars.filter((b) => b.span.kind === 'tool' || b.span.kind === 'wait_approval');
+  let modelTotal = 0;
+  for (const seg of modelBars) modelTotal += seg.durationMs;
+  let toolTotal = 0;
+  for (const seg of toolBars) toolTotal += seg.durationMs;
+  const rows: KindTimelineRow[] = [
+    {
+      kind: 'model',
+      totalMs: modelTotal,
+      segments: subtractBarIntervals(modelBars, cutters, windowMs),
+    },
+  ];
+  // Hide empty 工具 aggregate when no tools ran (0ms / empty bar).
+  if (toolTotal > 0) {
+    rows.push({
+      kind: 'tool',
+      totalMs: toolTotal,
+      segments: toolBars,
+    });
+  }
+  return { windowMs, ticks: computeTimelineTicks(windowMs), rows };
+}
+
 export type WaterfallBar = {
   span: TurnSpan;
   offsetMs: number;

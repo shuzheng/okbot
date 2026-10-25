@@ -103,8 +103,13 @@ export const ChatComposer = memo(function ChatComposer({
   useLayoutEffect(() => {
     const el = composerRef.current;
     if (!el) return;
-    const linePx = 18;
-    const padPx = 10; // textarea vertical padding 5+5
+    // Match CSS (.composer-inner textarea); mobile bump is 16px/22px in app.css.
+    const computed = getComputedStyle(el);
+    const linePxParsed = parseFloat(computed.lineHeight);
+    const linePx = Number.isFinite(linePxParsed) && linePxParsed > 0 ? linePxParsed : 18;
+    const padTop = parseFloat(computed.paddingTop) || 0;
+    const padBottom = parseFloat(computed.paddingBottom) || 0;
+    const padPx = padTop + padBottom > 0 ? padTop + padBottom : 10;
     const maxLines = 5;
     const maxPx = maxLines * linePx + padPx;
     const singleLinePx = linePx + padPx;

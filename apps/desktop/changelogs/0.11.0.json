@@ -1,0 +1,25 @@
+{
+  "version": "0.11.0",
+  "releasedAt": "2026-10-19T00:00:00Z",
+  "forceUpdate": false,
+  "notes": {
+    "en": {
+      "title": "What's new in 0.11.0",
+      "highlights": [
+        "Open tasks — expand/collapse the in-progress task list above the composer",
+        "Paste images & files in the composer (uploads via the gateway)",
+        "Edit page refresh — Memory and Skills as their own tabs; paginated Tasks / Resources"
+      ],
+      "bodyMarkdown": "## Added\n\n- **Open tasks**: expand/collapse the in-progress task list (default collapsed) as an overlay above the composer.\n- **Paste images & files** in the composer: attachments upload via the gateway `uploads/` path.\n- **Edit page** refresh for assistants/squads: **Memory** and **Skills** as their own tabs; **Tasks** / **Resources** paginated (newest first, 10 per load); owner workdir resources; export assistant from the edit header.\n- **Translucent** setting (default on): when off, disables sidebar glass, drawer/overlay frost, and the macOS transparent window + vibrancy.\n- **Timezone** setting with searchable picker and **Auto-detect**; used for schedules and other time-based features.\n- **Tray** menu: theme submenu, pinned section label, pinned/recent sessions, and **Cmd/Win+1–9** session switcher.\n- Floating **member pill** at the top of chat; mesh exchanges show a floating A→B pill.\n- Schedules stored as **jsonl** with ULID job ids; roster **description** seeding after onboarding; dual-write name/description to `bot.json` / `squad.json`.\n\n## Changed\n\n- Frosted-glass sidebar, drawers, and member pills; light panel surfaces and user bubble colors tuned.\n- Darwin window **hairline rim** (0.5px) on the transparent window.\n- Model access: custom providers **cascade-expand**; model-list column **Name**; request URL field labeled **Request URL** (EN).\n- Bubble **···** action menus; swipe-to-reveal message time (wheel-only).\n- Avatar picker sizing, color plates, and edit-page polish; marketplace / edit tabs / list-card spacing.\n- Removed **maxTurns** setting; quieter model greeting when new-bot onboarding is skipped.\n- AGENTS.md renamed to **SOUL.md** for assistant soul docs; task-progress migration dropped.\n\n## Fixed\n\n- Composer **+** attach menu no longer blocked by the Open tasks panel (stacking).\n- Open-tasks spacing vs composer; unread bell; pin-strip rename font; session shortcut hints when the sidebar is collapsed.\n- Onboarding: description refresh after skip Q&A; shorter skip-greeting LLM ask.\n- Window resize jank and sidebar avatar idle rules; group fold / marketplace selection clears; various edit-drawer frost and nav edge fixes."
+    },
+    "zh": {
+      "title": "0.11.0 更新内容",
+      "highlights": [
+        "进行中任务 — 可在输入框上方展开/收起任务列表",
+        "粘贴图片与文件到输入框（经网关上传）",
+        "编辑页改版 — 记忆、技能独立 Tab；任务/资源分页加载"
+      ],
+      "bodyMarkdown": "## 新增\n\n- **进行中任务**：可在输入框上方展开/收起进行中任务列表（默认收起）。\n- **粘贴图片与文件**：在输入框粘贴附件，经网关 `uploads/` 路径上传。\n- **编辑页改版**：助手/小队编辑页新增独立的 **记忆**、**技能** Tab；**任务** / **资源** 分页（最新优先，每次 10 条）；工作目录资源；编辑页顶栏可导出助手。\n- **半透明**设置（默认开启）：关闭后禁用侧栏毛玻璃、抽屉/浮层霜化，以及 macOS 透明窗口与 vibrancy。\n- **时区**设置：可搜索选择器与「自动检测」；用于定时任务等时间相关功能。\n- **托盘**菜单：主题子菜单、置顶分区标签、置顶/最近会话，以及 **Cmd/Win+1–9** 会话快捷切换。\n- 聊天顶部浮动 **成员胶囊**；私聊互聊显示浮动 A→B 胶囊。\n- 定时任务改为 **jsonl** 存储并用 ULID 作为任务 id；引导后写入花名册描述；名称/描述双写到 `bot.json` / `squad.json`。\n\n## 变更\n\n- 侧栏、抽屉与成员胶囊毛玻璃效果；浅色面板与用户气泡配色微调。\n- macOS 透明窗口增加 **0.5px 发丝描边**。\n- 模型接入：自定义供应商 **级联展开**；模型列表列名 **Name**；请求地址字段英文为 **Request URL**。\n- 气泡 **···** 操作菜单；滚轮滑动显示消息时间（仅滚轮，指针拖选仍用于选中文本）。\n- 头像选择器尺寸与色板、编辑页打磨；市场 / 编辑 Tab / 列表卡片间距。\n- 移除 **maxTurns** 设置；跳过新助手引导时的模型问候更安静。\n- 助手灵魂文档由 AGENTS.md 更名为 **SOUL.md**；移除任务进度迁移逻辑。\n\n## 修复\n\n- 输入框 **+** 附件菜单不再被「进行中任务」面板挡住（层叠）。\n- 进行中任务与输入框间距、未读铃、置顶条重命名字体、侧栏收起时的会话快捷键提示。\n- 引导：跳过问答后刷新描述；跳过问候时的 LLM 请求更短。\n- 窗口缩放卡顿与侧栏头像空闲规则；分组折叠 / 市场选中清除；编辑抽屉霜化与导航边缘等问题。"
+    }
+  }
+}

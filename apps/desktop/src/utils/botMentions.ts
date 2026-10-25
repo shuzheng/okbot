@@ -36,21 +36,58 @@ function isEmailLocalCharBefore(text: string, atIndex: number): boolean {
 
 type MentionKey = { key: string; bot: MentionBotRef };
 
-function buildMentionKeys(bots: readonly MentionBotRef[]): MentionKey[] {
-  const keys: MentionKey[] = [];
-  const seen = new Set<string>();
+export type MentionResolveOpts = {
+  /**
+   * When several roster bots share a display name, bind that name key to this
+   * id (typically the open session owner). Never invent a name→bot mapping by
+   * "first in list" — that paints the wrong avatar on 助手卡片 chips.
+   */
+  preferBotId?: string;
+};
+
+function buildMentionKeys(
+  bots: readonly MentionBotRef[],
+  opts?: MentionResolveOpts,
+): MentionKey[] {
+  const preferId = (opts?.preferBotId || '').trim();
+  const byId = new Map<string, MentionBotRef>();
   for (const bot of bots) {
     if (!bot?.id) continue;
-    const name = (bot.name || '').trim();
-    if (name && !seen.has(name)) {
-      keys.push({ key: name, bot });
-      seen.add(name);
-    }
-    if (bot.id && !seen.has(bot.id)) {
+    byId.set(bot.id, bot);
+  }
+  const keys: MentionKey[] = [];
+  const seen = new Set<string>();
+
+  // Ids always win — profile / avatar must resolve by id.
+  for (const bot of byId.values()) {
+    if (!seen.has(bot.id)) {
       keys.push({ key: bot.id, bot });
       seen.add(bot.id);
     }
   }
+
+  // Group display names; unique → safe; duplicates → only if preferBotId is one of them.
+  const byName = new Map<string, MentionBotRef[]>();
+  for (const bot of byId.values()) {
+    const name = (bot.name || '').trim();
+    if (!name) continue;
+    const list = byName.get(name);
+    if (list) list.push(bot);
+    else byName.set(name, [bot]);
+  }
+  for (const [name, list] of byName) {
+    if (seen.has(name)) continue;
+    let bot: MentionBotRef | undefined;
+    if (list.length === 1) {
+      bot = list[0];
+    } else if (preferId) {
+      bot = list.find((b) => b.id === preferId);
+    }
+    if (!bot) continue; // ambiguous same-name: require @id / okbot-mention:id
+    keys.push({ key: name, bot });
+    seen.add(name);
+  }
+
   // Longest key first so "翻译助手" wins over "翻译".
   keys.sort((a, b) => b.key.length - a.key.length || a.key.localeCompare(b.key));
   return keys;
@@ -69,9 +106,10 @@ function uniqueBotsFromKeys(keys: MentionKey[]): MentionBotRef[] {
 export function splitBotMentions(
   text: string,
   bots: readonly MentionBotRef[],
+  opts?: MentionResolveOpts,
 ): MentionSegment[] {
   if (!text) return [];
-  const keys = buildMentionKeys(bots);
+  const keys = buildMentionKeys(bots, opts);
   if (!keys.length) return [{ kind: 'text', text }];
 
   const segments: MentionSegment[] = [];
@@ -128,9 +166,13 @@ export function splitBotMentions(
   return segments.length ? segments : [{ kind: 'text', text }];
 }
 
-function replaceMentionsInPlain(text: string, bots: readonly MentionBotRef[]): string {
+function replaceMentionsInPlain(
+  text: string,
+  bots: readonly MentionBotRef[],
+  opts?: MentionResolveOpts,
+): string {
   if (!text || !bots.length) return text;
-  return splitBotMentions(text, bots)
+  return splitBotMentions(text, bots, opts)
     .map((s) =>
       s.kind === 'text'
         ? s.text
@@ -143,9 +185,13 @@ function replaceMentionsInPlain(text: string, bots: readonly MentionBotRef[]): s
  * Rewrite `@助手名` / `@id` outside fenced / inline code into markdown links
  * `[@显示名](okbot-mention:<id>)` for MarkdownContent to render as chips.
  */
-export function linkifyBotMentions(md: string, bots: readonly MentionBotRef[]): string {
+export function linkifyBotMentions(
+  md: string,
+  bots: readonly MentionBotRef[],
+  opts?: MentionResolveOpts,
+): string {
   if (!md || !bots.length) return md;
-  const keys = buildMentionKeys(bots);
+  const keys = buildMentionKeys(bots, opts);
   if (!keys.length) return md;
   const roster = uniqueBotsFromKeys(keys);
 
@@ -157,7 +203,9 @@ export function linkifyBotMentions(md: string, bots: readonly MentionBotRef[]): 
       // Protect inline code.
       return chunk
         .split(/(`[^`]*`)/g)
-        .map((piece, j) => (j % 2 === 1 ? piece : replaceMentionsInPlain(piece, roster)))
+        .map((piece, j) =>
+          j % 2 === 1 ? piece : replaceMentionsInPlain(piece, roster, opts),
+        )
         .join('');
     })
     .join('');

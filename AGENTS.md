@@ -10,7 +10,7 @@ OkBot 是跑在本机的个人桌面 AI 助手（Electron + React）。助手和
 
 ```text
 apps/desktop/          Electron 壳、React UI、网关 HTTP、okbot serve
-  electron/            main、preload、IPC、storage/（FileStorage 门面 + 域 Store）、updater、localHttpApi、cli
+  electron/            main、preload、IPC、storage/（FileStorage 门面 + 域 Store）、updater、cli（网关 HTTP 在 /gateway）
   src/                 渲染进程（features/chat、settings、sidebar…）
   bin/okbot.mjs        只加载已构建的 out/main/cli.js
   out/                 electron-vite 产物（gitignore）。不是源码
@@ -25,7 +25,7 @@ apps/sandbox-agent/    远程电脑 HTTP（shell / fs），不是桌面网关
 | --- | --- |
 | 聊天气泡、设置页、侧栏 | `apps/desktop/src/features/`，编排在 `src/App.tsx` |
 | 窗口 IPC、存储、审批、更新安装 | `apps/desktop/electron/ipc/`、`electron/storage/`、`electron/updater.ts`、`electron/macUpdateInstall.ts` |
-| 网关路由、`okbot serve`、附着窗口 | `electron/localHttpApi.ts`、`electron/cli.ts`、`electron/main.ts`、`electron/attachPreload.ts`、`src/bridge/httpOkbot.ts` |
+| 网关路由、`okbot serve`、附着窗口 | `apps/gateway/src/gatewayHttpApi.ts`、`electron/cli.ts`、`electron/main.ts`、`electron/attachPreload.ts`、`src/bridge/httpOkbot.ts` |
 | 模型调用、工具、电脑路由、压缩 | `packages/agent/src/`（`tools.ts`、`computerSelection.ts`、`executionBackend.ts`、`runAgentChat.ts`、`squad.ts`、`mesh.ts` 私聊 `ask_assistant`） |
 | 定时任务（schedules.jsonl / ticker） | `apps/desktop/electron/storage/schedules.ts`、`ScheduleStore`（经 `FileStorage` 门面）、`scheduleTicker.ts`、工具 `manage_schedule`（默认 allow；create/delete 强制 HITL（含 AAR 不可旁路）；list 不审批）；编辑助手/小队里的 `SchedulesList.tsx`（暂停 / 恢复 / `requestConfirm` 删除） |
 | 网页工具 | `packages/agent/src/webFetch.ts`、`webSearch.ts`；设置 `settings.web`；工具注册在 `tools.ts` |
@@ -62,7 +62,7 @@ Node `>=22.13`，包管理器 `pnpm@11.15.1`（见根 `package.json` 的 `packag
 
 ## 进程
 
-同一 `~/.okbot` 只允许一个服务听端口。Electron 启动时如果端口上已经是 OkBot，窗口只做界面（`attach` preload），关掉窗口不停那个进程。端口空闲时 Electron 自己 `listen`，退出时停掉。`okbot serve` 和 Electron 主进程走同一份 `localHttpApi`，不是两套服务。
+同一数据根（默认 `~/.okbot`）只允许一个服务听端口。`okbot serve` 可用成对的 `--port` + `--data-dir` 启隔离实例；缺一不可。本地 Electron 桌面客户端只连接默认根 `~/.okbot`（及其 server.json 端口，默认 18765），不扫描其它 data-dir。Electron 启动时如果默认端口上已经是 OkBot，窗口只做界面（`attach` preload），关掉窗口不停那个进程。端口空闲时 Electron 自己 `listen`，退出时停掉。`okbot serve` 和 Electron 主进程走同一份 `gatewayHttpApi`，不是两套服务。
 
 ## UI 约束
 

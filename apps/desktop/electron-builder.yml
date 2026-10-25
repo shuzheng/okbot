@@ -19,6 +19,11 @@ extraResources:
     to: assistant-gallery
     filter:
       - "**/*"
+  # Bilingual version changelogs (What's New + Settings history)
+  - from: changelogs
+    to: changelogs
+    filter:
+      - "**/*"
 extraMetadata:
   name: okbot
   main: out/main/index.js

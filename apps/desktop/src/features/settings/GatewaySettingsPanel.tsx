@@ -1,69 +1,83 @@
-import { CopyIcon, EyeIcon, EyeOffIcon } from '../../components/ui/icons';
 import {
-  sanitizeLocalHttpApiToken,
-  generateLocalHttpApiToken,
+  type Bot,
+  type ComputerEntry,
+  type GatewayApiTokenEntry,
+  type Squad,
 } from '@okbot/shared';
-import { toast } from '../../components/ui';
 import { SettingsHelpTip } from './SettingsHelpTip';
 import { SettingsToggle } from './SettingsToggle';
-import { gatewayWebUiUrl, readSavedGatewayToken } from './settingsHelpers';
+import { ComputersSettingsPanel } from './ComputersSettingsPanel';
+import { GatewayApiTokensPanel } from './GatewayApiTokensPanel';
+import { gatewayWebUiUrl } from './settingsHelpers';
 
 import { t, type UiLang } from '../../i18n';
 
 export function GatewaySettingsPanel({
   lang,
-  localHttpApiBindLan,
-  localHttpApiEnabled,
-  localHttpApiPort,
-  localHttpApiServeUi,
-  localHttpApiToken,
-  setLocalHttpApiBindLan,
-  setLocalHttpApiEnabled,
-  setLocalHttpApiPort,
-  setLocalHttpApiServeUi,
-  setLocalHttpApiToken,
-  setShowLocalHttpApiToken,
-  showLocalHttpApiToken,
-  saveTimerRef,
-  pendingSaveRef,
+  gatewayHttpApiBindLan,
+  gatewayHttpApiPort,
+  gatewayHttpApiServeUi,
+  gatewayHttpApiToken,
+  gatewayApiTokens,
+  setGatewayHttpApiBindLan,
+  setGatewayHttpApiPort,
+  setGatewayHttpApiServeUi,
+  onGatewayApiTokensChange,
+  computers,
+  defaultComputerId,
+  onComputersChange,
+  onDefaultComputerIdChange,
+  gatewayClient,
+  dataDir,
+  backupBusy,
+  backupExcludeSecrets,
+  setBackupExcludeSecrets,
+  exportBackup,
+  restoreBackup,
+  bots = [],
+  squads = [],
 }: {
-  pendingSaveRef: React.MutableRefObject<(() => void | Promise<void>) | null>;
-  saveTimerRef: React.MutableRefObject<number | null>;
   lang: UiLang;
-  localHttpApiBindLan: any;
-  localHttpApiEnabled: any;
-  localHttpApiPort: any;
-  localHttpApiServeUi: any;
-  localHttpApiToken: any;
-  setLocalHttpApiBindLan: React.Dispatch<React.SetStateAction<any>>;
-  setLocalHttpApiEnabled: React.Dispatch<React.SetStateAction<any>>;
-  setLocalHttpApiPort: React.Dispatch<React.SetStateAction<any>>;
-  setLocalHttpApiServeUi: React.Dispatch<React.SetStateAction<any>>;
-  setLocalHttpApiToken: React.Dispatch<React.SetStateAction<any>>;
-  setShowLocalHttpApiToken: React.Dispatch<React.SetStateAction<any>>;
-  showLocalHttpApiToken: any;
+  gatewayHttpApiBindLan: boolean;
+  gatewayHttpApiPort: string;
+  gatewayHttpApiServeUi: boolean;
+  /** Primary access token (for Open Web UI link). */
+  gatewayHttpApiToken: string;
+  gatewayApiTokens: GatewayApiTokenEntry[];
+  setGatewayHttpApiBindLan: React.Dispatch<React.SetStateAction<boolean>>;
+  setGatewayHttpApiPort: React.Dispatch<React.SetStateAction<string>>;
+  setGatewayHttpApiServeUi: React.Dispatch<React.SetStateAction<boolean>>;
+  onGatewayApiTokensChange: (next: GatewayApiTokenEntry[]) => void;
+  computers: ComputerEntry[];
+  defaultComputerId: string;
+  onComputersChange: (next: ComputerEntry[]) => void;
+  onDefaultComputerIdChange: (id: string) => void;
+  gatewayClient: boolean;
+  dataDir: string;
+  backupBusy: boolean;
+  backupExcludeSecrets: boolean;
+  setBackupExcludeSecrets: React.Dispatch<React.SetStateAction<boolean>>;
+  exportBackup: () => void | Promise<void>;
+  restoreBackup: () => void | Promise<void>;
+  bots?: Bot[];
+  squads?: Squad[];
 }) {
   return (
-
     <div>
-      <div className="settings-section-label" data-settings-id="localHttpApi">
-        {t(lang, 'localHttpApi')}
+      <div className="settings-section-label" data-settings-id="gatewayHttpApi">
+        {t(lang, 'gatewayHttpApi')}
+        <span className="settings-scope-tag" title={t(lang, 'settingsGatewayScopeHint')}>
+          {t(lang, 'settingsGatewayScope')}
+        </span>
       </div>
+      <p className="settings-hint" style={{ marginTop: -4, marginBottom: 8 }}>
+        {t(lang, 'gatewayHttpApiHostHint')}
+      </p>
       <div className="settings-card">
-        <div className="settings-row" data-settings-id="localHttpApiEnable">
+        <div className="settings-row" data-settings-id="gatewayHttpApiPort">
           <span className="settings-row-label">
-            <span className="settings-row-label-text">{t(lang, 'localHttpApiEnable')}</span>
-            <SettingsHelpTip text={t(lang, 'localHttpApiHint')} />
-          </span>
-          <SettingsToggle
-            checked={localHttpApiEnabled}
-            onChange={() => setLocalHttpApiEnabled((v: any) => !v)}
-          />
-        </div>
-        <div className="settings-row" data-settings-id="localHttpApiPort">
-          <span className="settings-row-label">
-            <span className="settings-row-label-text">{t(lang, 'localHttpApiPort')}</span>
-            <SettingsHelpTip text={t(lang, 'localHttpApiPortHint')} />
+            <span className="settings-row-label-text">{t(lang, 'gatewayHttpApiPort')}</span>
+            <SettingsHelpTip text={t(lang, 'gatewayHttpApiPortHint')} />
           </span>
           <input
             spellCheck={false}
@@ -72,123 +86,118 @@ export function GatewaySettingsPanel({
             min={1024}
             max={65535}
             step={1}
-            value={localHttpApiPort}
-            disabled={!localHttpApiEnabled}
-            onChange={(e) => setLocalHttpApiPort(e.target.value)}
+            value={gatewayHttpApiPort}
+            onChange={(e) => setGatewayHttpApiPort(e.target.value)}
           />
         </div>
-        <div className="settings-row settings-row-stack" data-settings-id="localHttpApiToken">
+        <div className="settings-row" data-settings-id="gatewayHttpApiBindLan">
           <span className="settings-row-label">
-            <span className="settings-row-label-text">{t(lang, 'localHttpApiToken')}</span>
-            <SettingsHelpTip text={t(lang, 'localHttpApiTokenHint')} />
-          </span>
-          <div className="settings-secret settings-secret-multi">
-            <input
-              type={showLocalHttpApiToken ? 'text' : 'password'}
-              className="wide"
-              value={localHttpApiToken}
-              disabled={!localHttpApiEnabled}
-              onChange={(e) => setLocalHttpApiToken(sanitizeLocalHttpApiToken(e.target.value))}
-              spellCheck={false}
-              autoComplete="off"
-              style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12 }}
-            />
-            <div className="settings-secret-actions">
-              <button
-                type="button"
-                className="settings-eye"
-                disabled={!localHttpApiEnabled}
-                aria-label={t(lang, showLocalHttpApiToken ? 'localHttpApiHideToken' : 'localHttpApiShowToken')}
-                title={t(lang, showLocalHttpApiToken ? 'localHttpApiHideToken' : 'localHttpApiShowToken')}
-                onClick={() => setShowLocalHttpApiToken((v: any) => !v)}
-              >
-                {showLocalHttpApiToken ? <EyeOffIcon /> : <EyeIcon />}
-              </button>
-              <button
-                type="button"
-                className="settings-eye"
-                disabled={!localHttpApiEnabled}
-                aria-label={t(lang, 'localHttpApiCopyToken')}
-                title={t(lang, 'localHttpApiCopyToken')}
-                onClick={() => {
-                  void (async () => {
-                    if (saveTimerRef.current != null) {
-                      window.clearTimeout(saveTimerRef.current);
-                      saveTimerRef.current = null;
-                    }
-                    const pending = pendingSaveRef.current;
-                    pendingSaveRef.current = null;
-                    if (pending) await pending();
-                    const token = await readSavedGatewayToken();
-                    if (!token) {
-                      toast.info(t(lang, 'localHttpApiTokenEmpty'));
-                      return;
-                    }
-                    if (token !== localHttpApiToken) {
-                      setLocalHttpApiToken(token);
-                      toast.info(t(lang, 'localHttpApiTokenSynced'));
-                    }
-                    await window.okbot.copyText(token);
-                    toast.success(t(lang, 'localHttpApiTokenCopied'));
-                  })();
-                }}
-              >
-                <CopyIcon />
-              </button>
-              <button
-                type="button"
-                className="settings-eye"
-                disabled={!localHttpApiEnabled}
-                aria-label={t(lang, 'localHttpApiRegenerateToken')}
-                title={t(lang, 'localHttpApiRegenerateToken')}
-                onClick={() => {
-                  setLocalHttpApiToken(generateLocalHttpApiToken());
-                  toast.success(t(lang, 'localHttpApiTokenRegenerated'));
-                }}
-              >
-                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-                  <path d="M3 3v5h5" />
-                  <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
-                  <path d="M16 16h5v5" />
-                </svg>
-              </button>
-            </div>
-          </div>
-        </div>
-        <div className="settings-row" data-settings-id="localHttpApiBindLan">
-          <span className="settings-row-label">
-            <span className="settings-row-label-text">{t(lang, 'localHttpApiBindLan')}</span>
-            <SettingsHelpTip text={t(lang, 'localHttpApiBindLanHint')} />
+            <span className="settings-row-label-text">{t(lang, 'gatewayHttpApiBindLan')}</span>
+            <SettingsHelpTip text={t(lang, 'gatewayHttpApiBindLanHint')} />
           </span>
           <SettingsToggle
-            checked={localHttpApiBindLan}
-            disabled={!localHttpApiEnabled}
-            onChange={() => setLocalHttpApiBindLan((v: any) => !v)}
+            checked={gatewayHttpApiBindLan}
+            onChange={() => setGatewayHttpApiBindLan((v) => !v)}
           />
         </div>
-        <div className="settings-row" data-settings-id="localHttpApiServeUi">
+        <div className="settings-row" data-settings-id="gatewayHttpApiServeUi">
           <span className="settings-row-label">
-            <span className="settings-row-label-text">{t(lang, 'localHttpApiServeUi')}</span>
-            <SettingsHelpTip text={t(lang, 'localHttpApiServeUiHint')} />
+            <span className="settings-row-label-text">{t(lang, 'gatewayHttpApiServeUi')}</span>
+            <SettingsHelpTip text={t(lang, 'gatewayHttpApiServeUiHint')} />
           </span>
           <span className="settings-row-trailing">
-            {localHttpApiServeUi ? (
+            {gatewayHttpApiServeUi ? (
               <a
                 className="settings-inline-link"
-                href={gatewayWebUiUrl(localHttpApiPort, localHttpApiToken)}
+                href={gatewayWebUiUrl(gatewayHttpApiPort, gatewayHttpApiToken)}
                 target="_blank"
                 rel="noreferrer noopener"
               >
-                {t(lang, 'localHttpApiOpenUi')}
+                {t(lang, 'gatewayHttpApiOpenUi')}
               </a>
             ) : null}
             <SettingsToggle
-              checked={localHttpApiServeUi}
-              disabled={!localHttpApiEnabled}
-              onChange={() => setLocalHttpApiServeUi((v: any) => !v)}
+              checked={gatewayHttpApiServeUi}
+              onChange={() => setGatewayHttpApiServeUi((v) => !v)}
             />
           </span>
+        </div>
+      </div>
+
+      <GatewayApiTokensPanel
+        lang={lang}
+        apiTokens={gatewayApiTokens}
+        onChange={onGatewayApiTokensChange}
+        bots={bots}
+        squads={squads}
+        readOnly={gatewayClient}
+      />
+
+      <ComputersSettingsPanel
+        lang={lang}
+        computers={computers}
+        defaultComputerId={defaultComputerId}
+        onChange={onComputersChange}
+        onDefaultComputerIdChange={onDefaultComputerIdChange}
+        embedded
+      />
+
+      <div className="settings-section-label" style={{ marginTop: 16 }} data-settings-id="data">
+        {t(lang, 'data')}
+        <span className="settings-scope-tag" title={t(lang, 'settingsGatewayScopeHint')}>
+          {t(lang, 'settingsGatewayScope')}
+        </span>
+      </div>
+      <p className="settings-hint" style={{ marginTop: -4, marginBottom: 8 }}>
+        {t(lang, 'dataGatewayHint')}
+      </p>
+      <div
+        className="settings-card"
+        aria-disabled={gatewayClient ? 'true' : undefined}
+        title={gatewayClient ? t(lang, 'backupDesktopOnly') : undefined}
+      >
+        <div className="settings-row settings-row-stack" data-settings-id="dataDir">
+          <span className="settings-row-label">{t(lang, 'dataDir')}</span>
+          <span className="settings-hint settings-data-dir">{dataDir}</span>
+        </div>
+        <div className="settings-row" data-settings-id="backupExcludeSecrets">
+          <span className="settings-row-label">
+            <span className="settings-row-label-text">{t(lang, 'backupExcludeSecrets')}</span>
+            <SettingsHelpTip text={t(lang, 'backupExcludeSecretsHint')} />
+          </span>
+          <SettingsToggle
+            checked={backupExcludeSecrets}
+            disabled={gatewayClient}
+            onChange={() => setBackupExcludeSecrets((v) => !v)}
+          />
+        </div>
+        <div className="settings-row" data-settings-id="backupExport">
+          <span className="settings-row-label">
+            <span className="settings-row-label-text">{t(lang, 'backupExport')}</span>
+            <SettingsHelpTip text={t(lang, 'backupExportHint')} />
+          </span>
+          <button
+            type="button"
+            className="settings-aar-add-btn"
+            disabled={gatewayClient || backupBusy}
+            onClick={() => void exportBackup()}
+          >
+            {t(lang, 'backupExportAction')}
+          </button>
+        </div>
+        <div className="settings-row" data-settings-id="backupRestore">
+          <span className="settings-row-label">
+            <span className="settings-row-label-text">{t(lang, 'backupRestore')}</span>
+            <SettingsHelpTip text={t(lang, 'backupRestoreHint')} />
+          </span>
+          <button
+            type="button"
+            className="settings-aar-add-btn"
+            disabled={gatewayClient || backupBusy}
+            onClick={() => void restoreBackup()}
+          >
+            {t(lang, 'backupRestoreAction')}
+          </button>
         </div>
       </div>
     </div>

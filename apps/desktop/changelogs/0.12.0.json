@@ -1,0 +1,25 @@
+{
+  "version": "0.12.0",
+  "releasedAt": "2026-10-25T00:00:00Z",
+  "forceUpdate": false,
+  "notes": {
+    "en": {
+      "title": "What's new in 0.12.0",
+      "highlights": [
+        "Multi-instance serve with --port / --data-dir; multiple gateway API tokens",
+        "Chat image lightbox preview; skills aligned with Zhihu professional template",
+        "Mobile WebUI phone layout; Settings icon-rail; Turn trace model/tool timeline"
+      ],
+      "bodyMarkdown": "## Added\n\n- **Skills** create/maintain prompts aligned with the Zhihu professional skill template.\n- CLI **multi-instance** `serve` via paired `--port` and `--data-dir`.\n- Chat **image preview**: fullscreen lightbox, smaller thumbs, workspace paths hidden from the UI.\n- Gateway **API tokens**: multiple tokens with quotas and per-owner usage (`user_` / `admin_` prefixes).\n- **Memory**: LLM-owned write and dedup; scenario TTL with lazy purge on load.\n- **New assistant** dialog and model-driven onboarding with quick-choice cards.\n- **Mobile WebUI**: HTML5 meta tags, favicon assets, phone session sheet (left-edge half-disk), and Safari layout fixes.\n- Settings modal **icon-rail** (hamburger on narrow); **gateway switcher** left of the chat member pill.\n- Aggregated model/tool timeline in the **Turn trace** popup.\n- Admin token can manage host settings, MCP, and backup over HTTP; warm local gateway at boot when the UI attaches remote.\n- Client vs gateway settings split (`ClientSettings`, multi-gateway prefs, attach to remote gateway).\n- Bilingual in-app **changelog** / What's New and force vs soft update UX.\n- **Squad**: drop member role; multi-select members only.\n\n## Changed\n\n- Maintenance analysis windows aligned with **everyTurns** settings.\n- Removed instruction category hint and squad max-turn caps from Settings.\n- Frost / sidebar / resize polish (Darwin frost burn-in, keep Settings open on frost toggle, pin-strip sync with sidebar rail).\n- Extracted **@okbot/gateway** from the desktop app; README repositioned as a desktop Personal Agent.\n\n## Fixed\n\n- Window and sidebar resize jank (with and without frost).\n- Gateway token inputs match settings-row field styling; tokens list matches gateway-list rows.\n- Image lightbox no longer traps the UI; phone attach via native file input; iPhone Safari shrink-to-fit / phone-layout issues.\n- Squad member candidate list hides already-selected assistants; assorted Settings and chat UI polish."
+    },
+    "zh": {
+      "title": "0.12.0 更新内容",
+      "highlights": [
+        "多实例 serve（--port / --data-dir）；网关多 API 令牌",
+        "聊天图片灯箱预览；技能对齐知乎专业模板",
+        "手机 WebUI 布局；设置图标轨；本轮链路模型/工具时间线"
+      ],
+      "bodyMarkdown": "## 新增\n\n- **技能**创建/维护提示词对齐知乎专业技能模板。\n- CLI 通过成对的 `--port` 与 `--data-dir` 支持 **多实例** `serve`。\n- 聊天 **图片预览**：全屏灯箱、更小缩略图，界面隐藏工作区路径。\n- 网关 **API 令牌**：多令牌、配额与按所有者用量（`user_` / `admin_` 前缀）。\n- **记忆**：由 LLM 负责写入与去重；场景 TTL，加载时惰性清理过期项。\n- **新建助手**对话框与模型驱动引导（快捷选项卡片）。\n- **手机 WebUI**：HTML5 meta、favicon、左侧半圆会话面板，以及 Safari 布局修复。\n- 设置弹窗 **图标轨**（窄屏汉堡菜单）；聊天成员胶囊左侧 **网关切换**。\n- **本轮链路**弹窗汇总模型/工具时间线。\n- Admin 令牌可通过 HTTP 管理主机设置、MCP 与备份；UI 挂远程时仍预热本机网关。\n- 客户端与网关端设置拆分（`ClientSettings`、多网关偏好、附着远程网关）。\n- 应用内双语 **更新说明** / What's New，以及强制与软更新体验。\n- **小队**：去掉成员角色；仅多选成员。\n\n## 变更\n\n- 维护分析窗口与 **everyTurns** 设置对齐。\n- 设置中移除指令分类提示与小队 max-turn 上限。\n- 半透明 / 侧栏 / 缩放打磨（Darwin 霜化烧屏、切换霜化时保持设置打开、置顶条与侧栏轨宽同步）。\n- 从桌面端抽出 **@okbot/gateway**；README 定位为桌面 Personal Agent。\n\n## 修复\n\n- 窗口与侧栏缩放卡顿（开启/关闭半透明）。\n- 网关令牌输入与设置行字段样式一致；令牌列表与网关列表行样式统一。\n- 图片灯箱不再卡住界面；手机端用原生文件选择附加；iPhone Safari 缩小适配 / 手机布局问题。\n- 小队成员候选列表隐藏已选助手；设置与聊天界面若干打磨。"
+    }
+  }
+}

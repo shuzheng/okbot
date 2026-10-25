@@ -3,12 +3,18 @@
  *
  * While the user is dragging the Electron window edge, Chromium already
  * reflows heavily. Extra JS (scroll-pin, scroll-fade mask toggles) and GPU
- * effects (backdrop-filter) on every resize event make the drag feel
- * stuttery. Consumers skip per-frame work while `isWindowResizing()` is
- * true and flush once on settle.
+ * effects (backdrop-filter / Darwin vibrancy) on every resize event make
+ * the drag feel stuttery. Consumers skip per-frame work while
+ * `isWindowResizing()` is true and flush once on settle. Sidebar
+ * auto-collapse writes `--sidebar-w` immediately (CSS) but defers React
+ * setState until settle; CSS snaps `--sidebar-w` (no transition) while
+ * this class is on. Main also parks Darwin vibrancy for the drag.
  *
  * Also toggles `html.is-window-resizing` so CSS can drop expensive effects
  * for the duration of the drag without a React re-render.
+ *
+ * Call `installWindowResizeGate()` once from main.tsx so the class toggles
+ * even before chat effects subscribe.
  */
 
 const SETTLE_MS = 120;
@@ -68,4 +74,12 @@ export function subscribeWindowResizeGate(onSettle: () => void): () => void {
       }
     }
   };
+}
+
+/** Keep the gate listening for the page lifetime (no React dependency). */
+let bootUnsub: (() => void) | null = null;
+export function installWindowResizeGate(): void {
+  if (typeof window === 'undefined') return;
+  if (bootUnsub) return;
+  bootUnsub = subscribeWindowResizeGate(() => {});
 }

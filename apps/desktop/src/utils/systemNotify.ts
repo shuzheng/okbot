@@ -5,6 +5,15 @@ export function windowIsFocused(): boolean {
   return document.hasFocus() && document.visibilityState !== 'hidden';
 }
 
+
+/** Keep notification body within typical OS banner limits (~macOS/Windows). */
+export function truncateNotifyBody(text: string, max = 180): string {
+  const s = (text || '').replace(/\s+/g, ' ').trim();
+  if (!s) return '';
+  if (s.length <= max) return s;
+  return s.slice(0, Math.max(0, max - 1)).trimEnd() + '…';
+}
+
 export function showSystemNotification(opts: {
   title: string;
   body: string;

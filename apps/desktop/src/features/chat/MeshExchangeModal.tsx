@@ -50,7 +50,7 @@ function PeerBubble(props: {
         <div className="bubble assistant has-speaker-label">
           <div className="bubble-speaker-label">{name}</div>
           {text ? (
-            <AssistantContent lang={lang} content={text} showThinking={false} bots={bots} />
+            <AssistantContent lang={lang} content={text} showThinking={false} bots={bots} preferBotId={botId} />
           ) : (
             <span className="mesh-exchange-empty">{t(lang, 'meshExchangeEmptyBody')}</span>
           )}

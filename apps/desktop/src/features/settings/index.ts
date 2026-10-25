@@ -12,3 +12,4 @@ export { SETTINGS_SEARCH_ITEMS, type SettingsSearchItem } from './settingsSearch
 export { UsagePanel } from './UsagePanel';
 export { ModelRefSelect, encodeModelRefValue, decodeModelRefValue } from './ModelRefSelect';
 export { ModelProvidersPanel } from './ModelProvidersPanel';
+export { ClientGatewaysPanel } from './ClientGatewaysPanel';

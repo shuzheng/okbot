@@ -193,12 +193,12 @@ export function SessionPinStrip({
                     </span>
                   ) : null}
                 </span>
-                {!narrow || renaming ? (
-                  <span className={`session-pin-name-edit${renaming ? ' is-renaming' : ''}`}>
-                    <span className="session-pin-name">{bot.name}</span>
-                    {renaming ? renameInput : null}
-                  </span>
-                ) : null}
+                {/* Always mounted: `.app.narrow` / @container hides the label in the
+                    same frame as --sidebar-w (React unmount lagged one paint). */}
+                <span className={`session-pin-name-edit${renaming ? ' is-renaming' : ''}`}>
+                  <span className="session-pin-name">{bot.name}</span>
+                  {renaming ? renameInput : null}
+                </span>
               </div>
             );
           }
@@ -276,12 +276,10 @@ export function SessionPinStrip({
                     </span>
                   ) : null}
               </span>
-              {!narrow || renaming ? (
-                <span className={`session-pin-name-edit${renaming ? ' is-renaming' : ''}`}>
-                  <span className="session-pin-name">{g.name}</span>
-                  {renaming ? renameInput : null}
-                </span>
-              ) : null}
+              <span className={`session-pin-name-edit${renaming ? ' is-renaming' : ''}`}>
+                <span className="session-pin-name">{g.name}</span>
+                {renaming ? renameInput : null}
+              </span>
             </div>
           );
         })}

@@ -492,3 +492,29 @@ export function stripLeadingCommittedInterim(
 
   return content;
 }
+
+/**
+ * Strip user-facing boilerplate that leaks internal storage (`resources/…`,
+ * 「工作空间」paths). Keeps markdown image lines intact.
+ */
+export function stripInternalImageStorageHints(content: string): string {
+  if (!content) return content;
+  const lines = content.split('\n');
+  const kept: string[] = [];
+  for (const line of lines) {
+    const t = line.trim();
+    if (!t) {
+      kept.push(line);
+      continue;
+    }
+    if (/^(原图)?保存在工作空间\s*[:：]/u.test(t)) continue;
+    if (/^原图保存(在|至|到)/u.test(t) && /resources\//i.test(t)) continue;
+    if (/^(图片)?已保存(在|至|到).*(工作空间|resources\/)/u.test(t)) continue;
+    if (/^(saved\s+to\s+)?workspace\s*[:：]/i.test(t)) continue;
+    if (/^asset\s*:\s*\S+\/resources\//i.test(t)) continue;
+    if (/^本机(路径|文件)\s*[:：]/u.test(t)) continue;
+    kept.push(line);
+  }
+  return kept.join('\n').replace(/\n{3,}/g, '\n\n');
+}
+

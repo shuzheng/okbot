@@ -14,9 +14,8 @@ export type SquadWizardState = {
   id?: string;
   name: string;
   description: string;
-  /** Ordered selected bot ids (drag order → squad.members order). */
+  /** Ordered selected bot ids (multi-select order → squad.members order). */
   memberIds: string[];
-  roles: Record<string, string>;
   /** Optional model override; both empty → global default. */
   providerId: string;
   modelId: string;

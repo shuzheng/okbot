@@ -549,12 +549,30 @@ export function MarkAsReadIcon() {
   );
 }
 
-/** Bell + top-right unread dot — 标为未读. */
+/**
+ * Bell + top-right unread badge — 标为未读.
+ * Dot sits on the dome’s top-right stroke; a mask breaks the outline under the
+ * badge so the stroke does not touch the dot.
+ */
 export function MarkAsUnreadIcon() {
+  const maskId = `okbot-bell-unread-${useId().replace(/:/g, '')}`;
+  // Centerline of dome arc near NE; badge sits on that outline.
+  const cx = 17.35;
+  const cy = 4.55;
+  const r = 2.75; // slightly larger than the prior gap-only nudge (2.35)
+  const clearR = r + 1.25; // air gap between broken stroke ends and the dot
   return (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden>
-      <BellGlyph />
-      <circle cx="18.5" cy="5.5" r="3.5" fill="currentColor" />
+      <defs>
+        <mask id={maskId}>
+          <rect width="24" height="24" fill="white" />
+          <circle cx={cx} cy={cy} r={clearR} fill="black" />
+        </mask>
+      </defs>
+      <g mask={`url(#${maskId})`}>
+        <BellGlyph />
+      </g>
+      <circle cx={cx} cy={cy} r={r} fill="currentColor" />
     </svg>
   );
 }
@@ -921,6 +939,16 @@ export function AssistantGalleryIcon() {
       <rect x="13" y="4" width="7" height="7" rx="1.8" stroke="currentColor" strokeWidth="1.8" />
       <rect x="4" y="13" width="7" height="7" rx="1.8" stroke="currentColor" strokeWidth="1.8" />
       <path d="M16.5 13.5v6M13.5 16.5h6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** Gateway / network hub — settings 「网关列表」 nav + chat header switcher. */
+export function GatewayIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+      <path d="M4 8h16M4 16h16M8 4v4M16 16v4" strokeLinecap="round" />
+      <circle cx="12" cy="12" r="2" />
     </svg>
   );
 }

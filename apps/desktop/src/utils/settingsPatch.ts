@@ -1,4 +1,9 @@
-import type { AppSettings } from '@okbot/shared';
+import {
+  CLIENT_SETTINGS_KEYS,
+  stripClientSettingsKeys,
+  type AppSettings,
+  type ClientSettingsKey,
+} from '@okbot/shared';
 
 /**
  * Re-base a partial settings write on the latest disk snapshot so fields the
@@ -10,13 +15,20 @@ export function mergeSettingsPatch(disk: AppSettings, patch: Partial<AppSettings
 }
 
 /**
- * Desktop-only keys a gateway client must not include in a settings write.
- * Echoing a stale `closeAction` (or intentionally changing it) would 409 against
- * `resolveGatewaySettingsWrite`.
+ * Strip client chrome keys before a gateway HTTP settings write.
+ * Theme/language/closeAction/etc. live in Electron userData or Web localStorage.
  */
 export function omitGatewayDesktopOnlySettings<T extends Partial<AppSettings>>(
   patch: T,
-): Omit<T, 'closeAction'> {
-  const { closeAction: _closeAction, ...rest } = patch;
-  return rest;
+): Omit<T, ClientSettingsKey> {
+  return stripClientSettingsKeys(patch as Record<string, unknown>) as Omit<T, ClientSettingsKey>;
 }
+
+/** @deprecated use omitGatewayDesktopOnlySettings — kept for call-site clarity */
+export function omitClientSettingsFromGatewayPatch<T extends Partial<AppSettings>>(
+  patch: T,
+): Omit<T, ClientSettingsKey> {
+  return omitGatewayDesktopOnlySettings(patch);
+}
+
+export { CLIENT_SETTINGS_KEYS };

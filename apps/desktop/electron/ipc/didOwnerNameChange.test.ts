@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { didOwnerNameChange } from './chatMaintenance';
+import { didOwnerNameChange } from '@okbot/gateway';
 
 assert.equal(didOwnerNameChange('旧名', '新名'), true);
 assert.equal(didOwnerNameChange('同名', '同名'), false);

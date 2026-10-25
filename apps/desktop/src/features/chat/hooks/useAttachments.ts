@@ -183,9 +183,54 @@ export function useAttachments(opts: {
   };
 
   const onPickAttach = async (kind: AttachKind) => {
+    // WebUI / HTTP attach: folder picks have no gateway-local path — tip and bail
+    // before the cancel stub so the fan does not look like a no-op.
+    if (
+      kind === 'folder' &&
+      typeof document !== 'undefined' &&
+      document.documentElement.dataset.okbotGateway === '1'
+    ) {
+      toast.info(t(lang, 'attachFolderUnavailable'));
+      return;
+    }
     try {
       const result = await window.okbot.pickPaths(kind);
-      if (result.canceled || !result.paths?.length) return;
+      if (result.canceled) return;
+
+      // Browser file input (httpOkbot.pickPaths) — upload bytes like paste/drop.
+      const pickedFiles = result.files;
+      if (pickedFiles?.length) {
+        if (uploadingRef.current) return;
+        uploadingRef.current = true;
+        try {
+          let slots = roomLeft();
+          if (slots <= 0) {
+            toastCap();
+            return;
+          }
+          for (const file of pickedFiles) {
+            if (!file || file.size <= 0) continue;
+            if (slots <= 0) {
+              toastCap();
+              break;
+            }
+            const previewUrl = file.type.startsWith('image/')
+              ? URL.createObjectURL(file)
+              : undefined;
+            await uploadAndAdd({
+              file,
+              name: file.name || undefined,
+              previewUrl,
+            });
+            slots = roomLeft();
+          }
+        } finally {
+          uploadingRef.current = false;
+        }
+        return;
+      }
+
+      if (!result.paths?.length) return;
       if (kind === 'folder') {
         for (const filePath of result.paths) {
           if (!filePath) continue;

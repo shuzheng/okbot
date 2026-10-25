@@ -2,11 +2,31 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
+    <!--
+      Viewport MUST be among the first head tags (before any classic script the
+      gateway may inject). iOS Safari defaults to a ~980px layout viewport until
+      it sees width=device-width; a late meta leaves phone MQs unmatched.
+      shrink-to-fit=no stops scale-down when desktop min-widths briefly overflow.
+      minimum/maximum-scale + user-scalable=no match mobile-webapp tutorial metas;
+      ≥16px inputs still avoid focus-zoom when pinch is re-enabled later.
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, shrink-to-fit=no" />
+    <!--
+      connect-src / img-src allow any http(s) host:port so Electron attach can talk to a
+      user-configured remote gateway (LAN IP / hostname), not only loopback.
+      script-src stays 'self' — do not widen that. Chrome same-origin WebUI is unaffected
+      ('self' still covers the gateway origin when the UI is served from there).
+    -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http://127.0.0.1:* http://localhost:*; media-src 'self' blob:; worker-src 'self' blob:; connect-src 'self' http://127.0.0.1:* http://localhost:*;"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https:; media-src 'self' blob: http: https:; worker-src 'self' blob:; connect-src 'self' http: https: ws: wss:;"
     />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1"/>
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+    <meta name="format-detection" content="telephone=no">
+    <link rel="shortcut icon" type="image/png" href="/favicon.png" />
+    <link rel="apple-touch-icon-precomposed" href="/apple-touch-icon-precomposed.png" />
     <title>OkBot</title>
   </head>
   <body>

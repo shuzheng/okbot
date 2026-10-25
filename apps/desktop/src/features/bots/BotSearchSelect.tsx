@@ -30,15 +30,18 @@ export function BotSearchSelect({
   const hideSelected = selectedDisplay === 'none';
   const exclude = useMemo(() => new Set(excludeIds), [excludeIds]);
   const selectedSet = useMemo(() => new Set(values), [values]);
+  // Multi (+ chips): selected stay in trigger chips; candidate list = not-yet-selected only.
+  // selectedDisplay "none": same hide (trigger stays placeholder; roster lives elsewhere).
+  const omitSelectedFromList = multi || hideSelected;
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return bots.filter((b) => {
       if (exclude.has(b.id)) return false;
-      if (hideSelected && selectedSet.has(b.id)) return false;
+      if (omitSelectedFromList && selectedSet.has(b.id)) return false;
       if (!needle) return true;
       return b.name.toLowerCase().includes(needle);
     });
-  }, [bots, exclude, hideSelected, selectedSet, q]);
+  }, [bots, exclude, omitSelectedFromList, selectedSet, q]);
   const selectedBots = useMemo(
     () => values.map((id) => bots.find((b) => b.id === id)).filter(Boolean) as Bot[],
     [values, bots],
@@ -61,19 +64,16 @@ export function BotSearchSelect({
   }, [open]);
 
   function toggle(id: string) {
-    if (hideSelected) {
+    if (omitSelectedFromList) {
+      // List has no selected rows; click only adds. Deselect via chips (or external roster).
       if (!selectedSet.has(id)) onChange([...values, id]);
       setQ('');
       requestAnimationFrame(() => inputRef.current?.focus());
+      if (!multi) setOpen(false);
       return;
     }
-    if (multi) {
-      if (selectedSet.has(id)) onChange(values.filter((x) => x !== id));
-      else onChange([...values, id]);
-    } else {
-      onChange([id]);
-      setOpen(false);
-    }
+    onChange([id]);
+    setOpen(false);
   }
 
   const showPlaceholder = hideSelected || selectedBots.length === 0;
@@ -82,7 +82,7 @@ export function BotSearchSelect({
     <div className={`bot-picker${open ? ' open' : ''}${hideSelected ? ' bot-picker-add' : ''}`} ref={rootRef}>
       <button
         type="button"
-        className="bot-picker-trigger"
+        className="bot-picker-trigger settings-select-chevron-host"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
       >
@@ -128,9 +128,6 @@ export function BotSearchSelect({
             <span>{selectedBots[0]!.name}</span>
           </span>
         )}
-        <span className="bot-picker-caret" aria-hidden>
-          ▾
-        </span>
       </button>
       {open ? (
         <div className="bot-picker-menu">
@@ -154,24 +151,22 @@ export function BotSearchSelect({
               <div className="bot-picker-empty">{t(lang, 'squadNoBotMatch')}</div>
             ) : (
               filtered.map((b) => {
-                const on = !hideSelected && selectedSet.has(b.id);
                 return (
                   <button
                     key={b.id}
                     type="button"
-                    className={`bot-picker-option${on ? ' selected' : ''}`}
+                    className="bot-picker-option"
                     onClick={() => toggle(b.id)}
                   >
                     <FlatAvatar
-                  emoji={b.emoji}
-                  color={b.color}
-                  avatarKind={b.avatarKind}
-                  botAvatarType={b.botAvatarType}
-                  className="bot-picker-chip-avatar"
-                  paused
-                />
+                      emoji={b.emoji}
+                      color={b.color}
+                      avatarKind={b.avatarKind}
+                      botAvatarType={b.botAvatarType}
+                      className="bot-picker-chip-avatar"
+                      paused
+                    />
                     <span className="bot-picker-option-name">{b.name}</span>
-                    {on ? <span className="bot-picker-check">✓</span> : null}
                   </button>
                 );
               })

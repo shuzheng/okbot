@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { GATEWAY_BRIDGE_METHOD_NAMES, gatewayBootJs } from './gatewayLoginPage';
+import { GATEWAY_BRIDGE_METHOD_NAMES, gatewayBootJs } from '@okbot/gateway';
 import { createHttpOkbotBridge } from '../src/bridge/httpOkbot';
 
 const preload = fs.readFileSync(new URL('./preload.ts', import.meta.url), 'utf8');
@@ -11,6 +11,7 @@ assert.ok(preloadMethods.includes('getBootstrap'));
 assert.ok(preloadMethods.includes('onRuntimeEvent'));
 assert.ok(preloadMethods.includes('getAppInfo'));
 assert.ok(preloadMethods.includes('getGatewayAccessToken'));
+assert.ok(preloadMethods.includes('getGatewayAdminToken'));
 
 const startupMethods = [
   'getAppInfo',
@@ -81,7 +82,7 @@ bootGlobal.fetch = (async (input: RequestInfo | URL) => {
             theme: 'dark',
             tools: {},
             model: { providers: [{ id: 'p', name: 'P', models: [{ id: 'm' }] }] },
-            localHttpApi: { enabled: true, port: 18765, token: '', bindLan: true, serveUi: true },
+            gatewayHttpApi: { enabled: true, port: 18765, token: '', bindLan: true, serveUi: true },
           },
           dataDir: '/tmp/okbot',
           hardwareAccelerationActive: true,
@@ -103,7 +104,7 @@ const shaped = (await sandbox.window.okbot!.getBootstrap!()) as {
   settings: {
     tools: Record<string, { enabled: boolean }>;
     model: { providers: Array<{ models: Array<{ enabled: boolean }> }> };
-    localHttpApi: { token: string };
+    gatewayHttpApi: { token: string };
   };
   busyBotIds: string[];
   pendingToolRequests: unknown[];
@@ -112,7 +113,7 @@ assert.equal(JSON.stringify(shaped.squads[0]?.members), '[]');
 assert.equal(shaped.settings.tools.read_file?.enabled, true);
 assert.equal(shaped.settings.tools.run_shell?.enabled, true);
 assert.equal(shaped.settings.model.providers[0]?.models[0]?.enabled, true);
-assert.equal(shaped.settings.localHttpApi.token, 'live-gateway-token');
+assert.equal(shaped.settings.gatewayHttpApi.token, 'live-gateway-token');
 assert.equal(JSON.stringify(shaped.busyBotIds), JSON.stringify(['b1']));
 assert.ok(Array.isArray(shaped.pendingToolRequests));
 const liveToken = await sandbox.window.okbot!.getGatewayAccessToken!();
@@ -139,7 +140,9 @@ sandbox.window.okbot = {
   onChatEvent: legacyOnChatEvent,
 };
 const installed = sandbox.window.okbot;
-assert.equal(installed.onChatEvent, legacyOnChatEvent);
+// bindGatewayLiveSync wraps onChatEvent for the SSE pump; keep a callable, not the raw ref.
+assert.equal(typeof installed.onChatEvent, 'function');
+assert.notEqual(installed.onChatEvent, legacyOnChatEvent);
 assert.equal(typeof installed.setTrafficLightPosition, 'function');
 for (const name of GATEWAY_BRIDGE_METHOD_NAMES) {
   assert.equal(typeof installed[name], 'function', `filled ${name}`);
@@ -216,3 +219,106 @@ try {
 
 
 console.log('gatewayBridge.test.ts: ok');
+
+
+// Local-host attach: disk IPC supplies both tokens; admin HTTP echo alone blanks user token.
+{
+  const prevFetch = globalThis.fetch;
+  const g = globalThis as typeof globalThis & { __okbotAttach?: Record<string, unknown> };
+  g.__okbotAttach = {
+    base: 'http://127.0.0.1:18765',
+    token: 'admin_live',
+    getAttachConfig: () => ({ base: 'http://127.0.0.1:18765', token: 'admin_live' }),
+    getGatewayAccessToken: async () => 'user_from_disk',
+    getGatewayAdminToken: async () => 'admin_from_disk',
+    saveLocalGatewayHttpApi: async (patch: unknown) => {
+      const p = patch && typeof patch === 'object' ? (patch as Record<string, unknown>) : {};
+      return {
+        enabled: true,
+        port: 18765,
+        token: typeof p.token === 'string' ? p.token : 'user_from_disk',
+        adminToken: typeof p.adminToken === 'string' ? p.adminToken : 'admin_from_disk',
+        bindLan: false,
+        serveUi: false,
+      };
+    },
+    saveClientSettings: async (s: unknown) => s,
+    getClientSettings: async () => ({}),
+  };
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.includes('/v1/gateway-token')) {
+      return {
+        ok: true,
+        text: async () => JSON.stringify({ ok: true, token: 'admin_live', role: 'admin' }),
+      };
+    }
+    if (url.includes('/v1/bootstrap')) {
+      return {
+        ok: true,
+        text: async () =>
+          JSON.stringify({
+            bots: [],
+            squads: [],
+            settings: {
+              theme: 'dark',
+              tools: {},
+              model: { providers: [] },
+              gatewayHttpApi: { enabled: true, port: 18765, token: '', adminToken: '', bindLan: false, serveUi: false },
+            },
+            dataDir: '/tmp/okbot',
+            hardwareAccelerationActive: true,
+            busyBotIds: [],
+            pendingToolRequests: [],
+          }),
+      };
+    }
+    if (url.includes('/v1/settings') && (init?.method || 'GET').toUpperCase() === 'POST') {
+      const body = JSON.parse(String(init?.body || '{}')) as Record<string, unknown>;
+      assert.equal(body.gatewayHttpApi, undefined, 'local attach must not POST gatewayHttpApi');
+      return {
+        ok: true,
+        text: async () =>
+          JSON.stringify({
+            ok: true,
+            settings: {
+              theme: 'dark',
+              tools: {},
+              model: { providers: [] },
+              gatewayHttpApi: { enabled: true, port: 18765, token: '', adminToken: '', bindLan: false, serveUi: false },
+            },
+          }),
+      };
+    }
+    return { ok: true, text: async () => '{}' };
+  }) as unknown as typeof fetch;
+  try {
+    const localBridge = createHttpOkbotBridge();
+    assert.equal(await localBridge.getGatewayAccessToken!(), 'user_from_disk');
+    assert.equal(await localBridge.getGatewayAdminToken!(), 'admin_from_disk');
+    const boot = (await localBridge.getBootstrap!()) as {
+      settings: { gatewayHttpApi: { token: string; adminToken: string } };
+    };
+    assert.equal(boot.settings.gatewayHttpApi.token, 'user_from_disk');
+    assert.equal(boot.settings.gatewayHttpApi.adminToken, 'admin_from_disk');
+    const saved = (await localBridge.saveSettings!({
+      theme: 'dark',
+      gatewayHttpApi: {
+        enabled: true,
+        port: 18765,
+        token: 'user_new',
+        adminToken: 'admin_from_disk',
+        bindLan: false,
+        serveUi: false,
+      },
+    })) as { gatewayHttpApi: { token: string } };
+    assert.equal(saved.gatewayHttpApi.token, 'user_new');
+  } finally {
+    globalThis.fetch = prevFetch;
+    delete g.__okbotAttach;
+  }
+}
+
+console.log('gatewayBridge.test.ts: local-attach disk tokens ok');
+
+process.exit(0);

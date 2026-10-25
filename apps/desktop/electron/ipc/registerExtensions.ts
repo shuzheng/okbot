@@ -1,16 +1,17 @@
 /**
- * Desktop-only IPC: MCP status / test and full data backup / restore.
- * Neither is on the gateway RPC allowlist: MCP starts host processes, and
- * backup / restore read and replace the whole data directory.
+ * Owner Electron IPC: MCP status / test and gateway-host data backup / restore.
+ * Remote admin clients use the same capabilities over HTTP (`/v1/mcp/*`,
+ * `/v1/backup/*`). Access/user token cannot call those routes.
  */
 import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import os from 'node:os';
 import path from 'node:path';
 import { IpcChannels, normalizeMcpServerEntry } from '@okbot/shared';
-import type { IpcContext } from './context';
-import { mcpStatus, mcpTest } from '../mcpRuntime';
-import { exportDataBackup, restoreDataBackup } from '../backup';
+import type { IpcContext } from '@okbot/gateway';
+import { mcpStatus, mcpTest } from '@okbot/gateway';
+import { exportDataBackup, restoreDataBackup } from '@okbot/gateway';
 import { setAllowQuit } from '../quitState';
+import { relaunchOkBotApp } from '../relaunchApp';
 
 function backupFileName(): string {
   const d = new Date();
@@ -74,8 +75,7 @@ export function registerExtensionsIpc(ctx: IpcContext): void {
         // Reload every store from the restored directory.
         setTimeout(() => {
           setAllowQuit(true);
-          app.relaunch();
-          app.quit();
+          relaunchOkBotApp();
         }, 600);
         return { ok: true, previousDir };
       } catch (err) {

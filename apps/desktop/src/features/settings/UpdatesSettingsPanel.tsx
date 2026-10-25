@@ -1,5 +1,8 @@
-import type { UpdaterStatus } from '@okbot/shared';
+import { useEffect, useState } from 'react';
+import type { LocalizedChangelogNotes, UpdaterStatus } from '@okbot/shared';
+import { ChevronDownIcon } from '../../components/ui/icons';
 import { t, type UiLang } from '../../i18n';
+import { ChangelogNotesBody } from '../updates/ChangelogNotesBody';
 import { SettingsHelpTip } from './SettingsHelpTip';
 import { SettingsToggle } from './SettingsToggle';
 
@@ -20,6 +23,24 @@ export function UpdatesSettingsPanel({
   updaterBusy: boolean;
   setUpdaterBusy: React.Dispatch<React.SetStateAction<boolean>>;
 }) {
+  const [history, setHistory] = useState<LocalizedChangelogNotes[] | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const getHistory = window.okbot.updaterGetChangelogHistory;
+    if (typeof getHistory !== 'function') {
+      setHistory([]);
+      return;
+    }
+    void getHistory(lang).then((rows) => {
+      if (!cancelled) setHistory(rows ?? []);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [lang]);
+
   return (
     <div>
       <div className="settings-section-label" data-settings-id="updateSection">
@@ -88,6 +109,51 @@ export function UpdatesSettingsPanel({
                     : t(lang, 'checkUpdate')}
           </button>
         </div>
+      </div>
+
+      <div className="settings-section-label" style={{ marginTop: 16 }} data-settings-id="changelogHistory">
+        {t(lang, 'changelogHistory')}
+      </div>
+      <div className="settings-card changelog-history-card">
+        {history == null ? (
+          <p className="changelog-history-empty">{t(lang, 'changelogHistoryLoading')}</p>
+        ) : history.length === 0 ? (
+          <p className="changelog-history-empty">{t(lang, 'changelogHistoryEmpty')}</p>
+        ) : (
+          <ul className="changelog-history-timeline">
+            {history.map((entry) => {
+              const open = expanded === entry.version;
+              return (
+                <li
+                  key={entry.version}
+                  className={`changelog-history-item${open ? ' open' : ''}`}
+                >
+                  <button
+                    type="button"
+                    className="changelog-history-toggle"
+                    aria-expanded={open}
+                    onClick={() => setExpanded(open ? null : entry.version)}
+                  >
+                    <span className="changelog-history-dot" aria-hidden />
+                    <span className="changelog-history-version">v{entry.version}</span>
+                    <span className="changelog-history-title">{entry.title}</span>
+                    <span
+                      className={`model-icon-btn aar-expand-btn changelog-history-expand${open ? ' expanded' : ''}`}
+                      aria-hidden
+                    >
+                      <ChevronDownIcon />
+                    </span>
+                  </button>
+                  {open ? (
+                    <div className="changelog-history-body">
+                      <ChangelogNotesBody notes={entry} lang={lang} compact />
+                    </div>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </div>
     </div>
   );

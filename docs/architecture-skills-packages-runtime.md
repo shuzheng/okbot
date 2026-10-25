@@ -19,7 +19,7 @@ runtime（packages/agent）
   buildTools(read_skill) / hitl 循环 / ExecutionBackend
   SkillHotReloadHub（fs.watch → skills_changed）
 adapters（apps/desktop/electron）
-  FileStorage（磁盘） / IPC / localHttpApi SSE / remote SSE→formatted
+  FileStorage（磁盘） / IPC / gatewayHttpApi SSE / remote SSE→formatted
   UI：侧栏右键「导出助手」、侧栏 +「导入助手」；高级区（默认折叠）只做技能编辑
 storage
   ~/.okbot/<botId>/{bot.json,SOUL.md,skills/*/SKILL.md}
@@ -52,7 +52,7 @@ storage
 | 消费者 | 方式 |
 |--------|------|
 | 桌面 renderer | `onRuntimeEvent`（IPC `okbot:chat-event`） |
-| Gateway / localHttpApi | SSE `event: <type>` + `data: <RuntimeEvent JSON>`（`encodeRuntimeEventSse`） |
+| Gateway / gatewayHttpApi | SSE `event: <type>` + `data: <RuntimeEvent JSON>`（`encodeRuntimeEventSse`） |
 | 云电脑 shell | `ExecStreamEvent`（stdout/stderr/done）→ remote backend 折叠为同一 `formatted` 字符串，工具层不感知第二套状态机 |
 
 ## 设计约束

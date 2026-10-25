@@ -1,10 +1,10 @@
-import type { IpcContext } from './context';
-import { registerEntityIpc } from './registerEntity';
-import { registerSystemIpc, registerWindowControlIpc } from './registerSystem';
-import { registerChatIpc } from './registerChat';
+import type { IpcContext } from '@okbot/gateway';
+import { registerEntityIpc, registerChatIpc } from '@okbot/gateway';
+import { registerSystemIpc, registerWindowControlIpc, registerUpdaterIpc } from './registerSystem';
 import { registerExtensionsIpc } from './registerExtensions';
+import { registerClientGatewayIpc } from './registerClientGateway';
 
-export type { IpcContext, PendingToolApproval, ActiveRunsSnapshot } from './context';
+export type { IpcContext, PendingToolApproval, ActiveRunsSnapshot } from '@okbot/gateway';
 
 export function registerAllIpc(ctx: IpcContext): void {
   registerEntityIpc(ctx);
@@ -13,4 +13,5 @@ export function registerAllIpc(ctx: IpcContext): void {
   registerExtensionsIpc(ctx);
 }
 
-export { registerWindowControlIpc };
+export { registerWindowControlIpc, registerUpdaterIpc };
+export { registerClientGatewayIpc };

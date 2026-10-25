@@ -9,19 +9,13 @@ export default defineConfig({
     define: {
       __OKBOT_BUILD_DATE__: JSON.stringify(buildDate),
     },
-    plugins: [externalizeDepsPlugin({ exclude: ['@okbot/shared', '@okbot/agent'] })],
+    plugins: [externalizeDepsPlugin({ exclude: ['@okbot/shared', '@okbot/agent', '@okbot/gateway'] })],
     build: {
       rollupOptions: {
         // ws optional native deps — must stay external or Electron load fails
         external: ['bufferutil', 'utf-8-validate'],
         input: {
           index: resolve('electron/main.ts'),
-          cli: resolve('electron/cli.ts'),
-        },
-        output: {
-          banner(chunk) {
-            return chunk.name === 'cli' ? '#!/usr/bin/env node\n' : '';
-          },
         },
       },
     },

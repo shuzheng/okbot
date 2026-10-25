@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+// Fixtures use +08:00 wall times; pin TZ so CI (UTC) matches local expectations.
+process.env.TZ = 'Asia/Shanghai';
 import {
   formatMessageClockTime,
   formatSessionUpdatedAt,

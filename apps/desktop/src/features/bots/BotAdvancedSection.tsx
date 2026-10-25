@@ -244,6 +244,7 @@ export function BotMemoryPanel({
     <MemoryEntriesList
       lang={lang}
       entries={memories}
+      addLabel={t(lang, 'globalMemoriesAdd')}
       emptyLabel={t(lang, 'botMemoriesEmpty')}
       placeholder={t(lang, 'botMemoryPlaceholder')}
       scrollOuterSelector=".form-drawer-body"

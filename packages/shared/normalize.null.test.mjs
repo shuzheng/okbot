@@ -13,8 +13,13 @@ import {
   DEFAULT_SQUAD_CAPTAIN_PERSONA,
   DEFAULT_SQUAD_PLAYBOOK,
   normalizeSquadSettings,
-  normalizeLocalHttpApiSettings,
-  sanitizeLocalHttpApiToken,
+  normalizeGatewayHttpApiSettings,
+  sanitizeGatewayHttpApiToken,
+  generateGatewayHttpApiToken,
+  generateDistinctGatewayHttpApiToken,
+  resolveGatewayAuthRole,
+  gatewayTokenPrefixRole,
+  generateComputerToken,
   normalizeComputerEntry,
   normalizeDefaultComputerId,
   normalizePinnedOwnerIds,
@@ -104,6 +109,10 @@ assert.equal(tryCompileShellPattern('(unclosed'), null);
 const cc = normalizeContextCompression(null);
 assert.equal(cc.ratio, DEFAULT_CONTEXT_COMPRESSION.ratio);
 assert.equal(cc.keepRecentMax, DEFAULT_CONTEXT_COMPRESSION.keepRecentMax);
+assert.equal(cc.estimateSafetyFactor, DEFAULT_CONTEXT_COMPRESSION.estimateSafetyFactor);
+assert.equal(normalizeContextCompression({ estimateSafetyFactor: 0.5 }).estimateSafetyFactor, 1);
+assert.equal(normalizeContextCompression({ estimateSafetyFactor: 9 }).estimateSafetyFactor, 3);
+assert.equal(normalizeContextCompression({ estimateSafetyFactor: 1.65 }).estimateSafetyFactor, 1.7);
 
 
 
@@ -149,7 +158,8 @@ assert.doesNotMatch(DEFAULT_SOUL_MD_REFRESH_SYSTEM_PROMPT, /NO_CHANGE/);
     agentsMdRecentMessageLimit: 7,
   });
   assert.equal(migrated.soulMdRefreshSystemPrompt, 'custom soul prompt keep me');
-  assert.equal(migrated.soulMdRecentMessageLimit, 7);
+  // Legacy analysis-window keys are ignored (windows follow maintenance.*EveryTurns).
+  assert.equal('soulMdRecentMessageLimit' in migrated, false);
   const maint = normalizeMaintenanceSettings({
     agentsEveryTurns: 9,
     agentsEveryUserChars: 900,
@@ -183,15 +193,38 @@ assert.doesNotMatch(DEFAULT_SOUL_MD_REFRESH_SYSTEM_PROMPT, /NO_CHANGE/);
 
 console.log('normalize.null.test.mjs: ok');
 
-assert.equal(sanitizeLocalHttpApiToken('ab.cd e'), 'abcde');
-const kept = normalizeLocalHttpApiSettings({ enabled: true, token: 'ab.cd' });
+assert.equal(sanitizeGatewayHttpApiToken('ab.cd e'), 'abcde');
+const kept = normalizeGatewayHttpApiSettings({ enabled: true, token: 'ab.cd' });
 assert.equal(kept.token, 'abcd');
-const disabledEmpty = normalizeLocalHttpApiSettings({ enabled: false, token: '' });
+const disabledEmpty = normalizeGatewayHttpApiSettings({ enabled: false, token: '' });
 assert.equal(disabledEmpty.token, '');
-const enabledEmpty = normalizeLocalHttpApiSettings({ enabled: true, token: '!!!' });
+const enabledEmpty = normalizeGatewayHttpApiSettings({ enabled: true, token: '!!!' });
 assert.equal(enabledEmpty.token, '');
-const reused = normalizeLocalHttpApiSettings({ enabled: false, token: 'abc_DEF-123' });
+const reused = normalizeGatewayHttpApiSettings({ enabled: false, token: 'abc_DEF-123' });
 assert.equal(reused.token, 'abc_DEF-123');
+assert.equal(reused.adminToken, '');
+const withAdmin = normalizeGatewayHttpApiSettings({ token: 'acc', adminToken: 'adm.x' });
+assert.equal(withAdmin.adminToken, 'admx');
+{
+  const a = generateGatewayHttpApiToken('access');
+  const b = generateDistinctGatewayHttpApiToken(a, 'admin');
+  assert.notEqual(b, a);
+  assert.match(a, /^user_[0-9a-f]{48}$/);
+  assert.match(b, /^admin_[0-9a-f]{48}$/);
+  assert.match(generateGatewayHttpApiToken('admin'), /^admin_[0-9a-f]{48}$/);
+  assert.match(generateComputerToken(), /^[0-9a-f]{48}$/);
+  assert.equal(gatewayTokenPrefixRole(a), 'access');
+  assert.equal(gatewayTokenPrefixRole(b), 'admin');
+  assert.equal(gatewayTokenPrefixRole('deadbeef'), null);
+  // prefix alone never authenticates
+  assert.equal(resolveGatewayAuthRole('user_forged', a, b), null);
+  assert.equal(resolveGatewayAuthRole(a, a, b), 'access');
+  assert.equal(resolveGatewayAuthRole(b, a, b), 'admin');
+  // legacy unprefixed still works when stored
+  assert.equal(resolveGatewayAuthRole('oldhex', 'oldhex', 'admin_x'), 'access');
+  assert.equal(resolveGatewayAuthRole('oldadmin', 'oldhex', 'oldadmin'), 'admin');
+}
+
 
 const keptComputer = normalizeComputerEntry({
   id: 'computer_a',

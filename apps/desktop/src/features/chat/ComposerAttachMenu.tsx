@@ -44,7 +44,7 @@ export function ComposerAttachMenu({ lang, disabled, onPick }: ComposerAttachMen
 
   useEffect(() => {
     if (!open) return;
-    const onPointer = (e: MouseEvent | PointerEvent) => {
+    const onPointer = (e: MouseEvent | PointerEvent | TouchEvent) => {
       const el = e.target as Node | null;
       if (rootRef.current?.contains(el)) return;
       setOpen(false);
@@ -56,13 +56,18 @@ export function ComposerAttachMenu({ lang, disabled, onPick }: ComposerAttachMen
       }
     };
     // Defer so the opening click does not immediately close.
+    // pointerdown + touchstart: phones often skip mousedown until after the tap.
     const t = window.setTimeout(() => {
+      document.addEventListener('pointerdown', onPointer, true);
       document.addEventListener('mousedown', onPointer, true);
+      document.addEventListener('touchstart', onPointer, true);
       document.addEventListener('keydown', onKey, true);
     }, 0);
     return () => {
       window.clearTimeout(t);
+      document.removeEventListener('pointerdown', onPointer, true);
       document.removeEventListener('mousedown', onPointer, true);
+      document.removeEventListener('touchstart', onPointer, true);
       document.removeEventListener('keydown', onKey, true);
     };
   }, [open]);
@@ -72,8 +77,10 @@ export function ComposerAttachMenu({ lang, disabled, onPick }: ComposerAttachMen
   }, [disabled, open]);
 
   const pick = (kind: AttachKind) => {
-    setOpen(false);
+    // Call onPick first so WebUI <input type=file>.click() stays in the same
+    // user-gesture turn as this tap (iOS Safari). Close the fan after.
     onPick(kind);
+    setOpen(false);
   };
 
   // Stage sized for a vertical column (x≈0); tall enough for 3×STACK_STEP above the anchor.

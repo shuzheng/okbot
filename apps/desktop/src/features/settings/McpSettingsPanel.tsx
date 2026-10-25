@@ -151,13 +151,15 @@ function McpServerDialog({
             <span className="settings-row-label">
               <span className="settings-row-label-text">{t(lang, 'mcpTransport')}</span>
             </span>
-            <select
-              value={draft.transport}
-              onChange={(e) => set({ transport: e.target.value === 'http' ? 'http' : 'stdio' })}
-            >
-              <option value="stdio">{t(lang, 'mcpTransportStdio')}</option>
-              <option value="http">{t(lang, 'mcpTransportHttp')}</option>
-            </select>
+            <span className="settings-select-chevron-host">
+              <select
+                value={draft.transport}
+                onChange={(e) => set({ transport: e.target.value === 'http' ? 'http' : 'stdio' })}
+              >
+                <option value="stdio">{t(lang, 'mcpTransportStdio')}</option>
+                <option value="http">{t(lang, 'mcpTransportHttp')}</option>
+              </select>
+            </span>
           </div>
           {draft.transport === 'stdio' ? (
             <>
@@ -265,7 +267,7 @@ function McpServerDialog({
 /**
  * MCP servers ("advanced extensions"). Off by default. Every MCP tool call asks
  * for approval. List layout matches ComputersSettingsPanel / the model list.
- * `readOnly` (gateway clients): MCP starts processes on the host, so only the desktop edits it.
+ * `readOnly` (user-token / non-admin gateway clients): MCP starts processes on the host; admin remote clients may edit via HTTP.
  */
 export function McpSettingsPanel({
   lang,

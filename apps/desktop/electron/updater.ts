@@ -15,7 +15,25 @@ import {
   updateSha512ToHex,
 } from './macUpdateInstall';
 import { setAllowQuit } from './quitState';
-import { IpcChannels, type AppSettings, type UpdaterStatus } from '@okbot/shared';
+import {
+  IpcChannels,
+  type AppSettings,
+  type ChangelogLang,
+  type LocalizedChangelogNotes,
+  type UpdaterStatus,
+} from '@okbot/shared';
+import {
+  dismissUpdatePrompt as persistDismissUpdatePrompt,
+  fetchRemoteChangelog,
+  getBundledWhatsNew,
+  listBundledChangelogs,
+  localizeChangelog,
+  markWhatsNewSeen as persistMarkWhatsNewSeen,
+  readUpdaterPrefs,
+  shouldShowUpdatePrompt,
+  shouldShowWhatsNew,
+} from './changelog';
+import { resolveMainUiLang, updateInstallDialogCopy } from './mainI18n';
 
 const { autoUpdater } = electronUpdater;
 
@@ -43,6 +61,26 @@ let downloadedSha512Hex: string | null = null;
 /** Detached mac install helper already spawned for this download. */
 let macInstallStarted = false;
 
+/** Monotonic token so a slower changelog fetch cannot overwrite a newer version. */
+let changelogFetchSeq = 0;
+
+function uiLang(): ChangelogLang {
+  return resolveMainUiLang(getSettings().language);
+}
+
+function prefsPath(): string {
+  return app.getPath('userData');
+}
+
+function withPromptDismissed(patch: Partial<UpdaterStatus>): Partial<UpdaterStatus> {
+  const availableVersion = patch.availableVersion ?? status.availableVersion;
+  const forceUpdate = patch.forceUpdate ?? status.forceUpdate ?? false;
+  return {
+    ...patch,
+    updatePromptDismissed: !shouldShowUpdatePrompt(prefsPath(), availableVersion, forceUpdate),
+  };
+}
+
 function isDownloadActive(): boolean {
   return (
     downloadInFlight != null ||
@@ -69,7 +107,41 @@ function setStatus(patch: Partial<UpdaterStatus>) {
 }
 
 export function getUpdaterStatus(): UpdaterStatus {
-  return { ...status, currentVersion: app.getVersion() };
+  const forceUpdate = status.forceUpdate === true;
+  return {
+    ...status,
+    currentVersion: app.getVersion(),
+    updatePromptDismissed: !shouldShowUpdatePrompt(
+      prefsPath(),
+      status.availableVersion,
+      forceUpdate,
+    ),
+  };
+}
+
+async function attachRemoteChangelog(version: string): Promise<void> {
+  const seq = ++changelogFetchSeq;
+  const entry = await fetchRemoteChangelog(version);
+  if (seq !== changelogFetchSeq) return;
+  // Version may have changed while we were fetching.
+  if (status.availableVersion && status.availableVersion !== version) return;
+
+  if (!entry) {
+    setStatus(
+      withPromptDismissed({
+        availableNotes: undefined,
+        forceUpdate: false,
+      }),
+    );
+    return;
+  }
+  const notes = localizeChangelog(entry, uiLang());
+  setStatus(
+    withPromptDismissed({
+      availableNotes: notes,
+      forceUpdate: entry.forceUpdate === true,
+    }),
+  );
 }
 
 const INSTALL_FAILED_FILE = 'update-install-failed.json';
@@ -136,17 +208,25 @@ export function initAutoUpdater(readSettings: SettingsReader) {
   autoUpdater.on('update-available', (info: UpdateInfo) => {
     // Keep downloading/downloaded UI; still refresh availableVersion if useful.
     if (status.phase === 'downloading' || status.phase === 'downloaded') {
-      setStatus({
-        availableVersion: info.version,
-        error: undefined,
-      });
+      setStatus(
+        withPromptDismissed({
+          availableVersion: info.version,
+          error: undefined,
+        }),
+      );
+      void attachRemoteChangelog(info.version);
       return;
     }
-    setStatus({
-      phase: 'available',
-      availableVersion: info.version,
-      error: undefined,
-    });
+    setStatus(
+      withPromptDismissed({
+        phase: 'available',
+        availableVersion: info.version,
+        availableNotes: undefined,
+        forceUpdate: false,
+        error: undefined,
+      }),
+    );
+    void attachRemoteChangelog(info.version);
     // Auto-update ON → download in background (header shows downloading → install).
     if (getSettings().autoUpdate !== false) {
       void downloadUpdate();
@@ -157,6 +237,9 @@ export function initAutoUpdater(readSettings: SettingsReader) {
     setStatus({
       phase: 'not-available',
       availableVersion: undefined,
+      availableNotes: undefined,
+      forceUpdate: false,
+      updatePromptDismissed: false,
       error: undefined,
     });
   });
@@ -179,12 +262,18 @@ export function initAutoUpdater(readSettings: SettingsReader) {
         ? updateSha512ToHex(info.sha512)
         : null);
     macInstallStarted = false;
-    setStatus({
-      phase: 'downloaded',
-      availableVersion: info.version,
-      progress: 100,
-      error: undefined,
-    });
+    setStatus(
+      withPromptDismissed({
+        phase: 'downloaded',
+        availableVersion: info.version,
+        progress: 100,
+        error: undefined,
+      }),
+    );
+    // Notes may already be attached from update-available; refresh if missing.
+    if (!status.availableNotes || status.availableNotes.version !== info.version) {
+      void attachRemoteChangelog(info.version);
+    }
   });
   autoUpdater.on('error', (err: Error) => {
     // Mac Squirrel emits this when the unsigned bundle fails its code
@@ -219,11 +308,12 @@ export function initAutoUpdater(readSettings: SettingsReader) {
 }
 
 export async function checkForUpdates(manual: boolean): Promise<UpdaterStatus> {
+  const copy = updateInstallDialogCopy(uiLang());
   if (!app.isPackaged) {
     if (isDownloadActive()) return getUpdaterStatus();
     setStatus({
       phase: 'not-available',
-      error: manual ? '开发模式下不检查更新' : undefined,
+      error: manual ? copy.devNoCheck : undefined,
     });
     return getUpdaterStatus();
   }
@@ -245,8 +335,9 @@ export async function checkForUpdates(manual: boolean): Promise<UpdaterStatus> {
 }
 
 export async function downloadUpdate(): Promise<UpdaterStatus> {
+  const copy = updateInstallDialogCopy(uiLang());
   if (!app.isPackaged) {
-    setStatus({ phase: 'error', error: '开发模式下无法下载更新' });
+    setStatus({ phase: 'error', error: copy.devNoDownload });
     return getUpdaterStatus();
   }
   // Single-flight: already downloading (or promise in flight) → return current status.
@@ -282,14 +373,15 @@ export async function downloadUpdate(): Promise<UpdaterStatus> {
 
 export async function installUpdate(): Promise<void> {
   if (status.phase !== 'downloaded') return;
+  const copy = updateInstallDialogCopy(uiLang());
   const boxOpts = {
     type: 'info' as const,
-    buttons: ['立即重启', '稍后'],
+    buttons: [copy.restartNow, copy.later],
     defaultId: 0,
     cancelId: 1,
     noLink: true,
-    message: '更新已下载完成',
-    detail: `新版本 ${status.availableVersion ?? ''} 已就绪。重启 OkBot 以完成安装。`,
+    message: copy.readyMessage,
+    detail: copy.readyDetail(status.availableVersion ?? ''),
   };
   // Not attached to a window: a macOS sheet keeps that window from closing,
   // and quitAndInstall never reaches the installer while any window is open.
@@ -301,6 +393,7 @@ export async function installUpdate(): Promise<void> {
 
 function restartToInstall(): void {
   setAllowQuit(true);
+  const copy = updateInstallDialogCopy(uiLang());
   if (process.platform === 'darwin') {
     // MacUpdater.quitAndInstall() does not quit unless native Squirrel has
     // already accepted the bundle. Unsigned builds never get there, so the
@@ -311,16 +404,16 @@ function restartToInstall(): void {
       setAllowQuit(false);
       const detail =
         started.reason === 'not_writable'
-          ? '当前应用所在目录不可写（例如还在 DMG 里运行，或没有 /Applications 的写入权限）。请先把 OkBot 复制到「应用程序」后再更新。'
+          ? copy.notWritable
           : started.reason === 'no_space'
-            ? '磁盘空间不足，无法展开安装包。请腾出空间后重试。'
+            ? copy.noSpace
             : started.reason === 'no_sha'
-              ? '安装包校验信息不完整。请重新检查更新并下载。'
-              : '已下载的安装包不在更新缓存里。请退出 OkBot，从 Release 手动安装。';
+              ? copy.noSha
+              : copy.genericFail;
       void dialog.showMessageBox({
         type: 'error',
-        buttons: ['好'],
-        message: '无法安装更新',
+        buttons: [copy.ok],
+        message: copy.failedMessage,
         detail,
       });
       return;
@@ -341,9 +434,9 @@ function restartToInstall(): void {
       const detail = err instanceof Error ? err.message : String(err);
       void dialog.showMessageBox({
         type: 'error',
-        buttons: ['好'],
-        message: '无法安装更新',
-        detail: detail || '安装程序未能启动，请稍后重试或手动安装。',
+        buttons: [copy.ok],
+        message: copy.failedMessage,
+        detail: detail || copy.installFailFallback,
       });
     }
   }, 0);
@@ -429,4 +522,34 @@ export function onAutoUpdatePreferenceChanged(enabled: boolean) {
     return;
   }
   void checkForUpdates(false);
+}
+
+export function getChangelogHistory(lang?: ChangelogLang): LocalizedChangelogNotes[] {
+  return listBundledChangelogs(lang ?? uiLang());
+}
+
+export function getWhatsNewIfNeeded(lang?: ChangelogLang): LocalizedChangelogNotes | null {
+  const current = app.getVersion();
+  if (!shouldShowWhatsNew(prefsPath(), current)) return null;
+  return getBundledWhatsNew(current, lang ?? uiLang());
+}
+
+export function markWhatsNewSeen(version?: string): void {
+  const v = (version || app.getVersion()).trim();
+  if (!v) return;
+  persistMarkWhatsNewSeen(prefsPath(), v);
+}
+
+export function dismissSoftUpdatePrompt(version?: string): UpdaterStatus {
+  const v = (version || status.availableVersion || '').trim();
+  if (!v) return getUpdaterStatus();
+  if (status.forceUpdate === true) return getUpdaterStatus();
+  persistDismissUpdatePrompt(prefsPath(), v);
+  setStatus({ updatePromptDismissed: true });
+  return getUpdaterStatus();
+}
+
+/** Test helper / diagnostics. */
+export function getUpdaterPrefsSnapshot() {
+  return readUpdaterPrefs(prefsPath());
 }

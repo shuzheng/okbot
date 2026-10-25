@@ -101,6 +101,38 @@ export function meshExchangeChipRef(
   };
 }
 
+/** Max options on a quick-choice card. */
+export const QUICK_CHOICE_MAX_OPTIONS = 6;
+
+/**
+ * Model-emitted quick-choice card (via the `ask_choice` tool) shown under an
+ * assistant reply. Clicking an option sends its text as the user's reply.
+ */
+export interface QuickChoice {
+  question: string;
+  options: string[];
+}
+
+/** Sanitize a quick-choice payload (null when unusable). */
+export function normalizeQuickChoice(raw: unknown): QuickChoice | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  const question = typeof o.question === 'string' ? o.question.trim().slice(0, 120) : '';
+  if (!question || !Array.isArray(o.options)) return null;
+  const seen = new Set<string>();
+  const options: string[] = [];
+  for (const item of o.options) {
+    if (typeof item !== 'string') continue;
+    const text = item.replace(/\s+/g, ' ').trim().slice(0, 60);
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    options.push(text);
+    if (options.length >= QUICK_CHOICE_MAX_OPTIONS) break;
+  }
+  if (options.length < 2) return null;
+  return { question, options };
+}
+
 export interface ChatMessage {
   id: string;
   role: ChatRole;
@@ -140,6 +172,8 @@ export interface ChatMessage {
   usage?: TokenUsage;
   /** Waterfall timeline for this assistant turn (model / tools / approval). */
   trace?: MessageTrace;
+  /** Quick-choice card under this assistant reply (model `ask_choice`). */
+  choice?: QuickChoice;
   /**
    * Renderer-only: optimistic user bubble send state.
    * `pending` while chatStart awaits; `failed` shows retry; cleared/`sent` after IPC succeeds.

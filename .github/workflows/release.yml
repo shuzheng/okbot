@@ -136,6 +136,21 @@ jobs:
           find dist -type f | sort
           test -n "$(find dist -type f | head -1)"
 
+      - name: Prepare changelog.json asset
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC="apps/desktop/changelogs/${VERSION}.json"
+          if [[ ! -f "$SRC" ]]; then
+            echo "::error::Missing bundled changelog $SRC — add apps/desktop/changelogs/${VERSION}.json before tagging"
+            exit 1
+          fi
+          mkdir -p upload
+          cp -f "$SRC" upload/changelog.json
+          echo "Prepared changelog.json from $SRC"
+
       - name: Create / update GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -149,6 +164,11 @@ jobs:
           find dist -type f -maxdepth 3 -print0 | while IFS= read -r -d '' f; do
             cp -f "$f" "upload/$(basename "$f")"
           done
+          # changelog.json prepared in prior step (or ensure again)
+          SRC="apps/desktop/changelogs/${VERSION}.json"
+          if [[ -f "$SRC" ]]; then
+            cp -f "$SRC" upload/changelog.json
+          fi
           ls -la upload
 
           NOTES=$(cat <<MD

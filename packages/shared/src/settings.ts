@@ -1,4 +1,4 @@
-/** App settings schema, normalize helpers, bots/squads, defaults. */
+/** App settings schema (client chrome + gateway host), normalize helpers, bots/squads, defaults. */
 
 import type { McpSettings } from './mcp.js';
 import type { WebSettings } from './web.js';
@@ -133,6 +133,12 @@ export interface ContextCompressionSettings {
   /** Soft char cap for the rolling session summary. */
   summaryMaxChars: number;
   /**
+   * Multiply the local token heuristic before comparing to the compress /
+   * enforceBudget threshold. Counters under-count vs provider billed usage
+   * (e.g. MiniMax overnight ~1.7×). Range 1.0–3.0; 1.0 = no calibration.
+   */
+  estimateSafetyFactor: number;
+  /**
    * When true (default), on send classify whether the new user message starts a
    * new topic; if yes, force one Summary+Buffer compress (keep recent buffer).
    */
@@ -158,11 +164,14 @@ export const CONTEXT_KEEP_RECENT_MESSAGES = 12;
 export const CONTEXT_KEEP_RECENT_MIN = 8;
 /** Soft cap for the rolling summary (Chinese chars / punctuation). */
 export const CONTEXT_SUMMARY_MAX_CHARS = 2000;
+/** Scale local token estimates before threshold checks (undercount calibration). */
+export const CONTEXT_ESTIMATE_SAFETY_FACTOR = 1.6;
 export const DEFAULT_CONTEXT_COMPRESSION: ContextCompressionSettings = {
   ratio: CONTEXT_COMPRESS_RATIO,
   keepRecentMax: CONTEXT_KEEP_RECENT_MESSAGES,
   keepRecentMin: CONTEXT_KEEP_RECENT_MIN,
   summaryMaxChars: CONTEXT_SUMMARY_MAX_CHARS,
+  estimateSafetyFactor: CONTEXT_ESTIMATE_SAFETY_FACTOR,
   autoTopicCompress: true,
 };
 export function normalizeContextWindow(raw: unknown): number {
@@ -531,6 +540,7 @@ export function resolveModelRef(
  * - ratio: 0.5–0.95 (UI percent ÷ 100)
  * - keepRecentMin/Max: integers with 1 ≤ min ≤ max (max capped at 500)
  * - summaryMaxChars: 100–8000
+ * - estimateSafetyFactor: 1.0–3.0 (missing → CONTEXT_ESTIMATE_SAFETY_FACTOR)
  * - autoTopicCompress: missing → true
  */
 export function normalizeContextCompression(raw: unknown): ContextCompressionSettings {
@@ -568,15 +578,33 @@ export function normalizeContextCompression(raw: unknown): ContextCompressionSet
   summaryMaxChars = Math.floor(summaryMaxChars);
   summaryMaxChars = Math.min(8000, Math.max(100, summaryMaxChars));
 
+  let estimateSafetyFactor =
+    typeof src.estimateSafetyFactor === 'number'
+      ? src.estimateSafetyFactor
+      : Number(src.estimateSafetyFactor);
+  if (!Number.isFinite(estimateSafetyFactor)) {
+    estimateSafetyFactor = CONTEXT_ESTIMATE_SAFETY_FACTOR;
+  }
+  // One decimal place is enough for UI / settings.json.
+  estimateSafetyFactor = Math.round(estimateSafetyFactor * 10) / 10;
+  estimateSafetyFactor = Math.min(3, Math.max(1, estimateSafetyFactor));
+
   // Missing / invalid → default ON (early product: no migration shim).
   const autoTopicCompress = src.autoTopicCompress === false ? false : true;
 
-  return { ratio, keepRecentMax, keepRecentMin, summaryMaxChars, autoTopicCompress };
+  return {
+    ratio,
+    keepRecentMax,
+    keepRecentMin,
+    summaryMaxChars,
+    estimateSafetyFactor,
+    autoTopicCompress,
+  };
 }
 
 /**
- * Default fallback for `normalizeMaxTurns` (squad captain/member caps, message
- * limit knobs). Not a user-facing 1:1 setting — that UI was removed.
+ * Default fallback for `normalizeMaxTurns` (message-limit knobs and similar).
+ * Not a user-facing 1:1 / squad run setting — those UIs were removed.
  */
 export const DEFAULT_MAX_TURNS = 50;
 
@@ -896,17 +924,16 @@ export function normalizeSecuritySettings(raw: unknown): SecuritySettings {
 
 /**
  * Global squad defaults (`settings.json` → `squad`).
- * Built-in virtual captain uses persona + playbook; maxTurns cap captain / member runs.
+ * Built-in virtual captain uses persona + playbook.
+ * Captain/member per-run maxTurns settings were removed; runs use
+ * {@link DEFAULT_RUNNER_MAX_TURNS}. Older JSON may still carry
+ * `captainMaxTurns` / `memberMaxTurns` — ignored on load.
  */
 export interface SquadSettings {
   /** Captain persona / profession instructions (Chinese by default). */
   captainPersona: string;
   /** Collaboration playbook injected into the captain. */
   playbook: string;
-  /** Max agent turns for the captain run. */
-  captainMaxTurns: number;
-  /** Max agent turns for each nested member asTool run. */
-  memberMaxTurns: number;
 }
 
 export const DEFAULT_SQUAD_CAPTAIN_PERSONA = `你是小队的虚拟队长与编排者。你负责理解目标、拆解任务、选择队员、传递上下文、校验结果、汇总结论，并简洁清楚的回复用户。
@@ -934,8 +961,6 @@ export const DEFAULT_SQUAD_PLAYBOOK = `0. 准备：读取队员名册、能力�
 export const DEFAULT_SQUAD_SETTINGS: SquadSettings = {
   captainPersona: DEFAULT_SQUAD_CAPTAIN_PERSONA,
   playbook: DEFAULT_SQUAD_PLAYBOOK,
-  captainMaxTurns: 50,
-  memberMaxTurns: 50,
 };
 
 /**
@@ -982,15 +1007,15 @@ export function normalizeSquadSettings(raw: unknown): SquadSettings {
   return {
     captainPersona: persona || DEFAULT_SQUAD_CAPTAIN_PERSONA,
     playbook: playbook || DEFAULT_SQUAD_PLAYBOOK,
-    captainMaxTurns: normalizeMaxTurns(src.captainMaxTurns, DEFAULT_SQUAD_SETTINGS.captainMaxTurns),
-    memberMaxTurns: normalizeMaxTurns(src.memberMaxTurns, DEFAULT_SQUAD_SETTINGS.memberMaxTurns),
   };
 }
 
 /**
  * Global 1:1 instruction templates (`settings.json` → `instructions`).
  * `{name}` is replaced with botName || 'OkBot' when building the system prompt.
- * Also holds SOUL.md / skills silent-refresh knobs (UI under 设置 → 指令).
+ * Also holds SOUL.md / skills silent-refresh prompt templates (UI under 设置 → 指令).
+ * Analysis window sizes follow `settings.maintenance.*EveryTurns` (not separate limit knobs).
+ * Older JSON may still carry `soulMdRecentMessageLimit` / `skillsRecentMessageLimit` — ignored on load.
  */
 export interface InstructionsSettings {
   /** Opening role sentence for 1:1 assistants. Empty / whitespace → default. */
@@ -1000,15 +1025,8 @@ export interface InstructionsSettings {
    * Settings JSON key: `soulMdRefreshSystemPrompt` (migrates from legacy `agentsMdRefreshSystemPrompt` on load).
    */
   soulMdRefreshSystemPrompt: string;
-  /**
-   * How many recent user/assistant messages refreshSoulMd analyzes. Default 12; clamp 1–100.
-   * Settings JSON key: `soulMdRecentMessageLimit` (migrates from legacy `agentsMdRecentMessageLimit` on load).
-   */
-  soulMdRecentMessageLimit: number;
   /** The create/update decision line injected into refreshBotSkills system prompt. Empty → default. */
   skillsCreateUpdateInstruction: string;
-  /** How many recent messages refreshBotSkills analyzes. Default 20; clamp 1–100. */
-  skillsRecentMessageLimit: number;
 }
 
 export const DEFAULT_ASSISTANT_ROLE_TEMPLATE =
@@ -1098,11 +1116,15 @@ export const DEFAULT_SOUL_MD_REFRESH_SYSTEM_PROMPT = [
   'heading 用现有章节名（不要带 #），常见章节：个性与边界 / 语气与表达 / 约束 / 安全红线 / 输入输出习惯。只列有变化的章节。',
 ].join('\n');
 
-export const DEFAULT_SOUL_MD_RECENT_MESSAGE_LIMIT = 12;
+/**
+ * Fallback recent-message window for refreshSoulMd when callers omit the limit.
+ * Runtime (post-turn) uses `settings.maintenance.soulEveryTurns` (same default: 5).
+ */
+export const DEFAULT_SOUL_MD_RECENT_MESSAGE_LIMIT = 5;
 
 /** Default create/update gate line for refreshBotSkills (one system line only). */
 export const DEFAULT_SKILLS_CREATE_UPDATE_INSTRUCTION =
-  '仅当对话中出现「固定多步流程」，或同一类事情已做/将做至少两遍时，才新增或更新 skill。技能 slug、name 与文件名均须以 okbot- 为前缀。description 写清能力与何时使用（含触发词与「勿用于」），最多 1024 字；触发说明只写在 description，body 只写步骤。';
+  '仅当对话中出现「固定多步流程」，或同一类事情已做/将做至少两遍时，才新增或更新 skill。技能 slug、name 与文件名均须以 okbot- 为前缀。description 必填（最多 1024 字），描述何时使用此技能；body 按专业技能模版写「何时使用此技能 / 工作原理 / 示例 / 注意事项」。';
 
 /** Exact prior defaults; persisted copies upgrade to DEFAULT_SKILLS_CREATE_UPDATE_INSTRUCTION. */
 export const LEGACY_DEFAULT_SKILLS_CREATE_UPDATE_INSTRUCTION =
@@ -1112,27 +1134,33 @@ export const LEGACY_DEFAULT_SKILLS_CREATE_UPDATE_INSTRUCTION =
 export const LEGACY_DEFAULT_SKILLS_CREATE_UPDATE_INSTRUCTION_V2 =
   '仅当对话中出现「固定多步流程」，或同一类事情已做/将做至少两遍时，才新增或更新 skill。技能slug（目录名）、技能name（名称）和文件name（skill文件名）必须以okbot-为前缀。';
 
+/** Prior default (triggers-only-in-description / body-steps-only); upgrade in place. */
+export const LEGACY_DEFAULT_SKILLS_CREATE_UPDATE_INSTRUCTION_V3 =
+  '仅当对话中出现「固定多步流程」，或同一类事情已做/将做至少两遍时，才新增或更新 skill。技能 slug、name 与文件名均须以 okbot- 为前缀。description 写清能力与何时使用（含触发词与「勿用于」），最多 1024 字；触发说明只写在 description，body 只写步骤。';
+
 /**
  * Fixed refreshBotSkills lines: how to write skill.description / body
  * (always injected; not replaced by skillsCreateUpdateInstruction).
  */
 export const DEFAULT_SKILLS_DESCRIPTION_FORMAT_INSTRUCTION = [
-  'description 必填，最多 1024 字：能力 + 何时使用（须含「何时使用」或 Use when…）；第三人称、动词开头（如「从…提取…」/ Extract…）；含清晰触发关键词；尽量写「勿用于」或 Do NOT use for… 减少误触发。避免「我能」「你可以」第一人称助手口吻。',
-  '「何时使用」/ Use when / 「勿用于」/ Do NOT use for 等触发说明只写在 description 字段，不要写入 body。',
-  'body 只写可执行步骤（Steps/做法），中文优先；不要重复 description 的触发说明，不要单独的 When/何时使用 章节。',
+  '目录布局：skills/<slug>/ 含 SKILL.md（必需），以及可选 scripts/、references/、assets/、README.md；slug / name / 目录名均以 okbot- 开头。',
+  'SKILL.md frontmatter：name、description 必填；author / version / tags / license 仅在有实际值时写入。description 最多 1024 字，描述何时使用此技能（第三人称、动词开头，如「从…提取…」/ Extract…）；避免「我能」「你可以」。',
+  'body 按此顺序写章节（中文优先）：# <Name> 技能 → ## 何时使用此技能 → ## 工作原理（编号步骤）→ ## 示例 → ## 注意事项。不要单独的「何时不要使用」/ Do NOT use 章节；额外约束放进「注意事项」。',
 ].join('\n');
 
-export const DEFAULT_SKILLS_RECENT_MESSAGE_LIMIT = 20;
+/**
+ * Fallback recent-message window for refreshBotSkills when callers omit the limit.
+ * Runtime uses `settings.maintenance.skillsEveryTurns` (same default: 5).
+ */
+export const DEFAULT_SKILLS_RECENT_MESSAGE_LIMIT = 5;
 
 export const DEFAULT_INSTRUCTIONS_SETTINGS: InstructionsSettings = {
   assistantRoleTemplate: DEFAULT_ASSISTANT_ROLE_TEMPLATE,
   soulMdRefreshSystemPrompt: DEFAULT_SOUL_MD_REFRESH_SYSTEM_PROMPT,
-  soulMdRecentMessageLimit: DEFAULT_SOUL_MD_RECENT_MESSAGE_LIMIT,
   skillsCreateUpdateInstruction: DEFAULT_SKILLS_CREATE_UPDATE_INSTRUCTION,
-  skillsRecentMessageLimit: DEFAULT_SKILLS_RECENT_MESSAGE_LIMIT,
 };
 
-/** Clamp / fill instructions settings. Empty strings → defaults; limits → 1–100. */
+/** Clamp / fill instructions settings. Empty strings → defaults. Leftover limit keys ignored. */
 export function normalizeInstructionsSettings(raw: unknown): InstructionsSettings {
   const src =
     raw && typeof raw === 'object'
@@ -1168,26 +1196,15 @@ export function normalizeInstructionsSettings(raw: unknown): InstructionsSetting
   const skillsInstr =
     !skillsInstrRaw ||
     skillsInstrRaw === LEGACY_DEFAULT_SKILLS_CREATE_UPDATE_INSTRUCTION ||
-    skillsInstrRaw === LEGACY_DEFAULT_SKILLS_CREATE_UPDATE_INSTRUCTION_V2
+    skillsInstrRaw === LEGACY_DEFAULT_SKILLS_CREATE_UPDATE_INSTRUCTION_V2 ||
+    skillsInstrRaw === LEGACY_DEFAULT_SKILLS_CREATE_UPDATE_INSTRUCTION_V3
       ? ''
       : skillsInstrRaw;
-  const soulLimitRaw =
-    srcAny.soulMdRecentMessageLimit !== undefined
-      ? srcAny.soulMdRecentMessageLimit
-      : srcAny.agentsMdRecentMessageLimit;
   return {
     assistantRoleTemplate: template || DEFAULT_ASSISTANT_ROLE_TEMPLATE,
     soulMdRefreshSystemPrompt: soulPrompt || DEFAULT_SOUL_MD_REFRESH_SYSTEM_PROMPT,
-    soulMdRecentMessageLimit: normalizeMaxTurns(
-      soulLimitRaw,
-      DEFAULT_SOUL_MD_RECENT_MESSAGE_LIMIT,
-    ),
     skillsCreateUpdateInstruction:
       skillsInstr || DEFAULT_SKILLS_CREATE_UPDATE_INSTRUCTION,
-    skillsRecentMessageLimit: normalizeMaxTurns(
-      src.skillsRecentMessageLimit,
-      DEFAULT_SKILLS_RECENT_MESSAGE_LIMIT,
-    ),
   };
 }
 
@@ -1201,12 +1218,12 @@ export function resolveAssistantRoleLine(template: string | undefined | null, bo
 /**
  * Memory refresh / global memory knobs (`settings.json` → `memory`).
  * `scopeInstruction` is the single line that teaches the model global vs bot scope.
+ * Analysis window size follows `settings.maintenance.memoryEveryTurns` (not a separate limit).
+ * Older JSON may still carry `recentMessageLimit` — ignored on load.
  */
 export interface MemorySettings {
   /** Injected into refreshMemories system prompt as the scope=global vs scope=bot rule line. */
   scopeInstruction: string;
-  /** How many recent messages refreshMemories analyzes. Default 20; clamp 1–100. */
-  recentMessageLimit: number;
   /** Max memory bullets injected into the system prompt. Default 40; clamp 5–200. */
   promptMaxEntries: number;
   /** Max chars for memory bullets in the system prompt. Default 4000; clamp 500–20000. */
@@ -1216,19 +1233,22 @@ export interface MemorySettings {
 export const DEFAULT_MEMORY_SCOPE_INSTRUCTION =
   '默认 scope=bot（本助手记忆）。仅当内容属于：用户身份/称呼、长期习惯与偏好、本机电脑环境、跨助手通用配置，或用户明确要求写入全局记忆时，才用 scope=global；其余一律 scope=bot。拿不准时选 bot。';
 
-export const DEFAULT_MEMORY_RECENT_MESSAGE_LIMIT = 20;
+/**
+ * Fallback recent-message window for refreshMemories when callers omit the limit.
+ * Runtime uses `settings.maintenance.memoryEveryTurns` (same default: 2).
+ */
+export const DEFAULT_MEMORY_RECENT_MESSAGE_LIMIT = 2;
 
 export const DEFAULT_MEMORY_PROMPT_MAX_ENTRIES = 40;
 export const DEFAULT_MEMORY_PROMPT_MAX_CHARS = 4_000;
 
 export const DEFAULT_MEMORY_SETTINGS: MemorySettings = {
   scopeInstruction: DEFAULT_MEMORY_SCOPE_INSTRUCTION,
-  recentMessageLimit: DEFAULT_MEMORY_RECENT_MESSAGE_LIMIT,
   promptMaxEntries: DEFAULT_MEMORY_PROMPT_MAX_ENTRIES,
   promptMaxChars: DEFAULT_MEMORY_PROMPT_MAX_CHARS,
 };
 
-/** Clamp / fill memory settings. Empty scope instruction → default; limit → 1–100. */
+/** Clamp / fill memory settings. Empty scope instruction → default. Leftover recentMessageLimit ignored. */
 export function normalizeMemorySettings(raw: unknown): MemorySettings {
   const src =
     raw && typeof raw === 'object'
@@ -1263,10 +1283,6 @@ export function normalizeMemorySettings(raw: unknown): MemorySettings {
 
   return {
     scopeInstruction: scopeInstruction || DEFAULT_MEMORY_SCOPE_INSTRUCTION,
-    recentMessageLimit: normalizeMaxTurns(
-      src.recentMessageLimit,
-      DEFAULT_MEMORY_RECENT_MESSAGE_LIMIT,
-    ),
     promptMaxEntries,
     promptMaxChars,
   };
@@ -1274,19 +1290,28 @@ export function normalizeMemorySettings(raw: unknown): MemorySettings {
 
 /**
  * Post-turn silent maintenance throttle (`settings.json` → `maintenance`).
- * Memory refreshes more often than SOUL.md / skills. User phrases like
- * 「记住」/ remember / 「别忘了」 force an immediate memory refresh.
+ * SOUL.md / skills still use turn/char gates. Memory always runs post-turn;
+ * the LLM decides whether to write (no programmatic every-N / chars gate).
+ * The same `*EveryTurns` numbers also size each refresh's recent-message analysis window
+ * (SOUL / roster description → soulEveryTurns; skills → skillsEveryTurns; memory → memoryEveryTurns).
  */
 export interface MaintenanceSettings {
-  /** Run memory refresh every N successful turns (default 2). Clamp 1–50. */
+  /**
+   * @deprecated Unused write gate (compat only). Memory refresh runs every successful
+   * turn; the model decides create/skip/merge. Still used as the memory analysis window size.
+   * Clamp 1–50 if present in settings.json. Default 2.
+   */
   memoryEveryTurns: number;
-  /** Or when user chars since last memory refresh ≥ this (default 400). Clamp 50–20000. */
+  /**
+   * @deprecated Unused write gate (compat only). Not consulted for memory refresh.
+   * Clamp 50–20000 if present in settings.json.
+   */
   memoryEveryUserChars: number;
-  /** SOUL.md refresh every N turns (default 5). Clamp 1–50. Settings key migrates from agentsEveryTurns. */
+  /** SOUL.md refresh every N turns (default 5); also the SOUL/roster analysis window. Clamp 1–50. Settings key migrates from agentsEveryTurns. */
   soulEveryTurns: number;
   /** Or when user chars since last SOUL refresh ≥ this (default 1200). Migrates from agentsEveryUserChars. */
   soulEveryUserChars: number;
-  /** Skills refresh every N turns (default 5). Clamp 1–50. */
+  /** Skills refresh every N turns (default 5); also the skills analysis window. Clamp 1–50. */
   skillsEveryTurns: number;
   /** Or when user chars since last skills refresh ≥ this (default 1200). */
   skillsEveryUserChars: number;
@@ -1374,7 +1399,7 @@ export function generateComputerId(): string {
 }
 
 export function generateComputerToken(): string {
-  return generateLocalHttpApiToken();
+  return randomGatewayTokenSecret();
 }
 
 export function normalizeComputerEntry(raw: unknown): ComputerEntry | null {
@@ -1684,33 +1709,97 @@ export function defaultOwnerGroupOrder(groups: ReadonlyArray<OwnerGroup>): strin
 }
 
 /**
- * Loopback HTTP API for external programs (`settings.json` → `localHttpApi`).
- * Default OFF. When enabled, main process binds 127.0.0.1 only.
- * When `bindLan` is true, binds 0.0.0.0 (intranet gateway) and can serve the web UI.
+ * Native always-on gateway HTTP API (`server.json` → `gatewayHttpApi`).
+ * On-disk alias: legacy installs may still have `localHttpApi`; readers should accept both
+ * via {@link pickGatewayHttpApiRaw} / SettingsStore normalize. Writers persist `gatewayHttpApi`.
+ * Always enabled when the gateway owns the process; no UI/CLI switch to turn it off.
+ * Default bind is 127.0.0.1 only. When `bindLan` is true, binds 0.0.0.0 and can serve the web UI.
  */
-export interface LocalHttpApiSettings {
-  /** Master switch. Default false. */
+/** Role granted by a matching gateway HTTP credential.
+ * UI copy says "user token"; mint prefix is `user_`. Internal id stays `access`
+ * so existing auth gates / CLI (`access|admin`) keep working.
+ */
+export type GatewayAuthRole = "access" | "admin";
+
+/** Prefix on newly minted user (access) tokens. */
+export const GATEWAY_USER_TOKEN_PREFIX = "user_";
+/** Prefix on newly minted admin tokens. */
+export const GATEWAY_ADMIN_TOKEN_PREFIX = "admin_";
+
+/** Per-token message / token quotas. `0` means unlimited. */
+export interface GatewayApiTokenLimits {
+  /** Max chat turns (messages) per local calendar day. 0 = unlimited. */
+  dailyMessages: number;
+  /** Max chat turns over the token lifetime. 0 = unlimited. */
+  totalMessages: number;
+  /** Max tokens (input+output+cache) per local calendar day. 0 = unlimited. */
+  dailyTokens: number;
+  /** Max tokens over the token lifetime. 0 = unlimited. */
+  totalTokens: number;
+}
+
+export const EMPTY_GATEWAY_API_TOKEN_LIMITS: GatewayApiTokenLimits = {
+  dailyMessages: 0,
+  totalMessages: 0,
+  dailyTokens: 0,
+  totalTokens: 0,
+};
+
+/**
+ * One gateway HTTP credential. The gateway may hold any number of these.
+ * `role` matches existing privilege semantics (`access` = 用户, `admin` = 超管).
+ */
+export interface GatewayApiTokenEntry {
+  id: string;
+  name: string;
+  role: GatewayAuthRole;
+  /** Secret string presented as Bearer / X-OkBot-Token. */
+  token: string;
+  limits: GatewayApiTokenLimits;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GatewayHttpApiSettings {
+  /**
+   * Always true. Kept on the wire for shape compatibility; normalize forces true
+   * (legacy `false` on disk is ignored — no migration, always-on).
+   */
   enabled: boolean;
   /** TCP port. Default 18765; clamp 1024–65535. */
   port: number;
-  /** Shared secret; required on every request except health. Empty is allowed. A token is created only when none is saved. */
+  /**
+   * Legacy primary access token (first `access` entry in {@link apiTokens}).
+   * Kept for attach / CLI / probe compatibility; auth matches every entry in `apiTokens`.
+   * Empty is allowed on disk; minted only when the owning process starts and none is saved.
+   */
   token: string;
+  /**
+   * Legacy primary admin token (first `admin` entry in {@link apiTokens}).
+   * Minted on upgrade when missing; never promoted from the old single token.
+   */
+  adminToken: string;
+  /**
+   * All gateway API tokens (user + super-admin). Prefer this list for CRUD.
+   * Normalize seeds from legacy `token` / `adminToken` when empty, and mirrors
+   * the first access/admin entry back into those fields.
+   */
+  apiTokens: GatewayApiTokenEntry[];
   /**
    * When true, bind 0.0.0.0 (LAN / desktop gateway) instead of 127.0.0.1.
    * Intranet use; auth token still required. Default false.
    */
   bindLan: boolean;
   /**
-   * When true (and enabled), serve the built renderer UI over HTTP for mobile browsers.
+   * When true, serve the built renderer UI over HTTP for mobile browsers.
    * Normalize defaults serveUi to true when bindLan is true.
    */
   serveUi: boolean;
 }
 
-export const DEFAULT_LOCAL_HTTP_API_PORT = 18765;
+export const DEFAULT_GATEWAY_HTTP_API_PORT = 18765;
 
-/** Cryptographically strong token for localHttpApi (48 hex chars). */
-export function generateLocalHttpApiToken(): string {
+export function randomGatewayTokenSecret(): string {
   const bytes = new Uint8Array(24);
   if (typeof globalThis.crypto?.getRandomValues === "function") {
     globalThis.crypto.getRandomValues(bytes);
@@ -1720,36 +1809,376 @@ export function generateLocalHttpApiToken(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-export const DEFAULT_LOCAL_HTTP_API: LocalHttpApiSettings = {
-  enabled: false,
-  port: DEFAULT_LOCAL_HTTP_API_PORT,
+/**
+ * Cryptographically strong gatewayHttpApi token with role prefix:
+ * access → `user_<hex>`, admin → `admin_<hex>`.
+ */
+export function generateGatewayHttpApiToken(role: GatewayAuthRole = "access"): string {
+  const prefix = role === "admin" ? GATEWAY_ADMIN_TOKEN_PREFIX : GATEWAY_USER_TOKEN_PREFIX;
+  return prefix + randomGatewayTokenSecret();
+}
+
+/** Mint a token for `role` that is not identical to `other` (access/admin must stay distinct). */
+export function generateDistinctGatewayHttpApiToken(
+  other: string,
+  role: GatewayAuthRole = "access",
+): string {
+  const avoid = (other || "").trim();
+  let next = generateGatewayHttpApiToken(role);
+  while (avoid && next === avoid) next = generateGatewayHttpApiToken(role);
+  return next;
+}
+
+/**
+ * Infer role from minted prefix only. Legacy unprefixed hex returns null.
+ * Never use this alone for authorization — match stored secrets via resolveGatewayAuthRole.
+ */
+export function gatewayTokenPrefixRole(presented: string): GatewayAuthRole | null {
+  const p = (presented || "").trim();
+  if (!p) return null;
+  if (p.startsWith(GATEWAY_ADMIN_TOKEN_PREFIX)) return "admin";
+  if (p.startsWith(GATEWAY_USER_TOKEN_PREFIX)) return "access";
+  return null;
+}
+
+export const DEFAULT_GATEWAY_HTTP_API: GatewayHttpApiSettings = {
+  enabled: true,
+  port: DEFAULT_GATEWAY_HTTP_API_PORT,
   token: "", // filled when a server starts and none is saved
+  adminToken: "", // minted on owner boot when missing
+  apiTokens: [],
   bindLan: false,
   serveUi: false,
 };
 
 /** Keep only the token charset external clients can send safely. */
-export function sanitizeLocalHttpApiToken(raw: string): string {
+export function sanitizeGatewayHttpApiToken(raw: string): string {
   return (raw || "").replace(/[^A-Za-z0-9_-]/g, "");
 }
 
 /**
- * Clamp / fill local HTTP API settings.
+ * Prefer `gatewayHttpApi` on disk; fall back to legacy `localHttpApi` for one release.
+ * Does not mutate the raw object. Callers normalize the returned blob.
+ */
+export function pickGatewayHttpApiRaw(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const o = raw as Record<string, unknown>;
+  if ("gatewayHttpApi" in o) return o.gatewayHttpApi;
+  if ("localHttpApi" in o) return o.localHttpApi;
+  return undefined;
+}
+
+const MAX_GATEWAY_API_TOKEN_NAME = 64;
+const MAX_GATEWAY_API_TOKENS = 200;
+
+function clampNonNegInt(raw: unknown): number {
+  if (raw == null || raw === "") return 0;
+  const n = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.min(Math.floor(n), Number.MAX_SAFE_INTEGER);
+}
+
+export function normalizeGatewayApiTokenLimits(raw: unknown): GatewayApiTokenLimits {
+  const obj = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  return {
+    dailyMessages: clampNonNegInt(obj.dailyMessages),
+    totalMessages: clampNonNegInt(obj.totalMessages),
+    dailyTokens: clampNonNegInt(obj.dailyTokens),
+    totalTokens: clampNonNegInt(obj.totalTokens),
+  };
+}
+
+export function createGatewayApiTokenId(): string {
+  return createId("gat");
+}
+
+/** Build a new token entry (secret already minted). */
+export function createGatewayApiTokenEntry(input: {
+  name: string;
+  role: GatewayAuthRole;
+  token: string;
+  limits?: Partial<GatewayApiTokenLimits> | null;
+  id?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}): GatewayApiTokenEntry {
+  const now = new Date().toISOString();
+  const name = (input.name || "").trim().slice(0, MAX_GATEWAY_API_TOKEN_NAME) || (input.role === "admin" ? "Admin" : "User");
+  return {
+    id: (input.id || "").trim() || createGatewayApiTokenId(),
+    name,
+    role: input.role === "admin" ? "admin" : "access",
+    token: sanitizeGatewayHttpApiToken(input.token),
+    limits: normalizeGatewayApiTokenLimits(input.limits ?? EMPTY_GATEWAY_API_TOKEN_LIMITS),
+    createdAt: input.createdAt || now,
+    updatedAt: input.updatedAt || now,
+  };
+}
+
+export function normalizeGatewayApiTokenEntry(raw: unknown): GatewayApiTokenEntry | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const o = raw as Record<string, unknown>;
+  const token = typeof o.token === "string" ? sanitizeGatewayHttpApiToken(o.token) : "";
+  if (!token) return null;
+  const role: GatewayAuthRole = o.role === "admin" ? "admin" : "access";
+  const id = typeof o.id === "string" && o.id.trim() ? o.id.trim().slice(0, 80) : createGatewayApiTokenId();
+  const nameRaw = typeof o.name === "string" ? o.name.trim() : "";
+  const name = (nameRaw || (role === "admin" ? "Admin" : "User")).slice(0, MAX_GATEWAY_API_TOKEN_NAME);
+  const createdAt = typeof o.createdAt === "string" && o.createdAt.trim() ? o.createdAt.trim() : new Date().toISOString();
+  const updatedAt = typeof o.updatedAt === "string" && o.updatedAt.trim() ? o.updatedAt.trim() : createdAt;
+  return {
+    id,
+    name,
+    role,
+    token,
+    limits: normalizeGatewayApiTokenLimits(o.limits),
+    createdAt,
+    updatedAt,
+  };
+}
+
+/**
+ * Normalize the apiTokens list. Drops empty secrets, dedupes by token string
+ * (first wins), caps length. Does not mint secrets.
+ */
+export function normalizeGatewayApiTokensList(raw: unknown): GatewayApiTokenEntry[] {
+  if (!Array.isArray(raw)) return [];
+  const out: GatewayApiTokenEntry[] = [];
+  const seenToken = new Set<string>();
+  const seenId = new Set<string>();
+  for (const item of raw) {
+    const entry = normalizeGatewayApiTokenEntry(item);
+    if (!entry) continue;
+    if (seenToken.has(entry.token)) continue;
+    let id = entry.id;
+    if (seenId.has(id)) id = createGatewayApiTokenId();
+    seenToken.add(entry.token);
+    seenId.add(id);
+    out.push(id === entry.id ? entry : { ...entry, id });
+    if (out.length >= MAX_GATEWAY_API_TOKENS) break;
+  }
+  return out;
+}
+
+/**
+ * Mirror first access/admin entries into legacy `token` / `adminToken` fields
+ * so attach, CLI, and probes keep working.
+ */
+export function syncLegacyGatewayTokens(apiTokens: GatewayApiTokenEntry[]): {
+  token: string;
+  adminToken: string;
+} {
+  const access = apiTokens.find((e) => e.role === "access");
+  const admin = apiTokens.find((e) => e.role === "admin");
+  return {
+    token: access?.token || "",
+    adminToken: admin?.token || "",
+  };
+}
+
+/**
+ * Seed `apiTokens` from legacy dual fields when the list is empty.
+ * Names: "User" / "Admin" (UI i18n labels the type separately).
+ */
+export function seedGatewayApiTokensFromLegacy(
+  token: string,
+  adminToken: string,
+): GatewayApiTokenEntry[] {
+  const out: GatewayApiTokenEntry[] = [];
+  const now = new Date().toISOString();
+  if (token) {
+    out.push(
+      createGatewayApiTokenEntry({
+        name: "User",
+        role: "access",
+        token,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+  }
+  if (adminToken && adminToken !== token) {
+    out.push(
+      createGatewayApiTokenEntry({
+        name: "Admin",
+        role: "admin",
+        token: adminToken,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+  }
+  return out;
+}
+
+/**
+ * Clamp / fill gateway HTTP API settings.
  * Disallowed characters are stripped (not silently replaced).
  * Does not generate a token. An empty value stays empty so a saved token is reused
  * instead of being replaced on read, on save, or when a window attaches.
+ * When `apiTokens` is empty, seeds from legacy `token` / `adminToken`.
+ * Always mirrors the first access/admin list entry back into those fields.
  */
-export function normalizeLocalHttpApiSettings(raw: unknown): LocalHttpApiSettings {
+export function normalizeGatewayHttpApiSettings(raw: unknown): GatewayHttpApiSettings {
   const obj =
-    raw && typeof raw === "object" ? (raw as Partial<Record<keyof LocalHttpApiSettings, unknown>>) : {};
-  const enabled = obj.enabled === true;
-  let port = typeof obj.port === "number" && Number.isFinite(obj.port) ? Math.floor(obj.port) : DEFAULT_LOCAL_HTTP_API_PORT;
-  if (port < 1024 || port > 65535) port = DEFAULT_LOCAL_HTTP_API_PORT;
-  const token = typeof obj.token === "string" ? sanitizeLocalHttpApiToken(obj.token) : "";
+    raw && typeof raw === "object" ? (raw as Partial<Record<keyof GatewayHttpApiSettings, unknown>>) : {};
+  // Always on — ignore legacy enabled:false on disk.
+  const enabled = true;
+  let port = typeof obj.port === "number" && Number.isFinite(obj.port) ? Math.floor(obj.port) : DEFAULT_GATEWAY_HTTP_API_PORT;
+  if (port < 1024 || port > 65535) port = DEFAULT_GATEWAY_HTTP_API_PORT;
+  const legacyToken = typeof obj.token === "string" ? sanitizeGatewayHttpApiToken(obj.token) : "";
+  const legacyAdmin = typeof obj.adminToken === "string" ? sanitizeGatewayHttpApiToken(obj.adminToken) : "";
+  let apiTokens = normalizeGatewayApiTokensList(obj.apiTokens);
+  if (apiTokens.length === 0) {
+    apiTokens = seedGatewayApiTokensFromLegacy(legacyToken, legacyAdmin);
+  } else {
+    // Keep legacy secrets that are not yet in the list (partial upgrades / hand edits).
+    const have = new Set(apiTokens.map((e) => e.token));
+    if (legacyToken && !have.has(legacyToken)) {
+      apiTokens = [
+        createGatewayApiTokenEntry({ name: "User", role: "access", token: legacyToken }),
+        ...apiTokens,
+      ];
+      have.add(legacyToken);
+    }
+    if (legacyAdmin && legacyAdmin !== legacyToken && !have.has(legacyAdmin)) {
+      apiTokens = [
+        createGatewayApiTokenEntry({ name: "Admin", role: "admin", token: legacyAdmin }),
+        ...apiTokens,
+      ];
+    }
+    if (apiTokens.length > MAX_GATEWAY_API_TOKENS) {
+      apiTokens = apiTokens.slice(0, MAX_GATEWAY_API_TOKENS);
+    }
+  }
+  const synced = syncLegacyGatewayTokens(apiTokens);
   const bindLan = obj.bindLan === true;
   // serveUi defaults to true when bindLan (gateway hosts UI); otherwise false
   const serveUi = obj.serveUi === true || (obj.serveUi !== false && bindLan);
-  return { enabled, port, token, bindLan, serveUi };
+  return {
+    enabled,
+    port,
+    token: synced.token,
+    adminToken: synced.adminToken,
+    apiTokens,
+    bindLan,
+    serveUi,
+  };
+}
+
+/** Result of matching a presented credential against gateway settings. */
+export type GatewayAuthMatch = {
+  role: GatewayAuthRole;
+  /** Entry id when matched via `apiTokens`; null for pure legacy dual-field match. */
+  tokenId: string | null;
+  entry: GatewayApiTokenEntry | null;
+};
+
+/**
+ * Match a presented credential against every `apiTokens` entry, then legacy
+ * `adminToken` / `token`. Admin entries win when the same secret appears twice
+ * (should not happen after normalize). Prefix alone never grants a role.
+ */
+export function resolveGatewayAuth(
+  presented: string,
+  api: Pick<GatewayHttpApiSettings, "token" | "adminToken" | "apiTokens">,
+): GatewayAuthMatch | null {
+  const p = (presented || "").trim();
+  if (!p) return null;
+  const list = Array.isArray(api.apiTokens) ? api.apiTokens : [];
+  let accessHit: GatewayAuthMatch | null = null;
+  for (const entry of list) {
+    if (!entry?.token || entry.token !== p) continue;
+    const match: GatewayAuthMatch = {
+      role: entry.role === "admin" ? "admin" : "access",
+      tokenId: entry.id,
+      entry,
+    };
+    if (match.role === "admin") return match;
+    if (!accessHit) accessHit = match;
+  }
+  if (accessHit) return accessHit;
+  if (api.adminToken && p === api.adminToken) {
+    return { role: "admin", tokenId: null, entry: null };
+  }
+  if (api.token && p === api.token) {
+    return { role: "access", tokenId: null, entry: null };
+  }
+  return null;
+}
+
+/**
+ * Match a presented credential to access or admin by exact equality with stored secrets.
+ * Prefer {@link resolveGatewayAuth} when `apiTokens` is available.
+ * Admin is checked first so a string that equals both (should not happen) grants admin.
+ * Prefix alone never grants a role.
+ */
+export function resolveGatewayAuthRole(
+  presented: string,
+  accessToken: string,
+  adminToken: string,
+  apiTokens?: GatewayApiTokenEntry[],
+): GatewayAuthRole | null {
+  if (apiTokens && apiTokens.length > 0) {
+    return resolveGatewayAuth(presented, {
+      token: accessToken,
+      adminToken,
+      apiTokens,
+    })?.role ?? null;
+  }
+  const p = (presented || "").trim();
+  if (!p) return null;
+  if (adminToken && p === adminToken) return "admin";
+  if (accessToken && p === accessToken) return "access";
+  return null;
+}
+
+/** Sum input+output+cache for quota checks. */
+export function totalTokensUsed(usage: { input?: number; output?: number; cache?: number } | null | undefined): number {
+  if (!usage) return 0;
+  return (usage.input || 0) + (usage.output || 0) + (usage.cache || 0);
+}
+
+export type GatewayApiTokenQuotaReason =
+  | "daily_messages"
+  | "total_messages"
+  | "daily_tokens"
+  | "total_tokens";
+
+/**
+ * Whether a token may start another chat turn given current usage counters.
+ * Limits of `0` are unlimited. `pendingMessages` / `pendingTokens` are added to
+ * current usage before comparing (usually 1 message / 0 tokens at gate time).
+ */
+export function checkGatewayApiTokenQuota(input: {
+  limits: GatewayApiTokenLimits;
+  lifetimeMessages: number;
+  lifetimeTokens: number;
+  dailyMessages: number;
+  dailyTokens: number;
+  pendingMessages?: number;
+  pendingTokens?: number;
+}): { ok: true } | { ok: false; reason: GatewayApiTokenQuotaReason } {
+  const limits = normalizeGatewayApiTokenLimits(input.limits);
+  const pendingMessages = Math.max(0, input.pendingMessages ?? 0);
+  const pendingTokens = Math.max(0, input.pendingTokens ?? 0);
+  const lifeMsg = Math.max(0, input.lifetimeMessages) + pendingMessages;
+  const dayMsg = Math.max(0, input.dailyMessages) + pendingMessages;
+  const lifeTok = Math.max(0, input.lifetimeTokens) + pendingTokens;
+  const dayTok = Math.max(0, input.dailyTokens) + pendingTokens;
+  if (limits.dailyMessages > 0 && dayMsg > limits.dailyMessages) {
+    return { ok: false, reason: "daily_messages" };
+  }
+  if (limits.totalMessages > 0 && lifeMsg > limits.totalMessages) {
+    return { ok: false, reason: "total_messages" };
+  }
+  if (limits.dailyTokens > 0 && dayTok > limits.dailyTokens) {
+    return { ok: false, reason: "daily_tokens" };
+  }
+  if (limits.totalTokens > 0 && lifeTok > limits.totalTokens) {
+    return { ok: false, reason: "total_tokens" };
+  }
+  return { ok: true };
 }
 
 /** Saved remote sources for the assistant marketplace (public URLs only). */
@@ -1782,6 +2211,253 @@ export function normalizeAssistantMarketplaceSettings(raw: unknown): AssistantMa
   return { savedSources: out };
 }
 
+/**
+ * Electron / browser chrome prefs — NOT stored in gateway `~/.okbot/server.json`.
+ * Desktop: `~/.okbot/client.json` (window bounds nested under `window`); Web: localStorage.
+ * Web UI (`isGatewayClient`): `localStorage` (or equivalent).
+ */
+export const CLIENT_SETTINGS_KEYS = [
+  'theme',
+  'translucent',
+  'language',
+  'microphoneId',
+  'hardwareAcceleration',
+  'autoUpdate',
+  'sidebarDockMagnify',
+  'closeAction',
+  'notifications',
+  'developerMode',
+  'settingsNavTab',
+  'settingsClientGroupExpanded',
+  'settingsGatewayGroupExpanded',
+] as const;
+
+/** Valid settings sidebar tab ids (client chrome prefs). */
+export const SETTINGS_NAV_TABS = [
+  'general',
+  'gateways',
+  'gateway',
+  'extensions',
+  'tools',
+  'security',
+  'model',
+  'instructions',
+  'memory',
+  'usage',
+  'updates',
+] as const;
+
+export type SettingsNavTab = (typeof SETTINGS_NAV_TABS)[number];
+
+const SETTINGS_NAV_TAB_SET: ReadonlySet<string> = new Set(SETTINGS_NAV_TABS);
+
+export function normalizeSettingsNavTab(raw: unknown): SettingsNavTab {
+  if (typeof raw === 'string' && SETTINGS_NAV_TAB_SET.has(raw)) {
+    return raw as SettingsNavTab;
+  }
+  // Legacy alias from older deep-links / search.
+  if (raw === 'computers') return 'gateway';
+  return 'general';
+}
+
+export type ClientSettingsKey = (typeof CLIENT_SETTINGS_KEYS)[number];
+
+const CLIENT_SETTINGS_KEY_SET: ReadonlySet<string> = new Set(CLIENT_SETTINGS_KEYS);
+
+export function isClientSettingsKey(key: string): key is ClientSettingsKey {
+  return CLIENT_SETTINGS_KEY_SET.has(key);
+}
+
+/** UI / shell prefs that stay on the client when switching gateways. */
+export interface ClientSettings {
+  theme: ThemeMode;
+  /**
+   * Frost / glass translucency (sidebar vibrancy, drawers, pills, transparent
+   * BrowserWindow on darwin). Default true; missing on disk = on.
+   */
+  translucent: boolean;
+  /** UI language. */
+  language: LanguageCode;
+  /** Empty string = system default microphone. */
+  microphoneId: string;
+  /** Requires app restart when changed. Default true. */
+  hardwareAcceleration: boolean;
+  /** When true, check GitHub Releases for updates in the background. Default true. */
+  autoUpdate: boolean;
+  /**
+   * Mac Dock–style icon magnification while the session sidebar is collapsed.
+   * Default false (off).
+   */
+  sidebarDockMagnify: boolean;
+  /**
+   * What the window close button does (desktop Electron).
+   * Default `ask`: first close offers Quit vs minimize/hide to tray; optional remember.
+   */
+  closeAction: CloseAction;
+  /**
+   * System notification + unread when the window is not focused and a reply
+   * finishes or a tool approval waits. Default true.
+   */
+  notifications: boolean;
+  /**
+   * Developer mode: unlocks advanced settings tabs (security / gateway / extensions),
+   * model context-compression, bot Advanced (SOUL), copy request URL, view context /
+   * usage / trace menus, settings-search filtering, revealAdvanced jump behavior,
+   * and the 系统指令 (instructions) tab. Default false. Missing on disk stays off.
+   */
+  developerMode: boolean;
+  /**
+   * Last selected Settings sidebar tab (chrome UI). Default `general`.
+   * Persisted in client.json so reopen restores the previous panel.
+   */
+  settingsNavTab: SettingsNavTab;
+  /**
+   * Whether the Settings 「客户端」 nav group is expanded. Default true.
+   */
+  settingsClientGroupExpanded: boolean;
+  /**
+   * Whether the Settings 「网关端」 nav group is expanded. Default false.
+   */
+  settingsGatewayGroupExpanded: boolean;
+}
+
+export const DEFAULT_CLIENT_SETTINGS: ClientSettings = {
+  theme: 'system',
+  translucent: true,
+  language: 'system',
+  microphoneId: '',
+  hardwareAcceleration: true,
+  autoUpdate: true,
+  sidebarDockMagnify: false,
+  closeAction: 'ask',
+  notifications: true,
+  developerMode: false,
+  settingsNavTab: 'general',
+  settingsClientGroupExpanded: true,
+  settingsGatewayGroupExpanded: false,
+};
+
+/** Clamp / fill client chrome prefs from disk, UI, or migration peel. */
+export function normalizeClientSettings(raw: unknown): ClientSettings {
+  const src =
+    raw && typeof raw === 'object' && !Array.isArray(raw)
+      ? (raw as Partial<Record<ClientSettingsKey, unknown>>)
+      : {};
+  const language =
+    src.language === 'en' || src.language === 'zh' || src.language === 'system'
+      ? src.language
+      : 'system';
+  const theme =
+    src.theme === 'light' || src.theme === 'dark' || src.theme === 'system'
+      ? src.theme
+      : 'system';
+  return {
+    theme,
+    language,
+    microphoneId: typeof src.microphoneId === 'string' ? src.microphoneId : '',
+    hardwareAcceleration: src.hardwareAcceleration !== false,
+    autoUpdate: src.autoUpdate !== false,
+    sidebarDockMagnify: src.sidebarDockMagnify === true,
+    translucent: src.translucent !== false,
+    developerMode: src.developerMode === true,
+    notifications: src.notifications !== false,
+    closeAction: normalizeCloseAction(src.closeAction),
+    settingsNavTab: normalizeSettingsNavTab(src.settingsNavTab),
+    // Missing keys keep historical defaults (client open, gateway collapsed).
+    settingsClientGroupExpanded: src.settingsClientGroupExpanded !== false,
+    settingsGatewayGroupExpanded: src.settingsGatewayGroupExpanded === true,
+  };
+}
+
+/** Pick the client chrome subset from a merged AppSettings (or partial). */
+export function pickClientSettings(
+  raw: Partial<AppSettings> | ClientSettings | Record<string, unknown> | null | undefined,
+): ClientSettings {
+  if (!raw || typeof raw !== 'object') return { ...DEFAULT_CLIENT_SETTINGS };
+  return normalizeClientSettings(raw);
+}
+
+/**
+ * Remove client chrome keys from a bag (gateway write / HTTP patch).
+ * Returns a shallow copy; does not mutate `raw`.
+ */
+export function stripClientSettingsKeys<T extends Record<string, unknown>>(
+  raw: T,
+): Omit<T, ClientSettingsKey> {
+  const out = { ...raw } as Record<string, unknown>;
+  for (const key of CLIENT_SETTINGS_KEYS) delete out[key];
+  return out as Omit<T, ClientSettingsKey>;
+}
+
+/**
+ * Peel client chrome from a legacy combined `settings.json` object.
+ * Returns null when no client keys were present (already slim / empty).
+ */
+export function peelClientSettingsFromRaw(
+  raw: unknown,
+): { client: ClientSettings; hadClientKeys: boolean } {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { client: { ...DEFAULT_CLIENT_SETTINGS }, hadClientKeys: false };
+  }
+  const src = raw as Record<string, unknown>;
+  let hadClientKeys = false;
+  for (const key of CLIENT_SETTINGS_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(src, key)) {
+      hadClientKeys = true;
+      break;
+    }
+  }
+  return { client: normalizeClientSettings(src), hadClientKeys };
+}
+
+/**
+ * Overlay client chrome onto gateway settings for UI / IPC merged view.
+ * Client wins for every {@link CLIENT_SETTINGS_KEYS} field.
+ */
+export function mergeClientGatewaySettings(
+  gateway: AppSettings,
+  client: ClientSettings,
+): AppSettings {
+  const c = normalizeClientSettings(client);
+  return {
+    ...(gateway as AppSettings),
+    theme: c.theme,
+    translucent: c.translucent,
+    language: c.language,
+    microphoneId: c.microphoneId,
+    hardwareAcceleration: c.hardwareAcceleration,
+    autoUpdate: c.autoUpdate,
+    sidebarDockMagnify: c.sidebarDockMagnify,
+    closeAction: c.closeAction,
+    notifications: c.notifications,
+    developerMode: c.developerMode,
+    settingsNavTab: c.settingsNavTab,
+    settingsClientGroupExpanded: c.settingsClientGroupExpanded,
+    settingsGatewayGroupExpanded: c.settingsGatewayGroupExpanded,
+  };
+}
+
+/**
+ * Split a merged AppSettings write into client + gateway halves.
+ */
+export function splitClientGatewaySettings(settings: AppSettings): {
+  client: ClientSettings;
+  gateway: AppSettings;
+} {
+  const client = pickClientSettings(settings);
+  // Keep AppSettings shape for SettingsStore.saveSettings, but chrome values are
+  // ignored on disk (stripped). Defaults keep the in-memory type complete.
+  const gateway: AppSettings = {
+    ...settings,
+    ...DEFAULT_CLIENT_SETTINGS,
+  };
+  return { client, gateway };
+}
+
+/**
+ * Merged UI / IPC view: client chrome + gateway host settings.
+ * Persistence is split — see {@link ClientSettings} vs gateway `~/.okbot/server.json`.
+ */
 export interface AppSettings {
   theme: ThemeMode;
   /** UI language. */
@@ -1808,10 +2484,16 @@ export interface AppSettings {
    */
   translucent: boolean;
   /**
-   * Shows developer-only settings (系统指令). Default false.
-   * Missing on disk stays off.
+   * Developer mode: advanced tabs, compression, bot Advanced, debug menus, and
+   * 系统指令. Default false. See {@link ClientSettings.developerMode}.
    */
   developerMode: boolean;
+  /** Last Settings sidebar tab. See {@link ClientSettings.settingsNavTab}. */
+  settingsNavTab: SettingsNavTab;
+  /** Settings 「客户端」 group expanded. See {@link ClientSettings.settingsClientGroupExpanded}. */
+  settingsClientGroupExpanded: boolean;
+  /** Settings 「网关端」 group expanded. See {@link ClientSettings.settingsGatewayGroupExpanded}. */
+  settingsGatewayGroupExpanded: boolean;
   /** Master switch for keyword-based auto tool approval. */
   autoApprovalEnabled: boolean;
   autoApprovalRules: AutoApprovalRule[];
@@ -1828,12 +2510,12 @@ export interface AppSettings {
   memory: MemorySettings;
   /** Post-turn AGENTS / skills / memory refresh throttle. */
   maintenance: MaintenanceSettings;
-  /** Built-in squad captain defaults (persona / playbook / maxTurns). */
+  /** Built-in squad captain defaults (persona / playbook). */
   squad: SquadSettings;
   /** 1:1 peer mesh bag (no caps; reserved). Squads ignore this. */
   mesh: MeshSettings;
-  /** Local / LAN HTTP API + optional desktop gateway UI (default OFF). */
-  localHttpApi: LocalHttpApiSettings;
+  /** Gateway HTTP listen settings (port / tokens / LAN / Web UI). Always on when owning. */
+  gatewayHttpApi: GatewayHttpApiSettings;
   /**
    * Registered remote cloud computers (sandbox containers).
    * Always-on Local is implicit (`LOCAL_COMPUTER_ID`) and not listed here.
@@ -1885,12 +2567,6 @@ export interface AppSettings {
    * Default `ask`: first close offers Quit vs minimize/hide to tray; optional remember.
    */
   closeAction: CloseAction;
-  /**
-   * Shows advanced settings (security, gateway, computers, extensions, run limits,
-   * compression). Default false for new users; migrated on for users who already
-   * use an advanced feature.
-   */
-  showAdvancedSettings: boolean;
   /** Optional MCP servers ("advanced extensions"). Default off. */
   mcp: McpSettings;
   /**
@@ -1901,6 +2577,12 @@ export interface AppSettings {
   /** Assistant marketplace: saved remote package sources. */
   assistantMarketplace: AssistantMarketplaceSettings;
 }
+
+/**
+ * Agent / host runtime persisted in each gateway’s `~/.okbot/server.json`.
+ * Does not include {@link ClientSettings} chrome keys.
+ */
+export type GatewaySettings = Omit<AppSettings, ClientSettingsKey>;
 
 /** Max chars for bot/squad roster description (sidebar / gallery blurb). */
 export const OWNER_DESCRIPTION_MAX_CHARS = 200;
@@ -2052,7 +2734,7 @@ export interface BotConfig {
   botAvatarType?: BotAvatarShape;
   createdAt: string;
   updatedAt: string;
-  /** False until the post-create two-step onboarding finishes. */
+  /** False until the model-driven new-assistant onboarding finishes (then never repeats). */
   onboardingComplete: boolean;
   /**
    * Optional model override. Both empty / omitted → global default provider+model at chat time.
@@ -2080,30 +2762,26 @@ export interface MemoryEntry {
   /** Owning / related bot id (also set for bot-local memories). */
   bot_id: string;
   memory: string;
-  /** ISO timestamp, or null for no expiry. */
+  /** ISO expiry (UTC), or null/omit for permanent. Missing field on disk = permanent. */
   expires: string | null;
   /** When true, prefer keeping this row in the prompt over unpinned locals. */
   pinned?: boolean;
 }
 
 export interface BotSkill {
-  /** Directory name under skills/, kebab-case. */
+  /** Directory name under skills/, kebab-case with okbot- prefix. */
   slug: string;
   name: string;
   /**
-   * Capability + when to use (Cursor-style). Required; max SKILL_DESCRIPTION_MAX_CHARS.
-   * Triggers (何时使用 / Use when / 勿用于 / Do NOT use for) live here only — not in body.
+   * When to use this skill (frontmatter). Required; max SKILL_DESCRIPTION_MAX_CHARS.
+   * Catalog progressive disclosure reads this field.
    */
   description: string;
-  /** Procedure / Steps markdown only (no When/trigger blurb). */
+  /**
+   * SKILL.md body: H1 + 何时使用此技能 / 工作原理 / 示例 / 注意事项 (in that order).
+   * No dedicated do-not-use section — put caveats under 注意事项.
+   */
   body: string;
-}
-
-export interface BotOnboardingAnswers {
-  scenarioId?: string;
-  scenarioLabel?: string;
-  howId?: string;
-  howLabel?: string;
 }
 
 /** Runtime bot = roster + config (+ ephemeral UI fields). */
@@ -2115,11 +2793,9 @@ export interface Bot extends BotRosterEntry, BotConfig {
   lastReplyPreview?: string;
 }
 
-/** One member seat inside a squad (role is per-squad, not on the bot). */
+/** One member seat inside a squad (assistant id only; no per-seat role). */
 export interface SquadMember {
   botId: string;
-  /** Short role label shown to captain + injected into that member asTool. */
-  role: string;
 }
 
 /**
@@ -2186,8 +2862,8 @@ export function normalizeSquad(raw: unknown): Squad | null {
     const botId = typeof m.botId === 'string' ? m.botId.trim() : '';
     if (!botId || seen.has(botId)) continue;
     seen.add(botId);
-    const role = typeof m.role === 'string' && m.role.trim() ? m.role.trim() : '成员';
-    members.push({ botId, role });
+    // Legacy `role` on disk is ignored (forward write omits it).
+    members.push({ botId });
   }
   const modelIdRaw = typeof src.modelId === 'string' ? src.modelId.trim() : '';
   const providerIdRaw = typeof src.providerId === 'string' ? src.providerId.trim() : '';
@@ -2250,7 +2926,6 @@ export const DEFAULT_SOUL_MD = `# 个性与边界
 export const DEFAULT_SETTINGS: AppSettings = {
   notifications: true,
   closeAction: 'ask',
-  showAdvancedSettings: false,
   mcp: { enabled: false, servers: [] },
   web: {
     search: { provider: 'tavily', apiKey: '', baseURL: '', compat: 'tavily' },
@@ -2266,6 +2941,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   sidebarDockMagnify: false,
   translucent: true,
   developerMode: false,
+  settingsNavTab: 'general',
+  settingsClientGroupExpanded: true,
+  settingsGatewayGroupExpanded: false,
   autoApprovalEnabled: false,
   autoApprovalRules: [],
   tools: {
@@ -2294,7 +2972,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   maintenance: { ...DEFAULT_MAINTENANCE_SETTINGS },
   squad: { ...DEFAULT_SQUAD_SETTINGS },
   mesh: { ...DEFAULT_MESH_SETTINGS },
-  localHttpApi: { ...DEFAULT_LOCAL_HTTP_API, token: '' },
+  gatewayHttpApi: { ...DEFAULT_GATEWAY_HTTP_API, token: '' },
   computers: [],
   defaultComputerId: LOCAL_COMPUTER_ID,
   defaultAssistantId: '',

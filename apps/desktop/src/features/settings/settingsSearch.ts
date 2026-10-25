@@ -62,16 +62,28 @@ export const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
     labelKey: 'updatesTab',
     keywords: ['自动更新', 'updates', 'release'],
   },
-  { id: 'data', tab: 'general', labelKey: 'data', keywords: ['dataDir', '目录', 'folder'] },
+  { id: 'data', tab: 'gateway', labelKey: 'data', keywords: ['dataDir', '目录', 'folder', '备份', 'backup', '网关数据'] },
+  {
+    id: 'dataDir',
+    tab: 'gateway',
+    labelKey: 'dataDir',
+    keywords: ['dataDir', '目录', 'folder', '~/.okbot'],
+  },
+  {
+    id: 'backupExcludeSecrets',
+    tab: 'gateway',
+    labelKey: 'backupExcludeSecrets',
+    keywords: ['密钥', 'secrets', 'api key', '备份'],
+  },
   {
     id: 'backupExport',
-    tab: 'general',
+    tab: 'gateway',
     labelKey: 'backupExport',
     keywords: ['备份', 'backup', 'export', '导出', '迁移', 'migrate', 'zip'],
   },
   {
     id: 'backupRestore',
-    tab: 'general',
+    tab: 'gateway',
     labelKey: 'backupRestore',
     keywords: ['恢复', 'restore', 'import', '导入', '迁移', 'migrate'],
   },
@@ -99,12 +111,6 @@ export const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
     ],
   },
   {
-    id: 'showAdvancedSettings',
-    tab: 'general',
-    labelKey: 'showAdvancedSettings',
-    keywords: ['高级', 'advanced', '更多设置', 'more settings'],
-  },
-  {
     id: 'mcpSection',
     tab: 'extensions',
     labelKey: 'mcpSection',
@@ -114,53 +120,70 @@ export const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
     id: 'developerMode',
     tab: 'general',
     labelKey: 'developerMode',
-    keywords: ['高级', 'advanced', 'developer', '开发者', '系统指令'],
+    keywords: [
+      '高级',
+      'advanced',
+      '更多设置',
+      'more settings',
+      'developer',
+      '开发者',
+      '系统指令',
+      'instructions',
+      'debug',
+      '调试',
+    ],
   },
   {
-    id: 'localHttpApi',
+    id: 'gatewayHttpApi',
     tab: 'gateway',
-    labelKey: 'localHttpApi',
-    keywords: ['HTTP', 'API', 'localhost', '127.0.0.1', 'loopback', '本地', '令牌', 'token', 'port', '端口', '网关服务', '网关配置', '网关'],
+    labelKey: 'gatewayHttpApi',
+    keywords: ['HTTP', 'API', 'localhost', '127.0.0.1', 'loopback', '本地', '令牌', 'token', 'port', '端口', '网关服务', '网关配置', '网关', '服务端', 'host', '常开', 'always'],
   },
   {
-    id: 'localHttpApiEnable',
-    tab: 'gateway',
-    labelKey: 'localHttpApiEnable',
-    keywords: ['启用', 'enable', 'HTTP API'],
+    id: 'clientGateways',
+    tab: 'gateways',
+    labelKey: 'clientGateways',
+    keywords: ['gateway', 'remote', 'client', '网关', '远程', '客户端', '连接', 'multi', '网关列表'],
   },
   {
-    id: 'localHttpApiPort',
+    id: 'gatewayHttpApiPort',
     tab: 'gateway',
-    labelKey: 'localHttpApiPort',
+    labelKey: 'gatewayHttpApiPort',
     keywords: ['端口', 'port'],
   },
   {
-    id: 'localHttpApiToken',
+    id: 'gatewayHttpApiToken',
     tab: 'gateway',
-    labelKey: 'localHttpApiToken',
-    keywords: ['令牌', 'token', 'bearer', 'secret'],
+    labelKey: 'gatewayHttpApiToken',
+    keywords: ['令牌', 'token', 'bearer', 'secret', '访问'],
   },
   {
-    id: 'localHttpApiBindLan',
+    id: 'gatewayHttpApiAdminToken',
     tab: 'gateway',
-    labelKey: 'localHttpApiBindLan',
+    labelKey: 'gatewayHttpApiAdminToken',
+    keywords: ['超管', 'admin', '令牌', 'token', 'super'],
+  },
+  {
+    id: 'gatewayHttpApiBindLan',
+    tab: 'gateway',
+    labelKey: 'gatewayHttpApiBindLan',
     keywords: ['lan', 'gateway', 'intranet', '局域网', '网关'],
   },
   {
-    id: 'localHttpApiServeUi',
+    id: 'gatewayHttpApiServeUi',
     tab: 'gateway',
-    labelKey: 'localHttpApiServeUi',
+    labelKey: 'gatewayHttpApiServeUi',
     keywords: ['ui', 'mobile', 'phone', 'web', '手机'],
   },
   {
     id: 'computers',
-    tab: 'computers',
+    tab: 'gateway',
     labelKey: 'computers',
     keywords: ['cloud', 'sandbox', 'sandbox-agent', 'docker', '电脑', '云', '电脑连接'],
   },
   {
     id: 'defaultComputer',
-    tab: 'computers',
+    tab: 'gateway',
     labelKey: 'defaultComputer',
     keywords: ['default', 'local', '本机', '默认电脑'],
   },
@@ -280,6 +303,12 @@ export const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
     labelKey: 'compressSummaryMaxChars',
   },
   {
+    id: 'estimateSafetyFactor',
+    tab: 'model',
+    labelKey: 'estimateSafetyFactor',
+    keywords: ['安全系数', '估算', '校准', 'safety', 'estimate', 'calibration', 'undercount'],
+  },
+  {
     id: 'assistantRoleTemplate',
     tab: 'instructions',
     labelKey: 'assistantRoleTemplate',
@@ -298,28 +327,10 @@ export const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
     keywords: ['协作', 'playbook', '指引', 'guidance'],
   },
   {
-    id: 'squadCaptainMaxTurns',
-    tab: 'instructions',
-    labelKey: 'squadCaptainMaxTurns',
-    keywords: ['maxTurns', '回合', '队长'],
-  },
-  {
-    id: 'squadMemberMaxTurns',
-    tab: 'instructions',
-    labelKey: 'squadMemberMaxTurns',
-    keywords: ['maxTurns', '队员', 'member'],
-  },
-  {
     id: 'soulMdRefreshSystemPrompt',
     tab: 'instructions',
     labelKey: 'soulMdRefreshSystemPrompt',
     keywords: ['SOUL', 'SOUL.md', 'AGENTS', 'system', '模版', '维护', 'refresh', 'soul'],
-  },
-  {
-    id: 'soulMdRecentMessageLimit',
-    tab: 'instructions',
-    labelKey: 'soulMdRecentMessageLimit',
-    keywords: ['SOUL', 'SOUL.md', '最近消息', '条数', 'limit', 'refresh', 'soul'],
   },
   {
     id: 'scopeInstruction',
@@ -328,22 +339,10 @@ export const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
     keywords: ['记忆', 'memory', 'scope', 'global', '全局', '记忆判定', '范围判定', 'scope instruction'],
   },
   {
-    id: 'memoryRecentMessageLimit',
-    tab: 'instructions',
-    labelKey: 'memoryRecentMessageLimit',
-    keywords: ['记忆', 'memory', '最近消息', '条数', 'limit', 'refresh'],
-  },
-  {
     id: 'skillsCreateUpdateInstruction',
     tab: 'instructions',
     labelKey: 'skillsCreateUpdateInstruction',
     keywords: ['技能', 'skill', '判定', '更新', '生成', 'skills', 'refresh'],
-  },
-  {
-    id: 'skillsRecentMessageLimit',
-    tab: 'instructions',
-    labelKey: 'skillsRecentMessageLimit',
-    keywords: ['技能', 'skill', '最近消息', '条数', 'limit', 'skills'],
   },
   {
     id: 'globalMemories',
@@ -356,8 +355,8 @@ export const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
 /** Nav label for each settings tab. */
 export const SETTINGS_TAB_LABEL_KEYS: Record<SettingsTab, I18nKey> = {
   general: 'general',
+  gateways: 'gatewaysTab',
   gateway: 'gateway',
-  computers: 'computers',
   extensions: 'extensionsTab',
   tools: 'tools',
   security: 'security',
@@ -368,28 +367,3 @@ export const SETTINGS_TAB_LABEL_KEYS: Record<SettingsTab, I18nKey> = {
   updates: 'updatesTab',
 };
 
-/** Tabs shown only when 「显示高级设置」 is on. */
-const ADVANCED_TABS: ReadonlySet<SettingsTab> = new Set<SettingsTab>([
-  'security',
-  'gateway',
-  'computers',
-  'extensions',
-]);
-
-/** Rows inside common tabs that are hidden until 「显示高级设置」 is on. */
-const ADVANCED_ITEM_IDS: ReadonlySet<string> = new Set([
-  'contextCompression',
-  'autoTopicCompress',
-]);
-
-export function isAdvancedSettingsTab(tab: SettingsTab): boolean {
-  return ADVANCED_TABS.has(tab);
-}
-
-export function isAdvancedSettingsItem(item: SettingsSearchItem): boolean {
-  return (
-    ADVANCED_TABS.has(item.tab) ||
-    ADVANCED_ITEM_IDS.has(item.id) ||
-    item.id.startsWith('compress')
-  );
-}

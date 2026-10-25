@@ -3,7 +3,7 @@ import type { Bot, ModelProvider } from '@okbot/shared';
 import { t } from '../../i18n';
 import { ChevronsRightIcon } from '../../components/ui/icons';
 import type { SquadWizardState } from '../../types';
-import { FlatAvatar, SquadAvatar } from '../../components/ui/avatars';
+import { SquadAvatar } from '../../components/ui/avatars';
 import { BotSearchSelect } from '../bots/BotSearchSelect';
 import { ModelRefSelect } from '../settings/ModelRefSelect';
 import { updateScrollFade } from '../../utils/scrollFade';
@@ -18,8 +18,6 @@ export type SquadWizardModalProps = {
   providers: ModelProvider[];
   defaultProviderId: string;
   defaultModelId: string;
-  /** When false, hide Advanced (schedules). Description is always plain text. */
-  showAdvancedSettings?: boolean;
   /** Edit flow: persist on change like BotFormModal (no Cancel/Save). */
   autoApply?: boolean;
   onChange: (next: SquadWizardState) => void;
@@ -28,8 +26,6 @@ export type SquadWizardModalProps = {
   /** autoApply persist (edit). */
   onApply?: (next: SquadWizardState) => void;
   syncMembers: (ids: string[]) => void;
-  removeMember: (id: string) => void;
-  reorderMember: (fromId: string, toId: string) => void;
 };
 
 export function SquadWizardModal({
@@ -39,15 +35,12 @@ export function SquadWizardModal({
   providers,
   defaultProviderId,
   defaultModelId,
-  showAdvancedSettings: _showAdvancedSettings = false,
   autoApply = false,
   onChange: setSquadWizard,
   onClose,
   onSubmit,
   onApply,
   syncMembers,
-  removeMember,
-  reorderMember,
 }: SquadWizardModalProps) {
   const { closing, requestClose, onDrawerAnimationEnd } = useDrawerClose(onClose);
 
@@ -65,7 +58,6 @@ export function SquadWizardModal({
 
   const [ownerFormTab, setOwnerFormTab] = useState<OwnerFormTab>('details');
   const squadNameRef = useRef<HTMLInputElement>(null);
-  const squadDragIdRef = useRef<string | null>(null);
   const composingRef = useRef(false);
   const emitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingEmitRef = useRef<SquadWizardState | null>(null);
@@ -250,8 +242,6 @@ export function SquadWizardModal({
             lang={lang}
             multi
             values={squadWizard.memberIds}
-            excludeIds={squadWizard.memberIds}
-            selectedDisplay="none"
             placeholder={t(lang, 'squadMembersPlaceholder')}
             onChange={(ids) => {
               syncMembers(ids);
@@ -260,121 +250,12 @@ export function SquadWizardModal({
               const keep = prev.filter((id) => ids.includes(id));
               const added = ids.filter((id) => !prev.includes(id));
               const memberIds = [...keep, ...added];
-              const roles = { ...squadWizard.roles };
-              for (const id of Object.keys(roles)) {
-                if (!memberIds.includes(id)) delete roles[id];
-              }
-              for (const id of memberIds) {
-                if (!roles[id]) roles[id] = t(lang, 'squadMemberDefaultRole');
-              }
-              emit({ ...squadWizard, memberIds, roles }, { immediate: true });
+              emit({ ...squadWizard, memberIds }, { immediate: true });
             }}
           />
-          {squadWizard.memberIds.length === 0 ? (
+          {squadWizard.memberIds.length < 2 ? (
             <div className="squad-members-hint">{t(lang, 'squadMembersHint')}</div>
-          ) : (
-            <div className="squad-role-list">
-              {squadWizard.memberIds.map((id) => {
-                const b = bots.find((x) => x.id === id);
-                if (!b) return null;
-                return (
-                  <div
-                    key={id}
-                    className="squad-role-row"
-                    onDragOver={(e) => {
-                      e.preventDefault();
-                      e.dataTransfer.dropEffect = 'move';
-                    }}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      const fromId =
-                        e.dataTransfer.getData('text/plain') || squadDragIdRef.current || '';
-                      squadDragIdRef.current = null;
-                      if (!fromId) return;
-                      reorderMember(fromId, id);
-                      if (!autoApply || fromId === id) return;
-                      const ids = [...squadWizard.memberIds];
-                      const from = ids.indexOf(fromId);
-                      const to = ids.indexOf(id);
-                      if (from < 0 || to < 0) return;
-                      ids.splice(from, 1);
-                      ids.splice(to, 0, fromId);
-                      emit({ ...squadWizard, memberIds: ids }, { immediate: true });
-                    }}
-                    onDragEnd={() => {
-                      squadDragIdRef.current = null;
-                      document
-                        .querySelectorAll('.squad-role-row.dragging')
-                        .forEach((el) => el.classList.remove('dragging'));
-                    }}
-                  >
-                    <span
-                      className="squad-role-grip"
-                      title={t(lang, 'squadDragHint')}
-                      aria-label={t(lang, 'squadDragHint')}
-                      draggable
-                      onDragStart={(e) => {
-                        squadDragIdRef.current = id;
-                        e.dataTransfer.setData('text/plain', id);
-                        e.dataTransfer.effectAllowed = 'move';
-                        (e.currentTarget.parentElement as HTMLElement | null)?.classList.add(
-                          'dragging',
-                        );
-                      }}
-                    >
-                      ⋮⋮
-                    </span>
-                    <FlatAvatar
-                      emoji={b.emoji}
-                      color={b.color}
-                      avatarKind={b.avatarKind}
-                      botAvatarType={b.botAvatarType}
-                    />
-                    <span className="squad-role-name">{b.name}</span>
-                    <input
-                      spellCheck={false}
-                      value={squadWizard.roles[id] || ''}
-                      onChange={(e) =>
-                        patch({
-                          roles: { ...squadWizard.roles, [id]: e.target.value },
-                        })
-                      }
-                      onCompositionStart={onComposeStart}
-                      onCompositionEnd={(e) => {
-                        const v = (e.target as HTMLInputElement).value;
-                        const next = {
-                          ...squadWizard,
-                          roles: { ...squadWizard.roles, [id]: v },
-                        };
-                        setSquadWizard(next);
-                        pendingEmitRef.current = next;
-                        onComposeEnd();
-                      }}
-                      onBlur={() => flushEmit()}
-                      placeholder={t(lang, 'squadRolePlaceholder')}
-                      aria-label={t(lang, 'squadRoleLabel')}
-                    />
-                    <button
-                      type="button"
-                      className="squad-role-remove"
-                      title={t(lang, 'squadRemoveMember')}
-                      aria-label={t(lang, 'squadRemoveMember')}
-                      onClick={() => {
-                        removeMember(id);
-                        if (!autoApply) return;
-                        const memberIds = squadWizard.memberIds.filter((x) => x !== id);
-                        const roles = { ...squadWizard.roles };
-                        delete roles[id];
-                        emit({ ...squadWizard, memberIds, roles }, { immediate: true });
-                      }}
-                    >
-                      ×
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+          ) : null}
         </div>
         </>
         ) : null}

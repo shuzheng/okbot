@@ -164,7 +164,7 @@ export async function resolveMediaAssetUrl(assetRel: string): Promise<string | n
   }
 
   const okbot = (globalThis as { okbot?: {
-    getSettings?: () => Promise<{ localHttpApi?: { port?: number; token?: string } }>;
+    getSettings?: () => Promise<{ gatewayHttpApi?: { port?: number; token?: string } }>;
     getGatewayAccessToken?: () => Promise<string>;
   } }).okbot;
 
@@ -185,9 +185,9 @@ export async function resolveMediaAssetUrl(assetRel: string): Promise<string | n
   // Electron owns-server: renderer is file:// or vite; images load from loopback gateway.
   try {
     const settings = typeof okbot?.getSettings === 'function' ? await okbot.getSettings() : null;
-    const port = settings?.localHttpApi?.port;
+    const port = settings?.gatewayHttpApi?.port;
     if (!token) {
-      token = typeof settings?.localHttpApi?.token === 'string' ? settings.localHttpApi.token.trim() : '';
+      token = typeof settings?.gatewayHttpApi?.token === 'string' ? settings.gatewayHttpApi.token.trim() : '';
     }
     if (typeof port === 'number' && port > 0 && token) {
       return `http://127.0.0.1:${port}${pathname}?token=${encodeURIComponent(token)}`;

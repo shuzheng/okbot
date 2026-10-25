@@ -12,8 +12,6 @@ import { t, type UiLang } from '../../i18n';
 
 export function GeneralSettingsPanel({
   lang,
-  backupBusy,
-  backupExcludeSecrets,
   closeAction,
   developerMode,
   hardwareAcceleration,
@@ -21,38 +19,26 @@ export function GeneralSettingsPanel({
   micOptions,
   microphoneId,
   notifications,
-  setBackupExcludeSecrets,
   setCloseAction,
   setDeveloperMode,
   setHardwareAcceleration,
   setLanguage,
   setMicrophoneId,
   setNotifications,
-  setRevealAdvanced,
-  setShowAdvancedSettings,
   setSidebarDockMagnify,
   setTheme,
   setTimezone,
   setTranslucent,
-  showAdvancedSettings,
   sidebarDockMagnify,
   theme,
   timezone,
   translucent,
   gatewayClient,
   needsHwRestart,
-  dataDir,
-  exportBackup,
-  restoreBackup,
 }: {
-  restoreBackup: () => void | Promise<void>;
-  exportBackup: () => void | Promise<void>;
-  dataDir: string;
   needsHwRestart: boolean;
   gatewayClient: boolean;
   lang: UiLang;
-  backupBusy: any;
-  backupExcludeSecrets: any;
   closeAction: any;
   developerMode: any;
   hardwareAcceleration: any;
@@ -60,20 +46,16 @@ export function GeneralSettingsPanel({
   micOptions: any;
   microphoneId: any;
   notifications: any;
-  setBackupExcludeSecrets: React.Dispatch<React.SetStateAction<any>>;
   setCloseAction: React.Dispatch<React.SetStateAction<any>>;
   setDeveloperMode: React.Dispatch<React.SetStateAction<any>>;
   setHardwareAcceleration: React.Dispatch<React.SetStateAction<any>>;
   setLanguage: React.Dispatch<React.SetStateAction<any>>;
   setMicrophoneId: React.Dispatch<React.SetStateAction<any>>;
   setNotifications: React.Dispatch<React.SetStateAction<any>>;
-  setRevealAdvanced: React.Dispatch<React.SetStateAction<any>>;
-  setShowAdvancedSettings: React.Dispatch<React.SetStateAction<any>>;
   setSidebarDockMagnify: React.Dispatch<React.SetStateAction<any>>;
   setTheme: React.Dispatch<React.SetStateAction<any>>;
   setTimezone: React.Dispatch<React.SetStateAction<string>>;
   setTranslucent: React.Dispatch<React.SetStateAction<boolean>>;
-  showAdvancedSettings: any;
   sidebarDockMagnify: any;
   theme: any;
   timezone: string;
@@ -81,41 +63,52 @@ export function GeneralSettingsPanel({
 }) {
   return (
     <div>
-      <div className="settings-section-label">{t(lang, 'appearance')}</div>
+      <div className="settings-section-label">
+        {t(lang, 'appearance')}
+        <span className="settings-scope-tag" title={t(lang, 'settingsClientScopeHint')}>
+          {t(lang, 'settingsClientScope')}
+        </span>
+      </div>
       <div className="settings-card">
         <div className="settings-row" data-settings-id="theme">
           <span className="settings-row-label">{t(lang, 'theme')}</span>
-          <select
-            value={theme}
-            onChange={(e) => {
-              const next = e.target.value as ThemeMode;
-              setTheme(next);
-              applyTheme(next);
-            }}
-          >
-            <option value="system">{t(lang, 'themeSystem')}</option>
-            <option value="light">{t(lang, 'themeLight')}</option>
-            <option value="dark">{t(lang, 'themeDark')}</option>
-          </select>
+          <span className="settings-select-chevron-host">
+            <select
+              value={theme}
+              onChange={(e) => {
+                const next = e.target.value as ThemeMode;
+                setTheme(next);
+                applyTheme(next);
+              }}
+            >
+              <option value="system">{t(lang, 'themeSystem')}</option>
+              <option value="light">{t(lang, 'themeLight')}</option>
+              <option value="dark">{t(lang, 'themeDark')}</option>
+            </select>
+          </span>
         </div>
         <div className="settings-row" data-settings-id="language">
           <span className="settings-row-label">{t(lang, 'language')}</span>
-          <select
-            value={language}
-            onChange={(e) => {
-              const v = e.target.value;
-              setLanguage(v === 'en' || v === 'zh' || v === 'system' ? v : 'system');
-            }}
-          >
-            <option value="system">{t(lang, 'langSystem')}</option>
-            <option value="zh">{t(lang, 'langZh')}</option>
-            <option value="en">{t(lang, 'langEn')}</option>
-          </select>
+          <span className="settings-select-chevron-host">
+            <select
+              value={language}
+              onChange={(e) => {
+                const v = e.target.value;
+                setLanguage(v === 'en' || v === 'zh' || v === 'system' ? v : 'system');
+              }}
+            >
+              <option value="system">{t(lang, 'langSystem')}</option>
+              <option value="zh">{t(lang, 'langZh')}</option>
+              <option value="en">{t(lang, 'langEn')}</option>
+            </select>
+          </span>
         </div>
         <div className="settings-row" data-settings-id="timezone">
           <span className="settings-row-label">
             <span className="settings-row-label-text">{t(lang, 'timezone')}</span>
-            <SettingsHelpTip text={t(lang, 'timezoneHint')} />
+            <SettingsHelpTip
+              text={`${t(lang, 'timezoneHint')} (${t(lang, 'settingsGatewayScope')}: ${t(lang, 'settingsGatewayScopeHint')})`}
+            />
           </span>
           <TimezoneCombobox
             lang={lang}
@@ -133,7 +126,12 @@ export function GeneralSettingsPanel({
             onChange={() => {
               setTranslucent((v) => {
                 const next = !v;
+                // CSS immediately; main persists. Darwin frost OFF→ON recreates
+                // the window (transparent is constructor-only) then reopens
+                // Settings on general/translucent; OFF clears vibrancy live.
+                // Debounced save also persists; applyTheme no-ops when matched.
                 document.documentElement.dataset.translucent = next ? 'true' : 'false';
+                void window.okbot.applyWindowTranslucent?.(next);
                 return next;
               });
             }}
@@ -160,17 +158,19 @@ export function GeneralSettingsPanel({
             <span className="settings-row-label-text">{t(lang, 'microphone')}</span>
             <SettingsHelpTip text={t(lang, 'micSpeechDeviceHint')} />
           </span>
-          <select
-            value={microphoneId}
-            onChange={(e) => setMicrophoneId(e.target.value)}
-          >
-            <option value="">{t(lang, 'micDefault')}</option>
-            {micOptions.map((m: any) => (
-              <option key={m.id || m.label} value={m.id}>
-                {m.label}
-              </option>
-            ))}
-          </select>
+          <span className="settings-select-chevron-host">
+            <select
+              value={microphoneId}
+              onChange={(e) => setMicrophoneId(e.target.value)}
+            >
+              <option value="">{t(lang, 'micDefault')}</option>
+              {micOptions.map((m: any) => (
+                <option key={m.id || m.label} value={m.id}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+          </span>
         </div>
         <div className="settings-row" data-settings-id="hardwareAcceleration">
           <span className="settings-row-label">{t(lang, 'hardwareAcceleration')}</span>
@@ -193,15 +193,17 @@ export function GeneralSettingsPanel({
             <span className="settings-row-label-text">{t(lang, 'closeActionSetting')}</span>
             <SettingsHelpTip text={t(lang, 'closeActionSettingHint')} />
           </span>
-          <select
-            value={closeAction}
-            disabled={gatewayClient}
-            onChange={(e) => setCloseAction(normalizeCloseAction(e.target.value))}
-          >
-            <option value="ask">{t(lang, 'closeActionAsk')}</option>
-            <option value="tray">{t(lang, 'closeActionTray')}</option>
-            <option value="quit">{t(lang, 'closeActionQuit')}</option>
-          </select>
+          <span className="settings-select-chevron-host">
+            <select
+              value={closeAction}
+              disabled={gatewayClient}
+              onChange={(e) => setCloseAction(normalizeCloseAction(e.target.value))}
+            >
+              <option value="ask">{t(lang, 'closeActionAsk')}</option>
+              <option value="tray">{t(lang, 'closeActionTray')}</option>
+              <option value="quit">{t(lang, 'closeActionQuit')}</option>
+            </select>
+          </span>
         </div>
       </div>
       {needsHwRestart ? (
@@ -213,21 +215,11 @@ export function GeneralSettingsPanel({
         {t(lang, 'advanced')}
       </div>
       <div className="settings-card">
-        <div className="settings-row" data-settings-id="showAdvancedSettings">
-          <span className="settings-row-label">
-            <span className="settings-row-label-text">{t(lang, 'showAdvancedSettings')}</span>
-            <SettingsHelpTip text={t(lang, 'showAdvancedSettingsHint')} />
-          </span>
-          <SettingsToggle
-            checked={showAdvancedSettings}
-            onChange={() => {
-              setShowAdvancedSettings((v: any) => !v);
-              setRevealAdvanced(false);
-            }}
-          />
-        </div>
         <div className="settings-row" data-settings-id="developerMode">
-          <span className="settings-row-label">{t(lang, 'developerMode')}</span>
+          <span className="settings-row-label">
+            <span className="settings-row-label-text">{t(lang, 'developerMode')}</span>
+            <SettingsHelpTip text={t(lang, 'developerModeHint')} />
+          </span>
           <SettingsToggle
             checked={developerMode}
             onChange={() => setDeveloperMode((v: any) => !v)}
@@ -235,58 +227,6 @@ export function GeneralSettingsPanel({
         </div>
       </div>
 
-      <div className="settings-section-label" style={{ marginTop: 16 }} data-settings-id="data">
-        {t(lang, 'data')}
-      </div>
-      <div
-        className="settings-card"
-        aria-disabled={gatewayClient ? 'true' : undefined}
-        title={gatewayClient ? t(lang, 'backupDesktopOnly') : undefined}
-      >
-        <div className="settings-row settings-row-stack" data-settings-id="dataDir">
-          <span className="settings-row-label">{t(lang, 'dataDir')}</span>
-          <span className="settings-hint settings-data-dir">{dataDir}</span>
-        </div>
-        <div className="settings-row" data-settings-id="backupExcludeSecrets">
-          <span className="settings-row-label">
-            <span className="settings-row-label-text">{t(lang, 'backupExcludeSecrets')}</span>
-            <SettingsHelpTip text={t(lang, 'backupExcludeSecretsHint')} />
-          </span>
-          <SettingsToggle
-            checked={backupExcludeSecrets}
-            disabled={gatewayClient}
-            onChange={() => setBackupExcludeSecrets((v: any) => !v)}
-          />
-        </div>
-        <div className="settings-row" data-settings-id="backupExport">
-          <span className="settings-row-label">
-            <span className="settings-row-label-text">{t(lang, 'backupExport')}</span>
-            <SettingsHelpTip text={t(lang, 'backupExportHint')} />
-          </span>
-          <button
-            type="button"
-            className="settings-aar-add-btn"
-            disabled={gatewayClient || backupBusy}
-            onClick={() => void exportBackup()}
-          >
-            {t(lang, 'backupExportAction')}
-          </button>
-        </div>
-        <div className="settings-row" data-settings-id="backupRestore">
-          <span className="settings-row-label">
-            <span className="settings-row-label-text">{t(lang, 'backupRestore')}</span>
-            <SettingsHelpTip text={t(lang, 'backupRestoreHint')} />
-          </span>
-          <button
-            type="button"
-            className="settings-aar-add-btn"
-            disabled={gatewayClient || backupBusy}
-            onClick={() => void restoreBackup()}
-          >
-            {t(lang, 'backupRestoreAction')}
-          </button>
-        </div>
-      </div>
     </div>
   );
 }

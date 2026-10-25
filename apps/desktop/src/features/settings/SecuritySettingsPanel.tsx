@@ -9,6 +9,7 @@ import { t, type UiLang } from '../../i18n';
 
 export function SecuritySettingsPanel({
   lang,
+  readOnly = false,
   allowedPathsText,
   blockMode,
   deniedPathsText,
@@ -27,6 +28,8 @@ export function SecuritySettingsPanel({
   shellPatternsEnabled,
 }: {
   lang: UiLang;
+  /** User-token / non-admin gateway client: host security is admin-only over HTTP. */
+  readOnly?: boolean;
   allowedPathsText: any;
   blockMode: any;
   deniedPathsText: any;
@@ -56,23 +59,25 @@ export function SecuritySettingsPanel({
             <span className="settings-row-label-text">{t(lang, 'securityMaster')}</span>
             <SettingsHelpTip text={t(lang, 'securityMasterHint')} />
           </span>
-            <SettingsToggle checked={securityEnabled} onChange={() => setSecurityEnabled((v: any) => !v)} />
+            <SettingsToggle disabled={readOnly} checked={securityEnabled} onChange={() => setSecurityEnabled((v: any) => !v)} />
         </div>
         <div className="settings-row" data-settings-id="securityBlockMode">
           <span className="settings-row-label">
             <span className="settings-row-label-text">{t(lang, 'securityBlockMode')}</span>
             <SettingsHelpTip text={t(lang, 'securityBlockModeHint')} />
           </span>
-          <select
-            value={blockMode}
-            disabled={!securityEnabled}
-            onChange={(e) =>
-              setBlockMode(e.target.value === 'tripwire' ? 'tripwire' : 'reject')
-            }
-          >
-            <option value="reject">{t(lang, 'securityBlockReject')}</option>
-            <option value="tripwire">{t(lang, 'securityBlockTripwire')}</option>
-          </select>
+          <span className="settings-select-chevron-host">
+            <select
+              value={blockMode}
+              disabled={readOnly || !securityEnabled}
+              onChange={(e) =>
+                setBlockMode(e.target.value === 'tripwire' ? 'tripwire' : 'reject')
+              }
+            >
+              <option value="reject">{t(lang, 'securityBlockReject')}</option>
+              <option value="tripwire">{t(lang, 'securityBlockTripwire')}</option>
+            </select>
+          </span>
         </div>
       </div>
 
@@ -85,7 +90,7 @@ export function SecuritySettingsPanel({
             <span className="settings-row-label-text">{t(lang, 'securityRestrictToHome')}</span>
             <SettingsHelpTip text={t(lang, 'securityRestrictToHomeHint')} />
           </span>
-            <SettingsToggle checked={restrictToHome} onChange={() => setRestrictToHome((v: any) => !v)} disabled={!securityEnabled} />
+            <SettingsToggle checked={restrictToHome} onChange={() => setRestrictToHome((v: any) => !v)} disabled={readOnly || !securityEnabled} />
         </div>
         <div className="settings-row settings-row-stack" data-settings-id="securityAllowedPaths">
           <span className="settings-row-label">
@@ -95,7 +100,7 @@ export function SecuritySettingsPanel({
           <textarea
             className="settings-paths-textarea"
             spellCheck={false}
-            disabled={!securityEnabled}
+            disabled={readOnly || !securityEnabled}
             placeholder={t(lang, 'securityAllowedPathsPlaceholder')}
             value={allowedPathsText}
             onChange={(e) => setAllowedPathsText(e.target.value)}
@@ -110,7 +115,7 @@ export function SecuritySettingsPanel({
           <textarea
             className="settings-paths-textarea"
             spellCheck={false}
-            disabled={!securityEnabled}
+            disabled={readOnly || !securityEnabled}
             placeholder={t(lang, 'securityDeniedPathsPlaceholder')}
             value={deniedPathsText}
             onChange={(e) => setDeniedPathsText(e.target.value)}
@@ -132,7 +137,7 @@ export function SecuritySettingsPanel({
             <button
               type="button"
               className="settings-aar-add-btn"
-              disabled={!securityEnabled || !shellPatternsEnabled}
+              disabled={readOnly || !securityEnabled || !shellPatternsEnabled}
               onClick={() => setShellPatternAddRequest((n: any) => n + 1)}
             >
               {t(lang, 'securityShellPatternAdd')}
@@ -140,7 +145,7 @@ export function SecuritySettingsPanel({
             <button
               type="button"
               className="settings-aar-add-btn"
-              disabled={!securityEnabled || !shellPatternsEnabled || shellPatterns === undefined}
+              disabled={readOnly || !securityEnabled || !shellPatternsEnabled || shellPatterns === undefined}
               onClick={() => setShellPatterns(undefined)}
               title={t(lang, 'securityShellPatternsResetHint')}
             >
@@ -149,7 +154,7 @@ export function SecuritySettingsPanel({
             <SettingsToggle
               checked={shellPatternsEnabled}
               onChange={() => setShellPatternsEnabled((v: any) => !v)}
-              disabled={!securityEnabled}
+              disabled={readOnly || !securityEnabled}
             />
           </div>
         </div>
@@ -158,7 +163,7 @@ export function SecuritySettingsPanel({
             <ShellPatternsList
               lang={lang}
               patterns={shellPatterns ?? DEFAULT_DANGEROUS_SHELL_PATTERNS}
-              disabled={!securityEnabled}
+              disabled={readOnly || !securityEnabled}
               requestAdd={shellPatternAddRequest}
               onChange={(next) => setShellPatterns(next)}
             />

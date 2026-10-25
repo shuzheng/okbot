@@ -1,6 +1,7 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
+import { stripInternalImageStorageHints } from '@okbot/shared';
 
 /** MiniMax native image models (not OpenAI /v1/images/generations). */
 export const MINIMAX_IMAGE_MODELS = ['image-01', 'image-01-live'] as const;
@@ -225,12 +226,16 @@ export function normalizeMediaMarkdownSrc(src: string): string | null {
  * Leaves data: / https / unknown srcs unchanged (tool copy forbids emitting them).
  */
 export function normalizeReplyMediaMarkdown(content: string): string {
-  if (!content || !content.includes('](')) return content;
-  return content.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (full, alt: string, src: string) => {
-    const next = normalizeMediaMarkdownSrc(src);
-    if (!next || next === src) return full;
-    return `![${alt}](${next})`;
-  });
+  if (!content) return content;
+  let out = content;
+  if (out.includes('](')) {
+    out = out.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (full, alt: string, src: string) => {
+      const next = normalizeMediaMarkdownSrc(src);
+      if (!next || next === src) return full;
+      return `![${alt}](${next})`;
+    });
+  }
+  return stripInternalImageStorageHints(out);
 }
 
 /** Build assetRel stored in markdown: `<ownerId>/resources/<fileName>`. */
@@ -755,15 +760,14 @@ export async function generateImage(
   return generateImageWithOpenAI(creds, input, { ...opts, capability }, capability);
 }
 
+export { stripInternalImageStorageHints };
+
+/** Tool result text for the model — no workspace/asset paths (avoids echoing them to users). */
 export function formatGenerateImageToolOutput(result: GenerateImageResult): string {
   return [
-    '图片已生成并保存到本机。',
-    `protocol: ${result.protocol}`,
-    `endpoint: ${result.endpoint}`,
-    `model: ${result.model}`,
-    `asset: ${result.assetRel}`,
+    '图片已生成。',
     '',
-    '请把下面这一行 markdown **原样**写入你的回复（不要改 src；禁止改成 data:、file:// 或外链 https），用户气泡才能经网关 /v1/media 内嵌显示图片：',
+    '请把下面这一行 markdown **原样**写入你的回复（不要改 src；禁止改成 data:、file:// 或外链 https）。不要向用户提及本机路径、resources 目录、asset 相对路径，也不要写「原图保存在…」一类说明：',
     result.markdown,
     '',
     '禁止用 SVG / ASCII 画 / write_file 手绘 / data:image 冒充文生图结果。',

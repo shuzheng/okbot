@@ -239,12 +239,15 @@ export function ComputersSettingsPanel({
   defaultComputerId,
   onChange,
   onDefaultComputerIdChange,
+  embedded = false,
 }: {
   lang: UiLang;
   computers: ComputerEntry[];
   defaultComputerId: string;
   onChange: (next: ComputerEntry[]) => void;
   onDefaultComputerIdChange: (id: string) => void;
+  /** When nested under Gateway settings, tighten top chrome. */
+  embedded?: boolean;
 }) {
   const [editor, setEditor] = useState<{ mode: 'add' } | { mode: 'edit'; id: string } | null>(null);
   const [probe, setProbe] = useState<ProbeState>({ kind: 'idle', message: '' });
@@ -294,12 +297,12 @@ export function ComputersSettingsPanel({
   }
 
   return (
-    <div>
+    <div style={embedded ? { marginTop: 16 } : undefined}>
       <div
         className="settings-section-label settings-section-label-with-help"
         data-settings-id="computers"
       >
-        <span>{t(lang, 'computers')}</span>
+        <span>{t(lang, embedded ? 'gatewayComputersSection' : 'computers')}</span>
         <SettingsHelpTip text={t(lang, 'computersHint')} />
       </div>
       <div className="settings-card settings-card-model">
@@ -308,18 +311,20 @@ export function ComputersSettingsPanel({
             <span className="settings-row-label-text">{t(lang, 'defaultComputer')}</span>
             <SettingsHelpTip text={t(lang, 'defaultComputerHint')} />
           </span>
-          <select
-            value={normalizeDefaultComputerId(defaultComputerId, enabledComputers)}
-            aria-label={t(lang, 'defaultComputer')}
-            onChange={(e) => onDefaultComputerIdChange(e.target.value)}
-          >
-            <option value={LOCAL_COMPUTER_ID}>{t(lang, 'computerLocal')}</option>
-            {enabledComputers.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
+          <span className="settings-select-chevron-host">
+            <select
+              value={normalizeDefaultComputerId(defaultComputerId, enabledComputers)}
+              aria-label={t(lang, 'defaultComputer')}
+              onChange={(e) => onDefaultComputerIdChange(e.target.value)}
+            >
+              <option value={LOCAL_COMPUTER_ID}>{t(lang, 'computerLocal')}</option>
+              {enabledComputers.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </span>
         </div>
       </div>
 

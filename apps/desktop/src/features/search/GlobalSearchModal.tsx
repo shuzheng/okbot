@@ -8,7 +8,7 @@ import {
 } from '@okbot/shared';
 import { t, type UiLang } from '../../i18n';
 import type { SettingsTab } from '../settings/types';
-import { SETTINGS_SEARCH_ITEMS, SETTINGS_TAB_LABEL_KEYS, isAdvancedSettingsItem } from '../settings/settingsSearch';
+import { SETTINGS_SEARCH_ITEMS, SETTINGS_TAB_LABEL_KEYS } from '../settings/settingsSearch';
 import { FlatAvatar, SquadAvatar, type SquadAvatarMember } from '../../components/ui/avatars';
 
 export type GlobalSearchSelect =
@@ -21,10 +21,8 @@ type Props = {
   lang: UiLang;
   bots: Bot[];
   squads: Squad[];
-  /** System-instruction rows are hidden unless developer mode is on. */
+  /** Advanced tabs/rows and system-instruction rows are hidden unless developer mode is on. */
   developerMode?: boolean;
-  /** Advanced tabs and rows are hidden unless 「显示高级设置」 is on. */
-  showAdvancedSettings?: boolean;
   onClose: () => void;
   onSelect: (target: GlobalSearchSelect) => void;
 };
@@ -61,7 +59,7 @@ function squadMemberAvatars(
 }
 
 
-export function GlobalSearchModal({ lang, bots, squads, developerMode = false, showAdvancedSettings = false, onClose, onSelect }: Props) {
+export function GlobalSearchModal({ lang, bots, squads, developerMode = false, onClose, onSelect }: Props) {
   const [query, setQuery] = useState('');
   const [messageHits, setMessageHits] = useState<MessageSearchHit[]>([]);
   const [messagesLoading, setMessagesLoading] = useState(false);
@@ -119,7 +117,6 @@ export function GlobalSearchModal({ lang, bots, squads, developerMode = false, s
     if (!q) return [];
     return SETTINGS_SEARCH_ITEMS.filter((item) => {
       if (item.tab === 'instructions' && !developerMode) return false;
-      if (!showAdvancedSettings && isAdvancedSettingsItem(item)) return false;
       const label = t(lang, item.labelKey);
       if (matchText(label, q)) return true;
       if (item.keywords?.some((k) => matchText(k, q))) return true;
@@ -127,7 +124,7 @@ export function GlobalSearchModal({ lang, bots, squads, developerMode = false, s
       if (matchText(item.id, q) || matchText(item.tab, q)) return true;
       return false;
     }).slice(0, 12);
-  }, [developerMode, showAdvancedSettings, lang, q]);
+  }, [developerMode, lang, q]);
 
   useEffect(() => {
     if (!q) {

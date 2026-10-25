@@ -49,7 +49,7 @@ export function ToolsSettingsPanel({
 
     <div>
       <div className="settings-section-label" data-settings-id="toolManagement">{t(lang, 'toolManagement')}</div>
-      <div className="settings-card tool-mgmt-card">
+      <div className="settings-card tool-mgmt-card" aria-disabled={gatewayClient ? 'true' : undefined}>
         {TOOL_IDS.map((id) => {
           const pref = tools[id];
           const labelKey =
@@ -77,26 +77,31 @@ export function ToolsSettingsPanel({
             >
               <span className="settings-row-label">{t(lang, labelKey)}</span>
               <div className="tool-mgmt-controls">
-                <select
-                  className="tool-mgmt-approval-select"
-                  aria-label={t(lang, 'toolApproval')}
-                  aria-hidden={!pref.enabled}
-                  tabIndex={pref.enabled ? 0 : -1}
-                  disabled={!pref.enabled}
-                  value={pref.approval}
-                  onChange={(e) => {
-                    const approval = e.target.value === 'allow' ? 'allow' : 'ask';
-                    setTools((prev: any) => ({
-                      ...prev,
-                      [id]: { ...prev[id], approval },
-                    }));
-                  }}
-                  style={pref.enabled ? undefined : { visibility: 'hidden' }}
-                >
-                  <option value="ask">{t(lang, 'autoApprovalAsk')}</option>
-                  <option value="allow">{t(lang, 'autoApprovalAllow')}</option>
-                </select>
-                  <SettingsToggle checked={pref.enabled} onChange={() =>
+                <span className="settings-select-chevron-host">
+                  <select
+                    className="tool-mgmt-approval-select"
+                    aria-label={t(lang, 'toolApproval')}
+                    aria-hidden={!pref.enabled}
+                    tabIndex={pref.enabled && !gatewayClient ? 0 : -1}
+                    disabled={gatewayClient || !pref.enabled}
+                    value={pref.approval}
+                    onChange={(e) => {
+                      const approval = e.target.value === 'allow' ? 'allow' : 'ask';
+                      setTools((prev: any) => ({
+                        ...prev,
+                        [id]: { ...prev[id], approval },
+                      }));
+                    }}
+                    style={pref.enabled ? undefined : { visibility: 'hidden' }}
+                  >
+                    <option value="ask">{t(lang, 'autoApprovalAsk')}</option>
+                    <option value="allow">{t(lang, 'autoApprovalAllow')}</option>
+                  </select>
+                </span>
+                  <SettingsToggle
+                    checked={pref.enabled}
+                    disabled={gatewayClient}
+                    onChange={() =>
                     setTools((prev: any) => ({
                       ...prev,
                       [id]: { ...prev[id], enabled: !prev[id].enabled },
@@ -116,24 +121,26 @@ export function ToolsSettingsPanel({
         </div>
         <div className="settings-row" data-settings-id="webSearchProvider">
           <span className="settings-row-label">{t(lang, 'webSearchProvider')}</span>
-          <select
-            className="wide"
-            disabled={gatewayClient}
-            value={webDraft.search.provider}
-            onChange={(e) => {
-              const provider = e.target.value as WebSearchProviderId;
-              if (!(WEB_SEARCH_PROVIDER_IDS as readonly string[]).includes(provider)) return;
-              setWebDraft((prev: any) => ({
-                ...prev,
-                search: { ...prev.search, provider },
-              }));
-            }}
-          >
-            <option value="tavily">Tavily</option>
-            <option value="brave">Brave</option>
-            <option value="serper">Serper</option>
-            <option value="custom">{t(lang, 'webSearchProviderCustom')}</option>
-          </select>
+          <span className="settings-select-chevron-host">
+            <select
+              className="wide"
+              disabled={gatewayClient}
+              value={webDraft.search.provider}
+              onChange={(e) => {
+                const provider = e.target.value as WebSearchProviderId;
+                if (!(WEB_SEARCH_PROVIDER_IDS as readonly string[]).includes(provider)) return;
+                setWebDraft((prev: any) => ({
+                  ...prev,
+                  search: { ...prev.search, provider },
+                }));
+              }}
+            >
+              <option value="tavily">Tavily</option>
+              <option value="brave">Brave</option>
+              <option value="serper">Serper</option>
+              <option value="custom">{t(lang, 'webSearchProviderCustom')}</option>
+            </select>
+          </span>
         </div>
         <div className="settings-row" data-settings-id="webSearchApiKey">
           <span className="settings-row-label">{t(lang, 'webSearchApiKey')}</span>
@@ -171,23 +178,25 @@ export function ToolsSettingsPanel({
                 <span className="settings-row-label-text">{t(lang, 'webSearchCompat')}</span>
                 <SettingsHelpTip text={t(lang, 'webSearchCompatHint')} />
               </span>
-              <select
-                className="wide"
-                disabled={gatewayClient}
-                value={webDraft.search.compat}
-                onChange={(e) => {
-                  const compat = e.target.value as WebSearchCompatId;
-                  if (!(WEB_SEARCH_COMPAT_IDS as readonly string[]).includes(compat)) return;
-                  setWebDraft((prev: any) => ({
-                    ...prev,
-                    search: { ...prev.search, compat },
-                  }));
-                }}
-              >
-                <option value="tavily">Tavily</option>
-                <option value="brave">Brave</option>
-                <option value="serper">Serper</option>
-              </select>
+              <span className="settings-select-chevron-host">
+                <select
+                  className="wide"
+                  disabled={gatewayClient}
+                  value={webDraft.search.compat}
+                  onChange={(e) => {
+                    const compat = e.target.value as WebSearchCompatId;
+                    if (!(WEB_SEARCH_COMPAT_IDS as readonly string[]).includes(compat)) return;
+                    setWebDraft((prev: any) => ({
+                      ...prev,
+                      search: { ...prev.search, compat },
+                    }));
+                  }}
+                >
+                  <option value="tavily">Tavily</option>
+                  <option value="brave">Brave</option>
+                  <option value="serper">Serper</option>
+                </select>
+              </span>
             </div>
             <div className="settings-row" data-settings-id="webSearchBaseURL">
               <span className="settings-row-label">

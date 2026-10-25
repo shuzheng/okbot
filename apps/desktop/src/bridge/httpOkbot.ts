@@ -3,12 +3,46 @@
  * over the desktop LAN HTTP API (REST + SSE). Same UI codebase.
  */
 
-import { buildChatStartBody, normalizeUsageStats, TOOL_IDS, type ChatStartOpts } from '@okbot/shared';
+import {
+  buildChatStartBody,
+  gatewayTokenPrefixRole,
+  mergeClientGatewaySettings,
+  normalizeUsageStats,
+  pickClientSettings,
+  stripClientSettingsKeys,
+  TOOL_IDS,
+  type AppSettings,
+  type ChatStartOpts,
+  type ClientSettings,
+} from '@okbot/shared';
+import {
+  loadBrowserClientSettings,
+  saveBrowserClientSettings,
+} from '../utils/browserClientSettings';
+import { pickBrowserFiles } from '../utils/browserPickFiles';
 
 
 type Json = Record<string, unknown>;
 
 type AttachConfig = { base?: string; token?: string; platform?: string };
+
+type ClientGatewayEntryDto = {
+  id: string;
+  label: string;
+  kind: 'local' | 'remote';
+  baseUrl?: string;
+  token?: string;
+};
+
+type ClientGatewayPrefsDto = {
+  activeId: string;
+  gateways: ClientGatewayEntryDto[];
+};
+
+const BROWSER_CLIENT_GATEWAY_PREFS: ClientGatewayPrefsDto = {
+  activeId: 'local',
+  gateways: [{ id: 'local', label: 'Local', kind: 'local' }],
+};
 
 type AttachWindowFns = {
   windowMinimize?: () => Promise<boolean>;
@@ -16,9 +50,53 @@ type AttachWindowFns = {
   windowClose?: () => Promise<boolean>;
   windowIsMaximized?: () => Promise<boolean>;
   windowFocus?: () => Promise<boolean>;
+  setBadgeCount?: (count: number) => Promise<boolean>;
   onWindowMaximizedChanged?: (cb: (maximized: boolean) => void) => () => void;
+  /** Desktop tray / main-process shell navigation (attach preload). */
+  onShellNavigate?: (cb: (payload: unknown) => void) => () => void;
   /** Electron attach preload: resolve absolute path for a dropped File. */
   getPathForFile?: (file: File) => string;
+  getClientGatewayPrefs?: () => Promise<ClientGatewayPrefsDto>;
+  setActiveClientGateway?: (id: string) => Promise<ClientGatewayPrefsDto>;
+  upsertClientGateway?: (entry: ClientGatewayEntryDto) => Promise<ClientGatewayPrefsDto>;
+  removeClientGateway?: (id: string) => Promise<ClientGatewayPrefsDto>;
+  probeClientGateway?: (
+    payload: { baseUrl: string; token: string },
+  ) => Promise<{ ok: true } | { ok: false; error: string }>;
+  relaunchApp?: () => Promise<boolean>;
+  getClientSettings?: () => Promise<ClientSettings>;
+  saveClientSettings?: (settings: ClientSettings) => Promise<ClientSettings>;
+  /** Local-host attach: both tokens from disk via main IPC (not HTTP echo). */
+  getGatewayAccessToken?: () => Promise<string>;
+  getGatewayAdminToken?: () => Promise<string>;
+  saveLocalGatewayHttpApi?: (patch: unknown) => Promise<{
+    enabled: boolean;
+    port: number;
+    token: string;
+    adminToken?: string;
+    bindLan: boolean;
+    serveUi: boolean;
+  }>;
+  applyWindowTranslucent?: (translucent: boolean) => Promise<boolean>;
+  onNativeThemeUpdated?: (handler: () => void) => () => void;
+  switchClientGateway?: (id: string) => Promise<{
+    mode: 'hot' | 'relaunch';
+    prefs: ClientGatewayPrefsDto;
+    previousActiveId: string;
+    base?: string;
+    token?: string;
+  }>;
+  getAttachConfig?: () => { base: string; token: string; platform?: string };
+  setAttachTarget?: (next: { base: string; token: string }) => boolean;
+  updaterGetStatus?: () => Promise<unknown>;
+  updaterCheck?: () => Promise<unknown>;
+  updaterDownload?: () => Promise<unknown>;
+  updaterInstall?: () => Promise<void>;
+  updaterGetChangelogHistory?: (lang?: 'zh' | 'en') => Promise<unknown[]>;
+  updaterGetWhatsNew?: (lang?: 'zh' | 'en') => Promise<unknown>;
+  updaterMarkWhatsNewSeen?: (version?: string) => Promise<boolean>;
+  updaterDismissUpdatePrompt?: (version?: string) => Promise<unknown>;
+  onUpdaterEvent?: (handler: (status: unknown) => void) => () => void;
 };
 
 type AttachRaw = AttachConfig & AttachWindowFns;
@@ -32,11 +110,16 @@ function attachRaw(): AttachRaw | null {
 /** Set by the Electron preload when this window is only a client of an existing server. */
 function attachConfig(): AttachConfig | null {
   const raw = attachRaw();
-  if (!raw?.base) return null;
+  if (!raw) return null;
+  const live = typeof raw.getAttachConfig === 'function' ? raw.getAttachConfig() : null;
+  const baseRaw = (live?.base || raw.base) as string | undefined;
+  if (typeof baseRaw !== 'string' || !baseRaw.trim()) return null;
+  const tokenRaw = live?.token ?? raw.token;
+  const platformRaw = live?.platform ?? raw.platform;
   return {
-    base: raw.base.replace(/\/+$/, ''),
-    token: typeof raw.token === 'string' ? raw.token : '',
-    platform: typeof raw.platform === 'string' ? raw.platform : undefined,
+    base: baseRaw.replace(/\/+$/, ''),
+    token: typeof tokenRaw === 'string' ? tokenRaw : '',
+    platform: typeof platformRaw === 'string' ? platformRaw : undefined,
   };
 }
 
@@ -64,6 +147,37 @@ function gatewayToken(): string {
   // Never read ?token= or sessionStorage — those leave the secret in the address bar / storage.
   return attachConfig()?.token?.trim() || '';
 }
+
+async function readClientChrome(): Promise<ClientSettings> {
+  const fn = attachRaw()?.getClientSettings;
+  if (typeof fn === 'function') {
+    try {
+      return pickClientSettings(await fn());
+    } catch {
+      /* fall through */
+    }
+  }
+  return loadBrowserClientSettings();
+}
+
+async function writeClientChrome(settings: ClientSettings): Promise<ClientSettings> {
+  const next = pickClientSettings(settings);
+  const fn = attachRaw()?.saveClientSettings;
+  if (typeof fn === 'function') {
+    try {
+      return pickClientSettings(await fn(next));
+    } catch {
+      /* fall through */
+    }
+  }
+  return saveBrowserClientSettings(next);
+}
+
+async function overlayClientChrome<T extends Record<string, unknown>>(gatewaySettings: T): Promise<T & AppSettings> {
+  const client = await readClientChrome();
+  return mergeClientGatewaySettings(gatewaySettings as unknown as AppSettings, client) as T & AppSettings;
+}
+
 
 async function api<T = Json>(
   method: string,
@@ -105,20 +219,38 @@ async function rpc<T = any>(op: string, args: Record<string, unknown> = {}): Pro
 
 const runtimeListeners = new Set<(event: any) => void>();
 let sessionEventsStarted = false;
+let sessionEventsAbort: AbortController | null = null;
 
-/** Long-lived SSE so a desktop-side roster change reaches this gateway page. */
+
+function durableGatewayEventsActive(): boolean {
+  if (sessionEventsStarted) return true;
+  try {
+    return !!(window as unknown as { __okbotGatewayEvents?: boolean }).__okbotGatewayEvents;
+  } catch {
+    return false;
+  }
+}
+
+/** Long-lived SSE: roster/settings + turn events so attach mirrors owner IPC fan-out. */
 function startGatewaySessionEvents(): void {
   if (sessionEventsStarted) return;
   if (typeof window === 'undefined' || typeof fetch !== 'function') return;
+  // gateway-boot.js already pumps /v1/events and fans out via wrapped onRuntimeEvent /
+  // onSettingsChanged — avoid a second SSE on the same page.
+  if ((window as unknown as { __okbotGatewayEvents?: boolean }).__okbotGatewayEvents) return;
   sessionEventsStarted = true;
   let stopped = false;
   const pump = async () => {
-    let delay = 1000;
+    let delay = 300;
     while (!stopped) {
+      let streamEndedClean = false;
       try {
+        sessionEventsAbort?.abort();
+        sessionEventsAbort = new AbortController();
         const token = gatewayToken();
         const res = await fetch(endpoint('/v1/events'), {
           credentials: 'include',
+          signal: sessionEventsAbort.signal,
           headers: {
             Accept: 'text/event-stream',
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -126,16 +258,21 @@ function startGatewaySessionEvents(): void {
         });
         if (!res.ok || !res.body) {
           await new Promise((r) => setTimeout(r, delay));
-          delay = Math.min(delay * 2, 10_000);
+          delay = Math.min(Math.max(delay, 300) * 2, 10_000);
           continue;
         }
-        delay = 1000;
+        delay = 300;
+        // Catch up after listen/rebind gaps (bindLan / port / token restart).
+        void notifySettingsChangedFromGateway();
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buf = '';
         while (!stopped) {
           const { done, value } = await reader.read();
-          if (done) break;
+          if (done) {
+            streamEndedClean = true;
+            break;
+          }
           buf += decoder.decode(value, { stream: true });
           const parts = buf.split('\n\n');
           buf = parts.pop() || '';
@@ -147,19 +284,30 @@ function startGatewaySessionEvents(): void {
             if (!data) continue;
             try {
               const event = JSON.parse(data);
-              if (!event || event.type !== 'sessions_changed') continue;
-              for (const listener of [...runtimeListeners]) listener(event);
+              if (!event || typeof event.type !== 'string') continue;
+              for (const listener of [...runtimeListeners]) {
+                try {
+                  listener(event);
+                } catch (err) {
+                  console.error('[okbot] gateway events listener failed', err);
+                }
+              }
+              if (event.type === 'settings_changed') {
+                void notifySettingsChangedFromGateway();
+              }
             } catch {
               /* ignore malformed */
             }
           }
         }
       } catch {
-        /* reconnect */
+        /* reconnect after abort / incomplete chunk / offline */
       }
       if (!stopped) {
-        await new Promise((r) => setTimeout(r, delay));
-        delay = Math.min(delay * 2, 10_000);
+        const wait = delay;
+        if (!streamEndedClean) delay = Math.min(Math.max(delay, 300) * 2, 10_000);
+        else delay = 300;
+        await new Promise((r) => setTimeout(r, wait));
       }
     }
   };
@@ -167,6 +315,50 @@ function startGatewaySessionEvents(): void {
   window.addEventListener('pagehide', () => {
     stopped = true;
   });
+}
+
+/** Abort the current SSE so the pump reconnects with the new attach base/token. */
+function reconnectGatewaySessionEvents(): void {
+  try {
+    sessionEventsAbort?.abort();
+  } catch {
+    /* ignore */
+  }
+  if (!sessionEventsStarted) {
+    startGatewaySessionEvents();
+  }
+}
+
+function dispatchGatewayReconnected(): void {
+  try {
+    window.dispatchEvent(new CustomEvent('okbot:gateway-reconnected'));
+  } catch {
+    /* ignore */
+  }
+}
+
+
+const settingsChangedListeners = new Set<(settings: any) => void>();
+let settingsNotifySeq = 0;
+
+/** Refetch merged settings (gateway + local client chrome) and fan out. */
+async function notifySettingsChangedFromGateway(): Promise<void> {
+  const ticket = ++settingsNotifySeq;
+  try {
+    const bridge = (window as unknown as { okbot?: { getSettings?: () => Promise<unknown> } }).okbot;
+    if (typeof bridge?.getSettings !== 'function') return;
+    const latest = await bridge.getSettings();
+    if (ticket !== settingsNotifySeq || !latest) return;
+    for (const listener of [...settingsChangedListeners]) {
+      try {
+        listener(latest);
+      } catch (err) {
+        console.error('[okbot] onSettingsChanged listener failed', err);
+      }
+    }
+  } catch (err) {
+    console.error('[okbot] settings_changed refetch failed', err);
+  }
 }
 
 const GATEWAY_TOOL_IDS = TOOL_IDS;
@@ -223,7 +415,6 @@ export function fillGatewaySquad<T extends Record<string, any>>(squad: T) {
     name: typeof squad?.name === 'string' ? squad.name : '',
     members: members.map((m: any) => ({
       botId: m?.botId || '',
-      role: typeof m?.role === 'string' ? m.role : '',
     })),
   };
 }
@@ -231,7 +422,7 @@ export function fillGatewaySquad<T extends Record<string, any>>(squad: T) {
 export function fillGatewaySettings(settings: unknown) {
   const s = settings && typeof settings === 'object' ? (settings as Record<string, any>) : {};
   const security = s.security && typeof s.security === 'object' ? s.security : {};
-  const local = s.localHttpApi && typeof s.localHttpApi === 'object' ? s.localHttpApi : {};
+  const local = s.gatewayHttpApi && typeof s.gatewayHttpApi === 'object' ? s.gatewayHttpApi : {};
   return {
     ...s,
     theme: s.theme || 'system',
@@ -254,15 +445,17 @@ export function fillGatewaySettings(settings: unknown) {
     autoApprovalEnabled: s.autoApprovalEnabled === true,
     autoApprovalRules: Array.isArray(s.autoApprovalRules) ? s.autoApprovalRules : [],
     notifications: s.notifications !== false,
-    showAdvancedSettings: s.showAdvancedSettings === true,
+    developerMode: s.developerMode === true,
     mcp: s.mcp && typeof s.mcp === 'object'
       ? { enabled: s.mcp.enabled === true, servers: Array.isArray(s.mcp.servers) ? s.mcp.servers : [] }
       : { enabled: false, servers: [] },
     microphoneId: typeof s.microphoneId === 'string' ? s.microphoneId : '',
-    localHttpApi: {
-      enabled: local.enabled === true,
+    gatewayHttpApi: {
+      enabled: true,
       port: typeof local.port === 'number' ? local.port : 18765,
       token: typeof local.token === 'string' ? local.token : '',
+      adminToken: typeof local.adminToken === 'string' ? local.adminToken : '',
+      apiTokens: Array.isArray(local.apiTokens) ? local.apiTokens : [],
       bindLan: local.bindLan === true,
       serveUi: local.serveUi === true,
     },
@@ -275,14 +468,66 @@ export function fillGatewaySettings(settings: unknown) {
   };
 }
 
-/** Fill localHttpApi.token from the narrow authenticated endpoint. Bootstrap blanks it. */
-async function withLiveGatewayToken<T extends { localHttpApi?: { token?: string } }>(settings: T): Promise<T> {
+/** Prefer local-host attach IPC (both tokens from server.json); else HTTP echo of presented role. */
+async function readAttachDiskGatewayTokens(): Promise<{
+  token: string;
+  adminToken: string;
+  apiTokens?: unknown[];
+} | null> {
+  const raw = attachRaw() as {
+    getGatewayAccessToken?: () => Promise<string>;
+    getGatewayAdminToken?: () => Promise<string>;
+    getGatewayApiTokens?: () => Promise<unknown[]>;
+  } | null;
+  if (!raw) return null;
+  const readAccess = raw.getGatewayAccessToken;
+  const readAdmin = raw.getGatewayAdminToken;
+  const readList = raw.getGatewayApiTokens;
+  if (typeof readAccess !== 'function' && typeof readAdmin !== 'function' && typeof readList !== 'function') {
+    return null;
+  }
   try {
-    const json = await api<{ token?: unknown }>('GET', '/v1/gateway-token');
+    const [access, admin, list] = await Promise.all([
+      typeof readAccess === 'function' ? readAccess() : Promise.resolve(''),
+      typeof readAdmin === 'function' ? readAdmin() : Promise.resolve(''),
+      typeof readList === 'function' ? readList() : Promise.resolve([]),
+    ]);
+    return {
+      token: typeof access === 'string' ? access : '',
+      adminToken: typeof admin === 'string' ? admin : '',
+      apiTokens: Array.isArray(list) ? list : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Fill gatewayHttpApi token fields. Bootstrap blanks them on the wire. */
+async function withLiveGatewayToken<T extends { gatewayHttpApi?: { token?: string; adminToken?: string; apiTokens?: unknown } }>(
+  settings: T,
+): Promise<T> {
+  const local = settings.gatewayHttpApi && typeof settings.gatewayHttpApi === 'object' ? settings.gatewayHttpApi : {};
+  const disk = await readAttachDiskGatewayTokens();
+  if (disk && (disk.token || disk.adminToken || (disk.apiTokens && disk.apiTokens.length))) {
+    return {
+      ...settings,
+      gatewayHttpApi: {
+        ...local,
+        ...(disk.token ? { token: disk.token } : {}),
+        ...(disk.adminToken ? { adminToken: disk.adminToken } : {}),
+        ...(disk.apiTokens && disk.apiTokens.length ? { apiTokens: disk.apiTokens } : {}),
+      },
+    };
+  }
+  try {
+    const json = await api<{ token?: unknown; role?: unknown }>('GET', '/v1/gateway-token');
     const token = typeof json?.token === 'string' ? json.token : '';
     if (!token) return settings;
-    const local = settings.localHttpApi && typeof settings.localHttpApi === 'object' ? settings.localHttpApi : {};
-    return { ...settings, localHttpApi: { ...local, token } };
+    const role = json?.role === 'admin' ? 'admin' : 'access';
+    if (role === 'admin') {
+      return { ...settings, gatewayHttpApi: { ...local, adminToken: token } };
+    }
+    return { ...settings, gatewayHttpApi: { ...local, token } };
   } catch {
     return settings;
   }
@@ -304,7 +549,9 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
           ? runs.pendingToolRequests
           : [];
       const squads = Array.isArray(b?.squads) ? b.squads : [];
-      const settings = await withLiveGatewayToken(fillGatewaySettings(b?.settings));
+      const settings = await overlayClientChrome(
+        await withLiveGatewayToken(fillGatewaySettings(b?.settings)),
+      );
       return {
         bots: Array.isArray(b?.bots) ? b.bots : [],
         squads: squads.map(fillGatewaySquad),
@@ -322,14 +569,142 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
       return (Array.isArray(squads) ? squads : []).map(fillGatewaySquad);
     },
     getSettings: async () => (await okbot.getBootstrap()).settings,
-    /** Live token the server checks. Not read from bootstrap, which blanks it. */
+    /** Live access/user token. Local-host attach reads disk; HTTP admin echo stays blank by design. */
     getGatewayAccessToken: async () => {
-      const json = await api<{ token?: unknown }>('GET', '/v1/gateway-token');
+      const disk = await readAttachDiskGatewayTokens();
+      if (disk) return disk.token;
+      const json = await api<{ token?: unknown; role?: unknown }>('GET', '/v1/gateway-token');
+      if (json?.role === 'admin') return '';
       return typeof json?.token === 'string' ? json.token : '';
     },
+    getGatewayAdminToken: async () => {
+      const disk = await readAttachDiskGatewayTokens();
+      if (disk) return disk.adminToken;
+      const json = await api<{ token?: unknown; role?: unknown }>('GET', '/v1/gateway-token');
+      if (json?.role !== 'admin') return '';
+      return typeof json?.token === 'string' ? json.token : '';
+    },
+    /** Token list for settings UI. Prefer local-host attach IPC (full secrets); else bootstrap (redacted). */
+    getGatewayApiTokens: async () => {
+      const disk = await readAttachDiskGatewayTokens();
+      if (disk && Array.isArray(disk.apiTokens) && disk.apiTokens.length) return disk.apiTokens;
+      try {
+        const b = await api<{ settings?: { gatewayHttpApi?: { apiTokens?: unknown } } }>('GET', '/v1/bootstrap');
+        const list = b?.settings?.gatewayHttpApi?.apiTokens;
+        return Array.isArray(list) ? list : [];
+      } catch {
+        return [];
+      }
+    },
+    /**
+     * Role of the credential this client is actually presenting (Bearer / cookie).
+     * Local-host attach can read both tokens from disk for the settings form — that
+     * must not imply the window is admin if the presented Bearer is user_/access.
+     */
+    getGatewayAuthRole: async () => {
+      const presented = gatewayToken();
+      const disk = await readAttachDiskGatewayTokens();
+      if (disk) {
+        const prefix = gatewayTokenPrefixRole(presented);
+        if (prefix) return prefix;
+        if (presented && presented === disk.adminToken) return 'admin';
+        if (presented && presented === disk.token) return 'access';
+        return null;
+      }
+      try {
+        const json = await api<{ role?: unknown }>('GET', '/v1/gateway-token');
+        if (json?.role === 'admin' || json?.role === 'access') return json.role;
+      } catch {
+        /* prefix fallback */
+      }
+      return gatewayTokenPrefixRole(presented);
+    },
     saveSettings: async (settings: unknown) => {
-      const json = await api<any>('POST', '/v1/settings', settings);
-      return withLiveGatewayToken(fillGatewaySettings(json?.settings ?? json));
+      const bag =
+        settings && typeof settings === 'object' && !Array.isArray(settings)
+          ? (settings as Record<string, unknown>)
+          : {};
+      const client = await writeClientChrome(pickClientSettings(bag));
+      const gatewayPatch = stripClientSettingsKeys(bag) as Record<string, unknown>;
+      const localSave = attachRaw()?.saveLocalGatewayHttpApi;
+      let localGatewayHttpApi: Record<string, unknown> | null = null;
+      if (typeof localSave === 'function' && gatewayPatch.gatewayHttpApi != null) {
+        // Local-host attach: persist listen/token via owner IPC (avoids restarting the
+        // HTTP server mid-response). Remote admin still POSTs gatewayHttpApi over HTTP.
+        try {
+          const savedApi = await localSave(gatewayPatch.gatewayHttpApi);
+          localGatewayHttpApi =
+            savedApi && typeof savedApi === 'object'
+              ? (savedApi as unknown as Record<string, unknown>)
+              : null;
+          // Local attach prefers admin Authorization (same as probe prefer:admin).
+          const cfg = attachConfig();
+          const nextAdmin =
+            typeof localGatewayHttpApi?.adminToken === 'string'
+              ? localGatewayHttpApi.adminToken.trim()
+              : '';
+          const nextAccess =
+            typeof localGatewayHttpApi?.token === 'string' ? localGatewayHttpApi.token.trim() : '';
+          const nextPresented = nextAdmin || nextAccess;
+          const base = typeof cfg?.base === 'string' ? cfg.base.trim() : '';
+          if (base && nextPresented && nextPresented !== (cfg?.token || '').trim()) {
+            attachRaw()?.setAttachTarget?.({ base, token: nextPresented });
+          }
+          delete gatewayPatch.gatewayHttpApi;
+        } catch (err) {
+          // Fall through to HTTP admin POST /v1/settings (access token → 403).
+          console.error('[okbot] saveLocalGatewayHttpApi failed', err);
+        }
+      }
+
+      const mergeGateway = async (raw: unknown): Promise<AppSettings> => {
+        let gateway = await withLiveGatewayToken(fillGatewaySettings(raw));
+        if (localGatewayHttpApi) {
+          gateway = fillGatewaySettings({
+            ...gateway,
+            gatewayHttpApi: {
+              ...(gateway.gatewayHttpApi && typeof gateway.gatewayHttpApi === 'object'
+                ? gateway.gatewayHttpApi
+                : {}),
+              ...localGatewayHttpApi,
+            },
+          });
+        }
+        return mergeClientGatewaySettings(gateway as AppSettings, client);
+      };
+
+      // Access/user token cannot POST /v1/settings (admin_required). Settings autosave still
+      // sends a full hybrid payload; skip the gateway write and keep client chrome only.
+      // Avoids forbidden toasts when 网关端 is hidden for remote user clients.
+      const presentedRole = gatewayTokenPrefixRole(gatewayToken());
+      if (presentedRole === 'access') {
+        return mergeGateway(gatewayPatch);
+      }
+
+      try {
+        const json = await api<any>('POST', '/v1/settings', gatewayPatch);
+        return mergeGateway(json?.settings ?? json);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message.trim() : String(err);
+        if (msg === 'forbidden' || msg.includes('admin_required')) {
+          // Legacy unprefixed access tokens, or race before role resolves: client chrome
+          // already saved — return UI hybrid without toasting.
+          return mergeGateway(gatewayPatch);
+        }
+        throw err;
+      }
+    },
+    applyWindowTranslucent: async (translucent: boolean) => {
+      const fn = attachRaw()?.applyWindowTranslucent;
+      if (typeof fn === 'function') {
+        try {
+          return Boolean(await fn(translucent));
+        } catch {
+          return false;
+        }
+      }
+      // Pure browser WebUI: CSS data-translucent only (no native vibrancy).
+      return true;
     },
     getMessagesPage: async (ownerId: string, opts?: { limit?: number; beforeMessageId?: string }) => {
       // Try bot path first; gateway accepts both bots and squads via same handler when we pass bots
@@ -440,7 +815,10 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
           if (!data) continue;
           try {
             const event = JSON.parse(data);
-            for (const l of runtimeListeners) l(event);
+            // Durable /v1/events already fans turn events; skip to avoid double deltas.
+            if (!durableGatewayEventsActive()) {
+              for (const l of runtimeListeners) l(event);
+            }
           } catch {
             /* ignore */
           }
@@ -478,7 +856,10 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
           if (!data) continue;
           try {
             const event = JSON.parse(data);
-            for (const l of runtimeListeners) l(event);
+            // Durable /v1/events already fans turn events; skip to avoid double deltas.
+            if (!durableGatewayEventsActive()) {
+              for (const l of runtimeListeners) l(event);
+            }
           } catch {
             /* ignore */
           }
@@ -512,8 +893,12 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
       runtimeListeners.add(cb);
       return () => runtimeListeners.delete(cb);
     },
-    /** Desktop tray / hotkey navigation — no-op on pure gateway web. */
-    onShellNavigate: (_cb: (payload: unknown) => void) => () => {},
+    /** Desktop tray / hotkey navigation — attach preload IPC; no-op on pure gateway web. */
+    onShellNavigate: (cb: (payload: unknown) => void) => {
+      const fn = attachRaw()?.onShellNavigate;
+      if (typeof fn !== 'function') return () => {};
+      return fn(cb);
+    },
     copyText: async (text: string) => {
       try {
         await navigator.clipboard.writeText(text);
@@ -567,13 +952,28 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
     },
     setChatUnread: (ownerId: string, hasUnread: boolean) =>
       rpc<boolean>('setChatUnread', { ownerId, hasUnread }),
+    setBadgeCount: async (count: number) => {
+      const fn = attachRaw()?.setBadgeCount;
+      if (typeof fn !== 'function') return false;
+      return Boolean(await fn(count));
+    },
     updaterGetStatus: async () => {
+      const fn = attachRaw()?.updaterGetStatus;
+      if (typeof fn === 'function') return fn();
       const info = await okbot.getAppInfo();
       return { phase: 'idle' as const, currentVersion: info?.version || '0.0.0' };
     },
-    onUpdaterEvent: () => () => {},
-    onNativeThemeUpdated: () => () => {},
-    onSettingsChanged: () => () => {},
+    onUpdaterEvent: (handler: (status: any) => void) => {
+      const fn = attachRaw()?.onUpdaterEvent;
+      if (typeof fn === 'function') return fn(handler);
+      return () => {};
+    },
+    onSettingsChanged: (handler: (settings: any) => void) => {
+      settingsChangedListeners.add(handler);
+      return () => {
+        settingsChangedListeners.delete(handler);
+      };
+    },
     windowMinimize: () => callAttachWindow('windowMinimize'),
     windowMaximizeToggle: () => callAttachWindow('windowMaximizeToggle'),
     windowClose: () => callAttachWindow('windowClose'),
@@ -599,7 +999,29 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
       const body = await api<Record<string, unknown>>('GET', '/v1/usage');
       return normalizeUsageStats(body);
     },
-    pickPaths: async () => ({ canceled: true, paths: [] }),
+    getApiTokenUsage: async (tokenId: string) => {
+      const id = typeof tokenId === 'string' ? tokenId.trim() : '';
+      if (!id) return { ok: false as const, error: 'missing_id' };
+      try {
+        return await api<Record<string, unknown>>('GET', `/v1/api-tokens/${encodeURIComponent(id)}/usage`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { ok: false as const, error: message };
+      }
+    },
+    // Owner Electron uses dialog IPC. WebUI / attach: native <input type=file>
+    // for image/file (blob upload). Folder stays canceled — gateway-local dirs
+    // are not meaningful from a phone/browser.
+    pickPaths: async (kind: 'image' | 'file' | 'folder') => {
+      if (kind !== 'image' && kind !== 'file') {
+        return { canceled: true as const, paths: [] as string[] };
+      }
+      const files = await pickBrowserFiles(kind);
+      if (!files.length) {
+        return { canceled: true as const, paths: [] as string[] };
+      }
+      return { canceled: false as const, paths: [] as string[], files };
+    },
     getPathForFile: (file: File): string => {
       const fn = attachRaw()?.getPathForFile;
       if (typeof fn !== 'function') return '';
@@ -725,8 +1147,7 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
     createBot: (input: Record<string, unknown>) => rpc('createBot', input ?? {}),
     createSquad: (input: Record<string, unknown>) => rpc('createSquad', input ?? {}),
     updateBot: (id: string, patch: Record<string, unknown>) => rpc('updateBot', { id, patch }),
-    finishBotOnboarding: (botId: string, answers: Record<string, unknown>) =>
-      rpc('finishBotOnboarding', { botId, answers }),
+    startBotOnboarding: (botId: string) => rpc('startBotOnboarding', { botId }),
     deleteBot: (id: string) => rpc<boolean>('deleteBot', { id }),
     updateSquad: (id: string, patch: Record<string, unknown>) => rpc('updateSquad', { id, patch }),
     deleteSquad: (id: string) => rpc<boolean>('deleteSquad', { id }),
@@ -748,11 +1169,93 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
       rpc('importAssistantFromUrl', { url, overwrite: opts?.overwrite === true }),
     cancelImportAssistantFromUrl: () =>
       rpc<boolean>('cancelImportAssistantFromUrl', {}).catch(() => false),
-    // Desktop-only: MCP starts host processes; backup reads / replaces the whole data dir.
-    mcpStatus: async () => [],
-    mcpTestServer: async () => ({ id: '', name: '', ok: false, toolCount: 0, error: 'desktop_only' }),
-    backupExport: async () => ({ ok: false as const, error: 'desktop_only' }),
-    backupRestore: async () => ({ ok: false as const, error: 'desktop_only' }),
+    // Admin HTTP: MCP status/test and gateway-host backup/restore (access token → 403).
+    mcpStatus: async () => {
+      const json = await api<{ servers?: unknown }>('GET', '/v1/mcp/status');
+      return Array.isArray(json?.servers) ? json.servers : [];
+    },
+    mcpTestServer: async (entry: unknown) => {
+      return api('POST', '/v1/mcp/test', { server: entry });
+    },
+    backupExport: async (payload: { excludeSecrets?: boolean }) => {
+      const token = gatewayToken();
+      const res = await fetch(endpoint('/v1/backup/export'), {
+        method: 'POST',
+        headers: {
+          Accept: 'application/zip, application/json',
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        credentials: 'include',
+        body: JSON.stringify({ excludeSecrets: payload?.excludeSecrets !== false }),
+      });
+      if (!res.ok) {
+        let err = `HTTP ${res.status}`;
+        try {
+          const json = (await res.json()) as { error?: string };
+          if (typeof json?.error === 'string' && json.error) err = json.error;
+        } catch {
+          /* ignore */
+        }
+        return { ok: false as const, error: err };
+      }
+      const blob = await res.blob();
+      const cd = res.headers.get('Content-Disposition') || '';
+      const m = /filename="([^"]+)"/i.exec(cd);
+      const filename = m?.[1] || 'okbot-backup.zip';
+      const url = URL.createObjectURL(blob);
+      try {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.rel = 'noopener';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+      return { ok: true as const, path: filename };
+    },
+    backupRestore: async () => {
+      const file = await new Promise<File | null>((resolve) => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.zip,application/zip';
+        input.style.display = 'none';
+        const done = (f: File | null) => {
+          input.remove();
+          resolve(f);
+        };
+        input.addEventListener('change', () => done(input.files?.[0] ?? null));
+        input.addEventListener('cancel', () => done(null));
+        document.body.appendChild(input);
+        input.click();
+      });
+      if (!file) return { canceled: true as const };
+      const buf = new Uint8Array(await file.arrayBuffer());
+      // Prefer raw zip body (smaller than base64 JSON).
+      const token = gatewayToken();
+      const res = await fetch(endpoint('/v1/backup/restore'), {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/zip',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        credentials: 'include',
+        body: buf,
+      });
+      const json = (await res.json().catch(() => null)) as {
+        ok?: boolean;
+        error?: string;
+        previousDir?: string;
+      } | null;
+      if (!res.ok || !json?.ok) {
+        return { ok: false as const, error: json?.error || `HTTP ${res.status}` };
+      }
+      return { ok: true as const, previousDir: json.previousDir || '' };
+    },
     discoverModels: async (payload: Record<string, unknown>) => {
       try {
         return await rpc('discoverModels', payload ?? {});
@@ -770,15 +1273,104 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
     clearModelBindingsForProvider: (payload: { providerId: string; removedModelIds?: string[] }) =>
       rpc('clearModelBindingsForProvider', payload ?? {}),
     getRecentErrorLog: (limit?: number) => rpc('getRecentErrorLog', { limit }),
-    updaterCheck: async () => okbot.updaterGetStatus(),
-    updaterDownload: async () => okbot.updaterGetStatus(),
-    updaterInstall: async () => undefined,
+    updaterCheck: async () => {
+      const fn = attachRaw()?.updaterCheck;
+      if (typeof fn === 'function') return fn();
+      return okbot.updaterGetStatus();
+    },
+    updaterDownload: async () => {
+      const fn = attachRaw()?.updaterDownload;
+      if (typeof fn === 'function') return fn();
+      return okbot.updaterGetStatus();
+    },
+    updaterInstall: async () => {
+      const fn = attachRaw()?.updaterInstall;
+      if (typeof fn === 'function') return fn();
+    },
+    // Electron attach: real desktop updater via preload. Pure WebUI: no-op stubs.
+    updaterGetChangelogHistory: async (lang?: 'zh' | 'en') => {
+      const fn = attachRaw()?.updaterGetChangelogHistory;
+      if (typeof fn === 'function') return fn(lang);
+      return [];
+    },
+    updaterGetWhatsNew: async (lang?: 'zh' | 'en') => {
+      const fn = attachRaw()?.updaterGetWhatsNew;
+      if (typeof fn === 'function') return fn(lang);
+      return null;
+    },
+    updaterMarkWhatsNewSeen: async (version?: string) => {
+      const fn = attachRaw()?.updaterMarkWhatsNewSeen;
+      if (typeof fn === 'function') return fn(version);
+      return true;
+    },
+    updaterDismissUpdatePrompt: async (version?: string) => {
+      const fn = attachRaw()?.updaterDismissUpdatePrompt;
+      if (typeof fn === 'function') return fn(version);
+      return okbot.updaterGetStatus();
+    },
     compressSessionNow: async (payload: Record<string, unknown>) => {
       try {
         return await rpc('compressSessionNow', payload ?? {});
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : 'compress_failed' };
       }
+    },
+    getClientGatewayPrefs: async () => {
+      const fn = attachRaw()?.getClientGatewayPrefs;
+      if (typeof fn !== 'function') return BROWSER_CLIENT_GATEWAY_PREFS;
+      return fn();
+    },
+    setActiveClientGateway: async (id: string) => {
+      const fn = attachRaw()?.setActiveClientGateway;
+      if (typeof fn !== 'function') return BROWSER_CLIENT_GATEWAY_PREFS;
+      return fn(id);
+    },
+    switchClientGateway: async (id: string) => {
+      // Only the Electron attach preload can hot-switch. Do not fall back to
+      // window.okbot.switchClientGateway (this method) — that recurses and used
+      // to surface a fake relaunch result to the settings UI.
+      const raw = attachRaw();
+      const switchFn = raw?.switchClientGateway;
+      if (typeof switchFn !== 'function') {
+        throw new Error('switch_client_gateway_unavailable');
+      }
+      const result = await switchFn(id);
+      if (result.mode === 'hot' && result.base) {
+        const setTarget = raw?.setAttachTarget;
+        if (typeof setTarget === 'function') {
+          setTarget({ base: result.base, token: result.token || '' });
+        }
+        reconnectGatewaySessionEvents();
+        dispatchGatewayReconnected();
+      }
+      return result;
+    },
+    upsertClientGateway: async (entry: ClientGatewayEntryDto) => {
+      const fn = attachRaw()?.upsertClientGateway;
+      if (typeof fn !== 'function') return BROWSER_CLIENT_GATEWAY_PREFS;
+      return fn(entry);
+    },
+    removeClientGateway: async (id: string) => {
+      const fn = attachRaw()?.removeClientGateway;
+      if (typeof fn !== 'function') return BROWSER_CLIENT_GATEWAY_PREFS;
+      return fn(id);
+    },
+    probeClientGateway: async (payload: { baseUrl: string; token: string }) => {
+      const fn = attachRaw()?.probeClientGateway;
+      if (typeof fn !== 'function') return { ok: false as const, error: 'desktop_only' };
+      return fn(payload);
+    },
+    relaunchApp: async () => {
+      const fn = attachRaw()?.relaunchApp;
+      if (typeof fn !== 'function') return false;
+      return Boolean(await fn());
+    },
+    getClientSettings: async () => readClientChrome(),
+    saveClientSettings: async (settings: ClientSettings) => writeClientChrome(settings),
+    onNativeThemeUpdated: (handler: () => void): (() => void) => {
+      const fn = attachRaw()?.onNativeThemeUpdated;
+      if (typeof fn === 'function') return fn(handler);
+      return () => {};
     },
   };
 

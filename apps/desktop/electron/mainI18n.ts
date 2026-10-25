@@ -122,3 +122,87 @@ const BACKGROUND_QUIT: Record<MainUiLang, BackgroundQuitCopy> = {
 export function backgroundQuitCopy(lang: MainUiLang): BackgroundQuitCopy {
   return BACKGROUND_QUIT[lang];
 }
+
+
+export type UpdateInstallDialogCopy = {
+  readyMessage: string;
+  readyDetail: (version: string) => string;
+  restartNow: string;
+  later: string;
+  failedMessage: string;
+  ok: string;
+  notWritable: string;
+  noSpace: string;
+  noSha: string;
+  genericFail: string;
+  installFailFallback: string;
+  /** Dev-mode check / download errors shown in updater status. */
+  devNoCheck: string;
+  devNoDownload: string;
+};
+
+const UPDATE_INSTALL: Record<MainUiLang, UpdateInstallDialogCopy> = {
+  zh: {
+    readyMessage: '更新已下载完成',
+    readyDetail: (version) => `新版本 ${version} 已就绪。重启 OkBot 以完成安装。`,
+    restartNow: '立即重启',
+    later: '稍后',
+    failedMessage: '无法安装更新',
+    ok: '好',
+    notWritable:
+      '当前应用所在目录不可写（例如还在 DMG 里运行，或没有 /Applications 的写入权限）。请先把 OkBot 复制到「应用程序」后再更新。',
+    noSpace: '磁盘空间不足，无法展开安装包。请腾出空间后重试。',
+    noSha: '安装包校验信息不完整。请重新检查更新并下载。',
+    genericFail: '已下载的安装包不在更新缓存里。请退出 OkBot，从 Release 手动安装。',
+    installFailFallback: '安装程序未能启动，请稍后重试或手动安装。',
+    devNoCheck: '开发模式下不检查更新',
+    devNoDownload: '开发模式下无法下载更新',
+  },
+  en: {
+    readyMessage: 'Update downloaded',
+    readyDetail: (version) => `Version ${version} is ready. Restart OkBot to finish installing.`,
+    restartNow: 'Restart now',
+    later: 'Later',
+    failedMessage: 'Could not install update',
+    ok: 'OK',
+    notWritable:
+      'The app folder is not writable (for example you are still running from a DMG, or lack write access to /Applications). Copy OkBot to Applications, then update.',
+    noSpace: 'Not enough disk space to unpack the update. Free some space and try again.',
+    noSha: 'The update package is missing a checksum. Check for updates and download again.',
+    genericFail: 'The downloaded package is not in the update cache. Quit OkBot and install manually from the Release.',
+    installFailFallback: 'The installer did not start. Try again later or install manually.',
+    devNoCheck: 'Update checks are disabled in development mode',
+    devNoDownload: 'Updates cannot be downloaded in development mode',
+  },
+};
+
+export function updateInstallDialogCopy(lang: MainUiLang): UpdateInstallDialogCopy {
+  return UPDATE_INSTALL[lang];
+}
+
+export type RemoteGatewayFailureCopy = {
+  retry: string;
+  openSettings: string;
+  quit: string;
+  /** Appended under the technical detail so users know Settings is reachable. */
+  hint: string;
+};
+
+const REMOTE_GATEWAY_FAILURE: Record<MainUiLang, RemoteGatewayFailureCopy> = {
+  zh: {
+    retry: '重试',
+    openSettings: '打开设置',
+    quit: '退出',
+    hint: '可打开设置切换到本地网关或修改远程网关；不会在未确认时静默启动本地网关。',
+  },
+  en: {
+    retry: 'Retry',
+    openSettings: 'Open Settings',
+    quit: 'Quit',
+    hint: 'Open Settings to switch to Local or edit the remote gateway. OkBot will not start a local gateway without that choice.',
+  },
+};
+
+export function remoteGatewayFailureCopy(lang: MainUiLang): RemoteGatewayFailureCopy {
+  return REMOTE_GATEWAY_FAILURE[lang];
+}

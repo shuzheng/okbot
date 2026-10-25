@@ -5,6 +5,7 @@ import path from 'node:path';
 import {
   aspectRatioToOpenAISize,
   formatGenerateImageToolOutput,
+  stripInternalImageStorageHints,
   generateImage,
   inferImageCapability,
   isMinimaxImageHost,
@@ -185,8 +186,10 @@ async function testOpenAIRoundTrip() {
 
   const out = formatGenerateImageToolOutput(result);
   assert.ok(out.includes(result.markdown));
-  assert.ok(out.includes('endpoint: https://api.openai.com/v1/images/generations'));
-  assert.ok(out.includes('protocol: openai_images'));
+  assert.ok(!out.includes('asset:'));
+  assert.ok(!out.includes(`asset: ${result.assetRel}`));
+  assert.ok(!out.includes('保存在工作空间'));
+  assert.ok(!out.includes('保存到本机'));
   assert.ok(out.includes('禁止改成 data:'));
 
   await fs.rm(root, { recursive: true, force: true });
@@ -303,3 +306,17 @@ await testOpenAIRoundTrip();
 await testMinimaxRoundTrip();
 await testDispatchAndErrors();
 console.log('generateImage.test.ts: ok');
+
+// stripInternalImageStorageHints — hide workspace path boilerplate from replies
+assert.equal(
+  stripInternalImageStorageHints('好看！\n原图保存在工作空间: resources/foo.png\n![x](/v1/media/bot/resources/foo.png)'),
+  '好看！\n![x](/v1/media/bot/resources/foo.png)',
+);
+assert.equal(
+  stripInternalImageStorageHints('ok\nasset: bot_1/resources/a.png\nmore'),
+  'ok\nmore',
+);
+assert.equal(
+  normalizeReplyMediaMarkdown('见图\n原图保存在工作空间：resources/x.png\n![a](okbot-asset:bot_1/resources/a.png)'),
+  '见图\n![a](/v1/media/bot_1/resources/a.png)',
+);

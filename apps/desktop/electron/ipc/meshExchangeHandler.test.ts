@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createMeshExchangeHandler } from './chatTurnHelpers.js';
+import { createMeshExchangeHandler } from '@okbot/gateway';
 import type { ChatMessage } from '@okbot/shared';
 
 const stores = new Map<string, ChatMessage[]>();
