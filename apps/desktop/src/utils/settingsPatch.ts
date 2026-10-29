@@ -23,12 +23,4 @@ export function omitGatewayDesktopOnlySettings<T extends Partial<AppSettings>>(
 ): Omit<T, ClientSettingsKey> {
   return stripClientSettingsKeys(patch as Record<string, unknown>) as Omit<T, ClientSettingsKey>;
 }
-
-/** @deprecated use omitGatewayDesktopOnlySettings — kept for call-site clarity */
-export function omitClientSettingsFromGatewayPatch<T extends Partial<AppSettings>>(
-  patch: T,
-): Omit<T, ClientSettingsKey> {
-  return omitGatewayDesktopOnlySettings(patch);
-}
-
 export { CLIENT_SETTINGS_KEYS };

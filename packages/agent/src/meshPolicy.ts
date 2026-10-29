@@ -23,11 +23,6 @@ export type MeshPeerSpec = MeshPeerRosterEntry & {
   memoriesText?: string;
 };
 
-/** @deprecated Call caps removed; kept for type compatibility with older call sites. */
-export type MeshCallBudget = {
-  calls: number;
-};
-
 export type MeshRuntimeContext = {
   /** Nesting level (0 = root user turn). Informational; not capped. */
   depth: number;
@@ -78,14 +73,6 @@ export function resolveMeshPeer(
 export function canAskMeshPeer(input: {
   stack: readonly string[];
   targetId: string;
-  /** @deprecated Ignored — depth caps removed. */
-  depth?: number;
-  /** @deprecated Ignored — depth caps removed. */
-  maxDepth?: number;
-  /** @deprecated Ignored — call caps removed. */
-  callsUsed?: number;
-  /** @deprecated Ignored — call caps removed. */
-  maxCallsPerTurn?: number;
 }): { ok: true } | { ok: false; error: string } {
   if (input.stack.includes(input.targetId)) {
     return {
@@ -94,11 +81,6 @@ export function canAskMeshPeer(input: {
     };
   }
   return { ok: true };
-}
-
-/** Depth/call caps removed: always allow registering ask_assistant when peers exist. */
-export function meshAskToolAllowed(_depth?: number, _maxDepth?: number): boolean {
-  return true;
 }
 
 export function buildMeshCalleeInstructions(input: {

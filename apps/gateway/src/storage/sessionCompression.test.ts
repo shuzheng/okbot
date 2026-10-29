@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import { DEFAULT_CONTEXT_COMPRESSION, type ChatMessage, type ResolvedModelConfig, type SessionSummary } from '@okbot/shared';
 import { ContextWindowExceededError } from '@okbot/agent';
-import { ensureSessionCompressed, resolveTopicCompressForce } from './sessionCompression';
+import {
+  ensureSessionCompressed,
+  mergeCompressForce,
+  resolveModelChangeCompressForce,
+  resolveTopicCompressForce,
+} from './sessionCompression';
 
 const model: ResolvedModelConfig = {
   baseURL: 'http://example.invalid/v1',
@@ -240,5 +245,107 @@ function store() {
   });
   assert.equal(calls, 0);
 }
+
+
+{
+  // Partial consume: folded callback only receives messages through consumedThroughId.
+  const prior = [msg('m0', 'a'), msg('m1', 'b'), msg('m2', 'c'), msg('m3', 'd')];
+  const mem = store();
+  let foldedIds: string[] = [];
+  await ensureSessionCompressed({
+    storage: mem,
+    ownerId: 'bot',
+    model,
+    contextCompression: DEFAULT_CONTEXT_COMPRESSION,
+    staticText: '',
+    prior,
+    force: 'newTopic',
+    onHistoryFolded: async ({ deltaMessages }) => {
+      foldedIds = deltaMessages.map((m) => m.id);
+    },
+    compress: async () => ({
+      summary: '约定：\n- x\n',
+      consumedThroughId: 'm1',
+    }),
+  });
+  assert.deepEqual(foldedIds, ['m0', 'm1']);
+  assert.equal(mem.readSessionSummary()?.coveredThroughId, 'm1');
+}
+
+{
+  // Model change: first observation seeds only (no force).
+  assert.equal(
+    resolveModelChangeCompressForce({ lastEffectiveModel: null, nextEffectiveModel: 'http://a\nm1' }),
+    undefined,
+  );
+  assert.equal(
+    resolveModelChangeCompressForce({ lastEffectiveModel: '', nextEffectiveModel: 'http://a\nm1' }),
+    undefined,
+  );
+  // Same model → no force.
+  assert.equal(
+    resolveModelChangeCompressForce({
+      lastEffectiveModel: 'http://a\nm1',
+      nextEffectiveModel: 'http://a\nm1',
+    }),
+    undefined,
+  );
+  // Changed model → one compress pass.
+  assert.equal(
+    resolveModelChangeCompressForce({
+      lastEffectiveModel: 'http://a\nm1',
+      nextEffectiveModel: 'http://a\nm2',
+    }),
+    'compress',
+  );
+  // Empty next → no force.
+  assert.equal(
+    resolveModelChangeCompressForce({ lastEffectiveModel: 'http://a\nm1', nextEffectiveModel: '  ' }),
+    undefined,
+  );
+}
+
+{
+  assert.equal(mergeCompressForce(undefined, undefined), undefined);
+  assert.equal(mergeCompressForce('compress', undefined), 'compress');
+  assert.equal(mergeCompressForce(undefined, 'compress'), 'compress');
+  assert.equal(mergeCompressForce('newTopic', 'compress'), 'newTopic');
+  assert.equal(mergeCompressForce('compress', 'newTopic'), 'newTopic');
+}
+
+{
+  // Model-change force runs one Summary+Buffer pass (keep buffer), then caller
+  // would persist lastEffectiveModel — here we only assert compress fires once.
+  const prior = Array.from({ length: 12 }, (_, i) => msg(`m${i}`, `row ${i} ` + 'x'.repeat(200)));
+  const mem = store();
+  let calls = 0;
+  const result = await ensureSessionCompressed({
+    storage: mem,
+    ownerId: 'bot',
+    model: { ...model, contextWindow: 100_000 },
+    contextCompression: {
+      ...DEFAULT_CONTEXT_COMPRESSION,
+      ratio: 0.9,
+      estimateSafetyFactor: 1.0,
+      autoTopicCompress: false,
+      keepRecentMax: 8,
+      keepRecentMin: 4,
+    },
+    staticText: 'hi',
+    prior,
+    force: 'compress',
+    compress: async (input) => {
+      calls += 1;
+      return {
+        summary: '目标：\n模型切换后压缩\n',
+        consumedThroughId: input.deltaMessages[input.deltaMessages.length - 1]?.id ?? null,
+      };
+    },
+  });
+  assert.equal(calls, 1);
+  assert.equal(result.didCompress, true);
+}
+
+console.log('sessionCompression.test.ts: model-change ok');
 
 console.log('sessionCompression.test.ts: ok');

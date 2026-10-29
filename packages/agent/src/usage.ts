@@ -40,18 +40,25 @@ export function tokenUsageFromSdkUsage(usage: Usage | null | undefined): TokenUs
   if (!usage) return emptyTokenUsage();
   const input = num(usage.inputTokens);
   const output = num(usage.outputTokens);
-  let cache = cacheFromDetails(usage.inputTokensDetails);
-  if (Array.isArray(usage.requestUsageEntries)) {
+  // Prefer requestUsageEntries when present (per-request detail). Otherwise use
+  // top-level inputTokensDetails / DeepSeek fields — never sum both (double-count).
+  let cache = 0;
+  if (Array.isArray(usage.requestUsageEntries) && usage.requestUsageEntries.length > 0) {
     for (const entry of usage.requestUsageEntries) {
-      cache += cacheFromDetails(entry?.inputTokensDetails);
-      // Some gateways put DeepSeek-style fields on the entry itself.
-      if (entry && typeof entry === 'object') {
+      const fromDetails = cacheFromDetails(entry?.inputTokensDetails);
+      if (fromDetails > 0) {
+        cache += fromDetails;
+      } else if (entry && typeof entry === 'object') {
+        // Some gateways put DeepSeek-style fields on the entry itself.
         cache += cacheFromDetails(entry);
       }
     }
+  } else {
+    cache = cacheFromDetails(usage.inputTokensDetails);
+    if (cache <= 0) {
+      cache = cacheFromDetails(usage as unknown as Record<string, unknown>);
+    }
   }
-  // Loose Usage bags may carry DeepSeek fields at the top level.
-  cache += cacheFromDetails(usage as unknown as Record<string, unknown>);
   return { input, output, cache };
 }
 

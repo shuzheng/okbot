@@ -59,6 +59,7 @@ export class PendingHitlStore {
       requestId: data.requestId,
       messageId: data.messageId,
       toolName: data.toolName,
+      ...(typeof data.callId === 'string' && data.callId.trim() ? { callId: data.callId.trim() } : {}),
       arguments: data.arguments,
       serializedRunState: data.serializedRunState,
       createdAt: data.createdAt || new Date().toISOString(),

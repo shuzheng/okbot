@@ -35,16 +35,6 @@ export function defaultClientGatewayPrefs(): ClientGatewayPrefs {
     gateways: [{ id: LOCAL_GATEWAY_ID, label: 'Local', kind: 'local' }],
   };
 }
-
-/**
- * Directory that holds `client.json` (default `~/.okbot`).
- * Pass `okbotRoot` in tests; production uses homedir `.okbot`.
- * @deprecated Prefer resolveClientSettingsDir — prefs now live in client.json.
- */
-export function resolveClientGatewayPrefsDir(okbotRoot?: string): string {
-  return resolveClientSettingsDir(okbotRoot);
-}
-
 function legacyPrefsPath(okbotRoot?: string): string {
   return path.join(resolveClientSettingsDir(okbotRoot), LEGACY_PREFS_FILE);
 }

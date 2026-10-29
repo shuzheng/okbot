@@ -26,6 +26,9 @@ const css = fs.readFileSync(path.join(root, 'apps/desktop/src/styles/app.css'), 
 // Empty-state metal title: static brushed-metal watermark (no flow animation).
 assert.match(css, /\.chat-watermark-metal\s*\{[^}]*background-clip:\s*text/s);
 assert.match(css, /\.chat-watermark-metal\s*\{[^}]*repeating-linear-gradient/s);
+assert.match(css, /--chat-watermark-metal-0:/);
+assert.match(css, /--chat-watermark-opacity:/);
+assert.match(css, /\.chat-watermark-metal\s*\{[^}]*var\(--chat-watermark-metal-0\)/s);
 assert.doesNotMatch(css, /@keyframes\s+okbot-metal-flow/);
 assert.doesNotMatch(css, /animation:\s*okbot-metal-flow/);
 assert.doesNotMatch(css, /will-change:\s*background-position/);

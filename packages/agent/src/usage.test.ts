@@ -24,4 +24,16 @@ import type { Usage } from '@openai/agents';
   assert.equal(t.cache, 7);
 }
 
+{
+  // requestUsageEntries + top-level details must not double-count cache.
+  const usage = {
+    inputTokens: 100,
+    outputTokens: 20,
+    inputTokensDetails: { cached_tokens: 40 },
+    requestUsageEntries: [{ inputTokensDetails: { cached_tokens: 40 } }],
+  } as unknown as Usage;
+  const t = tokenUsageFromSdkUsage(usage);
+  assert.equal(t.cache, 40, 'must not double-count overlapping cache fields');
+}
+
 console.log('usage.test.ts: ok');

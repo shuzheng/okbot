@@ -14,6 +14,7 @@ import { t, type UiLang } from '../../i18n';
 
 export function ToolsSettingsPanel({
   lang,
+  developerMode = false,
   aarAddRequest,
   autoApprovalEnabled,
   autoApprovalRules,
@@ -29,6 +30,8 @@ export function ToolsSettingsPanel({
   gatewayClient,
 }: {
   gatewayClient: boolean;
+  /** When false, hide per-tool 工具管理 (defaults stay 开启+自动允许). */
+  developerMode?: boolean;
   lang: UiLang;
   aarAddRequest: any;
   autoApprovalEnabled: any;
@@ -48,6 +51,8 @@ export function ToolsSettingsPanel({
   return (
 
     <div>
+      {developerMode ? (
+      <>
       <div className="settings-section-label" data-settings-id="toolManagement">{t(lang, 'toolManagement')}</div>
       <div className="settings-card tool-mgmt-card" aria-disabled={gatewayClient ? 'true' : undefined}>
         {TOOL_IDS.map((id) => {
@@ -64,6 +69,7 @@ export function ToolsSettingsPanel({
                 search_history: 'toolSearchHistory',
                 manage_schedule: 'toolManageSchedule',
                 manage_task_progress: 'toolManageTaskProgress',
+                manage_memory: 'toolManageMemory',
                 send_message: 'toolSendMessage',
                 web_fetch: 'toolWebFetch',
                 web_search: 'toolWebSearch',
@@ -111,8 +117,10 @@ export function ToolsSettingsPanel({
           );
         })}
       </div>
+      </>
+      ) : null}
 
-      <div className="settings-section-label" style={{ marginTop: 16 }} data-settings-id="webTools">
+      <div className="settings-section-label" style={{ marginTop: developerMode ? 16 : 0 }} data-settings-id="webTools">
         {t(lang, 'webTools')}
       </div>
       <div className="settings-card" aria-disabled={gatewayClient ? 'true' : undefined}>

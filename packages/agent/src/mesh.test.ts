@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import {
   canAskMeshPeer,
   formatPeerRosterSection,
-  meshAskToolAllowed,
   resolveMeshPeer,
   buildMeshCalleeInstructions,
   MESH_ASK_TOOL_NAME,
@@ -58,13 +57,6 @@ const peers = [
 }
 
 {
-  // Depth/call caps removed — tool always allowed when peers exist.
-  assert.equal(meshAskToolAllowed(), true);
-  assert.equal(meshAskToolAllowed(0, 2), true);
-  assert.equal(meshAskToolAllowed(99, 1), true);
-}
-
-{
   // Deep nesting still allowed: A→B→C→D
   const ok = canAskMeshPeer({
     stack: ['bot_a', 'bot_b', 'bot_c'],
@@ -90,17 +82,6 @@ const peers = [
     targetId: 'bot_b',
   });
   assert.equal(self.ok, false);
-}
-
-{
-  // Call-count caps removed — many prior calls still ok
-  const many = canAskMeshPeer({
-    stack: ['bot_a'],
-    targetId: 'bot_b',
-    callsUsed: 999,
-    maxCallsPerTurn: 5,
-  });
-  assert.equal(many.ok, true);
 }
 
 {

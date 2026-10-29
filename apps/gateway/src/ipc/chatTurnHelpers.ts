@@ -12,7 +12,7 @@ export function skillLookupFor(storage: IpcContext['storage'], botId: string): S
       name: hit.name,
       description: hit.description,
       body: hit.body,
-      global: hit.source === 'global',
+      global: hit.location === 'global',
     };
   };
 }
@@ -46,7 +46,7 @@ export function buildSquadMemberSpecs(
       soulMd: storage.readSoulMd(bot.id),
       skillsText: storage.formatSkillsForPrompt(bot.id),
       skillLookup: skillLookupFor(storage, bot.id),
-      memoriesText: storage.formatMemoriesForPrompt(bot.id),
+      memoriesText: storage.formatMemoriesForPrompt(bot.id, { recordHits: true }),
     };
   });
 }
@@ -66,7 +66,7 @@ export function buildMeshPeerSpecs(
       soulMd: storage.readSoulMd(bot.id),
       skillsText: storage.formatSkillsForPrompt(bot.id),
       skillLookup: skillLookupFor(storage, bot.id),
-      memoriesText: storage.formatMemoriesForPrompt(bot.id),
+      memoriesText: storage.formatMemoriesForPrompt(bot.id, { recordHits: true }),
     }));
 }
 

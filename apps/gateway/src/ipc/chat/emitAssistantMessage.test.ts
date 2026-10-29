@@ -147,7 +147,7 @@ function hostFor(live: LiveAssistantState) {
 // isDuplicateOpeningAck: near-identical opening 收到
 {
   assert.equal(
-    isDuplicateOpeningAck('收到，开始 Kimi 5 步调研。', '收到，Kimi 调研分 5 步，先列清单再动手。'),
+    isDuplicateOpeningAck('收到，开始课题 5 步调研。', '收到，课题调研分 5 步，先列清单再动手。'),
     true,
   );
   assert.equal(
@@ -155,7 +155,7 @@ function hostFor(live: LiveAssistantState) {
     true,
   );
   assert.equal(
-    isDuplicateOpeningAck('收到，开始 Kimi 5 步调研。', '第 1 步完成：Kimi = Moonshot…详细内容'),
+    isDuplicateOpeningAck('收到，开始课题 5 步调研。', '第 1 步完成：课题背景与范围…详细内容'),
     false,
   );
   assert.equal(
@@ -198,13 +198,13 @@ function hostFor(live: LiveAssistantState) {
   upserts.length = 0;
   emits.length = 0;
   noted.length = 0;
-  const live = makeLive('<think>计划</think>\n收到，开始 Kimi 5 步调研。');
-  await emitAssistantMessageBubble(live, '收到，Kimi 调研分 5 步，先列清单再动手。', hostFor(live));
+  const live = makeLive('<think>计划</think>\n收到，开始课题 5 步调研。');
+  await emitAssistantMessageBubble(live, '收到，课题调研分 5 步，先列清单再动手。', hostFor(live));
   assert.equal(upserts.length, 1, 'must not seal live + send_message as two 收到');
   assert.equal(emits.length, 1);
-  assert.match(upserts[0]!.content, /Kimi 调研分 5 步/);
+  assert.match(upserts[0]!.content, /课题调研分 5 步/);
   assert.equal(upserts[0]!.meshInterim, undefined);
-  assert.equal(live.lastEmittedVisible?.includes('收到') || live.lastEmittedVisible?.includes('Kimi'), true);
+  assert.equal(live.lastEmittedVisible?.includes('收到') || live.lastEmittedVisible?.includes('课题'), true);
 }
 
 // emitAssistantMessage: prior sealed ack + similar send_message → skip send
@@ -212,8 +212,8 @@ function hostFor(live: LiveAssistantState) {
   upserts.length = 0;
   emits.length = 0;
   const live = makeLive('');
-  live.lastEmittedVisible = '收到，开始 Kimi 5 步调研。';
-  await emitAssistantMessageBubble(live, '收到，Kimi 调研分 5 步，先列清单再动手。', hostFor(live));
+  live.lastEmittedVisible = '收到，开始课题 5 步调研。';
+  await emitAssistantMessageBubble(live, '收到，课题调研分 5 步，先列清单再动手。', hostFor(live));
   assert.equal(upserts.length, 0, 'skip send when lastEmitted is duplicate opening ack');
   assert.equal(emits.length, 0);
 }

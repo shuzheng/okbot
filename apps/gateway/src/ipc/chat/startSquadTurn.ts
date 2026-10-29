@@ -1,5 +1,6 @@
 import {
   createId,
+  effectiveModelKey,
   resolveModelConfig,
   SQUAD_CAPTAIN_SPEAKER_ID,
   type ChatMessage,
@@ -12,6 +13,8 @@ import {
 import { normalizeMessageAttachments } from '../../storage/sessionJsonl';
 import {
   ensureSessionCompressed,
+  mergeCompressForce,
+  resolveModelChangeCompressForce,
   resolveTopicCompressForce,
 } from '../../storage/sessionCompression';
 import {
@@ -33,7 +36,7 @@ import {
 } from '../ownerRuns';
 import { createApprovalWaiter, releaseRunApprovals } from '../approvalWaiter';
 import { mcpToolsForRun } from '../../mcpRuntime';
-import { buildSquadMemberSpecs, computerRouteFor, skillLookupFor } from '../chatTurnHelpers';
+import { buildSquadMemberSpecs, computerRouteFor } from '../chatTurnHelpers';
 import { historySearchForOwner } from '../historySearchTool';
 import { scheduleManageForOwner } from '../scheduleTool';
 import { taskProgressManageForOwner } from '../taskProgressTool';
@@ -60,7 +63,9 @@ export async function startSquadTurn(
         if (!byId.has(m.botId)) throw new Error(`成员不存在：${m.botId}`);
       }
       const quote = resolveQuoteFields(ctx.storage, squad.id, payload.quoteMessageId, text);
-      const attachments = normalizeMessageAttachments(payload.attachments);
+      const attachments = normalizeMessageAttachments(payload.attachments, squad.id, {
+        dataRoot: ctx.storage.dataRoot,
+      });
       const userMsg: ChatMessage = {
         id: createId('msg'),
         role: 'user',
@@ -162,6 +167,11 @@ export async function startSquadTurn(
           .filter(Boolean)
           .join('\n');
         const existingSummary = ctx.storage.readSessionSummary(squad.id);
+        const nextModelKey = effectiveModelKey(modelConfig);
+        const modelForce = resolveModelChangeCompressForce({
+          lastEffectiveModel: ctx.storage.readLastEffectiveModel(squad.id),
+          nextEffectiveModel: nextModelKey,
+        });
         const topicForce = await resolveTopicCompressForce({
           model: modelConfig,
           contextCompression: settings.contextCompression,
@@ -171,6 +181,7 @@ export async function startSquadTurn(
           newUserText: text,
           signal: controller.signal,
         });
+        const compressForce = mergeCompressForce(topicForce, modelForce);
         guards.trace.beginSystem('compress');
         let sessionSummary: string;
         let summaryState: Awaited<ReturnType<typeof ensureSessionCompressed>>['summaryState'];
@@ -186,13 +197,18 @@ export async function startSquadTurn(
               prior,
               sessionRows: ctx.storage.listSessionBudgetRows(squad.id),
               signal: controller.signal,
-              force: topicForce,
+              force: compressForce,
               enforceBudget: true,
             }),
           );
           sessionSummary = compressed.sessionSummary;
           summaryState = compressed.summaryState;
           omitRecordIds = compressed.omitRecordIds;
+          try {
+            ctx.storage.writeLastEffectiveModel(squad.id, nextModelKey);
+          } catch (err) {
+            console.error('[okbot] write lastEffectiveModel failed', err);
+          }
           guards.trace.endSystem('compress', { status: 'ok' });
         } catch (compressErr) {
           guards.trace.endSystem('compress', {
@@ -326,6 +342,7 @@ export async function startSquadTurn(
               ctx.storage.appendMessage(squad.id, exchangeMsg);
             } catch (err) {
               console.error('[okbot] append squad exchange failed', err);
+              return;
             }
             // Member usage stays on the exchange bubble only; aggregate under squad.id below.
             emitTurn({

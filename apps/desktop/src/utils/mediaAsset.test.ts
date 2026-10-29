@@ -106,3 +106,28 @@ assert.equal(
 assert.equal(mediaAssetPathname('bad'), null);
 
 console.log('mediaAsset.test.ts: ok');
+
+// Current layout: ~/.okbot/data/<owner>/uploads|resources/
+assert.deepEqual(
+  parseOwnerResourceSrc('/Users/zhangshuzheng/.okbot/data/bot_1/uploads/pasted.png'),
+  {
+    assetRel: 'bot_1/uploads/pasted.png',
+    ownerId: 'bot_1',
+    fileName: 'pasted.png',
+    subdir: 'uploads',
+  },
+);
+assert.deepEqual(
+  parseOwnerResourceSrc('file:///Users/zhangshuzheng/.okbot/data/bot_1/resources/bee-honey.png'),
+  {
+    assetRel: 'bot_1/resources/bee-honey.png',
+    ownerId: 'bot_1',
+    fileName: 'bee-honey.png',
+    subdir: 'resources',
+  },
+);
+// Must not treat "data" as ownerId when path is .okbot/data/<owner>/uploads/...
+assert.notEqual(
+  parseOwnerResourceSrc('/Users/x/.okbot/data/bot_1/uploads/x.png')?.ownerId,
+  'data',
+);

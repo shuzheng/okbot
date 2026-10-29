@@ -1,6 +1,14 @@
 export { OkbotFileSession, createOkbotFileSession, type OkbotSessionStore } from './session/OkbotFileSession.js';
 export {
   buildToolInputGuardrails,
+  buildToolOutputGuardrails,
+  buildAgentInputGuardrails,
+  buildAgentOutputGuardrails,
+  agentGuardrailsFromSecurity,
+  agentInputToText,
+  agentOutputToText,
+  hasSuspectedSecretsOrPii,
+  redactSuspectedSecrets,
   checkPathAllowed,
   findDangerousShellPattern,
   DANGEROUS_SHELL_PATTERNS,
@@ -56,17 +64,17 @@ export {
 
 export {
   MESH_ASK_TOOL_NAME,
+  resumeMeshCalleeAfterHitl,
+  formatMeshResumeNote,
   MESH_USER_FACING_REPLY_RULE,
   formatPeerRosterSection,
   resolveMeshPeer,
   canAskMeshPeer,
-  meshAskToolAllowed,
   buildMeshCalleeInstructions,
   buildAskAssistantTool,
   defaultMeshSettings,
   type MeshPeerRosterEntry,
   type MeshPeerSpec,
-  type MeshCallBudget,
   type MeshRuntimeContext,
   type MeshExchangeInfo,
 } from './mesh.js';
@@ -82,6 +90,8 @@ export {
   refreshMemories,
   refreshOwnerDescription,
   buildOwnerDescriptionSystemPrompt,
+  buildSkillsRefreshSystemPrompt,
+  buildMemoryRefreshSystemPrompt,
   type SkillRefreshResult,
   type MemoryRefreshResult,
   type OwnerDescriptionRefreshResult,
@@ -96,6 +106,12 @@ export {
   type SessionHistoryCompressResult,
   type SummaryDeltaSelection,
 } from './compression.js';
+export {
+  COMPRESS_HANDOFF_SECTION_HEADINGS,
+  buildCompressHandoffSystemPrompt,
+  buildCompressHandoffUserPrompt,
+  stripCompressHandoffPreamble,
+} from './compressHandoffPrompt.js';
 export {
   ContextWindowExceededError,
   estimatePackedSessionTokens,
@@ -114,6 +130,24 @@ export {
   type SoulMdSectionPatch,
 } from './soulMdPatch.js';
 export { detectTopicChange } from './detectTopicChange.js';
+export {
+  buildTopicChangeSystemPrompt,
+  buildTopicChangeUserPrompt,
+} from './topicChangePrompt.js';
+export {
+  listHardcodedSystemPrompts,
+  type HardcodedSystemPromptEntry,
+  type HardcodedSystemPromptCategory,
+} from './hardcodedSystemPrompts.js';
+export {
+  REPLY_STYLE_INSTRUCTION,
+  USER_FACING_PRODUCT_LANGUAGE_RULE,
+  SEND_MESSAGE_INSTRUCTION,
+  TASK_PROGRESS_INSTRUCTION,
+  TASK_PROGRESS_UNFINISHED_SYNC,
+  MID_RUN_USER_INPUT_INSTRUCTION,
+  formatSessionSummarySection,
+} from './instructions.js';
 export { quoteSessionInputCallback } from './quoteContext.js';
 export {
   buildMultimodalUserContent,
@@ -175,15 +209,11 @@ export {
 
 export {
   generateImage,
-  generateImageWithMinimax,
   generateImageWithOpenAI,
   inferImageCapability,
-  isMinimaxImageHost,
   isOpenAIImageHost,
-  minimaxImageGenerationUrl,
   openAIImageGenerationsUrl,
   aspectRatioToOpenAISize,
-  parseMinimaxImageResponse,
   parseOpenAIImagesResponse,
   okbotAssetMarkdownSrc,
   mediaGatewayPathname,
@@ -197,7 +227,6 @@ export {
   OKBOT_ASSET_SCHEME,
   GATEWAY_MEDIA_PATH_PREFIX,
   IMAGE_ASPECT_RATIOS,
-  MINIMAX_IMAGE_MODELS,
   OPENAI_DEFAULT_IMAGE_MODELS,
   type ImageApiCredentials,
   type ImageCapability,

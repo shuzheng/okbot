@@ -8,7 +8,7 @@ import type {
 } from '@okbot/shared';
 import type { Session, SessionInputCallback, Tool } from '@openai/agents';
 import type { ToolRunBudget } from './toolRunBudget.js';
-import type { EmitAssistantMessage, HistorySearch, ScheduleManage, SkillLookup, TaskProgressManage } from './tools.js';
+import type { EmitAssistantMessage, HistorySearch, MemoryManage, ScheduleManage, SkillLookup, TaskProgressManage } from './tools.js';
 import type { ExecutionBackend } from './executionBackend.js';
 import type { ComputerRoute } from './computerSelection.js';
 
@@ -25,6 +25,8 @@ export interface RunChatInput {
   historySearch?: HistorySearch;
   /** Manage timed wakeups for this chat (`manage_schedule`). */
   scheduleManage?: ScheduleManage;
+  /** Pin/forget/promote memories (`manage_memory`). */
+  memoryManage?: MemoryManage;
   /** Durable long-task checklist (`manage_task_progress`). */
   taskProgressManage?: TaskProgressManage;
   /** Emit a standalone assistant bubble mid-run (`send_message`). */
@@ -65,6 +67,8 @@ export interface RunChatResult {
 export interface ToolApprovalRequest {
   requestId: string;
   toolName: string;
+  /** SDK function_call call_id when present — preferred cold-resume match key. */
+  callId?: string;
   arguments: unknown;
   /** Serialized SDK RunState at the interruption (for cold-start resume). Empty if serialize failed. */
   serializedRunState: string;
@@ -123,8 +127,6 @@ export interface RunAgentChatInput extends RunChatInput {
   meshDepth?: number;
   /** Call stack of bot ids (root should be [ownerId]). */
   meshStack?: string[];
-  /** @deprecated Call caps removed; optional leftover counter. */
-  meshCallBudget?: import('./mesh.js').MeshCallBudget;
   /** Surface mesh ask/reply bubbles in the current 1:1 session. */
   onMeshExchange?: (info: {
     kind: 'ask' | 'reply';
@@ -167,6 +169,8 @@ export interface ResumeAgentChatAfterHitlInput {
   skillLookup?: SkillLookup;
   historySearch?: HistorySearch;
   scheduleManage?: ScheduleManage;
+  /** Pin/forget/promote memories (`manage_memory`). */
+  memoryManage?: MemoryManage;
   taskProgressManage?: TaskProgressManage;
   /** Emit a standalone assistant bubble mid-run (`send_message`). */
   emitAssistantMessage?: EmitAssistantMessage;
@@ -209,7 +213,6 @@ export interface ResumeAgentChatAfterHitlInput {
   meshSettings?: import('@okbot/shared').MeshSettings;
   meshDepth?: number;
   meshStack?: string[];
-  meshCallBudget?: import('./mesh.js').MeshCallBudget;
   onMeshExchange?: (info: {
     kind: 'ask' | 'reply';
     exchangeId: string;
@@ -242,6 +245,10 @@ export interface ResumeAgentChatAfterHitlInput {
   requestId: string;
   /** Tool name used to match `state.getInterruptions()`. */
   toolName: string;
+  /** SDK function_call callId when saved with the pending HITL (preferred match). */
+  callId?: string;
+  /** Args snapshot for disambiguating same-name tools when callId missing. */
+  arguments?: unknown;
   decision: ToolApprovalDecision;
 }
 

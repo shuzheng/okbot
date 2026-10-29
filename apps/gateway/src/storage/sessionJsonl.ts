@@ -11,12 +11,155 @@ function basenameOf(filePath: string): string {
   return i >= 0 ? norm.slice(i + 1) || norm : norm;
 }
 
-/** Sanitize attachments from ChatMessage / meta for persistence. */
+/** Options for owner attachment checks (ingress may pass dataRoot for realpath). */
+export type AttachmentOwnerCheckOpts = {
+  /** Durable data root (`~/.okbot/data`). When set, path must realpath under <root>/<owner>/{uploads|resources}/. */
+  dataRoot?: string;
+};
+
+/** Parse `/v1/media/<owner>/(uploads|resources)/<file>` strictly; owner must match. */
+function parseOwnerMediaPath(
+  media: string,
+  ownerId: string,
+): { subdir: 'uploads' | 'resources'; fileName: string } | null {
+  const trimmed = media.trim();
+  if (!trimmed.startsWith('/v1/media/')) return null;
+  const parts = trimmed.split('/').filter(Boolean);
+  if (parts.length !== 5 || parts[0] !== 'v1' || parts[1] !== 'media') return null;
+  let mediaOwner: string;
+  let fileName: string;
+  try {
+    mediaOwner = decodeURIComponent(parts[2] || '');
+    fileName = decodeURIComponent(parts[4] || '');
+  } catch {
+    return null;
+  }
+  if (mediaOwner !== ownerId) return null;
+  if (
+    !mediaOwner ||
+    mediaOwner.includes('..') ||
+    mediaOwner.includes('/') ||
+    mediaOwner.includes('\\') ||
+    mediaOwner.includes('\0')
+  ) {
+    return null;
+  }
+  const subdir = parts[3];
+  if (subdir !== 'uploads' && subdir !== 'resources') return null;
+  if (
+    !fileName ||
+    fileName.includes('/') ||
+    fileName.includes('\\') ||
+    fileName.includes('..') ||
+    fileName.includes('\0')
+  ) {
+    return null;
+  }
+  return { subdir, fileName };
+}
+
+/** Path has `/<owner>/(uploads|resources)/<file…>` segments and no `..`. */
+function pathLooksUnderOwnerMedia(
+  normPath: string,
+  ownerId: string,
+): { subdir: 'uploads' | 'resources' } | null {
+  if (!normPath || normPath.includes('\0')) return null;
+  const segments = normPath.split('/').filter((s) => s.length > 0);
+  if (segments.some((s) => s === '..')) return null;
+  for (let i = 0; i < segments.length - 1; i++) {
+    if (segments[i] !== ownerId) continue;
+    const sub = segments[i + 1];
+    if (sub !== 'uploads' && sub !== 'resources') continue;
+    if (i + 2 >= segments.length) return null;
+    return { subdir: sub };
+  }
+  return null;
+}
+
+/** realpath (or resolve) of absPath is under dataRoot/<owner>/{uploads|resources}/. */
+function pathRealUnderOwnerMedia(
+  absPath: string,
+  dataRoot: string,
+  ownerId: string,
+  preferSubdir?: 'uploads' | 'resources',
+): boolean {
+  const root = path.resolve(dataRoot);
+  let realRoot = root;
+  try {
+    if (fs.existsSync(root)) realRoot = fs.realpathSync(root);
+  } catch {
+    /* keep logical root */
+  }
+  let resolved: string;
+  try {
+    resolved = fs.existsSync(absPath) ? fs.realpathSync(absPath) : path.resolve(absPath);
+  } catch {
+    return false;
+  }
+  const candidates: Array<'uploads' | 'resources'> = preferSubdir
+    ? [preferSubdir]
+    : ['uploads', 'resources'];
+  for (const sub of candidates) {
+    const mediaDir = path.resolve(root, ownerId, sub);
+    let realMedia = mediaDir;
+    try {
+      if (fs.existsSync(mediaDir)) realMedia = fs.realpathSync(mediaDir);
+    } catch {
+      /* keep logical */
+    }
+    if (resolved !== realMedia && !resolved.startsWith(realMedia + path.sep)) continue;
+    if (resolved === realRoot || resolved.startsWith(realRoot + path.sep)) return true;
+  }
+  return false;
+}
+
+/**
+ * True when an image/file path belongs under owner uploads|resources.
+ * mediaPath alone never grants access; when present it must match path (owner, subdir, basename).
+ * Folders skip this check. Pass `dataRoot` on ingress for realpath containment.
+ */
+export function attachmentBelongsToOwner(
+  ownerId: string,
+  att: { kind: string; path: string; mediaPath?: string },
+  opts?: AttachmentOwnerCheckOpts,
+): boolean {
+  const id = ownerId.trim();
+  if (!id) return false;
+  if (att.kind === 'folder') return true;
+
+  const norm = (att.path || '').replace(/\\/g, '/').trim();
+  if (!norm) return false;
+
+  const pathInfo = pathLooksUnderOwnerMedia(norm, id);
+  if (!pathInfo) return false;
+
+  const media = (att.mediaPath || '').trim();
+  if (media) {
+    const parsed = parseOwnerMediaPath(media, id);
+    if (!parsed) return false;
+    if (parsed.subdir !== pathInfo.subdir) return false;
+    if (basenameOf(norm) !== parsed.fileName) return false;
+  }
+
+  if (opts?.dataRoot) {
+    return pathRealUnderOwnerMedia(att.path, opts.dataRoot, id, pathInfo.subdir);
+  }
+  return true;
+}
+
+/** Sanitize attachments from ChatMessage / meta for persistence.
+ * When `ownerId` is set, drop image/file rows whose path/mediaPath is outside that owner's uploads|resources
+ * (defense against session-switch upload races attaching A's file to B).
+ * Ingress should pass `{ dataRoot }` so ownership uses realpath, not substring matches.
+ */
 export function normalizeMessageAttachments(
   raw: unknown,
-): Array<{ kind: 'image' | 'file' | 'folder'; path: string; name: string; size?: number }> | undefined {
+  ownerId?: string,
+  opts?: AttachmentOwnerCheckOpts,
+): Array<{ kind: 'image' | 'file' | 'folder'; path: string; name: string; size?: number; mediaPath?: string }> | undefined {
   if (!Array.isArray(raw) || !raw.length) return undefined;
-  const out: Array<{ kind: 'image' | 'file' | 'folder'; path: string; name: string; size?: number }> = [];
+  const out: Array<{ kind: 'image' | 'file' | 'folder'; path: string; name: string; size?: number; mediaPath?: string }> = [];
+  const owner = typeof ownerId === 'string' ? ownerId.trim() : '';
   for (const item of raw) {
     if (!item || typeof item !== 'object') continue;
     const o = item as Record<string, unknown>;
@@ -30,7 +173,25 @@ export function normalizeMessageAttachments(
       typeof o.size === 'number' && Number.isFinite(o.size) && o.size >= 0
         ? Math.floor(o.size)
         : undefined;
-    out.push({ kind, path: filePath, name, ...(size != null ? { size } : {}) });
+    const mediaPath =
+      typeof o.mediaPath === 'string' && o.mediaPath.trim().startsWith('/v1/media/')
+        ? o.mediaPath.trim()
+        : undefined;
+    const row: {
+      kind: 'image' | 'file' | 'folder';
+      path: string;
+      name: string;
+      size?: number;
+      mediaPath?: string;
+    } = {
+      kind,
+      path: filePath,
+      name,
+      ...(size != null ? { size } : {}),
+      ...(mediaPath ? { mediaPath } : {}),
+    };
+    if (owner && !attachmentBelongsToOwner(owner, row, opts)) continue;
+    out.push(row);
   }
   return out.length ? out : undefined;
 }

@@ -137,4 +137,75 @@ import { parseSkillMarkdown, formatSkillMarkdown } from './parse.js';
   assert.match(r.skill.body, /## Notes/i);
 }
 
+
+// Fence-aware: bash block with # / ## headings must stay intact (no section split inside fence)
+{
+  const body = [
+    '# Okbot-fence-demo 技能',
+    '',
+    '## 何时使用此技能',
+    '当用户要跑示例脚本时使用。',
+    '',
+    '## 工作原理',
+    '1. 展示脚本。',
+    '2. 解释输出。',
+    '',
+    '## 示例',
+    '```bash',
+    '# 示例 1',
+    'echo one',
+    '',
+    '## 注意事项',
+    'export A=1',
+    '```',
+    '',
+    '## 注意事项',
+    '不要在未确认时执行脚本。',
+  ].join('\n');
+  const r = upgradeSkillFormat({
+    slug: 'okbot-fence-demo',
+    name: 'okbot-fence-demo',
+    description: '展示带围栏示例的技能。何时使用：用户要看脚本。',
+    body,
+  });
+  // Professional template already present → no reshape; fence content untouched.
+  assert.equal(r.reshapedBody, false, 'should not reshape professional body with fences');
+  assert.equal(r.skill.body, body, 'body bytes must be unchanged');
+  assert.match(r.skill.body, /```bash\n# 示例 1\necho one\n\n## 注意事项\nexport A=1\n```/);
+  // Legacy reshape path: body without when/how must keep fence headings inside the code block
+  const legacy = upgradeSkillFormat({
+    slug: 'okbot-fence-legacy',
+    name: 'okbot-fence-legacy',
+    description: 'Runs a demo. Use when user asks for a script sample.',
+    body: [
+      '1. Show the script.',
+      '',
+      '```bash',
+      '# 示例 1',
+      'echo one',
+      '',
+      '## 注意事项',
+      'export A=1',
+      '```',
+    ].join('\n'),
+  });
+  assert.equal(legacy.reshapedBody, true);
+  // Fence content must stay contiguous (lang may be zh from CJK inside the fence).
+  assert.match(
+    legacy.skill.body,
+    /```bash\n# 示例 1\necho one\n\n## 注意事项\nexport A=1\n```/,
+    'fenced block must stay intact after reshape',
+  );
+  // export A=1 must only appear inside the fence, not as a pulled-out Notes body.
+  const withoutFence = legacy.skill.body.replace(/```[\s\S]*?```/g, '');
+  assert.ok(
+    !/export A=1/.test(withoutFence),
+    'export A=1 must not be lifted out of the fence into Notes',
+  );
+  assert.ok(
+    !/echo one\n[\s\S]*```bash/.test(legacy.skill.body),
+    'echo one must not move above the fence',
+  );
+}
+
 console.log('upgrade.test.ts: ok');

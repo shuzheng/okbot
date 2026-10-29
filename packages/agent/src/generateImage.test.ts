@@ -8,15 +8,12 @@ import {
   stripInternalImageStorageHints,
   generateImage,
   inferImageCapability,
-  isMinimaxImageHost,
   isOpenAIImageHost,
   mediaGatewayPathname,
-  minimaxImageGenerationUrl,
   normalizeReplyMediaMarkdown,
   okbotAssetMarkdownSrc,
   openAIImageGenerationsUrl,
   ownerResourceAssetRel,
-  parseMinimaxImageResponse,
   parseOpenAIImagesResponse,
 } from './generateImage.js';
 
@@ -27,10 +24,6 @@ assert.equal(
 assert.equal(
   openAIImageGenerationsUrl('https://api.openai.com/v1/'),
   'https://api.openai.com/v1/images/generations',
-);
-assert.equal(
-  minimaxImageGenerationUrl('https://api.minimax.cn/v1'),
-  'https://api.minimax.cn/v1/image_generation',
 );
 
 assert.equal(
@@ -58,10 +51,8 @@ assert.equal(
 
 assert.equal(isOpenAIImageHost('https://api.openai.com/v1'), true);
 assert.equal(isOpenAIImageHost('https://myres.openai.azure.com/openai/v1'), true);
-assert.equal(isOpenAIImageHost('https://api.minimax.cn/v1'), false);
-assert.equal(isOpenAIImageHost('https://api.deepseek.com/v1'), false);
-assert.equal(isMinimaxImageHost('https://api.minimax.cn/v1'), true);
-assert.equal(isMinimaxImageHost('https://api.openai.com/v1'), false);
+assert.equal(isOpenAIImageHost('https://api.example-llm.test/v1'), false);
+assert.equal(isOpenAIImageHost('https://gateway.example.test/v1'), false);
 
 assert.equal(aspectRatioToOpenAISize('1:1'), '1024x1024');
 assert.equal(aspectRatioToOpenAISize('16:9'), '1792x1024');
@@ -82,51 +73,43 @@ assert.equal(aspectRatioToOpenAISize('9:16'), '1024x1792');
   assert.equal(err.errorMessage, 'billing hard limit');
 }
 
+// --- inference (openai_images protocol heuristics only) ---
 {
-  const ok = parseMinimaxImageResponse({
-    data: { image_base64: ['aaa'] },
-    base_resp: { status_code: 0, status_msg: 'success' },
-  });
-  assert.equal(ok.base64, 'aaa');
-  assert.equal(ok.statusCode, 0);
-}
-
-// --- inference (MiniMax + OpenAI-compatible) ---
-{
+  // Host heuristic: openai.com / *.openai.azure.com → openai_images defaults.
   const oai = inferImageCapability({ baseURL: 'https://api.openai.com/v1' });
   assert.ok(oai);
   assert.equal(oai!.protocol, 'openai_images');
   assert.ok(oai!.models.includes('dall-e-3'));
   assert.equal(oai!.defaultModel, 'dall-e-3');
 
+  // Catalog heuristic: ids matching dall-e* / gpt-image* (protocol convention, not a vendor bind).
   const byCatalogOai = inferImageCapability({
     baseURL: 'https://llm.proxy.local/v1',
-    catalogModelIds: ['gpt-4o', 'dall-e-3', 'gpt-image-1'],
+    catalogModelIds: ['chat-model-a', 'dall-e-3', 'gpt-image-1'],
   });
   assert.equal(byCatalogOai?.protocol, 'openai_images');
   assert.deepEqual(byCatalogOai!.models, ['dall-e-3', 'gpt-image-1']);
   assert.equal(byCatalogOai!.defaultModel, 'dall-e-3');
 
-  const mmHost = inferImageCapability({ baseURL: 'https://api.minimax.cn/v1' });
-  assert.equal(mmHost?.protocol, 'minimax');
-  assert.ok(mmHost!.models.includes('image-01'));
+  // Non-Images hosts / catalogs must not get a special protocol path.
+  const plainHost = inferImageCapability({ baseURL: 'https://api.example-llm.test/v1' });
+  assert.equal(plainHost, null);
 
-  const mmName = inferImageCapability({
-    baseURL: 'https://gateway.example.com/v1',
-    providerName: 'My MiniMax',
+  const brandedName = inferImageCapability({
+    baseURL: 'https://gateway.example.test/v1',
+    providerName: 'My Chat Provider',
   });
-  assert.equal(mmName?.protocol, 'minimax');
+  assert.equal(brandedName, null);
 
-  const mmCatalog = inferImageCapability({
-    baseURL: 'https://aihub.firstshare.cn/v1',
-    catalogModelIds: ['MiniMax-M1', 'image-01'],
+  const chatOnlyCatalog = inferImageCapability({
+    baseURL: 'https://gateway.example.test/v1',
+    catalogModelIds: ['chat-model-a', 'chat-model-b'],
   });
-  assert.equal(mmCatalog?.protocol, 'minimax');
-  assert.equal(mmCatalog!.defaultModel, 'image-01');
+  assert.equal(chatOnlyCatalog, null);
 
   const none = inferImageCapability({
-    baseURL: 'https://api.deepseek.com/v1',
-    catalogModelIds: ['deepseek-chat'],
+    baseURL: 'https://api.example-llm.test/v1',
+    catalogModelIds: ['chat-model-a'],
   });
   assert.equal(none, null);
 
@@ -164,7 +147,7 @@ async function testOpenAIRoundTrip() {
     {
       baseURL: 'https://api.openai.com/v1',
       apiKey: 'sk-test',
-      catalogModelIds: ['gpt-4o', 'dall-e-3'],
+      catalogModelIds: ['chat-model-a', 'dall-e-3'],
     },
     { prompt: 'a cat', aspectRatio: '16:9', model: 'dall-e-3' },
     { fetchImpl: fakeFetch, resourcesDir, ownerId },
@@ -226,15 +209,31 @@ async function testDispatchAndErrors() {
   assert.equal(r.protocol, 'openai_images');
   assert.equal(hit, 'https://proxy.local/v1/images/generations');
 
-  // Unsupported provider
+  // Unsupported: non-Images host with no dall-e* / gpt-image* catalog entries
   await assert.rejects(
     () =>
       generateImage(
-        { baseURL: 'https://api.deepseek.com/v1', apiKey: 'k' },
+        { baseURL: 'https://api.example-llm.test/v1', apiKey: 'k' },
         { prompt: 'x' },
         { resourcesDir, ownerId },
       ),
     /没有可用的文生图|不支持文生图/,
+  );
+
+  // Provider display name alone must not unlock image gen
+  await assert.rejects(
+    () =>
+      generateImage(
+        {
+          baseURL: 'https://gateway.example.test/v1',
+          apiKey: 'k',
+          providerName: 'Fancy Images Brand',
+          catalogModelIds: ['chat-model-a'],
+        },
+        { prompt: 'x' },
+        { resourcesDir, ownerId },
+      ),
+    /不支持文生图/,
   );
 
   // OpenAI 404
@@ -266,44 +265,7 @@ async function testDispatchAndErrors() {
   await fs.rm(root, { recursive: true, force: true });
 }
 
-
-async function testMinimaxRoundTrip() {
-  const png = Buffer.from(
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
-    'base64',
-  );
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'okbot-img-mm-'));
-  const ownerId = 'bot_test_mm';
-  const resourcesDir = path.join(root, ownerId, 'resources');
-  await fs.mkdir(path.join(root, ownerId));
-  let calledUrl = '';
-  const fakeFetch: typeof fetch = async (input, init) => {
-    calledUrl = String(input);
-    assert.equal(init?.method, 'POST');
-    return new Response(
-      JSON.stringify({
-        data: { image_base64: [png.toString('base64')] },
-        base_resp: { status_code: 0, status_msg: 'success' },
-      }),
-      { status: 200, headers: { 'Content-Type': 'application/json' } },
-    );
-  };
-  const result = await generateImage(
-    { baseURL: 'https://api.minimax.cn/v1', apiKey: 'k', providerName: 'MiniMax' },
-    { prompt: 'a sheep', aspectRatio: '1:1' },
-    { fetchImpl: fakeFetch, resourcesDir, ownerId },
-  );
-  assert.equal(calledUrl, 'https://api.minimax.cn/v1/image_generation');
-  assert.equal(result.protocol, 'minimax');
-  assert.ok(result.markdown.includes('/v1/media/'));
-  assert.ok(!result.markdown.includes('okbot-asset:'));
-  const saved = await fs.readFile(result.filePath);
-  assert.equal(saved.equals(png), true);
-  await fs.rm(root, { recursive: true, force: true });
-}
-
 await testOpenAIRoundTrip();
-await testMinimaxRoundTrip();
 await testDispatchAndErrors();
 console.log('generateImage.test.ts: ok');
 

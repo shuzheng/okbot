@@ -125,3 +125,42 @@ export function reportInstanceFlagError(t: CliMessages, error: InstanceFlagError
   else console.error(t.instanceBothRequired);
   return 1;
 }
+
+/**
+ * Optional `--data-dir PATH` for commands that do not need `--port`
+ * (token / config / data). Returns remaining args with the flag removed.
+ */
+export function peelDataDirFlag(args: string[]): {
+  ok: true;
+  dataDir: string | null;
+  rest: string[];
+} | { ok: false; error: 'invalid_data_dir'; detail?: string } {
+  let dataDirRaw: string | undefined;
+  const rest: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const t = args[i]!;
+    if (t === '--data-dir') {
+      dataDirRaw = args[++i];
+      continue;
+    }
+    if (t.startsWith('--data-dir=')) {
+      dataDirRaw = t.slice('--data-dir='.length);
+      continue;
+    }
+    rest.push(t);
+  }
+  if (dataDirRaw === undefined) {
+    return { ok: true, dataDir: null, rest };
+  }
+  const dataDir = typeof dataDirRaw === 'string' ? dataDirRaw.trim() : '';
+  if (!dataDir) return { ok: false, error: 'invalid_data_dir', detail: dataDirRaw };
+  try {
+    const resolved = resolveOkbotRoot(dataDir);
+    if (fs.existsSync(resolved) && !fs.statSync(resolved).isDirectory()) {
+      return { ok: false, error: 'invalid_data_dir', detail: dataDirRaw };
+    }
+  } catch {
+    return { ok: false, error: 'invalid_data_dir', detail: dataDirRaw };
+  }
+  return { ok: true, dataDir, rest };
+}

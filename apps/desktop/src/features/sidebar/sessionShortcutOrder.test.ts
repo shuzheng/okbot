@@ -111,6 +111,6 @@ const bHid = bot('bot_hid', 'Hidden', '2025-12-01T00:00:00.000Z');
 
 assert.equal(sessionShortcutHintLabel(1, 'darwin'), '⌘1');
 assert.equal(sessionShortcutHintLabel(2, 'win32'), 'Win+2');
-assert.equal(sessionShortcutHintLabel(3, 'linux'), 'Win+3');
+assert.equal(sessionShortcutHintLabel(3, 'linux'), 'Super+3');
 
 console.log('sessionShortcutOrder.test.ts: ok');

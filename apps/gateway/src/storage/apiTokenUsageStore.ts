@@ -6,7 +6,7 @@ import {
   totalTokensUsed,
   type TokenUsage,
 } from '@okbot/shared';
-import { ensureDir, readJson, writeJson } from './fs';
+import { ensureDir, readJsonResult, handleCorruptJsonRead, writeJson } from './fs';
 import { localUsageDay, pruneUsageDaily, USAGE_DAILY_RETENTION_DAYS } from './usageStore';
 
 /** Per-owner counters for one API token (messages + model tokens). */
@@ -113,7 +113,18 @@ function normalizeBucket(raw: unknown): ApiTokenUsageBucket {
 }
 
 export function loadApiTokenUsageStats(file: string): ApiTokenUsageStats {
-  const raw = readJson<ApiTokenUsageStats>(file, emptyApiTokenUsageStats());
+  const loaded = readJsonResult<ApiTokenUsageStats>(file, emptyApiTokenUsageStats());
+  if (
+    handleCorruptJsonRead(
+      file,
+      loaded.status,
+      loaded.status === 'invalid' ? loaded.error : undefined,
+      'api-token-usage.json',
+    )
+  ) {
+    return emptyApiTokenUsageStats();
+  }
+  const raw = loaded.data;
   const byTokenId: Record<string, ApiTokenUsageBucket> = {};
   if (raw.byTokenId && typeof raw.byTokenId === 'object') {
     for (const [id, bucket] of Object.entries(raw.byTokenId)) {

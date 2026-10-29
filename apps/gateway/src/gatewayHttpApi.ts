@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Socket } from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
-import { isLoopbackHostname, normalizeChatStartPayload, normalizeUsageStats, normalizeMcpServerEntry, resolveGatewayAuth, checkGatewayApiTokenQuota, type AppSettings, type RuntimeEvent, type GatewayHttpApiSettings, type GatewayAuthRole, type GatewayAuthMatch } from '@okbot/shared';
+import { normalizeChatStartPayload, normalizeUsageStats, normalizeMcpServerEntry, resolveGatewayAuth, checkGatewayApiTokenQuota, redactSecretUrl, type AppSettings, type RuntimeEvent, type GatewayHttpApiSettings, type GatewayAuthRole, type GatewayAuthMatch } from '@okbot/shared';
 import { acceptRuntimeEventForSseTurn, encodeRuntimeEventSse } from '@okbot/agent';
 import type { IpcContext } from './ipc/context';
 import { abortChatOwner } from './ipc/chatControl';
@@ -21,6 +21,13 @@ import { claimNotify, notifyDeviceKey } from './notifyClaim';
 import { exportDataBackup, restoreDataBackup } from './backup';
 import { mcpStatus, mcpTest } from './mcpRuntime';
 import os from 'node:os';
+import {
+  mediaMimeForExt,
+  resolveOwnerMediaFile,
+  resolveMediaCorsAllowOrigin,
+  isLoopbackHost,
+} from './gatewayHttpApiMedia';
+export { resolveMediaCorsAllowOrigin } from './gatewayHttpApiMedia';
 
 const LOOPBACK_HOST = '127.0.0.1';
 const LAN_HOST = '0.0.0.0';
@@ -54,12 +61,17 @@ function gatewaySquadsForUi<T extends { members?: unknown }>(squads: T[]): T[] {
 /** Strip credentials and the absolute data directory before a gateway response. */
 function projectSettingsForGateway(settings: AppSettings): AppSettings {
   const model = settings.model;
+  const marketplace = settings.assistantMarketplace;
   return {
     ...settings,
     model: {
       ...model,
       providers: Array.isArray(model?.providers)
-        ? model.providers.map((provider) => ({ ...provider, apiKey: '' }))
+        ? model.providers.map((provider) => ({
+            ...provider,
+            apiKey: '',
+            baseURL: typeof provider.baseURL === 'string' ? redactSecretUrl(provider.baseURL) : provider.baseURL,
+          }))
         : [],
     },
     gatewayHttpApi: {
@@ -79,10 +91,20 @@ function projectSettingsForGateway(settings: AppSettings): AppSettings {
       search: {
         ...(settings.web?.search ?? { provider: 'tavily', apiKey: '', baseURL: '', compat: 'tavily' }),
         apiKey: '',
+        baseURL: redactSecretUrl(
+          String(
+            (settings.web?.search ?? { baseURL: '' }).baseURL || '',
+          ),
+        ),
       },
       fetch: {
         allowPrivateNetwork: settings.web?.fetch?.allowPrivateNetwork === true,
       },
+    },
+    assistantMarketplace: {
+      savedSources: Array.isArray(marketplace?.savedSources)
+        ? marketplace.savedSources.map((u) => (typeof u === 'string' ? redactSecretUrl(u) : u))
+        : [],
     },
   };
 }
@@ -179,54 +201,6 @@ function extractToken(req: IncomingMessage): string {
 }
 
 
-/** MIME for owner resources served at GET /v1/media/… */
-function mediaMimeForExt(ext: string): string {
-  const e = (ext || '').toLowerCase();
-  if (e === '.jpg' || e === '.jpeg') return 'image/jpeg';
-  if (e === '.webp') return 'image/webp';
-  if (e === '.gif') return 'image/gif';
-  if (e === '.svg') return 'image/svg+xml';
-  if (e === '.png') return 'image/png';
-  return 'application/octet-stream';
-}
-
-/**
- * Resolve ~/.okbot/<ownerId>/{resources|uploads}/<file> for the media gateway.
- * Same path rules as IPC readGeneratedAssetDataUrl.
- */
-function resolveOwnerMediaFile(
-  /** Durable data root (`~/.okbot/data`), not the okbot config root. */
-  dataRootRaw: string,
-  ownerId: string,
-  subdir: 'resources' | 'uploads',
-  fileName: string,
-): { ok: true; filePath: string } | { ok: false; error: string } {
-  const id = (ownerId || '').trim();
-  const name = (fileName || '').trim();
-  if (subdir !== 'resources' && subdir !== 'uploads') {
-    return { ok: false, error: 'invalid asset path' };
-  }
-  if (!id || !name || id.includes('..') || name.includes('..')) {
-    return { ok: false, error: 'invalid asset path' };
-  }
-  if (id.includes('/') || id.includes('\\') || id.includes('\0')) {
-    return { ok: false, error: 'invalid asset path' };
-  }
-  if (name.includes('/') || name.includes('\\') || name.includes('\0')) {
-    return { ok: false, error: 'invalid asset path' };
-  }
-  const okbotRoot = path.resolve(dataRootRaw);
-  const mediaDir = path.resolve(okbotRoot, id, subdir);
-  const filePath = path.resolve(mediaDir, name);
-  if (filePath !== mediaDir && !filePath.startsWith(mediaDir + path.sep)) {
-    return { ok: false, error: 'path outside owner media' };
-  }
-  if (filePath !== okbotRoot && !filePath.startsWith(okbotRoot + path.sep)) {
-    return { ok: false, error: 'path outside okbot data root' };
-  }
-  return { ok: true, filePath };
-}
-
 function matchPath(url: string): { pathname: string; parts: string[] } {
   let pathname = url.split('?')[0] || '/';
   try {
@@ -254,21 +228,6 @@ function writeSseEvent(res: ServerResponse, event: RuntimeEvent): boolean {
   } catch {
     return false;
   }
-}
-
-/** Loopback clients must not be reachable via a foreign Host (DNS rebinding). */
-function isLoopbackHost(req: IncomingMessage): boolean {
-  const raw = req.headers.host;
-  const host = String(Array.isArray(raw) ? raw[0] : raw || '').trim().toLowerCase();
-  if (!host) return false;
-  let name = host;
-  if (name.startsWith('[')) {
-    const end = name.indexOf(']');
-    if (end > 0) name = name.slice(0, end + 1);
-  } else {
-    name = name.replace(/:\d+$/, '');
-  }
-  return isLoopbackHostname(name) || name === 'localhost';
 }
 
 
@@ -391,7 +350,6 @@ export function createGatewayHttpApi(deps: GatewayHttpApiDeps): {
   /** Long-lived SSE finish() hooks — called before stopSync destroys sockets. */
   const openSseFinishes = new Set<() => void>();
   const sockets = new Set<Socket>();
-  const rateHits: number[] = [];
   const entityOps = createEntityOps(deps.ctx);
 
   const subscribeRuntimeEvent = (listener: RuntimeEventListener): (() => void) => {
@@ -455,11 +413,42 @@ export function createGatewayHttpApi(deps: GatewayHttpApiDeps): {
     });
   };
 
-  const allowRate = () => {
+  /** Global + per-IP sliding windows (same RATE_WINDOW_MS / RATE_MAX). */
+  const rateHits: number[] = [];
+  const rateHitsByIp = new Map<string, number[]>();
+  const RATE_IP_MAP_MAX = 1024;
+  let rateIpPruneAt = 0;
+
+  const pruneRateHitsByIp = (now: number) => {
+    // Opportunistic: drop empty windows; if still oversized, evict oldest keys.
+    if (now - rateIpPruneAt < RATE_WINDOW_MS && rateHitsByIp.size <= RATE_IP_MAP_MAX) return;
+    rateIpPruneAt = now;
+    for (const [ip, hits] of rateHitsByIp) {
+      while (hits.length && now - hits[0]! >= RATE_WINDOW_MS) hits.shift();
+      if (hits.length === 0) rateHitsByIp.delete(ip);
+    }
+    while (rateHitsByIp.size > RATE_IP_MAP_MAX) {
+      const oldest = rateHitsByIp.keys().next().value;
+      if (oldest === undefined) break;
+      rateHitsByIp.delete(oldest);
+    }
+  };
+
+  const allowRate = (req?: IncomingMessage) => {
     const now = Date.now();
     while (rateHits.length && now - rateHits[0]! >= RATE_WINDOW_MS) rateHits.shift();
     if (rateHits.length >= RATE_MAX) return false;
+    const ip = (req?.socket?.remoteAddress || '').trim() || 'unknown';
+    pruneRateHitsByIp(now);
+    let ipHits = rateHitsByIp.get(ip);
+    if (!ipHits) {
+      ipHits = [];
+      rateHitsByIp.set(ip, ipHits);
+    }
+    while (ipHits.length && now - ipHits[0]! >= RATE_WINDOW_MS) ipHits.shift();
+    if (ipHits.length >= RATE_MAX) return false;
     rateHits.push(now);
+    ipHits.push(now);
     return true;
   };
 
@@ -499,6 +488,10 @@ export function createGatewayHttpApi(deps: GatewayHttpApiDeps): {
 
     // GET /v1/auth-challenge?nonce= — prove we know access or admin token without receiving it.
     if (method === 'GET' && parts.length === 2 && parts[0] === 'v1' && parts[1] === 'auth-challenge') {
+      if (!allowRate(req)) {
+        sendJson(res, 429, { ok: false, error: 'rate_limited' });
+        return;
+      }
       const urlObj = new URL(req.url || '/', 'http://127.0.0.1');
       const nonce = (urlObj.searchParams.get('nonce') || '').trim();
       const live = liveAuthApi();
@@ -538,6 +531,10 @@ export function createGatewayHttpApi(deps: GatewayHttpApiDeps): {
 
     // POST /gateway-login — set HttpOnly cookie, never put the token in the URL.
     if (method === 'POST' && parts.length === 1 && parts[0] === 'gateway-login') {
+      if (!allowRate(req)) {
+        sendJson(res, 429, { ok: false, error: 'rate_limited' });
+        return;
+      }
       const raw = await readBody(req, 8_000);
       let token = '';
       const ctype = String(req.headers['content-type'] || '');
@@ -699,7 +696,7 @@ export function createGatewayHttpApi(deps: GatewayHttpApiDeps): {
       const subdir = parts[3] === 'uploads' ? 'uploads' as const : 'resources' as const;
       const resolved = resolveOwnerMediaFile(deps.ctx.storage.dataRoot, ownerId, subdir, fileName);
       if (!resolved.ok) {
-        sendJson(res, 400, { ok: false, error: resolved.error });
+        sendJson(res, resolved.error === 'not_found' ? 404 : 400, { ok: false, error: resolved.error });
         return;
       }
       try {
@@ -713,15 +710,41 @@ export function createGatewayHttpApi(deps: GatewayHttpApiDeps): {
           return;
         }
         const buf = fs.readFileSync(resolved.filePath);
-        const mime = mediaMimeForExt(path.extname(resolved.filePath));
+        const ext = path.extname(resolved.filePath).toLowerCase();
+        // Scriptable types must not render inline (same-origin SVG/HTML can call /v1/rpc/*).
+        const scriptable = ext === '.svg' || ext === '.html' || ext === '.htm' || ext === '.xhtml' || ext === '.xml';
+        const mime = scriptable ? 'application/octet-stream' : mediaMimeForExt(ext);
         const headers: Record<string, string> = {
           'Content-Type': mime,
           'Content-Length': String(buf.byteLength),
           'Cache-Control': 'private, max-age=3600',
           'X-Content-Type-Options': 'nosniff',
         };
+        if (scriptable) {
+          const safeName = path.basename(resolved.filePath).replace(/[^\w.\-]+/g, '_');
+          headers['Content-Disposition'] = `attachment; filename="${safeName}"`;
+          headers['Content-Security-Policy'] = "default-src 'none'; sandbox";
+        }
         if (bindLan) {
-          headers['Access-Control-Allow-Origin'] = '*';
+          // Never *, tokenized media must not be readable by arbitrary origins.
+          const reqOrigin = String(req.headers.origin || '').trim();
+          const hostHdr = String(req.headers.host || '127.0.0.1').trim();
+          const xfProto = String(req.headers['x-forwarded-proto'] || '')
+            .split(',')[0]!
+            .trim()
+            .toLowerCase();
+          const proto =
+            xfProto === 'https' || xfProto === 'http'
+              ? xfProto
+              : 'http';
+          const gatewayOrigin = `${proto}://${hostHdr}`;
+          const acao = resolveMediaCorsAllowOrigin(reqOrigin, gatewayOrigin, hostHdr);
+          if (acao) {
+            // Echo Origin when it matches this gateway / exact loopback host (incl. https reverse proxy).
+            headers['Access-Control-Allow-Origin'] = acao;
+            headers['Vary'] = 'Origin';
+          }
+          // No Origin, or foreign Origin (e.g. http://localhost.attacker.com): omit ACAO entirely.
         }
         res.writeHead(200, headers);
         res.end(buf);
@@ -1155,9 +1178,10 @@ export function createGatewayHttpApi(deps: GatewayHttpApiDeps): {
           });
           sendJson(res, 200, { ok: true, settings: projectSettingsForGateway(saved) });
         } catch (err) {
+          console.error('[okbot] POST /v1/settings failed', err);
           sendJson(res, 400, {
             ok: false,
-            error: err instanceof Error ? err.message : 'save_failed',
+            error: 'save_failed',
           });
         }
         return;
@@ -1359,7 +1383,7 @@ export function createGatewayHttpApi(deps: GatewayHttpApiDeps): {
 
       // POST /v1/rpc/:op — bot / squad / memory / skill / model-probe ops (allowlist in gatewayRpc).
       if (method === 'POST' && parts.length === 3 && parts[0] === 'v1' && parts[1] === 'rpc') {
-        if (!allowRate()) {
+        if (!allowRate(req)) {
           sendJson(res, 429, { ok: false, error: 'rate_limited' });
           return;
         }
@@ -1429,7 +1453,7 @@ export function createGatewayHttpApi(deps: GatewayHttpApiDeps): {
           sendJson(res, 413, { ok: false, error: 'text_too_long' });
           return;
         }
-        if (!allowRate()) {
+        if (!allowRate(req)) {
           sendJson(res, 429, { ok: false, error: 'rate_limited' });
           return;
         }
@@ -1455,7 +1479,9 @@ export function createGatewayHttpApi(deps: GatewayHttpApiDeps): {
         const computerId = normalized.computerId;
         const clientTurnId = normalized.clientTurnId;
         const quoteMessageId = normalized.quoteMessageId;
-        const attachments = normalizeMessageAttachments(parsed.attachments);
+        const attachments = normalizeMessageAttachments(parsed.attachments, id, {
+          dataRoot: deps.ctx.storage.dataRoot,
+        });
 
         if (isBotMsg) {
           const bot = deps.ctx.storage.listBots().find((b) => b.id === id);
@@ -1500,12 +1526,20 @@ export function createGatewayHttpApi(deps: GatewayHttpApiDeps): {
           openSse(res);
 
           let closed = false;
+          let unsubscribed = false;
+          const unsubscribeSafe = () => {
+            if (unsubscribed) return;
+            unsubscribed = true;
+            unsubscribe();
+          };
           const finish = () => {
+            // Always drop the stopSync hook — even if the client already closed
+            // (onClientClose sets closed without ending via finish).
+            openSseFinishes.delete(finish);
+            req.off('close', onClientClose);
+            unsubscribeSafe();
             if (closed) return;
             closed = true;
-            openSseFinishes.delete(finish);
-            unsubscribe();
-            req.off('close', onClientClose);
             try {
               if (!res.writableEnded && !res.destroyed) {
                 try {
@@ -1538,14 +1572,24 @@ export function createGatewayHttpApi(deps: GatewayHttpApiDeps): {
           const unsubscribe = subscribeRuntimeEvent(onChat);
           const onClientClose = () => {
             // Stop writing only; chat turn continues for the UI / persistence.
+            // Still drop openSseFinishes + end the response so stopSync cannot
+            // retain a zombie finish hook after the client is gone.
             if (closed) return;
             closed = true;
-            unsubscribe();
+            unsubscribeSafe();
+            openSseFinishes.delete(finish);
+            req.off('close', onClientClose);
+            try {
+              if (!res.writableEnded && !res.destroyed) res.end();
+            } catch {
+              /* ignore */
+            }
           };
           req.on('close', onClientClose);
 
           try {
-            await startChatTurn(deps.ctx, payload);
+            // End SSE with the initiating run; AC continues via /v1/events fan-out.
+            await startChatTurn(deps.ctx, payload, { awaitAutoContinue: false });
           } catch (err) {
             console.error('[okbot] gatewayHttpApi SSE chat turn failed', err);
             if (!closed) {
@@ -1575,7 +1619,7 @@ export function createGatewayHttpApi(deps: GatewayHttpApiDeps): {
 
       // POST /v1/tool-respond — same decision path as the desktop approval card.
       if (method === 'POST' && parts.length === 2 && parts[0] === 'v1' && parts[1] === 'tool-respond') {
-        if (!allowRate()) {
+        if (!allowRate(req)) {
           sendJson(res, 429, { ok: false, error: 'rate_limited' });
           return;
         }

@@ -1,4 +1,5 @@
-import type { CSSProperties, MouseEvent } from 'react';
+import type { CSSProperties, MouseEvent, ReactNode } from 'react';
+import { BorderBeam } from 'border-beam';
 import type { Bot, Squad } from '@okbot/shared';
 import { t, type UiLang } from '../../i18n';
 import type { MenuState, RenameTarget, Selection, SessionItem } from '../../types';
@@ -13,6 +14,8 @@ type DockTipTarget =
 export type SessionPinStripProps = {
   lang: UiLang;
   narrow: boolean;
+  /** Size 置顶 avatars to rail immediately with width; independent of deferred railLayout. */
+  avatarCompact?: boolean;
   pinnedSessions: SessionItem[];
   listHasRows: boolean;
   /** When true (only implicit 未分组 / no custom groups), show the narrow pin divider. */
@@ -51,10 +54,34 @@ function squadMembers(squad: Squad, bots: Bot[]): SquadAvatarMember[] {
   return memberAvatars.length ? memberAvatars : [{ emoji: '👥', color: '#6366F1' }];
 }
 
+function resolvedOrbTheme(): 'light' | 'dark' {
+  if (typeof document === 'undefined') return 'dark';
+  return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+}
+
+/** Match session-list busy BorderBeam: ring the whole pin chrome (avatar + name), not just the avatar. */
+function pinBusyBeam(busy: boolean, child: ReactNode) {
+  if (!busy) return child;
+  return (
+    <BorderBeam
+      className="session-beam session-pin-beam"
+      size="sm"
+      theme={resolvedOrbTheme()}
+      colorVariant="ocean"
+      strength={0.9}
+      borderRadius={7}
+      duration={2.2}
+    >
+      {child}
+    </BorderBeam>
+  );
+}
+
 /** Expanded: large centered avatars + name. Collapsed: rail-sized avatars only. */
 export function SessionPinStrip({
   lang,
   narrow,
+  avatarCompact = false,
   pinnedSessions,
   listHasRows,
   showPinDivider,
@@ -166,39 +193,44 @@ export function SessionPinStrip({
                       }
                 }
               >
-                <span
-                  className={`session-avatar-shell session-pin-avatar-shell${unread ? ' unread' : ''}`}
-                  title={unread ? t(lang, 'unreadReply') : undefined}
-                >
-                  <FlatAvatar
-                    className={narrow ? 'session-avatar' : 'session-pin-avatar'}
-                    emoji={bot.emoji}
-                    color={bot.color}
-                    avatarKind={bot.avatarKind}
-                    botAvatarType={bot.botAvatarType}
-                    {...resolveSessionAvatarMotion({
-                      active,
-                      busy: botIsWorking(bot.id),
-                      lastInteractedAt: sessionInteractedAt[bot.id],
-                      now: avatarMotionNow || Date.now(),
-                    })}
-                    style={avatarStyle}
-                    size={narrow ? undefined : 56}
-                    showDefaultMark={defaultAssistantId === bot.id}
-                    defaultMarkTitle={t(lang, 'defaultAssistant')}
-                  />
-                  {shortcutHintByOwnerId?.[bot.id] ? (
-                    <span className="session-shortcut-hint session-shortcut-hint-pin" aria-hidden>
-                      {shortcutHintByOwnerId[bot.id]}
+                {pinBusyBeam(
+                  botIsWorking(bot.id),
+                  <>
+                    <span
+                      className={`session-avatar-shell session-pin-avatar-shell${unread ? ' unread' : ''}`}
+                      title={unread ? t(lang, 'unreadReply') : undefined}
+                    >
+                      <FlatAvatar
+                        className={avatarCompact ? 'session-avatar' : 'session-pin-avatar'}
+                        emoji={bot.emoji}
+                        color={bot.color}
+                        avatarKind={bot.avatarKind}
+                        botAvatarType={bot.botAvatarType}
+                        {...resolveSessionAvatarMotion({
+                          active,
+                          busy: botIsWorking(bot.id),
+                          lastInteractedAt: sessionInteractedAt[bot.id],
+                          now: avatarMotionNow || Date.now(),
+                        })}
+                        style={avatarStyle}
+                        size={avatarCompact ? 36 : 56}
+                        showDefaultMark={defaultAssistantId === bot.id}
+                        defaultMarkTitle={t(lang, 'defaultAssistant')}
+                      />
+                      {shortcutHintByOwnerId?.[bot.id] ? (
+                        <span className="session-shortcut-hint session-shortcut-hint-pin" aria-hidden>
+                          {shortcutHintByOwnerId[bot.id]}
+                        </span>
+                      ) : null}
                     </span>
-                  ) : null}
-                </span>
-                {/* Always mounted: `.app.narrow` / @container hides the label in the
-                    same frame as --sidebar-w (React unmount lagged one paint). */}
-                <span className={`session-pin-name-edit${renaming ? ' is-renaming' : ''}`}>
-                  <span className="session-pin-name">{bot.name}</span>
-                  {renaming ? renameInput : null}
-                </span>
+                    {/* Always mounted: `.app.narrow` / @container hides the label in the
+                        same frame as --sidebar-w (React unmount lagged one paint). */}
+                    <span className={`session-pin-name-edit${renaming ? ' is-renaming' : ''}`}>
+                      <span className="session-pin-name">{bot.name}</span>
+                      {renaming ? renameInput : null}
+                    </span>
+                  </>,
+                )}
               </div>
             );
           }
@@ -250,42 +282,49 @@ export function SessionPinStrip({
                     }
               }
             >
-              <span
-                className={`session-avatar-shell session-pin-avatar-shell${unread ? ' unread' : ''}`}
-                title={unread ? t(lang, 'unreadReply') : undefined}
-              >
-                <span
-                  className={narrow ? 'session-avatar' : 'session-pin-avatar'}
-                  style={
-                    narrow
-                      ? {
-                          transform: `scale(${dockScale})`,
-                          zIndex: Math.round(dockScale * 10),
-                        }
-                      : undefined
-                  }
-                >
-                  <SquadAvatar
-                    members={tipMembers}
-                    className={narrow ? 'session-avatar' : 'session-pin-avatar'}
-                  />
-                </span>
-                  {shortcutHintByOwnerId?.[g.id] ? (
-                    <span className="session-shortcut-hint session-shortcut-hint-pin" aria-hidden>
-                      {shortcutHintByOwnerId[g.id]}
+              {pinBusyBeam(
+                botIsWorking(g.id),
+                <>
+                  <span
+                    className={`session-avatar-shell session-pin-avatar-shell${unread ? ' unread' : ''}`}
+                    title={unread ? t(lang, 'unreadReply') : undefined}
+                  >
+                    <span
+                      className={avatarCompact ? 'session-avatar' : 'session-pin-avatar'}
+                      style={
+                        narrow
+                          ? {
+                              transform: `scale(${dockScale})`,
+                              zIndex: Math.round(dockScale * 10),
+                            }
+                          : undefined
+                      }
+                    >
+                      <SquadAvatar
+                        members={tipMembers}
+                        className={avatarCompact ? 'session-avatar' : 'session-pin-avatar'}
+                      />
                     </span>
-                  ) : null}
-              </span>
-              <span className={`session-pin-name-edit${renaming ? ' is-renaming' : ''}`}>
-                <span className="session-pin-name">{g.name}</span>
-                {renaming ? renameInput : null}
-              </span>
+                    {shortcutHintByOwnerId?.[g.id] ? (
+                      <span className="session-shortcut-hint session-shortcut-hint-pin" aria-hidden>
+                        {shortcutHintByOwnerId[g.id]}
+                      </span>
+                    ) : null}
+                  </span>
+                  <span className={`session-pin-name-edit${renaming ? ' is-renaming' : ''}`}>
+                    <span className="session-pin-name">{g.name}</span>
+                    {renaming ? renameInput : null}
+                  </span>
+                </>,
+              )}
             </div>
           );
         })}
       </div>
-      {/* Narrow only; show when there are no custom groups (only 未分组). */}
-      {narrow && listHasRows && showPinDivider && pinnedSessions.length > 0 ? (
+      {/* Mount whenever pins sit above the list (no custom groups). Size/visibility
+          follow sidebar @container / .narrow so collapse does not flash the
+          divider only after deferred railLayout. */}
+      {listHasRows && showPinDivider && pinnedSessions.length > 0 ? (
         <div className="session-pin-divider" aria-hidden />
       ) : null}
     </>

@@ -239,8 +239,11 @@ export class ScheduleStore {
   }
 
   /**
-   * Claim a due job: advance nextRunAt (or disable when once) so the ticker
-   * will not double-fire while the turn runs. Does not set lastRunAt.
+   * Claim a due job for firing: verifies due+enabled and returns a snapshot.
+   * Does **not** advance nextRunAt or disable `once` — that happens in
+   * {@link markScheduledJobFired} after the turn ends, so a crash mid-turn
+   * still leaves nextRunAt in the past for catch-up. Same-minute stacking is
+   * prevented by the ticker's in-memory inflight set (held until fire completes).
    */
   claimScheduledJobDue(ownerId: string, jobId: string, now: Date = new Date()): ScheduledJob | null {
     const id = assertSafeOwnerSegment(ownerId);
@@ -248,22 +251,16 @@ export class ScheduleStore {
     const jobs = readSchedulesFile(this.schedulesFile(id), id).jobs;
     const idx = jobs.findIndex((j) => j.id === jobId);
     if (idx < 0) return null;
-    let job = { ...jobs[idx]! };
+    const job = { ...jobs[idx]! };
     if (!job.enabled) return null;
     if (!job.nextRunAt || Date.parse(job.nextRunAt) > now.getTime()) return null;
-    job.updatedAt = now.toISOString();
-    if (job.once) {
-      job.enabled = false;
-      job.nextRunAt = null;
-    } else {
-      job = refreshJobNextRun(job, now, this.appTimezone());
-    }
-    jobs[idx] = job;
-    this.writeScheduledJobs(id, jobs);
     return job;
   }
 
-  /** After a claimed fire: record lastRunAt / lastError (does not re-advance nextRun). */
+  /**
+   * After a claimed fire completes (ok or fail): record lastRunAt / lastError,
+   * then advance nextRunAt (or disable when once).
+   */
   markScheduledJobFired(
     ownerId: string,
     jobId: string,
@@ -275,10 +272,16 @@ export class ScheduleStore {
     const idx = jobs.findIndex((j) => j.id === jobId);
     if (idx < 0) return null;
     const firedAt = result.firedAt ?? new Date();
-    const job = { ...jobs[idx]! };
+    let job = { ...jobs[idx]! };
     job.lastRunAt = firedAt.toISOString();
     job.lastError = result.ok ? null : (result.error || 'failed').slice(0, 500);
     job.updatedAt = firedAt.toISOString();
+    if (job.once) {
+      job.enabled = false;
+      job.nextRunAt = null;
+    } else {
+      job = refreshJobNextRun(job, firedAt, this.appTimezone());
+    }
     jobs[idx] = job;
     this.writeScheduledJobs(id, jobs);
     return job;

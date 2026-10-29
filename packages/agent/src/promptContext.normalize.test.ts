@@ -49,6 +49,7 @@ const prefs = {
   generate_image: { enabled: false, approval: 'ask' as const },
   search_history: { enabled: false, approval: 'ask' as const },
   manage_schedule: { enabled: false, approval: 'ask' as const },
+  manage_memory: { enabled: false, approval: 'ask' as const },
   web_fetch: { enabled: false, approval: 'ask' as const },
   web_search: { enabled: false, approval: 'ask' as const },
 };

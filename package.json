@@ -4,8 +4,8 @@
   "bin": {
     "okbot": "./apps/gateway/bin/okbot.mjs"
   },
-  "version": "0.12.0",
-  "description": "OkBot — personal desktop AI assistant",
+  "version": "0.13.0",
+  "description": "OkBot \u2014 personal desktop AI assistant",
   "packageManager": "pnpm@11.15.1",
   "scripts": {
     "dev": "pnpm --filter @okbot/shared build && pnpm --filter @okbot/agent build && pnpm --filter @okbot/gateway build && pnpm --filter @okbot/desktop dev",

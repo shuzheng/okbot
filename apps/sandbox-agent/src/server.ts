@@ -53,6 +53,13 @@ export function createSandboxHandler(token: string) {
     try {
       // POST /v1/shell
       if (method === 'POST' && parts.length === 2 && parts[0] === 'v1' && parts[1] === 'shell') {
+        // Abort on client disconnect. Do NOT use req.on('close'): Node fires that when
+        // the request stream ends normally (after readBody), while res is still open —
+        // which aborted every healthy shell. res.close + !writableEnded matches disconnect.
+        const ac = new AbortController();
+        res.on('close', () => {
+          if (!res.writableEnded) ac.abort();
+        });
         let parsed: Record<string, unknown> = {};
         try {
           const raw = await readBody(req);
@@ -71,10 +78,6 @@ export function createSandboxHandler(token: string) {
           return;
         }
         const cwd = typeof parsed.cwd === 'string' ? parsed.cwd : undefined;
-        const ac = new AbortController();
-        req.on('close', () => {
-          if (!res.writableEnded) ac.abort();
-        });
 
         if (wantsSse(req)) {
           openSse(res);

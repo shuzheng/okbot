@@ -117,6 +117,7 @@ export function GlobalSearchModal({ lang, bots, squads, developerMode = false, o
     if (!q) return [];
     return SETTINGS_SEARCH_ITEMS.filter((item) => {
       if (item.tab === 'instructions' && !developerMode) return false;
+      if (item.developerOnly && !developerMode) return false;
       const label = t(lang, item.labelKey);
       if (matchText(label, q)) return true;
       if (item.keywords?.some((k) => matchText(k, q))) return true;

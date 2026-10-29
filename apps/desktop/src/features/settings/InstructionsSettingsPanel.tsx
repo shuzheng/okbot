@@ -4,7 +4,10 @@ import {
   normalizeMemorySettings,
   type AppSettings,
 } from '@okbot/shared';
+import { listHardcodedSystemPrompts } from '@okbot/agent/hardcodedSystemPrompts';
 import { SettingsHelpTip } from './SettingsHelpTip';
+import { SlidingPillTabs } from '../../components/ui';
+import type { InstructionsSubTab } from './types';
 
 import { t, type UiLang } from '../../i18n';
 
@@ -32,12 +35,12 @@ export function InstructionsSettingsPanel({
   soulMdRefreshSystemPrompt: any;
   assistantRoleTemplate: any;
   captainPersona: any;
-  instructionsSubTab: any;
+  instructionsSubTab: InstructionsSubTab;
   scopeInstruction: any;
   setSoulMdRefreshSystemPrompt: React.Dispatch<React.SetStateAction<any>>;
   setAssistantRoleTemplate: React.Dispatch<React.SetStateAction<any>>;
   setCaptainPersona: React.Dispatch<React.SetStateAction<any>>;
-  setInstructionsSubTab: React.Dispatch<React.SetStateAction<any>>;
+  setInstructionsSubTab: React.Dispatch<React.SetStateAction<InstructionsSubTab>>;
   setScopeInstruction: React.Dispatch<React.SetStateAction<any>>;
   setSkillsCreateUpdateInstruction: React.Dispatch<React.SetStateAction<any>>;
   setSquadPlaybook: React.Dispatch<React.SetStateAction<any>>;
@@ -45,60 +48,37 @@ export function InstructionsSettingsPanel({
   squadPlaybook: any;
   tab: any;
 }) {
+  const otherPromptCount = listHardcodedSystemPrompts().length;
+
   return (
 
     <div>
-      <div
-        className="avatar-kind-toggle instructions-subtab-toggle"
-        role="tablist"
-        aria-label={t(lang, 'instructions')}
-      >
-        <button
-          type="button"
-          role="tab"
-          aria-selected={instructionsSubTab === 'assistant'}
-          className={instructionsSubTab === 'assistant' ? 'active' : ''}
-          onClick={() => setInstructionsSubTab('assistant')}
-        >
-          {t(lang, 'instructionsAssistant')}
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={instructionsSubTab === 'squad'}
-          className={instructionsSubTab === 'squad' ? 'active' : ''}
-          onClick={() => setInstructionsSubTab('squad')}
-        >
-          {t(lang, 'instructionsSquad')}
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={instructionsSubTab === 'soul'}
-          className={instructionsSubTab === 'soul' ? 'active' : ''}
-          onClick={() => setInstructionsSubTab('soul')}
-        >
-          {t(lang, 'instructionsAgents')}
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={instructionsSubTab === 'memory'}
-          className={instructionsSubTab === 'memory' ? 'active' : ''}
-          onClick={() => setInstructionsSubTab('memory')}
-        >
-          {t(lang, 'instructionsMemory')}
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={instructionsSubTab === 'skills'}
-          className={instructionsSubTab === 'skills' ? 'active' : ''}
-          onClick={() => setInstructionsSubTab('skills')}
-        >
-          {t(lang, 'instructionsSkills')}
-        </button>
-      </div>
+      <SlidingPillTabs
+        ariaLabel={t(lang, 'instructions')}
+        value={instructionsSubTab}
+        onChange={setInstructionsSubTab}
+        options={[
+          { id: 'assistant', label: t(lang, 'instructionsAssistant') },
+          { id: 'squad', label: t(lang, 'instructionsSquad') },
+          { id: 'soul', label: t(lang, 'instructionsAgents') },
+          { id: 'memory', label: t(lang, 'instructionsMemory') },
+          { id: 'skills', label: t(lang, 'instructionsSkills') },
+          {
+            id: 'builtin',
+            label: (
+              <span className="instructions-other-tab-label">
+                {t(lang, 'instructionsBuiltin')}
+                <span
+                  className="model-badge instructions-other-count"
+                  aria-label={String(otherPromptCount)}
+                >
+                  {otherPromptCount}
+                </span>
+              </span>
+            ),
+          },
+        ]}
+      />
 
       {instructionsSubTab === 'assistant' ? (
         <>
@@ -242,7 +222,7 @@ export function InstructionsSettingsPanel({
             </div>
           </div>
         </>
-      ) : (
+      ) : instructionsSubTab === 'skills' ? (
         <>
           <div className="settings-card settings-card-squad">
             <div
@@ -273,7 +253,54 @@ export function InstructionsSettingsPanel({
             </div>
           </div>
         </>
+      ) : (
+        <BuiltinHardcodedPromptsPanel lang={lang} />
       )}
+    </div>
+  );
+}
+
+function BuiltinHardcodedPromptsPanel({ lang }: { lang: UiLang }) {
+  const entries = listHardcodedSystemPrompts();
+  if (!entries.length) {
+    return (
+      <div className="settings-card settings-card-squad">
+        <div className="settings-hint">{t(lang, 'instructionsBuiltinEmpty')}</div>
+      </div>
+    );
+  }
+  return (
+    <div>
+      <div className="settings-hint" style={{ marginBottom: 12 }} data-settings-id="instructionsBuiltinHint">
+        {t(lang, 'instructionsBuiltinHint')}
+      </div>
+      {entries.map((entry) => (
+        <div
+          key={entry.id}
+          className="settings-card settings-card-squad"
+          style={{ marginBottom: 12 }}
+          data-settings-id={entry.id}
+        >
+          <div className="settings-row settings-row-stack">
+            <span className="settings-row-label">
+              <span className="settings-row-label-text">
+                {lang === 'zh' ? entry.titleZh : entry.titleEn}
+              </span>
+              <SettingsHelpTip text={lang === 'zh' ? entry.hintZh : entry.hintEn} />
+            </span>
+            <div className="settings-hint" style={{ marginBottom: 6 }}>
+              {t(lang, 'hardcodedPromptSource')}: packages/agent/src/{entry.source}
+            </div>
+            <textarea
+              className="settings-paths-textarea"
+              spellCheck={false}
+              rows={Math.min(18, Math.max(4, entry.body.split('\n').length + 1))}
+              value={entry.body}
+              readOnly
+            />
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

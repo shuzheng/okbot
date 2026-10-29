@@ -49,7 +49,7 @@ export async function compressSessionNow(
     });
     const soulMd = ctx.storage.readSoulMd(bot.id);
     const skillsText = ctx.storage.formatSkillsForPrompt(bot.id);
-    const memoriesText = ctx.storage.formatMemoriesForPrompt(bot.id);
+    const memoriesText = ctx.storage.formatMemoriesForPrompt(bot.id, { recordHits: true });
     staticText = [soulMd, skillsText, memoriesText, bot.name, bot.description]
       .filter(Boolean)
       .join('\n');

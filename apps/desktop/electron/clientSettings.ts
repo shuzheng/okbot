@@ -65,10 +65,13 @@ function readJsonFile(file: string): unknown | null {
 function writeClientJsonFile(file: string, data: ClientJsonFile): void {
   const dir = path.dirname(file);
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`, {
+  const payload = `${JSON.stringify(data, null, 2)}\n`;
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, payload, {
     encoding: 'utf8',
     mode: 0o600,
   });
+  fs.renameSync(tmp, file);
   try {
     fs.chmodSync(file, 0o600);
   } catch (err) {

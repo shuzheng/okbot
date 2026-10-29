@@ -65,7 +65,9 @@ export class SessionStore {
         needsUpgrade = true;
       }
     }
-    if (needsUpgrade) writeSessionRecordsAtomic(file, records);
+    if (needsUpgrade) {
+      this.life.withSessionWriteLockSync(botId, () => writeSessionRecordsAtomic(file, records));
+    }
   }
 
   readSessionRecords(botId: string): SessionRecordV2[] {
@@ -486,34 +488,38 @@ export class SessionStore {
 
   /** Patch fields on an existing UI message (matched by envelope id). */
   patchMessage(botId: string, messageId: string, patch: Partial<ChatMessage>): ChatMessage | null {
-    const records = this.readSessionRecords(botId);
-    const idx = records.findIndex((r) => r.id === messageId);
-    if (idx < 0) return null;
-    const prev = records[idx]!;
-    const prevUi = recordToUiMessage(prev);
-    if (!prevUi) return null;
-    const nextMsg: ChatMessage = {
-      ...prevUi,
-      ...patch,
-      id: prevUi.id,
-      role: prevUi.role,
-    };
-    // Always merge onto the existing SDK item so Responses array content survives.
-    const nextRec = mergeUiMessageOntoRecord(prev, nextMsg);
-    if (patch.content === undefined && prev.item) {
-      nextRec.item = prev.item;
-    }
-    records[idx] = nextRec;
-    this.writeSessionRecords(botId, records);
-    return nextMsg;
+    return this.life.withSessionWriteLockSync(botId, () => {
+      const records = this.readSessionRecords(botId);
+      const idx = records.findIndex((r) => r.id === messageId);
+      if (idx < 0) return null;
+      const prev = records[idx]!;
+      const prevUi = recordToUiMessage(prev);
+      if (!prevUi) return null;
+      const nextMsg: ChatMessage = {
+        ...prevUi,
+        ...patch,
+        id: prevUi.id,
+        role: prevUi.role,
+      };
+      // Always merge onto the existing SDK item so Responses array content survives.
+      const nextRec = mergeUiMessageOntoRecord(prev, nextMsg);
+      if (patch.content === undefined && prev.item) {
+        nextRec.item = prev.item;
+      }
+      records[idx] = nextRec;
+      this.writeSessionRecords(botId, records);
+      return nextMsg;
+    });
   }
 
   appendMessage(botId: string, message: ChatMessage): void {
-    this.deps.ensureBotLayout(botId);
-    this.ensureSessionV2(botId);
-    const rec = legacyMessageToRecord(message);
-    appendText(this.deps.sessionFile(botId), `${JSON.stringify(rec)}\n`);
-    this.deps.noteSessionsChanged(botId, 'message');
+    this.life.withSessionWriteLockSync(botId, () => {
+      this.deps.ensureBotLayout(botId);
+      this.ensureSessionV2(botId);
+      const rec = legacyMessageToRecord(message);
+      appendText(this.deps.sessionFile(botId), `${JSON.stringify(rec)}\n`);
+      this.deps.noteSessionsChanged(botId, 'message');
+    });
   }
 
   /**

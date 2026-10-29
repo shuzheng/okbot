@@ -6,9 +6,9 @@
  * effects (backdrop-filter / Darwin vibrancy) on every resize event make
  * the drag feel stuttery. Consumers skip per-frame work while
  * `isWindowResizing()` is true and flush once on settle. Sidebar
- * auto-collapse writes `--sidebar-w` immediately (CSS) but defers React
- * setState until settle; CSS snaps `--sidebar-w` (no transition) while
- * this class is on. Main also parks Darwin vibrancy for the drag.
+ * auto-collapse/expand animates `--sidebar-w` via `.is-sidebar-auto-animating`
+ * (overrides transition:none for that one-shot). Other per-frame work still
+ * defers until settle. Main also parks Darwin vibrancy for the drag.
  *
  * Also toggles `html.is-window-resizing` so CSS can drop expensive effects
  * for the duration of the drag without a React re-render.

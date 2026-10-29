@@ -12,7 +12,6 @@ import {
 } from '@okbot/shared';
 import { assertWritable, ensureDir } from './fs';
 import type { OwnerLifecycle } from './ownerLifecycle';
-import type { TaskProgressRecord } from './types';
 
 export type TaskProgressStoreDeps = {
   botDir(botId: string): string;
@@ -53,15 +52,6 @@ export function normalizeTaskStep(raw: unknown, index: number): TaskStep | null 
   if (endedAt) step.endedAt = endedAt;
   if (updatedAt) step.updatedAt = updatedAt;
   return step;
-}
-
-/** @deprecated Alias for normalizeTaskStep (legacy item shape). */
-export function normalizeTaskProgressItem(raw: unknown, index: number): TaskStep | null {
-  return normalizeTaskStep(raw, index);
-}
-
-export function isTaskProgressItemStatus(raw: unknown): raw is TaskStatus {
-  return isTaskStatus(raw);
 }
 
 /** Derive task status from steps (explicit cancelled/failed wins). */
@@ -164,47 +154,18 @@ export function normalizeTaskRecord(raw: unknown, index = 0): TaskRecord | null 
   return task;
 }
 
-/** @deprecated Legacy single-record normalize (tests / migration). */
-export function normalizeTaskProgressRecord(raw: unknown): TaskProgressRecord {
-  const now = nowIso();
-  if (!raw || typeof raw !== 'object') {
-    return { v: 1, items: [], updatedAt: now };
-  }
-  const o = raw as Record<string, unknown>;
-  const itemsIn = Array.isArray(o.items) ? o.items : [];
-  const items: TaskStep[] = [];
-  const seen = new Set<string>();
-  for (let i = 0; i < itemsIn.length; i++) {
-    const item = normalizeTaskStep(itemsIn[i], i);
-    if (!item) continue;
-    let id = item.id;
-    if (seen.has(id)) id = `${id}_${i + 1}`;
-    seen.add(id);
-    items.push(id === item.id ? item : { ...item, id });
-  }
-  const title = typeof o.title === 'string' && o.title.trim() ? o.title.trim() : undefined;
-  const updatedAt =
-    typeof o.updatedAt === 'string' && o.updatedAt.trim() ? o.updatedAt.trim() : now;
-  return title ? { v: 1, title, items, updatedAt } : { v: 1, items, updatedAt };
-}
-
-/** True when any task (or its steps) is still pending / in_progress. */
+/** True when any non-terminal task (or its steps) is still pending / in_progress. */
 export function hasUnfinishedTasks(tasks: TaskRecord[] | null | undefined): boolean {
   if (!tasks?.length) return false;
-  return tasks.some(
-    (t) =>
-      isOpenTaskStatus(t.status) ||
-      t.steps.some((s) => s.status === 'pending' || s.status === 'in_progress'),
-  );
-}
-
-/** @deprecated */
-export function hasUnfinishedTaskProgress(
-  record: TaskProgressRecord | TaskRecord[] | null | undefined,
-): boolean {
-  if (Array.isArray(record)) return hasUnfinishedTasks(record);
-  if (!record?.items?.length) return false;
-  return record.items.some((it) => it.status === 'pending' || it.status === 'in_progress');
+  return tasks.some((t) => {
+    // Cancelled / failed / done tasks must not drive auto-continue even if steps remain.
+    if (!isOpenTaskStatus(t.status)) return false;
+    return (
+      t.status === 'pending' ||
+      t.status === 'in_progress' ||
+      t.steps.some((s) => s.status === 'pending' || s.status === 'in_progress')
+    );
+  });
 }
 
 /**
@@ -222,17 +183,6 @@ export function fingerprintTasks(tasks: TaskRecord[] | null | undefined): string
       return `${t.id}\0${title}\0${t.status}\0${t.note || ''}\n${steps}`;
     })
     .join('\n---\n');
-}
-
-/** @deprecated */
-export function fingerprintTaskProgress(
-  record: TaskProgressRecord | TaskRecord[] | null | undefined,
-): string {
-  if (Array.isArray(record)) return fingerprintTasks(record);
-  if (!record?.items?.length) return '';
-  const title = (record.title || '').trim();
-  const parts = record.items.map((it) => `${it.id}\0${it.title}\0${it.status}\0${it.note || ''}`);
-  return `${title}\n${parts.join('\n')}`;
 }
 
 const STATUS_LABEL: Record<TaskStatus, string> = {
@@ -266,19 +216,6 @@ export function formatTasksForPrompt(tasks: TaskRecord[] | null | undefined): st
   return blocks.join('\n').trimEnd();
 }
 
-/** @deprecated */
-export function formatTaskProgressForPrompt(
-  record: TaskProgressRecord | TaskRecord[] | null | undefined,
-): string {
-  if (Array.isArray(record)) return formatTasksForPrompt(record);
-  if (!record || !record.items.length) return '';
-  const lines = record.items.map((it) => {
-    const note = it.note ? ` — ${it.note}` : '';
-    return `- [${STATUS_LABEL[it.status as TaskStatus] || it.status}] (${it.id}) ${it.title}${note}`;
-  });
-  const head = record.title?.trim() ? `标题：${record.title.trim()}` : '（无标题）';
-  return ['## 当前任务进度（持久清单；请先对照再行动）', '', head, '', ...lines].join('\n');
-}
 
 function writeJsonlAtomic(file: string, lines: string[]): void {
   assertWritable(file);
@@ -339,22 +276,6 @@ export class TaskProgressStore {
   /** Open tasks only (UI above composer). */
   loadOpen(ownerId: string): TaskRecord[] {
     return this.loadAll(ownerId).filter((t) => isOpenTaskStatus(t.status));
-  }
-
-  /**
-   * Legacy single-plan view: first open task, else empty plan.
-   * Prefer loadAll / loadOpen for multi-task.
-   */
-  load(ownerId: string): TaskProgressRecord {
-    const all = this.loadAll(ownerId);
-    const open = all.find((t) => isOpenTaskStatus(t.status)) || all[0];
-    if (!open) return { v: 1, items: [], updatedAt: nowIso() };
-    return {
-      v: 1,
-      title: open.title,
-      items: open.steps,
-      updatedAt: open.updatedAt,
-    };
   }
 
   private persist(ownerId: string, tasks: TaskRecord[]): TaskRecord[] {
@@ -553,46 +474,6 @@ export class TaskProgressStore {
       .map((t, i) => normalizeTaskRecord({ ...t, updatedAt: t.updatedAt || at }, i))
       .filter((t): t is TaskRecord => t != null);
     return this.persist(ownerId, normalized);
-  }
-
-  /** @deprecated Legacy set_plan → addTask with full steps (or update first open). */
-  setPlan(
-    ownerId: string,
-    input: {
-      title?: string;
-      items: Array<{ id?: string; title: string; status?: TaskStatus; note?: string }>;
-    },
-  ): TaskProgressRecord {
-    const task = this.addTask(ownerId, {
-      title: input.title,
-      steps: input.items,
-    });
-    return { v: 1, title: task.title, items: task.steps, updatedAt: task.updatedAt };
-  }
-
-  /** @deprecated Legacy update_item → update first matching open task step. */
-  updateItem(
-    ownerId: string,
-    input: {
-      id?: string;
-      title?: string;
-      status?: TaskStatus;
-      note?: string;
-      new_title?: string;
-    },
-  ): TaskProgressRecord {
-    const all = this.loadAll(ownerId);
-    const open = all.find((t) => isOpenTaskStatus(t.status)) || all[all.length - 1];
-    if (!open) throw new Error('当前没有任务可更新');
-    const task = this.updateTask(ownerId, {
-      id: open.id,
-      step_id: input.id,
-      step_title: input.title,
-      step_status: input.status,
-      step_note: input.note,
-      step_new_title: input.new_title,
-    });
-    return { v: 1, title: task.title, items: task.steps, updatedAt: task.updatedAt };
   }
 
   clear(ownerId: string): void {

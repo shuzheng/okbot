@@ -24,6 +24,7 @@ import { mcpToolsForRun } from '../../mcpRuntime';
 import { buildMeshPeerSpecs, computerRouteFor, createMeshExchangeHandler, skillLookupFor } from '../chatTurnHelpers';
 import { historySearchForOwner } from '../historySearchTool';
 import { scheduleManageForOwner } from '../scheduleTool';
+import { memoryManageForBot } from '../memoryTool';
 import { taskProgressManageForOwner } from '../taskProgressTool';
 import {
   clearLiveAssistantForTools,
@@ -92,7 +93,7 @@ export async function resumeBotFromCheckpoint(
     const soulMd = ctx.storage.readSoulMd(bot.id);
     const skillsText = ctx.storage.formatSkillsForPrompt(bot.id);
     const skillLookup = skillLookupFor(ctx.storage, bot.id);
-    const memoriesText = ctx.storage.formatMemoriesForPrompt(bot.id);
+    const memoriesText = ctx.storage.formatMemoriesForPrompt(bot.id, { recordHits: true });
     const summaryState = ctx.storage.readSessionSummary(bot.id);
     const sessionSummary = summaryState?.summary?.trim() || '';
     const fileSession = createOkbotFileSession(
@@ -110,6 +111,7 @@ export async function resumeBotFromCheckpoint(
       skillLookup,
       historySearch: historySearchForOwner(ctx.storage, bot.id),
       scheduleManage: scheduleManageForOwner(ctx.storage, bot.id),
+      memoryManage: memoryManageForBot(ctx.storage, bot.id),
       taskProgressManage: async (input) => {
         const result = await taskProgressManageForOwner(ctx.storage, bot.id)(input);
         try {
@@ -142,7 +144,6 @@ export async function resumeBotFromCheckpoint(
       meshSettings: settings.mesh,
       meshDepth: 0,
       meshStack: [bot.id],
-      meshCallBudget: { calls: 0 },
       signal: controller.signal,
       serializedRunState: disk.serializedRunState,
       onClearLiveText: async () => {

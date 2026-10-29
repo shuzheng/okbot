@@ -22,6 +22,7 @@ import {
   type McpSettings,
 } from '@okbot/shared';
 import { wrapToolExecute, type ToolRunBudget } from '../toolRunBudget.js';
+import { formatUntrusted } from '../webFetch.js';
 
 const CONNECT_TIMEOUT_MS = 15_000;
 const MAX_TOOL_OUTPUT = 24_000;
@@ -51,6 +52,8 @@ type Connection = {
   entry: McpServerEntry;
   server: MCPServer;
   tools: McpToolInfo[];
+  /** Cleared when the stdio child exits or a transport error marks the link dead. */
+  alive: boolean;
 };
 
 function entryKey(entry: McpServerEntry): string {
@@ -176,9 +179,11 @@ export function formatMcpToolOutput(content: unknown): string {
     }
     return JSON.stringify(b);
   });
-  const text = parts.join('\n').trim() || '（MCP 工具没有返回内容）';
-  if (text.length <= MAX_TOOL_OUTPUT) return text;
-  return `${text.slice(0, MAX_TOOL_OUTPUT)}\n\n…(已截断，共 ${text.length} 字符)`;
+  let text = parts.join('\n').trim() || '（MCP 工具没有返回内容）';
+  if (text.length > MAX_TOOL_OUTPUT) {
+    text = `${text.slice(0, MAX_TOOL_OUTPUT)}\n\n…(已截断，共 ${text.length} 字符)`;
+  }
+  return formatUntrusted(text);
 }
 
 function normalizeSchema(raw: unknown): Record<string, unknown> {
@@ -202,10 +207,58 @@ async function connectEntry(entry: McpServerEntry): Promise<Connection> {
       description: t.description,
       inputSchema: normalizeSchema(t.inputSchema),
     }));
-    return { key: entryKey(entry), entry, server, tools };
+    const conn: Connection = { key: entryKey(entry), entry, server, tools, alive: true };
+    watchConnectionDeath(conn);
+    return conn;
   } catch (err) {
     await server.close().catch(() => {});
     throw err;
+  }
+}
+
+/** Best-effort: stdio child exit / transport close flips alive so sync() reconnects. */
+function watchConnectionDeath(conn: Connection): void {
+  const die = () => {
+    conn.alive = false;
+  };
+  try {
+    // agents-core: MCPServerStdio.underlying = NodeMCPServerStdio with `.transport`
+    // (StdioClientTransport); child lives at transport._process — not underlying.process.
+    const anyServer = conn.server as unknown as {
+      underlying?: {
+        process?: NodeJS.EventEmitter;
+        transport?: {
+          _process?: NodeJS.EventEmitter;
+          onclose?: (() => void) | null;
+          onerror?: ((err: Error) => void) | null;
+        };
+      };
+      process?: NodeJS.EventEmitter;
+    };
+    const underlying = anyServer.underlying;
+    const transport = underlying?.transport;
+    const proc =
+      transport?._process ?? underlying?.process ?? anyServer.process;
+    if (proc && typeof proc.on === 'function') {
+      proc.on('exit', die);
+      proc.on('error', die);
+      proc.on('close', die);
+    }
+    // Prefer transport onclose/onerror — covers stdio child death and HTTP session end.
+    if (transport) {
+      const prevClose = transport.onclose;
+      transport.onclose = () => {
+        die();
+        if (typeof prevClose === 'function') prevClose();
+      };
+      const prevErr = transport.onerror;
+      transport.onerror = (err: Error) => {
+        die();
+        if (typeof prevErr === 'function') prevErr(err);
+      };
+    }
+  } catch {
+    /* ignore — some transports expose neither process nor onclose */
   }
 }
 
@@ -223,7 +276,8 @@ export class McpHub {
       }
       for (const [id, conn] of [...this.connections]) {
         const next = wanted.get(id);
-        if (next && entryKey(next) === conn.key) continue;
+        // Same config is not enough — a dead transport must be dropped and reconnected.
+        if (next && entryKey(next) === conn.key && conn.alive) continue;
         this.connections.delete(id);
         await conn.server.close().catch(() => {});
       }
@@ -276,7 +330,12 @@ export class McpHub {
                   `MCP 工具「${info.name}」`,
                 );
               } catch (err) {
-                return `MCP 工具调用失败：${errorText(err)}`;
+                const msg = errorText(err);
+                // Transport / process death — next sync() will reconnect.
+                if (/closed|EPIPE|ECONNRESET|not connected|disconnected|timeout/i.test(msg)) {
+                  conn.alive = false;
+                }
+                return `MCP 工具调用失败：${msg}`;
               }
             }),
           }) as Tool,

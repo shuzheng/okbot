@@ -15,6 +15,24 @@ void window.okbot.getAppInfo().then((info) => {
     }
 });
 
+
+// Prevent main-frame navigation when HTML / files are dropped outside the chat
+// composer (composer handles drop itself and calls preventDefault).
+window.addEventListener(
+  'dragover',
+  (e) => {
+    e.preventDefault();
+  },
+  false,
+);
+window.addEventListener(
+  'drop',
+  (e) => {
+    e.preventDefault();
+  },
+  false,
+);
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <App />

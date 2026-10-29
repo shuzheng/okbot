@@ -146,4 +146,32 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'okbot-client-settings-'));
 }
 
 
+{
+  // Atomic write: destination must be complete JSON after save (tmp+rename).
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'okbot-client-atomic-'));
+  saveClientSettings(
+    {
+      theme: 'light',
+      translucent: true,
+      language: 'en',
+      microphoneId: '',
+      hardwareAcceleration: true,
+      autoUpdate: true,
+      sidebarDockMagnify: false,
+      closeAction: 'quit',
+      notifications: true,
+      developerMode: false,
+      settingsNavTab: 'general',
+      settingsClientGroupExpanded: false,
+      settingsGatewayGroupExpanded: false,
+    },
+    root,
+  );
+  const file = path.join(root, 'client.json');
+  const raw = fs.readFileSync(file, 'utf8');
+  assert.doesNotThrow(() => JSON.parse(raw));
+  assert.ok(!fs.existsSync(`${file}.${process.pid}.tmp`));
+  fs.rmSync(root, { recursive: true, force: true });
+}
+
 console.log('clientSettings.test.ts: ok');

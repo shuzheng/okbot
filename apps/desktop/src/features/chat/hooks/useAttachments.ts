@@ -17,6 +17,16 @@ import { formatSystemError } from '../../../utils/formatSystemError';
 import { toast } from '../../../components/ui';
 import { t, type UiLang } from '../../../i18n';
 
+
+/** True when an in-flight upload may still be pushed into the current composer. */
+export function uploadStillCurrent(
+  tagged: { ownerId: string; generation: number },
+  current: { ownerId: string | null; generation: number },
+): boolean {
+  const cur = (current.ownerId || '').trim();
+  return Boolean(tagged.ownerId) && tagged.ownerId === cur && tagged.generation === current.generation;
+}
+
 /**
  * Composer attachments + chat-area file drag/drop + clipboard paste.
  * Image/file bytes are copied to the gateway host ~/.okbot/<ownerId>/uploads/
@@ -34,6 +44,10 @@ export function useAttachments(opts: {
   const fileDragDepthRef = useRef(0);
   const [fileDragOver, setFileDragOver] = useState(false);
   const uploadingRef = useRef(false);
+  /** Bumped on clear / session switch so late uploads cannot attach to the wrong owner. */
+  const uploadGenerationRef = useRef(0);
+  const ownerIdRef = useRef(ownerId);
+  ownerIdRef.current = ownerId;
 
   const updateAttachments = (next: ComposerAttachment[]) => {
     attachmentsRef.current = next;
@@ -86,8 +100,8 @@ export function useAttachments(opts: {
     previewUrl?: string;
   }) => {
     const id = ownerId?.trim() || '';
-    if (!id) {
-      toast.error(t(lang, 'attachNeedSession'));
+    const tagged = { ownerId: id, generation: uploadGenerationRef.current };
+    const discardPreview = () => {
       if (input.previewUrl?.startsWith('blob:')) {
         try {
           URL.revokeObjectURL(input.previewUrl);
@@ -95,17 +109,15 @@ export function useAttachments(opts: {
           /* ignore */
         }
       }
+    };
+    if (!id) {
+      toast.error(t(lang, 'attachNeedSession'));
+      discardPreview();
       return;
     }
     if (roomLeft() <= 0) {
       toastCap();
-      if (input.previewUrl?.startsWith('blob:')) {
-        try {
-          URL.revokeObjectURL(input.previewUrl);
-        } catch {
-          /* ignore */
-        }
-      }
+      discardPreview();
       return;
     }
 
@@ -129,18 +141,23 @@ export function useAttachments(opts: {
     }
 
     if (!result.ok) {
-      if (input.previewUrl?.startsWith('blob:')) {
-        try {
-          URL.revokeObjectURL(input.previewUrl);
-        } catch {
-          /* ignore */
-        }
-      }
+      discardPreview();
       if (result.error === 'upload_too_large') {
         toast.error(t(lang, 'attachTooLarge'));
       } else {
         toast.error(formatSystemError(result.error));
       }
+      return;
+    }
+
+    // Session switch / clearAttachments bumps generation; late finish must not push into B.
+    if (
+      !uploadStillCurrent(tagged, {
+        ownerId: ownerIdRef.current,
+        generation: uploadGenerationRef.current,
+      })
+    ) {
+      discardPreview();
       return;
     }
 
@@ -264,6 +281,7 @@ export function useAttachments(opts: {
   };
 
   const clearAttachments = useCallback(() => {
+    uploadGenerationRef.current += 1;
     for (const a of attachmentsRef.current) revokePreview(a);
     updateAttachments([]);
   }, []);
@@ -272,7 +290,10 @@ export function useAttachments(opts: {
     if (listening) return false;
     const pasted = collectPastedFiles(clipboardData);
     if (!pasted.length) return false;
-    if (uploadingRef.current) return true;
+    if (uploadingRef.current) {
+      toast.info(t(lang, 'attachUploadBusy'));
+      return true;
+    }
     uploadingRef.current = true;
     try {
       let slots = roomLeft();

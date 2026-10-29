@@ -45,3 +45,5 @@ export {
   type ConfirmOptions,
 } from './ConfirmModal';
 export { QuickTip } from './QuickTip';
+
+export { SlidingPillTabs, type SlidingPillTabOption } from './SlidingPillTabs';

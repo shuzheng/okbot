@@ -6,6 +6,8 @@ export * from './toolIds.js';
 export * from './approval.js';
 export * from './text.js';
 export * from './memoryQuality.js';
+export * from './memoryLifecycle.js';
+export * from './memoryRecall.js';
 export * from './memoryExpiry.js';
 export * from './usage.js';
 export * from './trace.js';

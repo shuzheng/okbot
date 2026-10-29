@@ -21,9 +21,15 @@ import { t, type UiLang } from '../../i18n';
 import type { MenuState, RenameTarget, Selection, SessionItem } from '../../types';
 import { FlatAvatar, SquadAvatar, type SquadAvatarMember } from '../../components/ui/avatars';
 import { resolveSessionAvatarMotion } from '../../utils/sessionAvatarMotion';
-import { AboutIcon, AssistantGalleryIcon, ChevronDownIcon, DownloadUpdateIcon, ImportAssistantIcon, InstallUpdateIcon, PersonIcon, SearchIcon, SettingsIcon, SquadNavIcon } from '../../components/ui/icons';
+import { AboutIcon, AssistantGalleryIcon, ChevronDownIcon, DownloadUpdateIcon, ExtensionsNavIcon, ImportAssistantIcon, InstallUpdateIcon, PersonIcon, SearchIcon, SettingsIcon, SquadNavIcon, WebsiteIcon } from '../../components/ui/icons';
 import { QuickTip } from '../../components/ui/QuickTip';
 import { SessionPinStrip } from './SessionPinStrip';
+import {
+  capFooterPillExtras,
+  fitFooterPills,
+  resolveFooterPillExpanded,
+  type FooterPillId,
+} from './footerPillFit';
 import { formatSessionDraftPreview } from '../../utils/formatSessionDraftPreview';
 import { formatSessionUpdatedAt } from '../../utils/formatSessionUpdatedAt';
 
@@ -45,6 +51,8 @@ export type SessionSidebarProps = {
   sidebarRef?: RefObject<HTMLElement | null>;
   lang: UiLang;
   narrow: boolean;
+  /** Pin avatar 56↔36 tracks width band immediately; may lead deferred `narrow`/railLayout. */
+  avatarCompact?: boolean;
   createMenu: boolean;
   createMenuPos: { top: number; left: number } | null;
   sessions: SessionItem[];
@@ -70,14 +78,14 @@ export type SessionSidebarProps = {
   onStartCreateBot: () => void;
   onOpenSquadWizard: () => void;
   onImportAssistant: () => void;
-  onOpenAssistantGallery: () => void;
+  onOpenAssistantGallery: (tab?: 'assistants' | 'connectors') => void;
   onSelect: (selection: Selection) => void;
   onOpenSessionMenu: (menu: NonNullable<MenuState>) => void;
   onRenameValueChange: (value: string) => void;
   onCommitRename: () => void;
   onCancelRename: () => void;
   onOpenSettings: () => void;
-  /** Open About modal (collapsed fab menu). */
+  /** Open About modal (collapsed fab menu + settings pill about segment). */
   onOpenAbout: () => void;
   onDockMouseMove: (clientY: number) => void;
   onDockScroll: () => void;
@@ -123,6 +131,7 @@ export const SessionSidebar = memo(function SessionSidebar({
   sidebarRef,
   lang,
   narrow,
+  avatarCompact = false,
   createMenu,
   createMenuPos,
   sessions,
@@ -172,6 +181,13 @@ export const SessionSidebar = memo(function SessionSidebar({
   shortcutHintByOwnerId,
 }: SessionSidebarProps) {
   const [footerMenuOpen, setFooterMenuOpen] = useState(false);
+  /** Expanded sidebar footer: exactly one pill stays wide; default 市场; last hover sticks. */
+  const [footerPillExpanded, setFooterPillExpanded] = useState<FooterPillId>('market');
+  /** Width fit: hide group extras first, then whole pills right→left. */
+  const [footerPillFit, setFooterPillFit] = useState<{ visible: FooterPillId[]; extras: 0 | 1 | 2 }>({
+    visible: ['settings', 'market', 'update'],
+    extras: 2,
+  });
   const [hiddenExpanded, setHiddenExpanded] = useState(false);
   /** Per-group expand; missing id → expanded (default open). Local UI like 已隐藏. */
   const [ownerGroupExpanded, setOwnerGroupExpanded] = useState<Record<string, boolean>>({});
@@ -181,6 +197,7 @@ export const SessionSidebar = memo(function SessionSidebar({
   const [draggingOwnerId, setDraggingOwnerId] = useState<string | null>(null);
   const [draggingGroupId, setDraggingGroupId] = useState<string | null>(null);
   const footerFabRef = useRef<HTMLDivElement>(null);
+  const footerRowRef = useRef<HTMLDivElement>(null);
 
   const OWNER_MIME = 'application/x-okbot-owner';
   const GROUP_MIME = 'application/x-okbot-group';
@@ -257,11 +274,93 @@ export const SessionSidebar = memo(function SessionSidebar({
     );
   }
 
+  /** Expanded sidebar: circular icon that widens into a pill; sticky last-hover. */
+  function renderUpdateExpand() {
+    if (!updateControl) return null;
+    if (!footerPillFit.visible.includes('update')) return null;
+    const { phase, title, aria, showBadge, disabled, onClick } = updateControl;
+    const isDownloading = phase === 'downloading';
+    const isReady = phase === 'downloaded';
+    const expanded = footerPillExpanded === 'update';
+    const extras = expanded ? capFooterPillExtras('update', footerPillFit.extras) : 0;
+    return (
+      <div
+        className={`footer-pill-expand footer-pill-expand-update${
+          isDownloading ? ' downloading' : isReady ? ' ready' : ' available'
+        }${showBadge ? ' has-badge' : ''}${expanded ? ' is-expanded' : ''}`}
+        data-extras={expanded ? extras : 0}
+        onMouseEnter={() => setFooterPillExpanded('update')}
+        onFocus={() => setFooterPillExpanded('update')}
+      >
+        <button
+          type="button"
+          className="footer-pill-seg footer-pill-update-main"
+          aria-label={aria}
+          title={title}
+          disabled={disabled}
+          onClick={onClick}
+        >
+          <span className="ico" aria-hidden>
+            {isReady ? <InstallUpdateIcon /> : <DownloadUpdateIcon />}
+          </span>
+          <span className="footer-pill-label">{t(lang, 'updateAction')}</span>
+        </button>
+      </div>
+    );
+  }
 
+
+
+  /* Close fab when leaving the width-band rail (avatarCompact), not only after
+   * deferred narrow/railLayout — matches footer visibility. */
+  useEffect(() => {
+    if (!avatarCompact) setFooterMenuOpen(false);
+  }, [avatarCompact]);
 
   useEffect(() => {
-    if (!narrow) setFooterMenuOpen(false);
-  }, [narrow]);
+    if (!updateControl && footerPillExpanded === 'update') {
+      setFooterPillExpanded('market');
+    }
+  }, [updateControl, footerPillExpanded]);
+
+  /** Measure footer row: hide expanded extras first, then pills right→left.
+   *  Skip while width-band is rail (avatarCompact) — row may be CSS-hidden
+   *  before deferred narrow flips. */
+  useEffect(() => {
+    if (narrow || avatarCompact) return;
+    const row = footerRowRef.current;
+    if (!row || typeof ResizeObserver === 'undefined') return;
+
+    const measure = () => {
+      const cs = getComputedStyle(row);
+      const circle =
+        parseFloat(cs.getPropertyValue('--footer-row-h')) ||
+        parseFloat(cs.getPropertyValue('--footer-pill-circle')) ||
+        36;
+      const gap = parseFloat(cs.getPropertyValue('--footer-pill-gap')) || 8;
+      const next = fitFooterPills(row.clientWidth, {
+        hasUpdate: Boolean(updateControl),
+        circle,
+        gap,
+      });
+      setFooterPillFit((prev) => {
+        if (
+          prev.extras === next.extras &&
+          prev.visible.length === next.visible.length &&
+          prev.visible.every((id, i) => id === next.visible[i])
+        ) {
+          return prev;
+        }
+        return next;
+      });
+      setFooterPillExpanded((cur) => resolveFooterPillExpanded(cur, next.visible));
+    };
+
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(row);
+    return () => ro.disconnect();
+  }, [narrow, avatarCompact, updateControl]);
 
   useEffect(() => {
     if (!footerMenuOpen) return;
@@ -915,6 +1014,7 @@ export const SessionSidebar = memo(function SessionSidebar({
         <SessionPinStrip
           lang={lang}
           narrow={narrow}
+          avatarCompact={avatarCompact}
           pinnedSessions={pinnedSessions}
           listHasRows={listSessions.length > 0}
           showPinDivider={!showOwnerGroupHeaders}
@@ -1041,7 +1141,9 @@ export const SessionSidebar = memo(function SessionSidebar({
       </div>
 
       <div className="sidebar-footer">
-        {narrow ? (
+        {/* Always mounted: @container / .narrow toggles fab vs pills so the
+            hamburger tracks width with collapse (not deferred railLayout). */}
+
           <div ref={footerFabRef} className={`footer-fab${footerMenuOpen ? ' open' : ''}`}>
             <div className="footer-fab-actions" role="menu">
               <QuickTip text={t(lang, 'sidebarNew')}>
@@ -1147,33 +1249,108 @@ export const SessionSidebar = memo(function SessionSidebar({
               </span>
             </button>
           </div>
-        ) : (
-          <div className="sidebar-footer-row">
-            <button
-              type="button"
-              className="footer-btn"
-              onClick={onOpenSettings}
-              aria-label={t(lang, 'settings')}
+          <div ref={footerRowRef} className="sidebar-footer-row">
+            {footerPillFit.visible.includes('settings') ? (
+            <div
+              className={`footer-pill-expand footer-pill-expand-settings${
+                footerPillExpanded === 'settings' ? ' is-expanded' : ''
+              }`}
+              data-extras={
+                footerPillExpanded === 'settings'
+                  ? capFooterPillExtras('settings', footerPillFit.extras)
+                  : 0
+              }
+              onMouseEnter={() => setFooterPillExpanded('settings')}
+              onFocus={() => setFooterPillExpanded('settings')}
             >
-              <span className="ico">
-                <SettingsIcon />
-              </span>
-              <span className="label">{t(lang, 'settings')}</span>
-            </button>
-            <button
-              type="button"
-              className="footer-btn"
-              onClick={onOpenAssistantGallery}
-              aria-label={t(lang, 'galleryTitle')}
+              <button
+                type="button"
+                className="footer-pill-seg"
+                onClick={onOpenSettings}
+                aria-label={t(lang, 'settings')}
+              >
+                <span className="ico" aria-hidden>
+                  <SettingsIcon />
+                </span>
+              </button>
+              <a
+                className="footer-pill-seg footer-pill-extra"
+                href="https://okbot-ai.com"
+                target="_blank"
+                rel="noreferrer noopener"
+                aria-label={t(lang, 'officialSite')}
+                tabIndex={footerPillExpanded === 'settings' && footerPillFit.extras >= 1 ? 0 : -1}
+                aria-hidden={!(footerPillExpanded === 'settings' && footerPillFit.extras >= 1) || undefined}
+              >
+                <span className="ico" aria-hidden>
+                  <WebsiteIcon />
+                </span>
+              </a>
+              <button
+                type="button"
+                className="footer-pill-seg footer-pill-extra"
+                onClick={onOpenAbout}
+                aria-label={t(lang, 'aboutOpen')}
+                tabIndex={footerPillExpanded === 'settings' && footerPillFit.extras >= 2 ? 0 : -1}
+                aria-hidden={!(footerPillExpanded === 'settings' && footerPillFit.extras >= 2) || undefined}
+              >
+                <span className="ico" aria-hidden>
+                  <AboutIcon />
+                </span>
+              </button>
+            </div>
+            ) : null}
+            {footerPillFit.visible.includes('market') ? (
+            <div
+              className={`footer-pill-expand footer-pill-expand-market${
+                footerPillExpanded === 'market' ? ' is-expanded' : ''
+              }`}
+              data-extras={
+                footerPillExpanded === 'market'
+                  ? capFooterPillExtras('market', footerPillFit.extras)
+                  : 0
+              }
+              onMouseEnter={() => setFooterPillExpanded('market')}
+              onFocus={() => setFooterPillExpanded('market')}
             >
-              <span className="ico">
-                <AssistantGalleryIcon />
-              </span>
-              <span className="label">{t(lang, 'galleryTitle')}</span>
-            </button>
-            {renderUpdateButton()}
+              <button
+                type="button"
+                className="footer-pill-seg"
+                onClick={() => onOpenAssistantGallery()}
+                aria-label={t(lang, 'galleryTitle')}
+              >
+                <span className="ico" aria-hidden>
+                  <AssistantGalleryIcon />
+                </span>
+              </button>
+              <button
+                type="button"
+                className="footer-pill-seg footer-pill-extra"
+                onClick={() => onOpenAssistantGallery('assistants')}
+                aria-label={t(lang, 'galleryTabAssistants')}
+                tabIndex={footerPillExpanded === 'market' && footerPillFit.extras >= 1 ? 0 : -1}
+                aria-hidden={!(footerPillExpanded === 'market' && footerPillFit.extras >= 1) || undefined}
+              >
+                <span className="ico" aria-hidden>
+                  <PersonIcon />
+                </span>
+              </button>
+              <button
+                type="button"
+                className="footer-pill-seg footer-pill-extra"
+                onClick={() => onOpenAssistantGallery('connectors')}
+                aria-label={t(lang, 'galleryTabConnectors')}
+                tabIndex={footerPillExpanded === 'market' && footerPillFit.extras >= 2 ? 0 : -1}
+                aria-hidden={!(footerPillExpanded === 'market' && footerPillFit.extras >= 2) || undefined}
+              >
+                <span className="ico" aria-hidden>
+                  <ExtensionsNavIcon />
+                </span>
+              </button>
+            </div>
+            ) : null}
+            {renderUpdateExpand()}
           </div>
-        )}
       </div>
     </aside>
   );

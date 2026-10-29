@@ -15,7 +15,7 @@
     |  附着窗口 / 浏览器: httpOkbot → HTTP
     v
 Electron main  或  `okbot serve`（二选一，同一数据目录）
-    |  都在本进程里调用 startChatTurn / FileStorage
+    |  都在本进程里调用 startChatTurn / FileStorage（gateway/src/storage）
     v
 gatewayHttpApi          网关 HTTP。不是独立服务
     |
@@ -29,14 +29,34 @@ gatewayHttpApi          网关 HTTP。不是独立服务
 
 六个角色：
 
-1. **Electron main**（`electron/main.ts`）。单实例锁、窗口、主题、自己拉起或附着网关。拥有服务时注册全部 IPC（`electron/ipc/index.ts` → `registerAllIpc`）。
-2. **附着客户端**。端口上已有 OkBot 时，窗口用 `electron/attachPreload.ts`（构建产物 `out/preload/attach.mjs`），不注册聊天 IPC。渲染进程经 `src/bridge/httpOkbot.ts` 把 `window.okbot` 指到已有网关。
-3. **渲染进程**。React UI。不直接碰 Node fs。本机完整 preload 是 `electron/preload.ts`。
-4. **gatewayHttpApi**（`apps/gateway/src/gatewayHttpApi.ts`）。Electron 拥有服务时跑在 main 里；`okbot serve`（`electron/cli.ts`）跑在 Node 里。两边是同一份实现，不是两个进程各写一套。`runtime.json` 的 `owner` 为 `electron` 或 `serve`。
+1. **Electron main**（`apps/desktop/electron/main.ts`）。单实例锁、窗口、主题、自己拉起或附着网关。拥有服务时注册全部 IPC（`apps/desktop/electron/ipc/index.ts` → `registerAllIpc`；聊天/实体 handler 实现在 `apps/gateway/src/ipc/`）。
+2. **附着客户端**。端口上已有 OkBot 时，窗口用 `apps/desktop/electron/attachPreload.ts`（构建产物 `apps/desktop/out/preload/attach.mjs`），不注册聊天 IPC。渲染进程经 `apps/desktop/src/bridge/httpOkbot.ts` 把 `window.okbot` 指到已有网关。
+3. **渲染进程**。React UI。不直接碰 Node fs。本机完整 preload 是 `apps/desktop/electron/preload.ts`。
+4. **gatewayHttpApi**（`apps/gateway/src/gatewayHttpApi.ts`）。Electron 拥有服务时跑在 main 里；`okbot serve`（`apps/gateway/src/cli.ts`）跑在 Node 里。两边是同一份实现，不是两个进程各写一套。`runtime.json` 的 `owner` 为 `electron` 或 `serve`。
 5. **本机执行**。`packages/agent` 的 `createLocalExecutionBackend`：`run_shell` / `read_file` / `write_file` / `edit_file` 跑在网关所在机器上。不是 OS 沙箱。
 6. **sandbox-agent**（`apps/sandbox-agent`）。另一台电脑或容器上的 HTTP。桌面只把它登记在 `settings.computers`。模型供应商是第三条出站：`@openai/agents` 按 `apiFormat`（`chat_completions` 或 `responses`）打到供应商 `baseURL`。没有 Anthropic `/v1/messages`。
 
 技能热更新：`gatewayRuntime.startSkillWatch` 在拥有服务的进程里 `fs.watch`，下一轮从磁盘重读。
+
+扩展面（工具 / MCP / skills / 模型供应商 / 电脑）的现状与推荐贡献路径见 [`docs/extension-surfaces.md`](./docs/extension-surfaces.md)。
+
+
+## Gateway vs Electron 边界
+
+同一数据根（默认 `~/.okbot`）上，**网关宿主只有一个进程**：要么是 Electron main（`runtime.json` `owner=electron`），要么是 `okbot serve`（`owner=serve`）。两边共用 `apps/gateway` 里的 `gatewayHttpApi`、`FileStorage`、`entityOps`、聊天编排与 schedule ticker，**不是**两套服务各写一份。
+
+| 职责 | 归属 | 说明 |
+| --- | --- | --- |
+| HTTP API / Web UI / SSE | `apps/gateway` | `gatewayHttpApi.ts`；Electron 拥有服务时也在 main 进程内 listen |
+| 磁盘与设置（`server.json`） | `apps/gateway/src/storage` | `FileStorage` 门面；不在 `apps/desktop` |
+| 实体 / 模型探测 / 回合编排 | `apps/gateway/src` | `entityOps`、`modelProbe`、`ipc/chat/*` |
+| 窗口、托盘、updater、主题壳 | `apps/desktop/electron` | 只在有桌面窗口时存在 |
+| 渲染 UI | `apps/desktop/src` | 经 preload IPC（拥有后端的窗口）或 `httpOkbot`（附着 / 浏览器） |
+| 远程 shell/fs | `apps/sandbox-agent` | 登记在 `settings.computers`；不是网关进程 |
+
+**IPC 注册：** `apps/desktop/electron/ipc/index.ts` 的 `registerAllIpc` 调用 `@okbot/gateway` 导出的 `registerEntityIpc` / `registerChatIpc`。这些 handler 源码在 `apps/gateway/src/ipc/`，内部用惰性 `require('electron')`（`loadElectronUi`）以便 `okbot serve` 在无 Electron 时仍能加载 gateway 包；真正执行 IPC 注册只发生在桌面拥有后端时。把整段 handler 挪回 desktop adapter 会牵动导出与测试面，**当前保持惰性 require，不强制搬迁**。
+
+**附着窗口：** 端口上已有 OkBot 时，Electron 不注册聊天 IPC，只用 attach preload + HTTP；关掉附着窗口不停网关。`okbot serve` 与「Electron 自己 listen」是互斥所有者，见 AGENTS「进程」。
 
 ## IPC
 
@@ -51,9 +71,9 @@ gatewayHttpApi          网关 HTTP。不是独立服务
 
 网关 HTTP 在进程内直接调 `startChatTurn`，不再绕一圈 IPC。
 
-1:1 忙碌发送经 `orchestrateBotTurn`（`electron/ipc/chat/orchestrateBotTurn.ts`）：composer（含看似空闲）经 `softSteerGate` 取消 auto-continue 并 abort 该 owner 全部在途回合后重启（把新用户消息并入同一活跃上下文；不按意图分叉并行 composer 回合）。schedule/api 忙碌时不软改向，走既有并行门闩。干净 `done` 后若 `task-progress` 仍有 pending/in_progress，主机静默 auto-continue（无可见用户气泡、不限次数；Stop/abort/composer 软改向/硬错误则停；进度指纹连续两次未变则停，中间一次加严提示）。助手气泡非流式：主机不推送 token `delta`；`send_message` / 自动允许与 HITL 工具边界可见旁白（`onBeforeToolExecute`→`clearLiveAssistantForTools`）/ `done` 时整条显示；同轮开场「收到」去重（含短确认后的长 bullet 开场）；禁止插入空白或仅 `<think>` 行。小队仍直接 `startSquadTurn`。
+1:1 忙碌发送经 `orchestrateBotTurn`（`apps/gateway/src/ipc/chat/orchestrateBotTurn.ts`）：composer（含看似空闲）经 `softSteerGate` 取消 auto-continue 并 abort 该 owner 全部在途回合后重启（把新用户消息并入同一活跃上下文；不按意图分叉并行 composer 回合）。schedule/api 忙碌时不软改向，走既有并行门闩。干净 `done` 后若 `task-progress` 仍有 pending/in_progress，主机静默 auto-continue（无可见用户气泡、不限次数；Stop/abort/composer 软改向/硬错误则停；进度指纹连续两次未变则停，中间一次加严提示）。助手气泡非流式：主机不推送 token `delta`；`send_message` / 自动允许与 HITL 工具边界可见旁白（`onBeforeToolExecute`→`clearLiveAssistantForTools`）/ `done` 时整条显示；同轮开场「收到」去重（含短确认后的长 bullet 开场）；禁止插入空白或仅 `<think>` 行。小队仍直接 `startSquadTurn`。
 
-助手、小队、记忆、技能、助手市场（含 GitHub URL 导入）、模型探测这些操作写在 `electron/entityOps.ts`（`createEntityOps(ctx)`），不带传输层。`registerEntity.ts` 的 IPC 和网关 `POST /v1/rpc/:op` 都调它，两边行为一致。模型探测的实现在 `electron/modelProbe.ts`。
+助手、小队、记忆、技能、助手市场（含 GitHub URL 导入）、模型探测这些操作写在 `apps/gateway/src/entityOps.ts`（`createEntityOps(ctx)`），不带传输层。`apps/gateway/src/ipc/registerEntity.ts` 的 IPC 和网关 `POST /v1/rpc/:op` 都调它，两边行为一致。模型探测的实现在 `apps/gateway/src/modelProbe.ts`。
 
 ## 网关 HTTP
 
@@ -114,7 +134,7 @@ gatewayHttpApi          网关 HTTP。不是独立服务
 产品侧目录一览与备份行为见 [`GUIDE.md` §12](./GUIDE.md#12-数据目录一览)。本节只写架构边界与关键路径角色。
 
 
-`FileStorage` 是薄门面：共享根路径、组装域 Store（`SettingsStore` / `SessionStore` / `RosterStore` / `SkillsStore` / `MemoryStore` / `ScheduleStore` / `PendingHitlStore` / `AssistantPackageStore`），并保持原有调用面。墓碑与 session 写锁集中在 `ownerLifecycle.ts`（`OwnerLifecycle`）；各 Store 的写路径自行调用，不在门面复制。根目录默认 `~/.okbot`（`path.join(homedir, '.okbot')`）。构造时 `chmod` 目录 `0700`。`server.json`（网关设置）经 `writeJson(..., { mode: 0o600 })` 写出，并在创建/读到已有文件后再 `chmod` `0600`。`chmod` 失败会 `console.error`，不抛。进程锁为同目录下的 `runtime.json`（旧名曾为 `server.json`）。
+`FileStorage`（`apps/gateway/src/storage/FileStorage.ts`；**不在** `apps/desktop`）是薄门面：共享根路径、组装域 Store（`SettingsStore` / `SessionStore` / `RosterStore` / `SkillsStore` / `MemoryStore` / `ScheduleStore` / `PendingHitlStore` / `AssistantPackageStore`），并保持原有调用面。墓碑与 session 写锁集中在 `ownerLifecycle.ts`（`OwnerLifecycle`）；各 Store 的写路径自行调用，不在门面复制。根目录默认 `~/.okbot`（`path.join(homedir, '.okbot')`）。构造时 `chmod` 目录 `0700`。`server.json`（网关设置）经 `writeJson(..., { mode: 0o600 })` 写出，并在创建/读到已有文件后再 `chmod` `0600`。`chmod` 失败会 `console.error`，不抛。进程锁为同目录下的 `runtime.json`（旧名曾为 `server.json`）。
 
 ### 设置所有权（客户端 vs 网关）
 
@@ -178,7 +198,7 @@ MCP 工具（名字以 `mcp_` 开头）不经过自动审批：`resolveToolAppro
 ## 令牌
 
 - 网关可创建任意多个 API 令牌，存在 `gatewayHttpApi.apiTokens[]`（每项：`id` / `name` / `role`=`access`|`admin` / `token` / `limits` / 时间戳）。遗留字段 `token` / `adminToken` 仍镜像各自角色的**第一条**，供 attach / CLI / 探测兼容；鉴权匹配列表中每一项。
-- 限额（`limits`）：`dailyMessages` / `totalMessages` / `dailyTokens` / `totalTokens`；**0 = 不限制**。HTTP 聊天回合前按用量门禁；用量落在 `~/.okbot/api-token-usage.json`，按令牌 × 助手/小队累计消息数与 token（input+output+cache）。
+- 限额（`limits`）：`dailyMessages` / `totalMessages` / `dailyTokens` / `totalTokens`；**0 = 不限制**。HTTP 聊天回合前按用量门禁；用量落在 `~/.okbot/data/api-token-usage.json`，按令牌 × 助手/小队累计消息数与 token（input+output+cache）。
 - 只有拥有服务的进程在磁盘上还没有用户/超管令牌时才 `ensureGatewayToken` 生成并写入。附着到已有服务不会另造一串。规范化不会因为「已启用且为空」就生成。
 - `GET /v1/bootstrap` 和 `POST /v1/settings` 的响应把 `gatewayHttpApi.token` / `adminToken` / 各 `apiTokens[].token` 留空。
 - 要读正在核对的令牌：鉴权后 `GET /v1/gateway-token`（回显本次凭据）。本机 Electron 另经 IPC `getGatewayAccessToken` / `getGatewayAdminToken` / `getGatewayApiTokens` 读完整列表；附着窗口和 Web UI 用 HTTP。用量：`GET /v1/api-tokens/:id/usage` 或 IPC `getApiTokenUsage`。

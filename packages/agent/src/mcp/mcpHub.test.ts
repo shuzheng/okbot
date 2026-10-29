@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { isMcpToolName } from '@okbot/shared';
 import { callMcpTool, formatMcpToolOutput, mcpServerTag, mcpToolName, stdioEnv } from './mcpHub.ts';
+import { UNTRUSTED_WEB_FENCE_OPEN } from '../webFetch.ts';
 import { isInsecureRemoteMcpUrl } from '@okbot/shared';
 
 const used = new Set<string>(['run_shell']);
@@ -24,16 +25,33 @@ assert.equal(env.EXTRA, '1');
 assert.equal(env.PATH, process.env.PATH);
 const long = mcpToolName('x'.repeat(80), 'y'.repeat(80), used);
 assert.ok(long.length <= 64);
-assert.equal(formatMcpToolOutput([{ type: 'text', text: 'hi' }, { type: 'image', data: 'x' }]), 'hi\n{"type":"image","data":"x"}');
-assert.equal(formatMcpToolOutput([]), '（MCP 工具没有返回内容）');
+{
+  const out = formatMcpToolOutput([{ type: 'text', text: 'hi' }, { type: 'image', data: 'x' }]);
+  assert.ok(out.includes(UNTRUSTED_WEB_FENCE_OPEN));
+  assert.ok(out.includes('hi'));
+  assert.ok(out.includes('"type":"image"'));
+}
+{
+  const empty = formatMcpToolOutput([]);
+  assert.ok(empty.includes(UNTRUSTED_WEB_FENCE_OPEN));
+  assert.ok(empty.includes('（MCP 工具没有返回内容）'));
+}
 // isError results are tool errors.
 const errServer = {
   callTool: async () => [],
   callToolResult: async () => ({ content: [{ type: 'text', text: 'boom' }], isError: true }),
 };
-assert.equal(await callMcpTool(errServer as never, 't', {}), 'MCP 工具返回错误：boom');
+{
+  const errOut = await callMcpTool(errServer as never, 't', {});
+  assert.ok(errOut.startsWith('MCP 工具返回错误：'));
+  assert.ok(errOut.includes('boom'));
+}
 const okServer = { callTool: async () => [{ type: 'text', text: 'fine' }] };
-assert.equal(await callMcpTool(okServer as never, 't', {}), 'fine');
+{
+  const out = await callMcpTool(okServer as never, 't', {});
+  assert.ok(out.includes(UNTRUSTED_WEB_FENCE_OPEN));
+  assert.ok(out.includes('fine'));
+}
 
 // Strict loopback: names that start with 127. are not loopback.
 assert.equal(isInsecureRemoteMcpUrl('http://127.evil.com/mcp'), true);

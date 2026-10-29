@@ -31,7 +31,7 @@ export function createApprovalWaiter(
     onParked?: (requestId: string) => void;
   },
 ): (req: ToolApprovalRequest) => Promise<ToolApprovalDecision> {
-  return ({ requestId, toolName, arguments: toolArgs, serializedRunState, squadMember }) =>
+  return ({ requestId, toolName, callId, arguments: toolArgs, serializedRunState, squadMember }) =>
     new Promise<ToolApprovalDecision>((resolve) => {
       if (opts.signal.aborted) {
         resolve({ approved: false, message: '已取消' });
@@ -62,6 +62,7 @@ export function createApprovalWaiter(
             requestId,
             messageId,
             toolName,
+            ...(typeof callId === 'string' && callId.trim() ? { callId: callId.trim() } : {}),
             arguments: toolArgs,
             serializedRunState,
             ...(squadMember ? { squadMember } : {}),
@@ -70,6 +71,9 @@ export function createApprovalWaiter(
           });
         } catch (err) {
           console.error('[okbot] save pending hitl failed', err);
+          ctx.pendingToolApprovals.delete(requestId);
+          resolve({ approved: false, message: '无法保存待审批请求' });
+          return;
         }
       }
       const runId = (opts.runId || '').trim() || undefined;

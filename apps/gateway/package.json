@@ -1,6 +1,6 @@
 {
   "name": "@okbot/gateway",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "private": true,
   "type": "module",
   "description": "OkBot headless gateway (okbot serve) and shared server modules",

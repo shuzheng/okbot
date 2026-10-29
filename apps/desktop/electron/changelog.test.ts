@@ -10,6 +10,7 @@ import {
   loadBundledChangelogIndex,
   localizeChangelog,
   markWhatsNewSeen,
+  ensureWhatsNewBaseline,
   parseChangelogEntry,
   readUpdaterPrefs,
   shouldShowUpdatePrompt,
@@ -18,23 +19,27 @@ import {
 } from './changelog';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const seedPath = path.join(here, '..', 'changelogs', '0.12.0.json');
-const indexPath = path.join(here, '..', 'changelogs', 'index.json');
+const changelogsDir = path.join(here, '..', 'changelogs');
+const indexPath = path.join(changelogsDir, 'index.json');
 
-assert.ok(fs.existsSync(seedPath), 'bundled 0.12.0.json missing');
 assert.ok(fs.existsSync(indexPath), 'bundled index.json missing');
+const index = JSON.parse(fs.readFileSync(indexPath, 'utf8')) as unknown;
+assert.ok(Array.isArray(index) && index.length >= 1 && typeof index[0] === 'string');
+const latestVersion = String(index[0]);
+const seedPath = path.join(changelogsDir, `${latestVersion}.json`);
+assert.ok(fs.existsSync(seedPath), `bundled ${latestVersion}.json missing`);
 
 const raw = JSON.parse(fs.readFileSync(seedPath, 'utf8')) as unknown;
 const entry = parseChangelogEntry(raw);
 assert.ok(entry, 'seed must parse');
-assert.equal(entry!.version, '0.12.0');
-assert.equal(entry!.forceUpdate, false);
-assert.ok(entry!.notes.en.title.includes('0.12.0'));
-assert.ok(entry!.notes.zh?.title.includes('0.12.0'));
-assert.ok(entry!.notes.en.highlights.length >= 3);
-assert.ok(entry!.notes.zh!.highlights.length >= 3);
-assert.ok(entry!.notes.en.bodyMarkdown.includes('multi-instance'));
-assert.ok(entry!.notes.zh!.bodyMarkdown.includes('多实例'));
+assert.equal(entry!.version, latestVersion);
+assert.equal(typeof entry!.forceUpdate, 'boolean');
+assert.ok(entry!.notes.en.title.includes(latestVersion));
+assert.ok((entry!.notes.zh?.title || '').length > 0);
+assert.ok(entry!.notes.en.highlights.length >= 1);
+assert.ok((entry!.notes.zh?.highlights.length || 0) >= 1);
+assert.ok(entry!.notes.en.bodyMarkdown.length > 0);
+assert.ok((entry!.notes.zh?.bodyMarkdown || '').length > 0);
 
 const en = localizeChangelog(entry!, 'en');
 assert.equal(en.lang, 'en');
@@ -68,8 +73,20 @@ assert.deepEqual(readUpdaterPrefs(tmp), {
   updatePromptDismissedFor: '',
 });
 
-markWhatsNewSeen(tmp, '0.12.0');
-assert.equal(readUpdaterPrefs(tmp).lastSeenWhatsNewVersion, '0.12.0');
+// First install (empty lastSeen): do not show What's New.
+assert.equal(shouldShowWhatsNew(tmp, latestVersion), false);
+assert.equal(readUpdaterPrefs(tmp).lastSeenWhatsNewVersion, '');
+
+// Silent baseline seed (startup path) — still no dialog, but upgrades can show later.
+ensureWhatsNewBaseline(tmp, latestVersion);
+assert.equal(readUpdaterPrefs(tmp).lastSeenWhatsNewVersion, latestVersion);
+assert.equal(shouldShowWhatsNew(tmp, latestVersion), false);
+// Idempotent.
+ensureWhatsNewBaseline(tmp, latestVersion);
+assert.equal(readUpdaterPrefs(tmp).lastSeenWhatsNewVersion, latestVersion);
+
+markWhatsNewSeen(tmp, latestVersion);
+assert.equal(readUpdaterPrefs(tmp).lastSeenWhatsNewVersion, latestVersion);
 
 dismissUpdatePrompt(tmp, '0.13.0');
 assert.equal(readUpdaterPrefs(tmp).updatePromptDismissedFor, '0.13.0');
@@ -78,22 +95,21 @@ assert.equal(shouldShowUpdatePrompt(tmp, '0.13.0', false), false);
 assert.equal(shouldShowUpdatePrompt(tmp, '0.13.0', true), true); // force ignores dismiss
 assert.equal(shouldShowUpdatePrompt(tmp, '0.14.0', false), true);
 
-assert.equal(readUpdaterPrefs(tmp).lastSeenWhatsNewVersion, '0.12.0');
-assert.equal(shouldShowWhatsNew(tmp, '0.12.0'), false);
-assert.equal(shouldShowWhatsNew(tmp, '0.13.0'), false); // no bundled file for 0.13.0
-writeUpdaterPrefs(tmp, { lastSeenWhatsNewVersion: '', updatePromptDismissedFor: '0.13.0' });
-assert.equal(shouldShowWhatsNew(tmp, '0.12.0'), true);
+assert.equal(readUpdaterPrefs(tmp).lastSeenWhatsNewVersion, latestVersion);
+assert.equal(shouldShowWhatsNew(tmp, latestVersion), false);
+assert.equal(shouldShowWhatsNew(tmp, '0.0.0'), false); // no bundled file
+// Simulate upgrade: last seen older than current bundled.
+writeUpdaterPrefs(tmp, { lastSeenWhatsNewVersion: '0.0.1', updatePromptDismissedFor: '0.13.0' });
+assert.equal(shouldShowWhatsNew(tmp, latestVersion), true);
 
-const index = JSON.parse(fs.readFileSync(indexPath, 'utf8')) as unknown;
-assert.ok(Array.isArray(index) && index[0] === '0.12.0');
-
-assert.deepEqual(loadBundledChangelogIndex(), ['0.12.0', '0.11.0']);
+const loadedIndex = loadBundledChangelogIndex();
+assert.ok(loadedIndex.length >= 1);
+assert.equal(loadedIndex[0], latestVersion);
 const historyZh = listBundledChangelogs('zh');
-assert.equal(historyZh.length, 2);
-assert.equal(historyZh[0]!.version, '0.12.0');
+assert.equal(historyZh.length, loadedIndex.length);
+assert.equal(historyZh[0]!.version, latestVersion);
 assert.equal(historyZh[0]!.lang, 'zh');
-assert.equal(historyZh[1]!.version, '0.11.0');
-const whats = getBundledWhatsNew('0.12.0', 'en');
+const whats = getBundledWhatsNew(latestVersion, 'en');
 assert.ok(whats);
 assert.equal(whats!.title, entry!.notes.en.title);
 assert.equal(getBundledWhatsNew('0.0.0', 'en'), null);

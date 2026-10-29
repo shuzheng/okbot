@@ -135,6 +135,8 @@ export function sessionShortcutHintLabel(
   const n = String(digit);
   if (platform === 'darwin') return `⌘${n}`;
   if (platform === 'win32') return `Win+${n}`;
-  // Linux / unknown: Meta is Super; show Win-style for consistency with Meta binding.
-  return `Win+${n}`;
+  // Linux: Meta is Super (often WM-bound); label Super rather than Win.
+  if (platform === 'linux') return `Super+${n}`;
+  // Unknown / pure web: Meta chord — avoid claiming Win when host OS is unknown.
+  return `Meta+${n}`;
 }

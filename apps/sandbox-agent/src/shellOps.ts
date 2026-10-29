@@ -100,6 +100,8 @@ export async function runShell(
           timeout: SHELL_TIMEOUT_MS,
           maxBuffer: 1024 * 1024,
           env,
+          // New process group so kill(-pid) can reap grandchildren on abort/timeout.
+          detached: true,
         } as import('node:child_process').ExecFileOptions,
         (err: Error | null, out: string | Buffer, errOut: string | Buffer) => {
           stdout = typeof out === 'string' ? out : (out?.toString('utf8') ?? '');

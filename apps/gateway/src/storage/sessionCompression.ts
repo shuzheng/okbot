@@ -75,6 +75,34 @@ export async function resolveTopicCompressForce(input: {
   return isNew ? 'newTopic' : undefined;
 }
 
+/**
+ * When the resolved model for this turn differs from the last recorded key,
+ * force one Summary+Buffer compress (keep recent buffer). First observation
+ * (no last key) returns undefined — caller should seed lastEffectiveModel
+ * without compressing so we do not spam on cold sessions.
+ */
+export function resolveModelChangeCompressForce(input: {
+  lastEffectiveModel: string | null | undefined;
+  nextEffectiveModel: string;
+}): SessionCompressForceMode | undefined {
+  const next = (input.nextEffectiveModel || '').trim();
+  if (!next) return undefined;
+  const last = (input.lastEffectiveModel || '').trim();
+  if (!last) return undefined;
+  return last === next ? undefined : 'compress';
+}
+
+/**
+ * Combine topic + model-change force modes. `newTopic` wins (keep=0).
+ */
+export function mergeCompressForce(
+  ...modes: Array<SessionCompressForceMode | undefined>
+): SessionCompressForceMode | undefined {
+  if (modes.some((m) => m === 'newTopic')) return 'newTopic';
+  if (modes.some((m) => m === 'compress')) return 'compress';
+  return undefined;
+}
+
 function rowsFromPrior(prior: ChatMessage[]): BudgetSessionRow[] {
   return prior.map((m) => ({
     id: m.id,
@@ -225,7 +253,14 @@ export async function ensureSessionCompressed(input: {
             sessionSummary = compressed.summary;
             if (compressed.consumedThroughId) {
               didCompress = true;
-              foldedDeltas.push(...deltaMessages);
+              // Only messages the summarizer actually consumed — a partial
+              // prefix must not be handed to compress-time memory extract
+              // (those rows remain uncovered for the next pass).
+              const tip = compressed.consumedThroughId;
+              const tipIdx = deltaMessages.findIndex((m) => m.id === tip);
+              foldedDeltas.push(
+                ...(tipIdx >= 0 ? deltaMessages.slice(0, tipIdx + 1) : deltaMessages),
+              );
             }
             advanceCovered(compressed.consumedThroughId, sessionSummary);
           }

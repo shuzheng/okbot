@@ -4,6 +4,10 @@
   --panel: #E8EAEA;
   --panel-2: #e4e4e7;
   --chat-bg: #fafafa;
+  /* Chrome column fills — theme/platform overrides below; usage sites use var(). */
+  --sidebar-bg: color-mix(in srgb, var(--panel) 18%, transparent);
+  --sidebar-resize-bg: var(--chat-bg);
+  --main-bg: var(--chat-bg);
   --border: #d4d4d8;
   --text: #18181b;
   --muted: #71717a;
@@ -33,8 +37,9 @@
   --mention-chip-bg: var(--accent-soft);
   --mention-chip-fg: var(--text);
   --mention-chip-border: var(--border);
-  --bubble-user: var(--bubble-bot);
-  --bubble-user-text: var(--text);
+  /* Soft OkBot light: user send = dark bg + light text (黑底白字); dark theme keeps luminance wash. */
+  --bubble-user: var(--text);
+  --bubble-user-text: color-mix(in srgb, var(--text) 6%, var(--chat-bg));
   --bubble-bot: #f3f3f5;
   /* Attach +/fan chrome; no soft elevation (native border feel). */
   --composer-attach: #ececee;
@@ -74,6 +79,12 @@
   --bubble-sticky-top: 0;
   --hairline: 0.5px;
   --hairline-color: #4a4a4a;
+  /* Empty-chat 「OkBot」 brushed-metal watermark (theme-aware; light defaults). */
+  --chat-watermark-metal-0: #8a8a8a;
+  --chat-watermark-metal-1: #b0b0b0;
+  --chat-watermark-metal-2: #ffffff;
+  --chat-watermark-metal-3: #9a9a9a;
+  --chat-watermark-opacity: 0.42;
   /* Darwin transparent window rim (matches Electron roundedCorners clip). */
   --window-radius: 10px;
   /* Solid rim — light theme default (fainter edge so 0.5px AA reads thinner). Dark overrides below. */
@@ -94,13 +105,18 @@
     --panel: #121212;
     --panel-2: #161616;
     --chat-bg: #000000;
+    /* Frost ON: translucent wash so vibrancy/CSS blur shows; frost OFF sets #000 via data-translucent. */
+    --sidebar-bg: color-mix(in srgb, var(--panel) 18%, transparent);
+    --sidebar-resize-bg: var(--panel);
+    --main-bg: var(--panel);
     --border: #1f1f1f;
     --text: #f5f5f5;
     --muted: #8a8a8a;
     --accent: #f5f5f5;
     --accent-soft: rgba(255, 255, 255, 0.07);
-    --session-active-bg: rgba(255, 255, 255, 0.06);
-    --bubble-user: var(--bubble-bot);
+    --session-active-bg: rgba(255, 255, 255, 0.08);
+    /* Soft OkBot: user send slightly lighter neutral than assistant #212121 (no accent). */
+    --bubble-user: color-mix(in srgb, var(--text) 30%, var(--chat-bg));
     --bubble-user-text: var(--text);
     --bubble-bot: #212121;
     --composer-attach: #2e2e2e;
@@ -115,6 +131,11 @@
     --mention-chip-border: rgba(255, 255, 255, 0.2);
     /* Softer dark rim so 0.5px AA reads thinner (was #6e6e73). */
     --window-rim-color: #48484a;
+    --chat-watermark-metal-0: #6b6b6b;
+    --chat-watermark-metal-1: #959595;
+    --chat-watermark-metal-2: #f0f0f0;
+    --chat-watermark-metal-3: #8a8a8a;
+    --chat-watermark-opacity: 0.55;
   }
 }
 
@@ -123,13 +144,18 @@
   --panel: #121212;
   --panel-2: #161616;
   --chat-bg: #000000;
+  /* Frost ON: translucent wash; frost OFF → #000 via data-translucent. */
+  --sidebar-bg: color-mix(in srgb, var(--panel) 18%, transparent);
+  --sidebar-resize-bg: var(--panel);
+  --main-bg: var(--panel);
   --border: #1f1f1f;
   --text: #f5f5f5;
   --muted: #8a8a8a;
   --accent: #f5f5f5;
   --accent-soft: rgba(255, 255, 255, 0.07);
-  --session-active-bg: rgba(255, 255, 255, 0.06);
-  --bubble-user: var(--bubble-bot);
+  --session-active-bg: rgba(255, 255, 255, 0.08);
+  /* Soft OkBot: user send slightly lighter neutral than assistant #212121 (no accent). */
+  --bubble-user: color-mix(in srgb, var(--text) 30%, var(--chat-bg));
   --bubble-user-text: var(--text);
   --bubble-bot: #212121;
   --composer-attach: #2e2e2e;
@@ -143,6 +169,11 @@
   --mention-chip-fg: var(--text);
   --mention-chip-border: rgba(255, 255, 255, 0.2);
   --window-rim-color: #48484a;
+  --chat-watermark-metal-0: #6b6b6b;
+  --chat-watermark-metal-1: #959595;
+  --chat-watermark-metal-2: #f0f0f0;
+  --chat-watermark-metal-3: #8a8a8a;
+  --chat-watermark-opacity: 0.55;
 }
 
 :root[data-theme='light'] {
@@ -152,19 +183,52 @@
   --panel: #E8EAEA;
   --panel-2: #e4e4e7;
   --chat-bg: #fafafa;
+  --sidebar-bg: color-mix(in srgb, var(--panel) 22%, transparent);
+  --sidebar-resize-bg: var(--chat-bg);
+  --main-bg: var(--chat-bg);
   --border: #d4d4d8;
   --text: #18181b;
   --muted: #71717a;
   --accent: #3f3f46;
   --accent-soft: rgba(0, 0, 0, 0.06);
   --session-active-bg: rgba(0, 0, 0, 0.04);
-  --bubble-user: var(--bubble-bot);
-  --bubble-user-text: var(--text);
+  /* Soft OkBot light: user send = dark bg + light text (黑底白字); dark theme keeps luminance wash. */
+  --bubble-user: var(--text);
+  --bubble-user-text: color-mix(in srgb, var(--text) 6%, var(--chat-bg));
   --bubble-bot: #f3f3f5;
   --composer-attach: #ececee;
   --composer-attach-text: #3f3f46;
   --composer-attach-shadow: none;
   --input: #ffffff;
+  --chat-watermark-metal-0: #8a8a8a;
+  --chat-watermark-metal-1: #b0b0b0;
+  --chat-watermark-metal-2: #ffffff;
+  --chat-watermark-metal-3: #9a9a9a;
+  --chat-watermark-opacity: 0.42;
+}
+
+/* Darwin: lighter sidebar wash (vibrancy supplies frost). Dark also stays translucent when frost ON. */
+:root[data-platform='darwin'] {
+  --sidebar-bg: color-mix(in srgb, var(--panel) 12%, transparent);
+}
+:root[data-platform='darwin'][data-theme='light'] {
+  --sidebar-bg: color-mix(in srgb, var(--panel) 14%, transparent);
+}
+:root[data-platform='darwin'][data-theme='dark'] {
+  --sidebar-bg: color-mix(in srgb, var(--panel) 12%, transparent);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) {
+    --sidebar-bg: color-mix(in srgb, var(--panel) 22%, transparent);
+  }
+  :root[data-platform='darwin']:not([data-theme='dark']) {
+    --sidebar-bg: color-mix(in srgb, var(--panel) 14%, transparent);
+  }
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-platform='darwin']:not([data-theme='light']) {
+    --sidebar-bg: color-mix(in srgb, var(--panel) 12%, transparent);
+  }
 }
 
 * { box-sizing: border-box; }
@@ -234,7 +298,10 @@ input, textarea { user-select: text; }
      Electron macOS roundedCorners so content/rim follow the system clip. */
   position: relative;
   border-radius: var(--window-radius);
-  transition: --sidebar-w 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+  /* Idle collapse/expand (click toggle, threshold snap after is-resizing clears).
+     ~0.3s — slightly slower than 0.2s so collapse feels smooth, not floaty.
+     Live splitter / window-edge drag disables below. */
+  transition: --sidebar-w 0.3s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* Darwin transparent+vibrancy: solid 0.5px rim flush to window edges (no alpha
@@ -251,14 +318,25 @@ input, textarea { user-select: text; }
   border: 0.5px solid var(--window-rim-color);
 }
 .app.is-resizing {
+  /* Finger-down splitter: no transition fighting the cursor. */
+  transition: none;
+}
+.app.is-resizing .session-pin-avatar-shell,
+.app.is-resizing .session-pin-avatar {
   transition: none;
 }
 
-/* Live window-edge drag: snap --sidebar-w (no 0.22s ease fighting Chromium reflow).
-   Click-collapse / expand while idle keeps the cubic-bezier on .app. */
+/* Live window-edge drag: snap --sidebar-w (no ease fighting Chromium reflow).
+   Click-collapse / expand and post-drag rail snaps clear is-resizing first so
+   the idle cubic-bezier on .app runs. Auto collapse/expand on window resize
+   adds .is-sidebar-auto-animating for a one-shot --sidebar-w transition. */
 html.is-window-resizing .app {
   transition: none;
   pointer-events: none;
+}
+html.is-window-resizing .app.is-sidebar-auto-animating,
+.app.is-sidebar-auto-animating {
+  transition: --sidebar-w 0.3s cubic-bezier(0.22, 1, 0.36, 1);
 }
 html.is-window-resizing .chat-member-pill,
 html.is-window-resizing .chat-gateway-btn,
@@ -269,33 +347,34 @@ html.is-window-resizing .session-row,
 html.is-window-resizing .bubble-action-btn {
   transition: none !important;
 }
-/* Contain layout invalidation to each column while the window is dragged.
-   size+paint avoids sibling layout thrash; content-visibility on bubbles
-   skips painting off-screen transcript rows during the drag only. */
-html.is-window-resizing .sidebar,
-html.is-window-resizing .messages-shell,
-html.is-window-resizing .main {
-  contain: layout paint;
+/* Contain layout invalidation to the sidebar column while the window is
+   dragged. Do NOT put content-visibility / contain-intrinsic-size on
+   transcript rows — estimated heights (72px/400px) fight real markdown
+   layout and make chat text jump vertically as rows enter/leave the
+   scrollport. Avoid paint containment on .messages-shell too: sticky
+   speaker avatars + bubble actions stick to the .messages scrollport. */
+html.is-window-resizing .sidebar {
+  contain: layout;
 }
-
-html.is-window-resizing .bubble-row {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 72px;
-}
-html.is-window-resizing .messages-content {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 400px;
+/* While width reflows mid-drag, let the browser keep the visible message
+   anchored (idle keeps overflow-anchor:none for stick-to-bottom appends). */
+html.is-window-resizing .messages {
+  overflow-anchor: auto;
 }
 
 /* Live Electron window resize: drop GPU-heavy effects that recomposite every frame.
    Class is toggled by windowResizeGate (no React re-render). Keep visual design when
    idle; during the drag, kill blur/mask and use denser fills so 10% frost does not
-   go see-through. Do not freeze --sidebar-w here — auto-collapse must stay immediate. */
+   go see-through. Auto-collapse/expand width uses .is-sidebar-auto-animating
+   (re-enables --sidebar-w transition for that one-shot; other effects stay off). */
 html.is-window-resizing .chat-member-pill,
 html.is-window-resizing .chat-gateway-btn,
 html.is-window-resizing .immersive-chat-fab,
 html.is-window-resizing .scroll-to-bottom-btn,
 html.is-window-resizing .mesh-exchange-close,
+html.is-window-resizing .new-btn,
+html.is-window-resizing .search-btn,
+html.is-window-resizing .footer-pill-expand:not(.footer-pill-expand-update),
 html.is-window-resizing .sidebar,
 html.is-window-resizing .modal.form-drawer,
 html.is-window-resizing .modal.form-drawer .field input,
@@ -306,7 +385,8 @@ html.is-window-resizing .modal.form-drawer .bot-picker-trigger,
 html.is-window-resizing .modal.form-drawer .aar-policy-select,
 html.is-window-resizing .modal.form-drawer .tool-mgmt-approval-select,
 html.is-window-resizing .modal.form-drawer .settings-row select,
-html.is-window-resizing .open-tasks-list-fold-inner,
+html.is-window-resizing .open-tasks-glass,
+html.is-window-resizing .open-tasks-list-fold.is-open,
 html.is-window-resizing .bubble-more-menu,
 html.is-window-resizing .chat-gateway-menu {
   backdrop-filter: none !important;
@@ -318,7 +398,11 @@ html.is-window-resizing .chat-gateway-btn,
 html.is-window-resizing .immersive-chat-fab,
 html.is-window-resizing .scroll-to-bottom-btn,
 html.is-window-resizing .mesh-exchange-close,
-html.is-window-resizing .open-tasks-list-fold-inner,
+html.is-window-resizing .new-btn,
+html.is-window-resizing .search-btn,
+html.is-window-resizing .footer-pill-expand:not(.footer-pill-expand-update),
+html.is-window-resizing .open-tasks-glass,
+html.is-window-resizing .open-tasks-list-fold.is-open,
 html.is-window-resizing .bubble-more-menu,
 html.is-window-resizing .chat-gateway-menu,
 html.is-window-resizing .modal.form-drawer {
@@ -367,10 +451,11 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
 }
 .sidebar {
   /* Darwin: window vibrancy supplies real frost; keep a light panel wash.
-     Other platforms: denser wash + CSS blur (no vibrancy). */
+     Other platforms: denser wash + CSS blur (no vibrancy).
+     Fill via --sidebar-bg (dark frost ON → translucent wash; frost OFF → #000). */
   position: relative;
   z-index: 1;
-  background: color-mix(in srgb, var(--panel) 18%, transparent);
+  background: var(--sidebar-bg);
   backdrop-filter: blur(28px);
   -webkit-backdrop-filter: blur(28px);
   display: flex;
@@ -387,30 +472,15 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
 .sidebar * { -webkit-app-region: no-drag; }
 :root[data-platform='darwin'] .sidebar {
   /* Vibrancy already blurs; avoid double-stacking CSS blur on the material. */
-  background: color-mix(in srgb, var(--panel) 12%, transparent);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
-}
-:root[data-theme='light'] .sidebar {
-  background: color-mix(in srgb, var(--panel) 22%, transparent);
-}
-:root[data-platform='darwin'][data-theme='light'] .sidebar {
-  background: color-mix(in srgb, var(--panel) 14%, transparent);
-}
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme='dark']) .sidebar {
-    background: color-mix(in srgb, var(--panel) 22%, transparent);
-  }
-  :root[data-platform='darwin']:not([data-theme='dark']) .sidebar {
-    background: color-mix(in srgb, var(--panel) 14%, transparent);
-  }
 }
 
 .sidebar-resize {
   position: relative;
   cursor: col-resize;
-  /* Hairline on the LEFT flush against session-list scrollbar; fill matches chat. */
-  background: var(--chat-bg);
+  /* Hairline on the LEFT flush against session-list scrollbar; fill via --sidebar-resize-bg. */
+  background: var(--sidebar-resize-bg);
   border-left: var(--hairline) solid var(--hairline-color);
   border-right: none;
   z-index: 5;
@@ -424,14 +494,12 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
     border-left-color: color-mix(in srgb, #a8a8ae 42%, transparent);
   }
 }
-/* Dark: fainter splitter than chat/header chrome; fill matches middle (--panel #121212) */
+/* Dark: fainter splitter than chat/header chrome; fill from --sidebar-resize-bg (= --panel). */
 :root[data-theme='dark'] .sidebar-resize {
-  background: #121212;
   border-left-color: color-mix(in srgb, var(--hairline-color) 38%, transparent);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) .sidebar-resize {
-    background: #121212;
     border-left-color: color-mix(in srgb, var(--hairline-color) 38%, transparent);
   }
 }
@@ -441,7 +509,7 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 2px;
+  gap: 12px;
   /* 4px top pad → ~+2px icon drop vs pure center; keep traffic-light band */
   padding: 4px 10px 0;
   flex-shrink: 0;
@@ -468,6 +536,8 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
 
 .new-btn,
 .search-btn {
+  /* Expanded topbar only (.app.narrow hides these; footer uses *-footer).
+     Default: icon only (no wash/border). Hover: rounded-square accent-soft. */
   width: 28px;
   height: 28px;
   border-radius: 8px;
@@ -480,7 +550,10 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   opacity: 0.95;
   border: none;
   background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, opacity 0.15s ease;
 }
 .new-btn svg,
 .search-btn svg {
@@ -500,7 +573,9 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
 :root[data-theme='light'] .search-btn,
 :root[data-theme='light'] .footer-btn .ico,
 :root[data-theme='light'] .app.narrow .new-btn-footer,
-:root[data-theme='light'] .app.narrow .search-btn-footer {
+:root[data-theme='light'] .app.narrow .search-btn-footer,
+:root[data-theme='light'] .footer-fab .new-btn-footer,
+:root[data-theme='light'] .footer-fab .search-btn-footer {
   color: #3f3f46;
   opacity: 1;
 }
@@ -509,7 +584,9 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   :root:not([data-theme='dark']) .search-btn,
   :root:not([data-theme='dark']) .footer-btn .ico,
   :root:not([data-theme='dark']) .app.narrow .new-btn-footer,
-  :root:not([data-theme='dark']) .app.narrow .search-btn-footer {
+  :root:not([data-theme='dark']) .app.narrow .search-btn-footer,
+  :root:not([data-theme='dark']) .footer-fab .new-btn-footer,
+  :root:not([data-theme='dark']) .footer-fab .search-btn-footer {
     color: #3f3f46;
     opacity: 1;
   }
@@ -622,6 +699,16 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   z-index: 1;
   /* Lock layout size so BotAvatar overscan / emoji metrics cannot grow the pin hover pad. */
   contain: layout size;
+  /* Ease with --sidebar-w when --pin-avatar flips at collapse/expand start
+     (width-band sync; not deferred railLayout). */
+  transition:
+    width 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+    height 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+    min-width 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+    min-height 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+    max-width 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+    max-height 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+    border-radius 0.3s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .session-pin-avatar {
   width: var(--pin-avatar);
@@ -638,10 +725,45 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   overflow: visible;
   box-sizing: border-box;
   line-height: 0;
+  transition:
+    width 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+    height 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+    min-width 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+    min-height 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+    max-width 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+    max-height 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+    border-radius 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+    font-size 0.3s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .session-pin-avatar-shell > .session-pin-avatar {
   width: var(--pin-avatar);
   height: var(--pin-avatar);
+}
+/* BorderBeam size=sm injects overflow:hidden — clips bot-avatars 1.5× busy hop.
+   Beam wraps the full pin chrome (avatar + name), matching session-list row beam. */
+.session-pin-item > .session-beam {
+  overflow: visible !important;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 13px;
+  box-sizing: border-box;
+  /* Expand to the selected member pad box (parent keeps padding for idle layout). */
+  margin: calc(-1 * var(--pin-item-pad)) calc(-1 * var(--pin-item-pad-x));
+  padding: var(--pin-item-pad) var(--pin-item-pad-x);
+  width: calc(100% + 2 * var(--pin-item-pad-x));
+  border-radius: var(--rail-row-radius);
+  position: relative;
+  z-index: 1;
+}
+.app.narrow .session-pin-item > .session-beam {
+  margin: calc(-1 * var(--rail-row-pad));
+  padding: var(--rail-row-pad);
+  width: calc(100% + 2 * var(--rail-row-pad));
+  border-radius: var(--rail-row-radius);
+}
+.session-pin-item:has(> .session-beam) {
+  z-index: 2;
 }
 /* Pin unread ring must match 15px shell (+3px inset), not rail's 12px. */
 .session-pin-avatar-shell.unread::after {
@@ -734,15 +856,19 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   z-index: 25;
 }
 
-/* Inset divider — same width as session rows (14px margins).
-   Equal block margins (was 2px/8px) so top/bottom air matches. */
+/* Pin→list divider: zero footprint while expanded. Rail chrome comes from
+   @container sidebar (max-width: 185px) / .app.narrow so it does not pop in
+   only after deferred railLayout (collapse-end stutter). */
 .session-pin-divider {
-  height: var(--hairline, 0.5px);
-  min-height: 1px;
-  margin: 8px 14px;
-  background: var(--border);
+  height: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: transparent;
   flex-shrink: 0;
   border: none;
+  pointer-events: none;
 }
 /* --- Hidden assistants/squads collapsed group (bottom of session list) --- */
 .session-hidden-group {
@@ -868,7 +994,6 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   width: 100%;
   height: var(--hairline, 0.5px);
   min-height: 1px;
-  background: var(--border);
   border-radius: 1px;
   transition: opacity 0.12s ease;
 }
@@ -1154,7 +1279,6 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   width: 100%;
   height: var(--hairline, 0.5px);
   min-height: 1px;
-  background: var(--border);
   border-radius: 1px;
   transition: opacity 0.12s ease;
 }
@@ -1163,19 +1287,29 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   opacity: 0;
 }
 
-/* Dark + narrow: soften group/pin hairlines over vibrancy frost.
+/* Pin/group/hidden hairline color: one stable rule for expanded+rail. Do not
+   set background on .app.narrow / @container ::before — that equal-specificity
+   override after collapse-end railLayout flashed --border then soft (or vice
+   versa). Dark softener must always win over the default. Also apply without
+   .app.narrow so mid-collapse @container hairlines keep the same color. */
+.session-pin-divider::before,
+.session-hidden-header::before,
+.session-owner-group-header:not(.renaming)::before {
+  background: var(--border);
+}
+/* Dark: soften group/pin/hidden hairlines over vibrancy frost.
    Solid --border (#1f1f1f) reads as a hard black stroke when light desktop
    shows through the sidebar glass; use a low-alpha light line instead
    (same idea as other frost-friendly chrome). Light theme unchanged. */
-:root[data-theme='dark'] .app.narrow .session-hidden-header::before,
-:root[data-theme='dark'] .app.narrow .session-owner-group-header:not(.renaming)::before,
-:root[data-theme='dark'] .app.narrow .session-pin-divider::before {
+:root[data-theme='dark'] .session-hidden-header::before,
+:root[data-theme='dark'] .session-owner-group-header:not(.renaming)::before,
+:root[data-theme='dark'] .session-pin-divider::before {
   background: color-mix(in srgb, #ffffff 16%, transparent);
 }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme='light']) .app.narrow .session-hidden-header::before,
-  :root:not([data-theme='light']) .app.narrow .session-owner-group-header:not(.renaming)::before,
-  :root:not([data-theme='light']) .app.narrow .session-pin-divider::before {
+  :root:not([data-theme='light']) .session-hidden-header::before,
+  :root:not([data-theme='light']) .session-owner-group-header:not(.renaming)::before,
+  :root:not([data-theme='light']) .session-pin-divider::before {
     background: color-mix(in srgb, #ffffff 16%, transparent);
   }
 }
@@ -1402,7 +1536,6 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   width: 100%;
   height: var(--hairline, 0.5px);
   min-height: 1px;
-  background: var(--border);
   border-radius: 1px;
 }
 
@@ -1676,7 +1809,7 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   position: relative;
   z-index: 1;
 }
-/* Edit assistant / squad: centered avatar, then name, then plain description. */
+/* Edit assistant / squad: centered avatar, then name. Description sits below (after avatar picker when open). */
 .avatar-preview-stack {
   display: flex;
   flex-direction: column;
@@ -1758,6 +1891,10 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   text-align: center;
   white-space: pre-wrap;
   word-break: break-word;
+}
+/* Assistant edit: description sits below avatar stack / picker (outside stack). */
+.form-drawer-body > .bot-form-description-text {
+  margin: 0 0 14px;
 }
 .avatar-preview-hit {
   position: relative;
@@ -2140,36 +2277,429 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
 .app.narrow .empty-side { display: none; }
 
 .sidebar-footer-row {
+  --footer-pill-circle: var(--footer-row-h);
+  /* Max expanded = three segment slots (settings: gear + site + about). */
+  --footer-pill-expanded: calc(var(--footer-row-h) * 3);
+  --footer-pill-gap: 8px;
+  --footer-pill-border-w: 0.5px;
+  /* Hover fill inset from the outer pill stroke (and between adjacent segs). */
+  --footer-pill-seg-inset: 2px;
   display: flex;
   flex-direction: row;
   align-items: center;
-  gap: 4px;
+  justify-content: center;
+  gap: var(--footer-pill-gap);
   width: 100%;
 }
 .sidebar-footer-row .footer-btn {
   flex: 1;
   min-width: 0;
 }
-/* Expanded: settings/market icon+text. Hide labels when sidebar is tight
-   (still expanded layout, before .narrow rail) — no tooltip. */
-@container sidebar (max-width: 200px) {
-  .sidebar-footer-row .footer-btn .label {
-    display: none;
+
+/* Expanded sidebar footer: exactly one sticky-expanded pill; others stay circles. Total width fixed. */
+.footer-pill-expand {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  height: var(--footer-row-h);
+  width: var(--footer-pill-circle);
+  max-width: var(--footer-pill-circle);
+  border-radius: 999px;
+  /* Light stroke so circles read on panel without competing with icons.
+     Frost ON: each pill is its own glass surface (not under a frosted parent).
+     Update blue variant overrides fill + kills blur below. */
+  border: var(--footer-pill-border-w) solid color-mix(in srgb, var(--text) 16%, var(--border));
+  /* Frost ON light: #fff wash (whiter). Dark overrides below → gray white-alpha. */
+  background: color-mix(in srgb, #ffffff 42%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  color: var(--muted);
+  overflow: hidden;
+  transition:
+    width 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+    max-width 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+    background 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease;
+}
+.footer-pill-expand.is-expanded {
+  width: var(--footer-pill-expanded);
+  max-width: var(--footer-pill-expanded);
+  color: var(--text);
+  background: color-mix(in srgb, #ffffff 56%, transparent);
+  border-color: color-mix(in srgb, var(--text) 22%, var(--border));
+}
+:root[data-theme='dark'] .footer-pill-expand:not(.footer-pill-expand-update) {
+  background: color-mix(in srgb, #ffffff 10%, transparent);
+}
+:root[data-theme='dark'] .footer-pill-expand.is-expanded:not(.footer-pill-expand-update) {
+  background: color-mix(in srgb, #ffffff 10%, transparent);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .footer-pill-expand:not(.footer-pill-expand-update) {
+    background: color-mix(in srgb, #ffffff 10%, transparent);
   }
-  .sidebar-footer-row .footer-btn {
-    justify-content: center;
-    gap: 0;
+  :root:not([data-theme='light']) .footer-pill-expand.is-expanded:not(.footer-pill-expand-update) {
+    background: color-mix(in srgb, #ffffff 10%, transparent);
   }
 }
-/* Icon-rail threshold (SIDEBAR_NARROW_AT = 128): hide pin names + topbar search/+
-   from the same container width pass as the grid column — no React-frame lag. */
-@container sidebar (max-width: 128px) {
+/* Width fit (ResizeObserver): shrink expanded extras before dropping pills. */
+.footer-pill-expand.is-expanded[data-extras="0"] {
+  width: var(--footer-pill-circle);
+  max-width: var(--footer-pill-circle);
+}
+.footer-pill-expand.is-expanded[data-extras="1"] {
+  width: calc(var(--footer-pill-circle) * 2);
+  max-width: calc(var(--footer-pill-circle) * 2);
+}
+.footer-pill-expand.is-expanded[data-extras="2"] {
+  width: calc(var(--footer-pill-circle) * 3);
+  max-width: calc(var(--footer-pill-circle) * 3);
+}
+.footer-pill-expand.is-expanded[data-extras="3"] {
+  width: calc(var(--footer-pill-circle) * 4);
+  max-width: calc(var(--footer-pill-circle) * 4);
+}
+.footer-pill-seg {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 var(--footer-row-h);
+  width: var(--footer-row-h);
+  height: var(--footer-row-h);
+  padding: 0;
+  margin: 0;
+  /* Transparent inset so hover fill does not flush against the outer pill border. */
+  border: var(--footer-pill-seg-inset) solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  background-clip: padding-box;
+  color: inherit;
+  cursor: pointer;
+  line-height: 0;
+  text-decoration: none;
+  box-sizing: border-box;
+}
+a.footer-pill-seg {
+  color: inherit;
+}
+.footer-pill-seg:hover,
+.footer-pill-seg:focus-visible {
+  color: var(--text);
+  background: var(--accent-soft);
+  background-clip: padding-box;
+}
+.footer-pill-seg:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.footer-pill-seg .ico {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+.footer-pill-seg .ico svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+.footer-pill-extra {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.14s ease;
+}
+.footer-pill-expand.is-expanded .footer-pill-extra {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Update pill: blue circle → blue pill with icon + 「更新」 (same expanded width as others). */
+.footer-pill-expand-update {
+  border-color: color-mix(in srgb, #1d4ed8 55%, #93c5fd);
+  background: #3b82f6;
+  /* Solid brand fill — not frosted glass. */
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  color: #fff;
+  width: var(--footer-pill-circle);
+  max-width: var(--footer-pill-circle);
+}
+.footer-pill-expand-update.is-expanded {
+  width: var(--footer-pill-expanded);
+  max-width: var(--footer-pill-expanded);
+  background: #2563eb;
+  border-color: color-mix(in srgb, #1e3a8a 40%, #93c5fd);
+  color: #fff;
+}
+.footer-pill-expand-update.is-expanded[data-extras="0"] {
+  width: var(--footer-pill-circle);
+  max-width: var(--footer-pill-circle);
+}
+.footer-pill-expand-update.is-expanded[data-extras="1"] {
+  width: calc(var(--footer-pill-circle) * 2);
+  max-width: calc(var(--footer-pill-circle) * 2);
+}
+.footer-pill-expand-update.is-expanded[data-extras="2"],
+.footer-pill-expand-update.is-expanded[data-extras="3"] {
+  width: calc(var(--footer-pill-circle) * 3);
+  max-width: calc(var(--footer-pill-circle) * 3);
+}
+.footer-pill-expand-update.downloading {
+  animation: okbot-update-pulse 1.2s ease-in-out infinite;
+}
+.footer-pill-expand-update.has-badge {
+  position: relative;
+}
+.footer-pill-expand-update.has-badge::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ef4444;
+  box-shadow: 0 0 0 1.5px #3b82f6;
+  pointer-events: none;
+  z-index: 1;
+}
+.footer-pill-update-main {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: var(--footer-row-h);
+  padding: 0 12px 0 10px;
+  gap: 6px;
+  justify-content: center;
+}
+.footer-pill-expand-update:not(.is-expanded) .footer-pill-update-main {
+  width: var(--footer-row-h);
+  min-width: var(--footer-row-h);
+  padding: 0;
+}
+.footer-pill-expand-update.is-expanded .footer-pill-update-main {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+}
+.footer-pill-expand-update.is-expanded[data-extras="0"] .footer-pill-update-main {
+  flex: 0 0 auto;
+  width: var(--footer-row-h);
+  min-width: var(--footer-row-h);
+  padding: 0;
+}
+.footer-pill-label {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+  opacity: 0;
+  max-width: 0;
+  overflow: hidden;
+  transition:
+    opacity 0.14s ease,
+    max-width 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.footer-pill-expand-update.is-expanded[data-extras="1"] .footer-pill-label,
+.footer-pill-expand-update.is-expanded[data-extras="2"] .footer-pill-label {
+  opacity: 1;
+  max-width: 4em;
+}
+.footer-pill-expand-update.is-expanded[data-extras="0"] .footer-pill-label {
+  opacity: 0;
+  max-width: 0;
+}
+.footer-pill-expand-update .footer-pill-seg:hover,
+.footer-pill-expand-update .footer-pill-seg:focus-visible {
+  background: color-mix(in srgb, #fff 14%, transparent);
+  color: #fff;
+}
+.footer-pill-expand-update .ico svg {
+  width: 16px;
+  height: 16px;
+}
+.footer-pill-expand-update button:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+/* Expanded footer pills; keep row compact when tight.
+   Pill hide / extras collapse is driven by ResizeObserver + data-extras
+   (see footerPillFit.ts); this only tightens the gap. */
+@container sidebar (max-width: 200px) {
+  .sidebar-footer-row {
+    --footer-pill-gap: 2px;
+    gap: var(--footer-pill-gap);
+  }
+}
+/* Icon-rail threshold (SIDEBAR_NARROW_AT = 185, was 128): hide pin names + topbar search/+
+   from the same container width pass as the grid column — no React-frame lag.
+   Also apply pin-strip + group/hidden header→divider rail chrome here (not only
+   deferred .app.narrow) so collapse-end railLayout does not reflow pins / flash
+   dividers a second time after the width ease. */
+@container sidebar (max-width: 185px) {
   .sidebar-topbar .search-btn,
   .sidebar-topbar .new-btn {
     display: none;
   }
   .session-pin-item:not(.renaming) .session-pin-name-edit {
     display: none;
+  }
+  .session-pin-strip {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 2px;
+    padding: 0;
+  }
+  .session-pin-item {
+    max-width: none;
+    min-width: 0;
+    width: fit-content;
+    margin-inline: auto;
+    padding: var(--rail-row-pad);
+    border-radius: var(--rail-row-radius);
+  }
+  .session-pin-item > .session-beam {
+    margin: calc(-1 * var(--rail-row-pad));
+    padding: var(--rail-row-pad);
+    width: calc(100% + 2 * var(--rail-row-pad));
+    border-radius: var(--rail-row-radius);
+  }
+  .session-pin-avatar-shell {
+    /* Follow --pin-avatar (width-band) so expand can grow before exiting 185. */
+    width: var(--pin-avatar);
+    height: var(--pin-avatar);
+    min-width: var(--pin-avatar);
+    min-height: var(--pin-avatar);
+    max-width: var(--pin-avatar);
+    max-height: var(--pin-avatar);
+    border-radius: 10px;
+    contain: none;
+  }
+  .session-pin-avatar-shell.unread::after {
+    border-radius: 12px;
+  }
+  .session-pin-item .session-avatar,
+  .session-pin-item .session-pin-avatar {
+    width: var(--pin-avatar);
+    height: var(--pin-avatar);
+    min-width: var(--pin-avatar);
+    min-height: var(--pin-avatar);
+    max-width: var(--pin-avatar);
+    max-height: var(--pin-avatar);
+    border-radius: 10px;
+    font-size: var(--pin-avatar);
+    transform-origin: center center;
+  }
+  .session-pin-item.renaming .session-pin-name-edit {
+    display: block;
+    width: var(--pin-avatar);
+    max-width: var(--pin-avatar);
+  }
+  .session-pin-divider {
+    width: var(--rail-avatar);
+    height: 16px;
+    min-height: 16px;
+    margin: 8px auto;
+    align-self: center;
+    background: transparent;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: visible;
+  }
+  .session-pin-divider::before {
+    content: '';
+    display: block;
+    width: 100%;
+    height: var(--hairline, 0.5px);
+    min-height: 1px;
+    border-radius: 1px;
+  }
+
+  /* Group / hidden headers → rail dividers on the same width pass as pins /
+     hamburger (not deferred .app.narrow after collapse-end). */
+  .session-owner-group-header:not(.renaming),
+  .session-hidden-header {
+    position: relative;
+    width: var(--rail-avatar);
+    max-width: var(--rail-avatar);
+    margin-inline: auto;
+    justify-content: center;
+    align-items: center;
+    padding: 0;
+    height: 16px;
+    min-height: 16px;
+    box-sizing: border-box;
+    background: transparent !important;
+    border-radius: var(--rail-row-radius);
+  }
+  .session-owner-group-header:not(.renaming)::before,
+  .session-hidden-header::before {
+    content: '';
+    display: block;
+    width: 100%;
+    height: var(--hairline, 0.5px);
+    min-height: 1px;
+    border-radius: 1px;
+    transition: opacity 0.12s ease;
+  }
+  .session-owner-group-header:not(.renaming):hover::before,
+  .session-owner-group-header:not(.renaming):focus-visible::before,
+  .session-hidden-header:hover::before,
+  .session-hidden-header:focus-visible::before {
+    opacity: 0;
+  }
+  .session-owner-group-header:not(.renaming) .session-owner-group-label,
+  .session-owner-group-count,
+  .session-hidden-label,
+  .session-hidden-count {
+    display: none;
+  }
+  .session-owner-group-trailing,
+  .session-hidden-trailing {
+    position: absolute;
+    inset: 0;
+    margin: 0;
+    min-width: 0;
+    min-height: 0;
+    width: 100%;
+    height: 100%;
+    place-items: center;
+  }
+  .session-owner-group-header:not(.renaming) .session-owner-group-chevron,
+  .session-hidden-header .session-hidden-chevron {
+    width: 16px;
+    height: 16px;
+    opacity: 0;
+    visibility: hidden;
+  }
+  .session-owner-group-header:not(.renaming):hover .session-owner-group-chevron,
+  .session-owner-group-header:not(.renaming):focus-visible .session-owner-group-chevron,
+  .session-hidden-header:hover .session-hidden-chevron,
+  .session-hidden-header:focus-visible .session-hidden-chevron {
+    opacity: 0.8;
+    visibility: visible;
+  }
+  .session-owner-group-header:not(.renaming):hover,
+  .session-owner-group-header:not(.renaming):focus-visible,
+  .session-hidden-header:hover,
+  .session-hidden-header:focus-visible {
+    background: var(--accent-soft) !important;
+  }
+  .session-group-sticky {
+    display: flex;
+    justify-content: center;
+    width: 100%;
+  }
+  .session-pane:has(> .session-pin-strip):not(:has(> .session-pin-divider))
+    .session-list > .session-owner-group:first-child > .session-group-sticky {
+    margin-top: 0;
   }
 }
 .sidebar-footer {
@@ -2187,6 +2717,12 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   gap: 0;
   position: relative;
   overflow: visible;
+}
+.app.narrow .sidebar-footer-row {
+  display: none;
+}
+.app.narrow .footer-fab {
+  display: flex;
 }
 
 
@@ -2297,14 +2833,92 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   opacity: 1;
 }
 
-/* Collapsed footer: hamburger / X toggle with upward fly-out actions */
+/* Fab fly-out chrome without waiting for deferred .app.narrow (container may
+   show .footer-fab while railLayout is still pending). */
+.footer-fab .footer-btn {
+  width: var(--rail-avatar);
+  height: var(--rail-avatar);
+  min-height: 0;
+  padding: 0;
+  gap: 0;
+  justify-content: center;
+  border-radius: 10px;
+  opacity: 0.85;
+  line-height: 0;
+}
+.footer-fab .footer-btn .label { display: none !important; }
+.footer-fab .footer-btn .ico {
+  width: 20px;
+  height: 20px;
+  color: inherit;
+  opacity: 1;
+}
+.footer-fab .footer-btn .ico svg {
+  width: 20px;
+  height: 20px;
+}
+.footer-fab .new-btn-footer,
+.footer-fab .search-btn-footer {
+  width: var(--rail-avatar);
+  height: var(--rail-avatar);
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  line-height: 0;
+  color: var(--muted);
+  opacity: 0.85;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+.footer-fab .new-btn-footer svg,
+.footer-fab .search-btn-footer svg {
+  display: block;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+}
+.footer-fab .new-btn-footer:hover,
+.footer-fab .search-btn-footer:hover,
+.footer-fab .footer-btn:hover {
+  background: var(--accent-soft);
+  color: var(--text);
+  opacity: 1;
+}
+.footer-fab .footer-update-btn {
+  width: var(--rail-avatar);
+  height: var(--rail-avatar);
+  border-radius: 10px;
+}
+
+/* Collapsed footer: hamburger / X toggle with upward fly-out actions.
+   Hidden while expanded; @container (max-width: 185px) / .app.narrow shows it.
+   This @container block MUST follow `.footer-fab { display: none }` so equal
+   specificity still wins on the width pass (not only after deferred .narrow). */
 .footer-fab {
   position: relative;
-  display: flex;
+  display: none;
   flex-direction: column;
   align-items: center;
   /* match toggle = narrow session-item chrome (--rail-row-h) */
   width: var(--rail-row-h);
+}
+@container sidebar (max-width: 185px) {
+  .sidebar-footer {
+    align-items: center;
+    padding: 2px 6px 6px;
+    gap: 0;
+    position: relative;
+    overflow: visible;
+  }
+  .sidebar-footer-row {
+    display: none;
+  }
+  .footer-fab {
+    display: flex;
+  }
 }
 .footer-fab-toggle {
   /*
@@ -2380,6 +2994,7 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   gap: 2px;
   padding: 4px;
   border-radius: 12px;
+  /* Popup list fill (hamburger fly-out). Toggle button itself stays transparent. */
   background: var(--panel-2);
   border: var(--hairline) solid var(--border);
   box-shadow: none;
@@ -2462,19 +3077,11 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   height: 100%;
   max-height: 100%;
   overflow: hidden;
-  /* Opaque chat surface — keeps vibrancy/transparent window out of the transcript. */
-  background: var(--chat-bg);
+  /* Opaque chat surface — keeps vibrancy/transparent window out of the transcript.
+     Fill via --main-bg (light --chat-bg; dark --panel). */
+  background: var(--main-bg);
   position: relative;
   box-sizing: border-box;
-}
-/* Dark: match middle panel / splitter fill (--panel #121212); light stays --chat-bg */
-:root[data-theme='dark'] .main {
-  background: #121212;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme='light']) .main {
-    background: #121212;
-  }
 }
 .main-topdrag {
   position: absolute;
@@ -3977,7 +4584,16 @@ button.message-attach-image {
    Top margin matches .composer padding-top (10px); bottom margin is 0 so the
    composer's own top padding is the only air below (avoids stacking margins). */
 .open-tasks-panel {
-  /* Anchor for upward absolute overlay; keep collapsed header in flow only. */
+  /* Anchor for upward absolute overlay; keep collapsed header in flow only.
+     Expanded: one unified card — list overlay flush above + bar below; glass top
+     border acts as the divider (no gap / no second floating card).
+     Frost: do NOT put backdrop-filter on this panel. A parent with backdrop-filter
+     becomes a Backdrop Root and the absolute .open-tasks-list-fold child cannot
+     blur chat messages underneath (only a translucent wash shows). Frost + chrome
+     live on sibling layers: .open-tasks-glass (header bar) + .open-tasks-list-fold.is-open.
+     Border must sit on the frost layer (not this transparent shell): a backdrop-filter
+     sibling covering inset:0 otherwise composites over the shell's hairline at the
+     rounded top corners when collapsed. */
   position: relative;
   z-index: 9;
   overflow: visible;
@@ -3987,11 +4603,41 @@ button.message-attach-image {
   box-sizing: border-box;
   padding: 8px 10px;
   border-radius: 12px;
-  background: var(--panel-2);
-  border: var(--hairline) solid var(--border);
+  background: transparent;
+  border: none;
   color: var(--text);
 }
+.open-tasks-panel.is-expanded {
+  /* Top corners belong to the list overlay; glass top border stays as the divider. */
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+/* Header-bar frost — sibling of the fold (not an ancestor), so fold blur still
+   samples messages. Same ~10% panel + blur 28px as .modal.form-drawer.
+   Border lives here with the frost so collapsed top-left/top-right hairlines paint. */
+.open-tasks-glass {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  box-sizing: border-box;
+  border-radius: inherit;
+  border: var(--hairline) solid var(--border);
+  background: color-mix(in srgb, var(--panel) 10%, transparent);
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+}
+:root[data-theme='light'] .open-tasks-glass {
+  background: color-mix(in srgb, var(--panel) 10%, transparent);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .open-tasks-glass {
+    background: color-mix(in srgb, var(--panel) 10%, transparent);
+  }
+}
 .open-tasks-header {
+  position: relative;
+  z-index: 1;
   width: 100%;
   display: flex;
   align-items: center;
@@ -4035,12 +4681,13 @@ button.message-attach-image {
   /* Expand-up: CCW from collapsed (-90°) to up (-180°); collapse CW back. */
   transform: rotate(-180deg);
 }
-/* Expand upward as absolute overlay above the header — must not push .messages-shell. */
+/* Expand upward flush against the panel — same card, no gap / second floater.
+   Must not push .messages-shell. */
 .open-tasks-list-fold {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: calc(100% + 6px);
+  bottom: 100%;
   z-index: 1;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -4049,13 +4696,31 @@ button.message-attach-image {
   width: 100%;
   min-width: 0;
   overflow: hidden;
-  border-radius: 12px;
+  border-radius: 12px 12px 0 0;
   transition: grid-template-rows 0.22s cubic-bezier(0.22, 1, 0.36, 1);
   pointer-events: none;
+  background: transparent;
+  border: 0 solid var(--border);
+  border-bottom: none;
 }
 .open-tasks-list-fold.is-open {
   grid-template-rows: 1fr;
   pointer-events: auto;
+  /* Continuous with .open-tasks-panel: shared frost fill + side/top chrome. */
+  background: color-mix(in srgb, var(--panel) 10%, transparent);
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+  border-width: var(--hairline);
+  border-style: solid;
+  border-bottom: none;
+}
+:root[data-theme='light'] .open-tasks-list-fold.is-open {
+  background: color-mix(in srgb, var(--panel) 10%, transparent);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .open-tasks-list-fold.is-open {
+    background: color-mix(in srgb, var(--panel) 10%, transparent);
+  }
 }
 .open-tasks-list-fold-inner {
   overflow: hidden;
@@ -4065,20 +4730,10 @@ button.message-attach-image {
   transition: opacity 0.16s ease;
   box-sizing: border-box;
   padding: 8px 10px;
-  border-radius: 12px;
-  border: var(--hairline) solid var(--border);
-  /* Match .modal.form-drawer / .sidebar frost: ~10% panel + blur 28px. */
-  background: color-mix(in srgb, var(--panel) 10%, transparent);
-  backdrop-filter: blur(28px);
-  -webkit-backdrop-filter: blur(28px);
-}
-:root[data-theme='light'] .open-tasks-list-fold-inner {
-  background: color-mix(in srgb, var(--panel) 10%, transparent);
-}
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme='dark']) .open-tasks-list-fold-inner {
-    background: color-mix(in srgb, var(--panel) 10%, transparent);
-  }
+  /* No separate card chrome — lives inside the unified panel+fold shell. */
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 .open-tasks-list-fold.is-open > .open-tasks-list-fold-inner {
   opacity: 1;
@@ -5093,8 +5748,8 @@ button.message-attach-image {
   background: color-mix(in srgb, var(--panel) 10%, transparent);
   backdrop-filter: blur(28px);
   -webkit-backdrop-filter: blur(28px);
-  /* Soft left edge depth (no page dim/mask); dark theme strengthens below. */
-  box-shadow: -6px 0 18px rgba(0, 0, 0, 0.14);
+  /* Edge via border only (no soft offset shadow). */
+  box-shadow: none;
   display: flex;
   flex-direction: column;
   animation: okbot-drawer-in 0.2s cubic-bezier(0.22, 1, 0.36, 1);
@@ -5112,16 +5767,15 @@ button.message-attach-image {
     animation: none;
   }
 }
-/* Dark: left edge lighter than default --hairline-color (#4a4a4a);
-   strengthen left shadow — shared 0.14 alpha disappears on dark panels. */
+/* Dark: left edge lighter than default --hairline-color (#4a4a4a). */
 :root[data-theme='dark'] .modal.form-drawer {
   border-left-color: color-mix(in srgb, var(--text) 22%, transparent);
-  box-shadow: -8px 0 28px rgba(0, 0, 0, 0.55);
+  box-shadow: none;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) .modal.form-drawer {
     border-left-color: color-mix(in srgb, var(--text) 22%, transparent);
-    box-shadow: -8px 0 28px rgba(0, 0, 0, 0.55);
+    box-shadow: none;
   }
 }
 :root[data-theme='light'] .modal.form-drawer {
@@ -5182,16 +5836,16 @@ button.message-attach-image {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   border-color: var(--border);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  box-shadow: none;
 }
 :root[data-theme='light'] .modal.form-drawer .bot-picker-menu {
   background: #fff;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  box-shadow: none;
 }
 @media (prefers-color-scheme: light) {
   :root:not([data-theme='dark']) .modal.form-drawer .bot-picker-menu {
     background: #fff;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+    box-shadow: none;
   }
 }
 .modal.form-drawer .bot-picker-search {
@@ -6842,18 +7496,19 @@ button.message-attach-image {
   pointer-events: none;
   letter-spacing: 0.02em;
 }
-/* Static brushed-metal fill — no keyframes / flow animation. */
+/* Static brushed-metal fill — no keyframes / flow animation.
+   Stops + opacity come from theme tokens so light/dark (and future themes) track. */
 .chat-watermark-metal {
   font-size: 48px;
   font-weight: 650;
   line-height: 1.1;
   background-image: repeating-linear-gradient(
     110deg,
-    #6b6b6b 0px,
-    #959595 45px,
-    #f0f0f0 90px,
-    #8a8a8a 135px,
-    #6b6b6b 180px
+    var(--chat-watermark-metal-0) 0px,
+    var(--chat-watermark-metal-1) 45px,
+    var(--chat-watermark-metal-2) 90px,
+    var(--chat-watermark-metal-3) 135px,
+    var(--chat-watermark-metal-0) 180px
   );
   background-position: 60px 0;
   background-size: auto;
@@ -6861,31 +7516,7 @@ button.message-attach-image {
   background-clip: text;
   color: transparent;
   -webkit-text-fill-color: transparent;
-  opacity: 0.55;
-}
-:root[data-theme='light'] .chat-watermark-metal {
-  opacity: 0.42;
-  background-image: repeating-linear-gradient(
-    110deg,
-    #8a8a8a 0px,
-    #b0b0b0 45px,
-    #ffffff 90px,
-    #9a9a9a 135px,
-    #8a8a8a 180px
-  );
-}
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme='dark']) .chat-watermark-metal {
-    opacity: 0.42;
-    background-image: repeating-linear-gradient(
-      110deg,
-      #8a8a8a 0px,
-      #b0b0b0 45px,
-      #ffffff 90px,
-      #9a9a9a 135px,
-      #8a8a8a 180px
-    );
-  }
+  opacity: var(--chat-watermark-opacity);
 }
 
 .settings-toggle {
@@ -7671,24 +8302,6 @@ button.message-attach-image {
   padding: 8px 12px 0;
 }
 
-/* Match .tool-mgmt-approval-select exactly so rule rows look like tool rows */
-.aar-item-action {
-  /* unused if rows use tool-mgmt-approval-select; keep as alias */
-  background: #2a2a2a;
-  border: none;
-  border-radius: 8px;
-  padding: 5px 10px;
-  width: 108px;
-  flex-shrink: 0;
-  box-sizing: border-box;
-  color: var(--text);
-  font-size: 12px;
-  outline: none;
-}
-:root[data-theme='light'] .aar-item-action {
-  background: #fff;
-  border: 1px solid var(--border);
-}
 
 .aar-chevron-btn {
   width: 28px;
@@ -9760,28 +10373,28 @@ button.message-attach-image {
   backdrop-filter: blur(28px);
   -webkit-backdrop-filter: blur(28px);
   border: var(--hairline) solid var(--border);
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  box-shadow: none;
 }
 :root[data-theme='light'] .bubble-more-menu {
   background: color-mix(in srgb, var(--panel) 10%, transparent);
   border-color: color-mix(in srgb, #000000 10%, transparent);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.10);
+  box-shadow: none;
 }
 @media (prefers-color-scheme: light) {
   :root:not([data-theme='dark']) .bubble-more-menu {
     background: color-mix(in srgb, var(--panel) 10%, transparent);
     border-color: color-mix(in srgb, #000000 10%, transparent);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.10);
+    box-shadow: none;
   }
 }
 :root[data-theme='dark'] .bubble-more-menu {
   border-color: color-mix(in srgb, var(--text) 22%, transparent);
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
+  box-shadow: none;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) .bubble-more-menu {
     border-color: color-mix(in srgb, var(--text) 22%, transparent);
-    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
+    box-shadow: none;
   }
 }
 
@@ -9798,28 +10411,28 @@ button.message-attach-image {
   backdrop-filter: blur(28px);
   -webkit-backdrop-filter: blur(28px);
   border: var(--hairline) solid var(--border);
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  box-shadow: none;
 }
 :root[data-theme='light'] .chat-gateway-menu {
   background: color-mix(in srgb, var(--panel) 10%, transparent);
   border-color: color-mix(in srgb, #000000 10%, transparent);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.10);
+  box-shadow: none;
 }
 @media (prefers-color-scheme: light) {
   :root:not([data-theme='dark']) .chat-gateway-menu {
     background: color-mix(in srgb, var(--panel) 10%, transparent);
     border-color: color-mix(in srgb, #000000 10%, transparent);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.10);
+    box-shadow: none;
   }
 }
 :root[data-theme='dark'] .chat-gateway-menu {
   border-color: color-mix(in srgb, var(--text) 22%, transparent);
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
+  box-shadow: none;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) .chat-gateway-menu {
     border-color: color-mix(in srgb, var(--text) 22%, transparent);
-    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
+    box-shadow: none;
   }
 }
 
@@ -10068,6 +10681,23 @@ button.message-attach-image {
 }
 .instructions-subtab-toggle {
   margin-bottom: 14px;
+}
+.instructions-other-tab-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.instructions-other-count {
+  min-width: 18px;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  user-select: none;
+}
+.sliding-pill-tabs .marketplace-tabs-track > button.active .instructions-other-count,
+.avatar-kind-toggle > button.active .instructions-other-count {
+  background: color-mix(in srgb, var(--accent, #6366f1) 22%, transparent);
+  color: var(--text);
 }
 
 /* In-app confirm (replaces window.confirm) — above settings / model-edit */
@@ -10892,9 +11522,11 @@ button.message-attach-image {
 }
 
 
-/* Edit assistant/squad: 详情 / 任务 / 自动化 / 记忆 / 技能 / 资源
-   Tabs reuse Market sliding-pill (.marketplace-tabs-track / .marketplace-tabs-pill).
-   margin-bottom is the single shared gap from tabs → first card/content. */
+/* Shared sliding-pill tabs (settings sub-tabs, edit assistant/squad, …).
+   Reuses Market track/pill (.marketplace-tabs-track / .marketplace-tabs-pill).
+   margin-bottom is the single shared gap from tabs → first card/content.
+   .owner-form-tabs kept as alias class for form drawers. */
+.sliding-pill-tabs,
 .owner-form-tabs {
   margin: 4px 0 12px;
   width: 100%;
@@ -10902,15 +11534,32 @@ button.message-attach-image {
   justify-content: center;
   flex-shrink: 0;
 }
+.sliding-pill-tabs .marketplace-tabs-track,
 .owner-form-tabs .marketplace-tabs-track {
+  /* Cap width so many tabs never paint past the rounded border. */
+  max-width: 100%;
   width: auto;
   display: inline-flex;
+  box-sizing: border-box;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
+  scrollbar-width: none;
 }
+.sliding-pill-tabs .marketplace-tabs-track::-webkit-scrollbar,
+.owner-form-tabs .marketplace-tabs-track::-webkit-scrollbar {
+  display: none;
+}
+.sliding-pill-tabs .marketplace-tabs-track > button,
 .owner-form-tabs .marketplace-tabs-track > button {
-  flex: 0 0 auto;
+  /* Allow shrink when labels exceed drawer width; scroll remains as fallback. */
+  flex: 0 1 auto;
   min-width: 0;
   font-size: 12px;
-  padding: 6px 14px;
+  padding: 6px 10px;
+  white-space: nowrap;
 }
 /* First panel after tabs: no extra top margin on list-cards / details fields.
    Direct .list-card siblings margin-collapsed with tabs (gap 12px) while cards
@@ -11222,7 +11871,7 @@ button.owner-task-row:hover {
   transition: transform 0.12s ease;
   user-select: none;
   -webkit-user-drag: none;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.28);
+  box-shadow: none;
   backface-visibility: hidden;
 }
 .chat-image-lightbox-zoom {
@@ -11239,8 +11888,8 @@ button.owner-task-row:hover {
   opacity: 1;
 }
 .chat-image-lightbox-btn {
-  width: 40px;
-  height: 40px;
+  width: 32px;
+  height: 32px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -11267,8 +11916,8 @@ button.owner-task-row:hover {
   outline-offset: 2px;
 }
 .chat-image-lightbox-btn svg {
-  width: 18px;
-  height: 18px;
+  width: 15px;
+  height: 15px;
   display: block;
 }
 .chat-image-lightbox-zoom-btn {
@@ -11416,7 +12065,21 @@ button.owner-task-row:hover {
 /* === translucent OFF (settings.translucent === false) ===
    Kill frost/glass everywhere: opaque fills, no backdrop-filter.
    Darwin: createWindow skips transparent+vibrancy when frost is off; live
-   toggle recreates the window (see applyWindowTranslucent). */
+   toggle recreates the window (see applyWindowTranslucent).
+   Dark sidebar token → solid #000000 (desired when frost is off). */
+:root[data-translucent='false'] {
+  --sidebar-bg: var(--panel);
+}
+:root[data-translucent='false'][data-theme='dark'],
+:root[data-translucent='false'][data-platform='darwin'][data-theme='dark'] {
+  --sidebar-bg: #000000;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-translucent='false']:not([data-theme='light']),
+  :root[data-translucent='false'][data-platform='darwin']:not([data-theme='light']) {
+    --sidebar-bg: #000000;
+  }
+}
 :root[data-translucent='false'] html,
 :root[data-translucent='false'] body,
 :root[data-translucent='false'] #root {
@@ -11435,12 +12098,12 @@ button.owner-task-row:hover {
 :root[data-translucent='false'][data-platform='darwin'] .sidebar,
 :root[data-translucent='false'][data-theme='light'] .sidebar,
 :root[data-translucent='false'][data-platform='darwin'][data-theme='light'] .sidebar {
-  background: var(--panel) !important;
+  background: var(--sidebar-bg) !important;
 }
 @media (prefers-color-scheme: light) {
   :root[data-translucent='false']:not([data-theme='dark']) .sidebar,
   :root[data-translucent='false'][data-platform='darwin']:not([data-theme='dark']) .sidebar {
-    background: var(--panel) !important;
+    background: var(--sidebar-bg) !important;
   }
 }
 :root[data-translucent='false'] .modal.new-bot-dialog,
@@ -11487,21 +12150,69 @@ button.owner-task-row:hover {
     box-shadow: none;
   }
 }
-:root[data-translucent='false'] .open-tasks-list-fold-inner,
-:root[data-translucent='false'][data-theme='light'] .open-tasks-list-fold-inner {
-  background: var(--panel) !important;
+:root[data-translucent='false'] .open-tasks-glass,
+:root[data-translucent='false'] .open-tasks-list-fold.is-open,
+:root[data-translucent='false'][data-theme='light'] .open-tasks-glass,
+:root[data-translucent='false'][data-theme='light'] .open-tasks-list-fold.is-open {
+  background: var(--panel-2) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 @media (prefers-color-scheme: light) {
-  :root[data-translucent='false']:not([data-theme='dark']) .open-tasks-list-fold-inner {
-    background: var(--panel) !important;
+  :root[data-translucent='false']:not([data-theme='dark']) .open-tasks-glass,
+  :root[data-translucent='false']:not([data-theme='dark']) .open-tasks-list-fold.is-open {
+    background: var(--panel-2) !important;
   }
 }
 :root[data-translucent='false'] .immersive-chat-fab,
 :root[data-translucent='false'] .scroll-to-bottom-btn,
 :root[data-translucent='false'] .mesh-exchange-close,
-:root[data-translucent='false'] .footer-fab-toggle,
 :root[data-translucent='false'] .footer-fab-actions {
   background: var(--panel) !important;
+}
+/* Expanded sidebar search/+: stay transparent (hover accent-soft) even when frost is off.
+   Footer pills still use solid wash below. */
+:root[data-translucent='false'] .new-btn,
+:root[data-translucent='false'] .search-btn {
+  background: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border: none !important;
+}
+:root[data-translucent='false'] .new-btn:hover,
+:root[data-translucent='false'] .search-btn:hover {
+  background: var(--accent-soft) !important;
+}
+
+/* Footer pill chrome: solid wash when frost is off.
+   Light → #fff (whiter); dark → white-alpha gray (not panel-2 near-black). */
+:root[data-translucent='false'] .footer-pill-expand:not(.footer-pill-expand-update) {
+  background: color-mix(in srgb, #ffffff 72%, transparent) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+:root[data-translucent='false'] .footer-pill-expand.is-expanded:not(.footer-pill-expand-update) {
+  background: color-mix(in srgb, #ffffff 88%, transparent) !important;
+}
+:root[data-translucent='false'][data-theme='dark'] .footer-pill-expand:not(.footer-pill-expand-update) {
+  background: color-mix(in srgb, #ffffff 10%, transparent) !important;
+}
+:root[data-translucent='false'][data-theme='dark'] .footer-pill-expand.is-expanded:not(.footer-pill-expand-update) {
+  background: color-mix(in srgb, #ffffff 10%, transparent) !important;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-translucent='false']:not([data-theme='light']) .footer-pill-expand:not(.footer-pill-expand-update) {
+    background: color-mix(in srgb, #ffffff 10%, transparent) !important;
+  }
+  :root[data-translucent='false']:not([data-theme='light']) .footer-pill-expand.is-expanded:not(.footer-pill-expand-update) {
+    background: color-mix(in srgb, #ffffff 10%, transparent) !important;
+  }
+}
+/* Hamburger stays unfilled (matches default .footer-fab-toggle { background: transparent }).
+   Do not reintroduce a panel wash here when translucency is off. */
+:root[data-translucent='false'] .footer-fab-toggle,
+:root[data-translucent='false'] .footer-fab-toggle:hover {
+  background: transparent !important;
 }
 :root[data-translucent='false'] .modal.form-drawer .field input,
 :root[data-translucent='false'] .modal.form-drawer .field textarea,
@@ -11711,9 +12422,10 @@ button.owner-task-row:hover {
     min-width: 0;
   }
 
-  .main-topdrag {
-    display: none;
-  }
+  /* Keep .main-topdrag: Electron frameless windows still need the chat-top
+     drag strip when the window is ≤720 (icon-rail desktop narrow). Hiding it
+     here was leftover from when ≤720 forced phone single-column; pointer-events
+     none + control no-drag already keep buttons clickable. */
 
   .modal.form-drawer,
   .form-drawer {
@@ -11810,8 +12522,8 @@ button.owner-task-row:hover {
     backdrop-filter: blur(28px);
     -webkit-backdrop-filter: blur(28px);
     border-right: var(--hairline) solid var(--hairline-color);
-    /* Soft right-edge depth — mirror .modal.form-drawer left shadow (sign flipped). */
-    box-shadow: 6px 0 18px rgba(0, 0, 0, 0.14);
+    /* Edge via border only (no soft offset shadow). */
+    box-shadow: none;
     padding-top: env(safe-area-inset-top, 0px);
     padding-bottom: env(safe-area-inset-bottom, 0px);
     -webkit-app-region: no-drag;
@@ -11843,13 +12555,12 @@ button.owner-task-row:hover {
   }
   :root[data-theme='dark'] .app.phone-layout > .sidebar {
     border-right-color: color-mix(in srgb, var(--text) 22%, transparent);
-    /* Strengthen right shadow — same tokens as .modal.form-drawer dark left edge. */
-    box-shadow: 8px 0 28px rgba(0, 0, 0, 0.55);
+    box-shadow: none;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme='light']) .app.phone-layout > .sidebar {
       border-right-color: color-mix(in srgb, var(--text) 22%, transparent);
-      box-shadow: 8px 0 28px rgba(0, 0, 0, 0.55);
+      box-shadow: none;
     }
   }
 

@@ -18,8 +18,11 @@ domain（packages/shared + packages/agent）
 runtime（packages/agent）
   buildTools(read_skill) / hitl 循环 / ExecutionBackend
   SkillHotReloadHub（fs.watch → skills_changed）
+host（apps/gateway）
+  FileStorage（磁盘门面 + 域 Store） / gatewayHttpApi SSE / entityOps / modelProbe
+  IPC handlers（registerChat / registerEntity；由 desktop main 注册）
 adapters（apps/desktop/electron）
-  FileStorage（磁盘） / IPC / gatewayHttpApi SSE / remote SSE→formatted
+  窗口 / preload / updater / 桌面侧 IPC 壳；remote SSE→formatted
   UI：侧栏右键「导出助手」、侧栏 +「导入助手」；高级区（默认折叠）只做技能编辑
 storage
   ~/.okbot/<botId>/{bot.json,SOUL.md,skills/*/SKILL.md}
@@ -33,7 +36,7 @@ storage
 | `packages/agent/src/skills/catalog.ts` | 目录文本拼装（不含正文） |
 | `packages/agent/src/skills/parse.ts` | SKILL.md 解析 / 序列化 |
 | `packages/agent/src/tools.ts` | `read_skill` 按 slug 取正文 |
-| `FileStorage.formatSkillsForPrompt` | 读盘 → catalog |
+| `FileStorage.formatSkillsForPrompt`（`apps/gateway/src/storage`） | 读盘 → catalog |
 | `SkillHotReloadHub` | watch → `RuntimeEvent.skills_changed` |
 
 热更新语义：watch 仅发信号；**每轮对话仍从磁盘重读目录与 lookup**，因此改文件后无需重启进程。

@@ -62,8 +62,19 @@ const BUILT_IN_TOOL_RULE_IDS: ReadonlySet<string> = new Set<string>(TOOL_IDS);
 /** manage_schedule create/delete always HITL — AAR / settings allow must not bypass. */
 export function manageScheduleActionRequiresConfirm(toolArgs: unknown): boolean {
   if (!toolArgs || typeof toolArgs !== 'object' || Array.isArray(toolArgs)) return false;
-  const action = String((toolArgs as { action?: unknown }).action || '').trim().toLowerCase();
+  const action = String((toolArgs as { action?: unknown }).action || '')
+    .trim()
+    .toLowerCase();
   return action === 'create' || action === 'delete';
+}
+
+/** manage_memory forget always HITL. */
+export function manageMemoryActionRequiresConfirm(toolArgs: unknown): boolean {
+  if (!toolArgs || typeof toolArgs !== 'object' || Array.isArray(toolArgs)) return false;
+  const action = String((toolArgs as { action?: unknown }).action || '')
+    .trim()
+    .toLowerCase();
+  return action === 'forget';
 }
 
 export function resolveToolApproval(
@@ -73,7 +84,32 @@ export function resolveToolApproval(
 ): AutoApprovalAction {
   if (isMcpToolName(toolName)) return 'ask';
   if (toolName === 'manage_schedule' && manageScheduleActionRequiresConfirm(toolArgs)) return 'ask';
+  if (toolName === 'manage_memory' && manageMemoryActionRequiresConfirm(toolArgs)) return 'ask';
   return resolveAutoApproval(settings.autoApprovalEnabled === true, settings.autoApprovalRules, toolName, toolArgs);
+}
+
+/** Minimum keyword length so a single char cannot globally allow every tool. */
+const MIN_AUTO_APPROVAL_KEYWORD_LEN = 2;
+
+/** Escape a literal for use inside a RegExp. */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Keyword match that still allows `ls` → `run_shell {command:"ls -la"}` but rejects
+ * path-segment false positives like `read_file {path:"/home/x/ls.txt"}`.
+ * Built-in tool-id rules are handled separately (name-only).
+ */
+function keywordMatchesHaystack(haystack: string, keyword: string): boolean {
+  if (!keyword) return false;
+  if (haystack.includes(keyword) === false) return false;
+  // Path / extension glue: do not match when keyword sits inside /seg/ or file.ext.
+  const re = new RegExp(
+    `(^|[^\\w/\\\\])${escapeRegExp(keyword)}(?=[^\\w./\\\\]|$)`,
+    'i',
+  );
+  return re.test(haystack);
 }
 
 function ruleMatchesKeywords(description: string, haystack: string): boolean {
@@ -83,12 +119,11 @@ function ruleMatchesKeywords(description: string, haystack: string): boolean {
     const nl = haystack.indexOf('\n');
     return (nl >= 0 ? haystack.slice(0, nl) : haystack) === raw;
   }
-  if (haystack.includes(raw)) return true;
   const parts = raw
     .split(/[,，、;；\n]+/)
     .map((s) => s.trim())
-    .filter((s) => s.length > 0);
-  if (parts.length <= 1) return haystack.includes(raw);
+    .filter((s) => s.length >= MIN_AUTO_APPROVAL_KEYWORD_LEN);
+  if (parts.length === 0) return false;
   // Comma-separated keywords: any phrase matches (OR).
-  return parts.some((p) => haystack.includes(p));
+  return parts.some((p) => keywordMatchesHaystack(haystack, p));
 }

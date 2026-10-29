@@ -259,3 +259,21 @@ assert.equal(
   normalizeSkillDescription(longDesc, 'okbot-long-desc').length,
   SKILL_DESCRIPTION_MAX_CHARS,
 );
+
+{
+  // Newlines in description must fold so YAML round-trip stays a single scalar.
+  const multi = normalizeSkillDescription('第一行\n第二行', 'okbot-x');
+  assert.equal(multi.includes('\n'), false);
+  assert.match(multi, /第一行 第二行/);
+  const md = formatSkillMarkdown({
+    slug: 'okbot-nl',
+    name: 'okbot-nl',
+    description: '第一行\n第二行',
+    body: 'body',
+  });
+  const again = parseSkillMarkdown('okbot-nl', md);
+  assert.equal(again.description.includes('\n'), false);
+  assert.match(again.description, /第一行/);
+}
+
+console.log('catalog.test.ts: ok');

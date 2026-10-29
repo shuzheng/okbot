@@ -12,19 +12,41 @@ import { createId, DEFAULT_RUNNER_MAX_TURNS, DEFAULT_SECURITY, DEFAULT_TOOL_PREF
 import { buildAgentInstructions } from './instructions.js';
 import { shellFsRoutingSection, type ComputerRoute } from './computerSelection.js';
 import { buildTools, resolveImageCapability, type SkillLookup } from './tools.js';
+import { agentGuardrailsFromSecurity } from './guardrails.js';
 import type { ExecutionBackend } from './executionBackend.js';
 import type { ToolRunBudget } from './toolRunBudget.js';
 import type { HitlLoopHooks, RunChatResult } from './types.js';
 import { stripLeadingCommittedInterim } from './meshCommit.js';
 import { tokenUsageFromRunResult } from './usage.js';
 import {
-  meshAskToolAllowed,
-  type MeshCallBudget,
   type MeshPeerSpec,
 } from './meshPolicy.js';
 import type { MeshSettings } from '@okbot/shared';
 
 
+/** Prefer SDK callId on the interruption / raw function_call item. */
+function stableArgsKey(args: unknown): string {
+  try {
+    return JSON.stringify(args ?? null);
+  } catch {
+    return String(args);
+  }
+}
+
+export function interruptionCallId(item: {
+  callId?: string;
+  rawItem?: unknown;
+}): string {
+  const direct = typeof item?.callId === 'string' ? item.callId.trim() : '';
+  if (direct) return direct;
+  const raw = item?.rawItem;
+  if (raw && typeof raw === 'object') {
+    const o = raw as { callId?: unknown; call_id?: unknown };
+    if (typeof o.callId === 'string' && o.callId.trim()) return o.callId.trim();
+    if (typeof o.call_id === 'string' && o.call_id.trim()) return o.call_id.trim();
+  }
+  return '';
+}
 
 export function parseToolArgs(raw: string | undefined): unknown {
   if (!raw?.trim()) return {};
@@ -90,7 +112,7 @@ export async function consumeAgentTextStream(
 }
 
 export type AgentRunStreamResult = Awaited<ReturnType<Runner['run']>> & {
-  interruptions?: Array<{ name?: string; arguments?: string }>;
+  interruptions?: Array<{ name?: string; arguments?: string; callId?: string; rawItem?: unknown }>;
   state: {
     approve: (interruption: unknown) => void;
     reject: (interruption: unknown, options?: { message?: string }) => void;
@@ -109,6 +131,7 @@ export function createAgentAndRunner(input: {
   historySearch?: import('./tools.js').HistorySearch;
   scheduleManage?: import('./tools.js').ScheduleManage;
   taskProgressManage?: import('./tools.js').TaskProgressManage;
+  memoryManage?: import('./tools.js').MemoryManage;
   emitAssistantMessage?: import('./tools.js').EmitAssistantMessage;
   /** Seal live narration at auto-allow tool boundaries (see BuildToolsOptions). */
   onBeforeToolExecute?: () => void | Promise<void>;
@@ -146,7 +169,6 @@ export function createAgentAndRunner(input: {
   meshSettings?: MeshSettings;
   meshDepth?: number;
   meshStack?: string[];
-  meshCallBudget?: MeshCallBudget;
   onMeshExchange?: HitlLoopHooks['onMeshExchange'];
   /** Pre-built ask_assistant tool (from runAgentChat); depth/roster already applied. */
   meshAskTool?: Tool;
@@ -174,7 +196,7 @@ export function createAgentAndRunner(input: {
   });
   const historyForInstructions = input.session ? [] : (input.history ?? []);
   const meshPeers = input.meshPeers ?? [];
-  const askEnabled = meshPeers.length > 0 && meshAskToolAllowed();
+  const askEnabled = meshPeers.length > 0;
   const peerRoster = meshPeers.map((p) => ({
     id: p.id,
     name: p.name,
@@ -211,6 +233,7 @@ export function createAgentAndRunner(input: {
       skillLookup: input.skillLookup,
       historySearch: input.historySearch,
       scheduleManage: input.scheduleManage,
+      memoryManage: input.memoryManage,
       taskProgressManage: input.taskProgressManage,
       emitAssistantMessage: input.emitAssistantMessage,
       onBeforeToolExecute: input.onBeforeToolExecute,
@@ -226,10 +249,14 @@ export function createAgentAndRunner(input: {
       ...(input.extraTools ?? []),
       ...(input.meshAskTool ? [input.meshAskTool] : []),
     ],
+    ...agentGuardrailsFromSecurity(security),
   });
   const runner = new Runner({
     modelProvider: provider,
     model: input.model.model,
+    // Unknown tool names (e.g. model invents `shell` vs registered `run_shell`)
+    // return a model-visible error so the run can retry instead of hard-stopping.
+    toolNotFoundBehavior: 'return_error_to_model',
   });
   return { agent, runner, toolPrefs };
 }
@@ -247,11 +274,14 @@ export function buildRunOpts(input: {
     session?: Session;
     sessionInputCallback?: SessionInputCallback;
     maxTurns: number;
+    toolNotFoundBehavior: 'return_error_to_model';
   } = {
     stream: true,
     signal: input.signal,
     // Always pass a finite cap — SDK falls back to 10 when omitted.
     maxTurns: input.maxTurns ?? DEFAULT_RUNNER_MAX_TURNS,
+    // Same as Runner config: keep unknown-tool soft-fail even if a caller rebuilds Runner.
+    toolNotFoundBehavior: 'return_error_to_model',
   };
   if (input.session) {
     runOpts.session = input.session;
@@ -377,9 +407,11 @@ export async function runHitlStreamLoop(
       const approvalSpanId = typeof approvalStarted === 'string' ? approvalStarted : undefined;
       let decision: Awaited<ReturnType<typeof hooks.onToolApprovalRequest>>;
       try {
+        const callId = interruptionCallId(interruption);
         decision = await hooks.onToolApprovalRequest({
           requestId,
           toolName,
+          ...(callId ? { callId } : {}),
           arguments: args,
           serializedRunState,
         });
@@ -461,22 +493,63 @@ export async function runHitlStreamLoop(
  */
 export function applyResumeDecision(
   state: {
-    getInterruptions: () => Array<{ name?: string }>;
+    // Broad: SDK RunToolApprovalItem.rawItem union is wider than function_call.
+    getInterruptions: () => Array<{
+      name?: string;
+      arguments?: string;
+      callId?: string;
+      rawItem?: unknown;
+    }>;
     approve: (item: any) => void;
     reject: (item: any, options?: { message?: string }) => void;
   },
   input: Pick<HitlLoopHooks, 'onToolResult'> & {
     requestId: string;
     toolName: string;
+    /** Preferred: SDK function_call id saved with the pending HITL record. */
+    callId?: string;
+    /** Optional args snapshot for disambiguating same-name tools when callId missing. */
+    arguments?: unknown;
     decision: { approved: boolean; message?: string };
   },
 ): void {
   const interruptions = state.getInterruptions();
-  // Prefer exact toolName; only fall back to the sole interruption (never a random
-  // same-name sibling / interruptions[0] when several are pending).
-  const byName = interruptions.filter((item) => (item.name || '') === input.toolName);
-  const match =
-    byName.length >= 1 ? byName[0] : interruptions.length === 1 ? interruptions[0] : undefined;
+  const wantCallId = (input.callId || '').trim();
+  let match:
+    | (typeof interruptions)[number]
+    | undefined;
+
+  if (wantCallId) {
+    match = interruptions.find((item) => interruptionCallId(item) === wantCallId);
+  }
+
+  if (!match) {
+    // Prefer exact toolName; only fall back to the sole interruption (never a random
+    // same-name sibling / interruptions[0] when several are pending).
+    const byName = interruptions.filter((item) => (item.name || '') === input.toolName);
+    if (byName.length === 1) {
+      match = byName[0];
+    } else if (byName.length > 1 && input.arguments !== undefined) {
+      const want = stableArgsKey(input.arguments);
+      const byArgs = byName.filter(
+        (item) => stableArgsKey(parseToolArgs(item.arguments)) === want,
+      );
+      if (byArgs.length === 1) match = byArgs[0];
+      else {
+        throw new Error(
+          `恢复失败：工具「${input.toolName}」有 ${byName.length} 个同名待审批中断，无法唯一匹配` +
+            (wantCallId ? `（callId=${wantCallId}）` : ''),
+        );
+      }
+    } else if (byName.length > 1) {
+      throw new Error(
+        `恢复失败：工具「${input.toolName}」有 ${byName.length} 个同名待审批中断，缺少 callId 无法唯一匹配`,
+      );
+    } else if (interruptions.length === 1) {
+      match = interruptions[0];
+    }
+  }
+
   if (!match) {
     throw new Error(
       interruptions.length

@@ -11,6 +11,7 @@ import {
   stripSettingsSecrets,
   takeRestoreNotice,
 } from './backup';
+import { redactSecretUrl } from '@okbot/shared';
 
 const settings = {
   theme: 'dark',
@@ -50,6 +51,97 @@ assert.deepEqual(carried, settings);
   const carriedList = carryOverSecrets(strippedList, withList) as typeof withList;
   assert.equal(carriedList.gatewayHttpApi.apiTokens[0]!.token, 'user_secret');
   assert.equal(carriedList.gatewayHttpApi.apiTokens[1]!.token, 'admin_secret');
+
+// attach hydrate → add token must not wipe sibling access tokens after carryOver
+{
+  const withThree = {
+    ...settings,
+    gatewayHttpApi: {
+      ...settings.gatewayHttpApi,
+      apiTokens: [
+        { id: 'gat_a', name: 'User A', role: 'access' as const, token: 'user_A', limits: { dailyMessages: 0, totalMessages: 0, dailyTokens: 0, totalTokens: 0 }, createdAt: 't', updatedAt: 't' },
+        { id: 'gat_b', name: 'Admin', role: 'admin' as const, token: 'admin_B', limits: { dailyMessages: 0, totalMessages: 0, dailyTokens: 0, totalTokens: 0 }, createdAt: 't', updatedAt: 't' },
+        { id: 'gat_c', name: 'User C', role: 'access' as const, token: 'user_C', limits: { dailyMessages: 0, totalMessages: 0, dailyTokens: 0, totalTokens: 0 }, createdAt: 't', updatedAt: 't' },
+      ],
+    },
+  };
+  const projected = stripSettingsSecrets(withThree) as typeof withThree;
+  // Simulate UI: empty placeholders kept, then append NEW
+  const uiPayload = {
+    ...projected,
+    gatewayHttpApi: {
+      ...projected.gatewayHttpApi,
+      apiTokens: [
+        ...projected.gatewayHttpApi.apiTokens,
+        { id: 'gat_new', name: 'User NEW', role: 'access' as const, token: 'user_NEW', limits: { dailyMessages: 0, totalMessages: 0, dailyTokens: 0, totalTokens: 0 }, createdAt: 't', updatedAt: 't' },
+      ],
+    },
+  };
+  const saved = carryOverSecrets(uiPayload, withThree) as typeof withThree;
+  const toks = saved.gatewayHttpApi.apiTokens;
+  assert.equal(toks.length, 4, 'attach hydrate → add token keeps siblings');
+  assert.equal(toks.find((e) => e.id === 'gat_a')?.token, 'user_A');
+  assert.equal(toks.find((e) => e.id === 'gat_c')?.token, 'user_C');
+  assert.equal(toks.find((e) => e.id === 'gat_b')?.token, 'admin_B');
+  assert.equal(toks.find((e) => e.id === 'gat_new')?.token, 'user_NEW');
+}
+
+{
+  // Delete one token (subset) — remaining refill by id; removed id stays gone.
+  const withThree = {
+    gatewayHttpApi: {
+      enabled: true,
+      token: 'user_A',
+      adminToken: 'admin_B',
+      apiTokens: [
+        { id: 'gat_a', name: 'User A', role: 'access', token: 'user_A', limits: { dailyMessages: 0, totalMessages: 0, dailyTokens: 0, totalTokens: 0 }, createdAt: 't', updatedAt: 't' },
+        { id: 'gat_b', name: 'Admin', role: 'admin', token: 'admin_B', limits: { dailyMessages: 0, totalMessages: 0, dailyTokens: 0, totalTokens: 0 }, createdAt: 't', updatedAt: 't' },
+        { id: 'gat_c', name: 'User C', role: 'access', token: 'user_C', limits: { dailyMessages: 0, totalMessages: 0, dailyTokens: 0, totalTokens: 0 }, createdAt: 't', updatedAt: 't' },
+      ],
+    },
+  };
+  const projected = stripSettingsSecrets(withThree) as typeof withThree;
+  const withoutC = {
+    ...projected,
+    gatewayHttpApi: {
+      ...projected.gatewayHttpApi,
+      apiTokens: projected.gatewayHttpApi.apiTokens.filter((e) => e.id !== 'gat_c'),
+    },
+  };
+  const afterOne = carryOverSecrets(withoutC, withThree) as typeof withThree;
+  assert.equal(afterOne.gatewayHttpApi.apiTokens.length, 2, 'delete one keeps others');
+  assert.equal(afterOne.gatewayHttpApi.apiTokens.find((e) => e.id === 'gat_a')?.token, 'user_A');
+  assert.equal(afterOne.gatewayHttpApi.apiTokens.find((e) => e.id === 'gat_b')?.token, 'admin_B');
+  assert.equal(afterOne.gatewayHttpApi.apiTokens.find((e) => e.id === 'gat_c'), undefined);
+
+  // Delete all (explicit []) — must NOT resurrect; legacy dual fields stay blank.
+  const wipe = {
+    ...projected,
+    gatewayHttpApi: {
+      ...projected.gatewayHttpApi,
+      token: '',
+      adminToken: '',
+      apiTokens: [],
+    },
+  };
+  const afterAll = carryOverSecrets(wipe, withThree) as typeof withThree;
+  assert.deepEqual(afterAll.gatewayHttpApi.apiTokens, [], 'delete all must not resurrect');
+  assert.equal(afterAll.gatewayHttpApi.token, '', 'wipe clears legacy access');
+  assert.equal(afterAll.gatewayHttpApi.adminToken, '', 'wipe clears legacy admin');
+
+  // Omitted apiTokens (not an array) still falls back to current list.
+  const omitted = {
+    gatewayHttpApi: {
+      enabled: true,
+      token: '',
+      adminToken: '',
+      // apiTokens omitted
+    },
+  };
+  const afterOmit = carryOverSecrets(omitted, withThree) as typeof withThree;
+  assert.equal(afterOmit.gatewayHttpApi.apiTokens?.length, 3, 'omitted apiTokens keeps current');
+}
+
   assert.equal(carriedList.gatewayHttpApi.token, 't1');
   assert.equal(carriedList.gatewayHttpApi.adminToken, 'at1');
 }
@@ -61,9 +153,18 @@ fs.writeFileSync(path.join(root, 'server.json'), JSON.stringify(settings));
 fs.writeFileSync(path.join(root, 'data', 'bot_1', 'session.jsonl'), 'hello\n');
 fs.writeFileSync(path.join(root, 'runtime.json'), JSON.stringify({ pid: 1, port: 9, owner: 'serve' }));
 fs.writeFileSync(path.join(root, 'client.json'), JSON.stringify({ theme: 'light' }));
+fs.mkdirSync(path.join(root, 'data', 'bot_1', 'pending-hitl'), { recursive: true });
+fs.writeFileSync(path.join(root, 'data', 'bot_1', 'pending-hitl', 'req1.json'), JSON.stringify({ toolArgs: 'token=secret' }));
+fs.writeFileSync(path.join(root, 'data', 'bot_1', 'run-checkpoint.json'), JSON.stringify({ serializedRunState: 'x' }));
 
 const archive = exportDataBackup(root, path.join(base, 'b.zip'), { excludeSecrets: true });
 assert.ok(fs.existsSync(archive));
+{
+  const listed = execFileSync('zipinfo', ['-1', archive], { encoding: 'utf8' });
+  assert.ok(!listed.includes('pending-hitl'), 'backup must skip pending-hitl');
+  assert.ok(!listed.includes('run-checkpoint.json'), 'backup must skip run-checkpoint.json');
+}
+
 assert.throws(() => exportDataBackup(root, path.join(root, 'inside.zip'), { excludeSecrets: false }));
 
 // Change data, then restore: session comes back, secrets carried over from current settings.
@@ -178,4 +279,81 @@ assert.ok(fs.existsSync(path.join(root, 'server.json')));
 
 fs.rmSync(base, { recursive: true, force: true });
 fs.rmSync(tmp, { recursive: true, force: true });
+
+// Bootstrap redactSecretUrl round-trip: restore original baseURL + secrets.
+{
+  const local = {
+    model: {
+      providers: [
+        {
+          id: 'p1',
+          baseURL: 'https://user:pass@api.example.com/v1',
+          apiKey: 'k-secret',
+        },
+        {
+          id: 'p2',
+          baseURL: 'https://api.example.com/a.okbot?token=abc&mode=1',
+          apiKey: 'k2',
+        },
+      ],
+    },
+    web: {
+      search: {
+        provider: 'custom',
+        compat: 'tavily',
+        baseURL: 'https://u:p@search.example/v1?api_key=sekrit',
+        apiKey: 'search-key',
+      },
+    },
+    assistantMarketplace: {
+      savedSources: [
+        'https://token:xyz@raw.githubusercontent.com/org/repo/main/pkg.zip',
+        'https://example.com/a.zip?token=abc',
+      ],
+    },
+  };
+  const projected = {
+    model: {
+      providers: local.model.providers.map((p) => ({
+        ...p,
+        apiKey: '',
+        baseURL: redactSecretUrl(p.baseURL),
+      })),
+    },
+    web: {
+      search: {
+        ...local.web.search,
+        apiKey: '',
+        baseURL: redactSecretUrl(local.web.search.baseURL),
+      },
+    },
+    assistantMarketplace: {
+      savedSources: local.assistantMarketplace.savedSources.map((u) => redactSecretUrl(u)),
+    },
+  };
+  // Redaction actually changed something (else the test is vacuous).
+  assert.notEqual(projected.model.providers[0]!.baseURL, local.model.providers[0]!.baseURL);
+  assert.notEqual(projected.model.providers[1]!.baseURL, local.model.providers[1]!.baseURL);
+  assert.notEqual(projected.web.search.baseURL, local.web.search.baseURL);
+  assert.notEqual(projected.assistantMarketplace.savedSources[0], local.assistantMarketplace.savedSources[0]);
+
+  const back = carryOverSecrets(projected, local) as typeof local;
+  assert.equal(back.model.providers[0]!.apiKey, 'k-secret');
+  assert.equal(back.model.providers[0]!.baseURL, local.model.providers[0]!.baseURL);
+  assert.equal(back.model.providers[1]!.apiKey, 'k2');
+  assert.equal(back.model.providers[1]!.baseURL, local.model.providers[1]!.baseURL);
+  assert.equal(back.web.search.apiKey, 'search-key');
+  assert.equal(back.web.search.baseURL, local.web.search.baseURL);
+  assert.deepEqual(back.assistantMarketplace.savedSources, local.assistantMarketplace.savedSources);
+
+  // Different endpoint after redact must NOT receive the secret.
+  const evil = {
+    model: {
+      providers: [{ id: 'p1', baseURL: 'https://evil.example/v1', apiKey: '' }],
+    },
+  };
+  const noLeak = carryOverSecrets(evil, local) as typeof local;
+  assert.equal(noLeak.model.providers[0]!.apiKey, '');
+}
+
 console.log('backup.test.ts: ok');

@@ -1,4 +1,12 @@
-import { memo, useEffect, useMemo, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  memo,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from 'react';
 import { ChatImageFx } from './ChatImageFx';
 import { resolveUiLang, t, type UiLang } from '../../i18n';
 import {
@@ -292,6 +300,98 @@ function markdownUrlTransform(url: string): string {
   return defaultUrlTransform(url);
 }
 
+/**
+ * Roster for mention chips inside markdown links. Kept in context so the
+ * react-markdown `components` map can be a stable module-level constant —
+ * inline `img: () => …` / `a: () => …` recreate component *types* each
+ * render, which remounts every image (network reload) whenever the parent
+ * re-renders (e.g. avatar auto-save → bots[] identity change).
+ */
+const MentionRosterContext = createContext<ReadonlyMap<string, MentionBotRef>>(
+  new Map(),
+);
+const MarkdownUiLangContext = createContext<UiLang>('zh');
+
+const MdLink = memo(function MdLink({
+  href,
+  children: linkChildren,
+}: {
+  href?: string;
+  children?: ReactNode;
+}) {
+  const botsById = useContext(MentionRosterContext);
+  if (isBotMentionHref(href)) {
+    const id = botIdFromMentionHref(href || '');
+    const bot = botsById.get(id);
+    if (bot) return <BotMentionChip bot={bot} />;
+    // Roster may have changed; still show avatar+name chip from link text.
+    const name = String(linkChildren ?? '').replace(/^@/, '').trim() || id;
+    return <BotMentionChip bot={{ id, name, emoji: '🤖', color: '' }} />;
+  }
+  return (
+    <a href={href} target="_blank" rel="noreferrer noopener">
+      {linkChildren}
+    </a>
+  );
+});
+
+const MdImg = memo(function MdImg({ src, alt }: { src?: string; alt?: string }) {
+  const uiLang = useContext(MarkdownUiLangContext);
+  const resource = parseOwnerResourceSrc(src);
+  if (resource || isOkbotAssetSrc(src)) {
+    return <OkbotAssetImage src={src || ''} alt={alt} lang={uiLang} />;
+  }
+  if (src && isSafeDataImageSrc(src)) {
+    return <ChatThumbImage src={src} alt={alt} />;
+  }
+  if (src && /^https?:/i.test(src)) {
+    return (
+      <span className="md-asset-missing" title={src}>
+        {t(uiLang, 'externalImageBlocked')}
+      </span>
+    );
+  }
+  // Never render bare file:// (CSP + security). Show missing instead.
+  if (src && /^file:/i.test(src)) {
+    return (
+      <span className="md-asset-missing" title={src}>
+        {(alt ? `${alt} · ` : '') + t(uiLang, 'imageLoadFailed')}
+      </span>
+    );
+  }
+  if (src) return <ChatThumbImage src={src} alt={alt} />;
+  return null;
+});
+
+const MdCode = memo(function MdCode({
+  className,
+  children: codeChildren,
+  node,
+}: {
+  className?: string;
+  children?: ReactNode;
+  node?: { position?: { start?: { line?: number }; end?: { line?: number } } };
+}) {
+  const text = String(codeChildren).replace(/\n$/, '');
+  if (isInlineCode(className, node)) {
+    return <code className={className}>{codeChildren}</code>;
+  }
+  const match = /language-([^\s]+)/.exec(className || '');
+  return <CodeBlock language={match?.[1] || 'text'} code={text} />;
+});
+
+function MdPre({ children: preChildren }: { children?: ReactNode }) {
+  return <>{preChildren as ReactNode}</>;
+}
+
+/** Stable component types — must not be recreated on parent re-render. */
+const MARKDOWN_COMPONENTS = {
+  a: MdLink,
+  img: MdImg,
+  code: MdCode,
+  pre: MdPre,
+};
+
 export const MarkdownContent = memo(function MarkdownContent({
   children,
   lang,
@@ -316,74 +416,18 @@ export const MarkdownContent = memo(function MarkdownContent({
     return map;
   }, [bots]);
   return (
-    <div className="md">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        urlTransform={markdownUrlTransform}
-        components={{
-          a: ({ href, children: linkChildren }) => {
-            if (isBotMentionHref(href)) {
-              const id = botIdFromMentionHref(href || '');
-              const bot = botsById.get(id);
-              if (bot) return <BotMentionChip bot={bot} />;
-              // Roster may have changed; still show avatar+name chip from link text.
-              const name = String(linkChildren ?? '').replace(/^@/, '').trim() || id;
-              return (
-                <BotMentionChip
-                  bot={{ id, name, emoji: '🤖', color: '' }}
-                />
-              );
-            }
-            return (
-              <a href={href} target="_blank" rel="noreferrer noopener">
-                {linkChildren}
-              </a>
-            );
-          },
-          img: ({ src, alt }) => {
-            const resource = parseOwnerResourceSrc(src);
-            if (resource || isOkbotAssetSrc(src)) {
-              return <OkbotAssetImage src={src || ''} alt={alt} lang={uiLang} />;
-            }
-            if (src && isSafeDataImageSrc(src)) {
-              return <ChatThumbImage src={src} alt={alt} />;
-            }
-            if (src && /^https?:/i.test(src)) {
-              return (
-                <span className="md-asset-missing" title={src}>
-                  {t(uiLang, 'externalImageBlocked')}
-                </span>
-              );
-            }
-            // Never render bare file:// (CSP + security). Show missing instead.
-            if (src && /^file:/i.test(src)) {
-              return (
-                <span className="md-asset-missing" title={src}>
-                  {(alt ? `${alt} · ` : '') + t(uiLang, 'imageLoadFailed')}
-                </span>
-              );
-            }
-            if (src) return <ChatThumbImage src={src} alt={alt} />;
-            return null;
-          },
-          code: ({ className, children: codeChildren, node }) => {
-            const text = String(codeChildren).replace(/\n$/, '');
-            if (
-              isInlineCode(
-                className,
-                node as { position?: { start?: { line?: number }; end?: { line?: number } } },
-              )
-            ) {
-              return <code className={className}>{codeChildren}</code>;
-            }
-            const match = /language-([^\s]+)/.exec(className || '');
-            return <CodeBlock language={match?.[1] || 'text'} code={text} />;
-          },
-          pre: ({ children: preChildren }) => <>{preChildren as ReactNode}</>,
-        }}
-      >
-        {source}
-      </ReactMarkdown>
-    </div>
+    <MentionRosterContext.Provider value={botsById}>
+      <MarkdownUiLangContext.Provider value={uiLang}>
+        <div className="md">
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            urlTransform={markdownUrlTransform}
+            components={MARKDOWN_COMPONENTS}
+          >
+            {source}
+          </ReactMarkdown>
+        </div>
+      </MarkdownUiLangContext.Provider>
+    </MentionRosterContext.Provider>
   );
 });

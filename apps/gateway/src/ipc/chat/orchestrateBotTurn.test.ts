@@ -771,4 +771,74 @@ resetSoftSteerStateForTests();
   assert.deepEqual(listOwnerRunIds(map, 'bot_race_ac'), [], 'AC aborted; only composer turn');
 }
 
+
+{
+  // awaitAutoContinue:false returns after first turn; AC still runs in background.
+  resetSoftSteerStateForTests();
+  resetOwnerRunQueuesForTests();
+  resetAutoContinueStateForTests();
+  let progressItems: Array<{ id: string; title: string; status: string }> = [
+    { id: '1', title: 'A', status: 'pending' },
+  ];
+  const startCalls: string[] = [];
+  let acResolve!: () => void;
+  const acStarted = new Promise<void>((r) => {
+    acResolve = r;
+  });
+  const ctx = {
+    abortControllers: new Map(),
+    storage: {
+      loadTasks: () => [
+        {
+          v: 1 as const,
+          id: 'task_1',
+          title: 'T',
+          status: (progressItems.some((i) => i.status === 'pending' || i.status === 'in_progress')
+            ? 'pending'
+            : 'done') as 'pending' | 'done',
+          steps: progressItems,
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+      appendMessage: () => undefined,
+      touchBot: () => undefined,
+      getMessageById: () => null,
+    },
+    sendRuntimeEvent: () => undefined,
+  };
+  const first = await orchestrateBotTurn(
+    ctx as never,
+    { botId: 'bot_bg_ac', text: 'go', origin: 'schedule' },
+    'go',
+    {
+      awaitAutoContinue: false,
+      startTurn: async (_c, payload, text) => {
+        startCalls.push(payload.origin || 'unset');
+        if (payload.origin === 'auto_continue') {
+          progressItems = [{ id: '1', title: 'A', status: 'done' }];
+          acResolve();
+        }
+        return {
+          userMessage: {
+            id: 'm',
+            role: 'user',
+            content: text,
+            createdAt: '2026-01-01T00:00:00.000Z',
+            ...(payload.origin === 'auto_continue' ? { autoContinue: true } : {}),
+          },
+        };
+      },
+    },
+  );
+  assert.equal(first.userMessage.content, 'go');
+  // Initiating turn recorded; AC may already have raced ahead on a fast mock.
+  assert.equal(startCalls[0], 'schedule');
+  await acStarted;
+  await new Promise((r) => setImmediate(r));
+  assert.ok(
+    startCalls.includes('auto_continue'),
+    `expected background AC, got ${JSON.stringify(startCalls)}`,
+  );
+}
+
 console.log('orchestrateBotTurn.test.ts OK');

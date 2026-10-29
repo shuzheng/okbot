@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { UiLang } from '../../i18n';
 import { t } from '../../i18n';
+import { SlidingPillTabs } from '../../components/ui';
 
 export type OwnerFormTab =
   | 'details'
@@ -62,57 +62,16 @@ export function OwnerFormTabs({
   /** Visible tabs; defaults to details/tasks/automation/resources. */
   tabs?: OwnerFormTab[];
 }) {
-  const trackRef = useRef<HTMLDivElement>(null);
-  const btnRefs = useRef<Partial<Record<OwnerFormTab, HTMLButtonElement | null>>>({});
-  const [pill, setPill] = useState({ left: 0, width: 0 });
-
-  const syncPill = useCallback(() => {
-    const track = trackRef.current;
-    const btn = btnRefs.current[value];
-    if (!track || !btn) return;
-    const trackBox = track.getBoundingClientRect();
-    const btnBox = btn.getBoundingClientRect();
-    setPill({ left: btnBox.left - trackBox.left, width: btnBox.width });
-  }, [value]);
-
-  useLayoutEffect(() => {
-    syncPill();
-  }, [syncPill, lang, tabs]);
-
-  useEffect(() => {
-    const onResize = () => syncPill();
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, [syncPill]);
-
   return (
-    <div className="owner-form-tabs" role="tablist" aria-label={t(lang, 'ownerFormTabs')}>
-      <div className="marketplace-tabs-track" ref={trackRef}>
-        <span
-          className="marketplace-tabs-pill"
-          aria-hidden
-          style={{
-            transform: `translateX(${pill.left}px)`,
-            width: pill.width ? `${pill.width}px` : undefined,
-            opacity: pill.width ? 1 : 0,
-          }}
-        />
-        {tabs.map((tab) => (
-          <button
-            key={tab}
-            ref={(el) => {
-              btnRefs.current[tab] = el;
-            }}
-            type="button"
-            role="tab"
-            aria-selected={value === tab}
-            className={value === tab ? 'active' : ''}
-            onClick={() => onChange(tab)}
-          >
-            {t(lang, TAB_I18N[tab])}
-          </button>
-        ))}
-      </div>
-    </div>
+    <SlidingPillTabs
+      ariaLabel={t(lang, 'ownerFormTabs')}
+      value={value}
+      onChange={onChange}
+      className="owner-form-tabs"
+      options={tabs.map((tab) => ({
+        id: tab,
+        label: t(lang, TAB_I18N[tab]),
+      }))}
+    />
   );
 }

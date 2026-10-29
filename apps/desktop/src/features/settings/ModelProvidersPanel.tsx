@@ -124,14 +124,6 @@ export function ModelProvidersPanel({ lang, value, onChange: onChangeProp, readO
     onChange(next);
   }
 
-  function updateActive(patch: Partial<ModelProvider>) {
-    if (!active) return;
-    commit({
-      ...value,
-      providers: patchProvider(providers, active.id, patch),
-    });
-  }
-
   function updateProvider(providerId: string, patch: Partial<ModelProvider>) {
     commit({
       ...value,

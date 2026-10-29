@@ -440,6 +440,8 @@ export function fillGatewaySettings(settings: unknown) {
       shellPatternsEnabled: security.shellPatternsEnabled !== false,
       ...(Array.isArray(security.shellPatterns) ? { shellPatterns: security.shellPatterns } : {}),
       blockMode: security.blockMode === 'tripwire' ? 'tripwire' : 'reject',
+      // Preserve agent guardrail knobs; dropping them hydrates Settings as all-off then autosave writes that back.
+      ...(security.agent && typeof security.agent === 'object' ? { agent: security.agent } : {}),
     },
     model: fillGatewayModel(s.model),
     autoApprovalEnabled: s.autoApprovalEnabled === true,
@@ -908,7 +910,15 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
       }
     },
     getAppInfo: async () => {
-      const fallbackPlatform = attachConfig()?.platform || 'web';
+      // Prefer the browser OS for shortcut tips — gateway host platform mislabels WebUI chords.
+      const browserPlatform = (() => {
+        const ua = typeof navigator !== 'undefined' ? navigator.userAgent || '' : '';
+        if (/Mac/i.test(ua)) return 'darwin';
+        if (/Win/i.test(ua)) return 'win32';
+        if (/Linux/i.test(ua)) return 'linux';
+        return 'web';
+      })();
+      const platform = browserPlatform || attachConfig()?.platform || 'web';
       try {
         const info = await api<{
           name?: string;
@@ -919,7 +929,7 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
         return {
           name: info?.name?.trim() || 'OkBot',
           version: info?.version?.trim() || '0.0.0',
-          platform: info?.platform?.trim() || fallbackPlatform,
+          platform,
           arch: info?.arch?.trim() || '',
           electron: '',
           chrome: '',
@@ -929,7 +939,7 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
         return {
           name: 'OkBot',
           version: '0.0.0',
-          platform: fallbackPlatform,
+          platform,
           arch: '',
           electron: '',
           chrome: '',

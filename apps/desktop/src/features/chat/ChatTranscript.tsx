@@ -1,4 +1,4 @@
-import { Fragment, memo, useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
+import { Fragment, memo, useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import { ThinkingOrb } from 'thinking-orbs';
 import {
   SQUAD_CAPTAIN_SPEAKER_ID,
@@ -296,7 +296,7 @@ function BubbleCopyButton({
   );
 }
 
-function MessageAttachImage({
+const MessageAttachImage = memo(function MessageAttachImage({
   attachment,
 }: {
   attachment: MessageAttachment;
@@ -304,7 +304,12 @@ function MessageAttachImage({
   const [src, setSrc] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
+    const fromMediaPath =
+      typeof attachment.mediaPath === 'string' && attachment.mediaPath
+        ? parseOwnerResourceSrc(attachment.mediaPath)
+        : null;
     const parsed =
+      fromMediaPath ||
       parseOwnerResourceSrc(attachment.path) ||
       (attachment.path.startsWith('/v1/media/')
         ? parseOwnerResourceSrc(attachment.path)
@@ -323,7 +328,10 @@ function MessageAttachImage({
     return () => {
       cancelled = true;
     };
-  }, [attachment.path]);
+  }, [attachment.path, attachment.mediaPath]);
+
+  // Hooks must run unconditionally (before any early return).
+  const openPreview = useOpenImagePreview();
 
   if (!src) {
     return (
@@ -335,7 +343,6 @@ function MessageAttachImage({
       </div>
     );
   }
-  const openPreview = useOpenImagePreview();
   return (
     <button
       type="button"
@@ -353,7 +360,7 @@ function MessageAttachImage({
       <img src={src} alt={attachment.name} loading="lazy" />
     </button>
   );
-}
+});
 
 function MessageAttachmentChips({
   attachments,
@@ -539,6 +546,10 @@ export const ChatTranscript = memo(function ChatTranscript({
   // Swipe-to-reveal HH:MM on the whole messages area (gaps included).
   useMessagesSwipeReveal(messagesBoxRef);
 
+  const openImagePreview = useCallback((target: ImageLightboxTarget) => {
+    setImagePreview(target);
+  }, []);
+
   const renderToolCard = (card: ToolCard) => (
     <ToolCardView
       key={card.requestId}
@@ -551,7 +562,7 @@ export const ChatTranscript = memo(function ChatTranscript({
   );
 
   return (
-    <ImagePreviewProvider value={(target) => setImagePreview(target)}>
+    <ImagePreviewProvider value={openImagePreview}>
       <>
       <div className="messages-shell">
         <div

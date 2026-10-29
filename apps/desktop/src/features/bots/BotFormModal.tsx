@@ -95,7 +95,7 @@ export function BotFormModal({
 
 
   const [name, setName] = useState(initial.name);
-  const [description, setDescription] = useState(initial.description);
+  const [description] = useState(initial.description);
   const [avatarKind, setAvatarKind] = useState<BotAvatarKind>(
     normalizeBotAvatarKind(initial.avatarKind),
   );
@@ -338,9 +338,6 @@ export function BotFormModal({
               }}
             />
           </div>
-          {description.trim() ? (
-            <p className="bot-form-description-text">{description}</p>
-          ) : null}
         </div>
         {pickerOpen ? (
           <AvatarPicker
@@ -360,6 +357,9 @@ export function BotFormModal({
               emit(formValues({ name, description, ...next, providerId, modelId }), { immediate: true });
             }}
           />
+        ) : null}
+        {description.trim() ? (
+          <p className="bot-form-description-text">{description}</p>
         ) : null}
         <OwnerFormTabs lang={lang} value={ownerFormTab} onChange={setOwnerFormTab} tabs={BOT_OWNER_FORM_TABS} />
         {ownerFormTab === 'details' ? (

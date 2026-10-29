@@ -60,6 +60,8 @@ export type CliMessages = {
   stopStaleLockReleased: string;
   stopOwnerElectron: string;
   stopNotOkbot: string;
+  stopForceHint: string;
+  stopForceUsed: string;
   stopHelp: string;
 
   restartStopping: string;
@@ -102,6 +104,13 @@ export type CliMessages = {
   dataOpened: (p: string) => string;
   dataOpenFailed: (detail: string) => string;
   dataUnknownSub: (sub: string) => string;
+  dataResetJsonUsage: string;
+  dataResetJsonUnknown: (name: string, allowed: string) => string;
+  dataResetJsonFailed: (detail: string) => string;
+  dataResetJsonNotCorrupt: (file: string) => string;
+  dataResetJsonFromBackup: (file: string, backup: string) => string;
+  dataResetJsonFallback: (file: string) => string;
+  dataResetJsonRestartHint: string;
   dataHelp: string;
 };
 
@@ -188,13 +197,17 @@ const zh: CliMessages = {
   stopStaleLockReleased: '已清理过期锁（进程已不存在）。',
   stopOwnerElectron: '注意: 锁所有者为 electron，将停止该 Electron 后端进程。',
   stopNotOkbot: '锁/进程无法确认为 OkBot 网关，未发送信号。',
+  stopForceHint: '若确认仍是本实例网关（例如刚 reset 令牌未重启，或主线程卡住），可加 --force（仍要求 lock.pid 存活且 owner 为 serve|electron）。',
+  stopForceUsed: '已使用 --force：跳过 HTTP 探测，按锁内 pid 终止。',
   stopHelp: `用法:
   okbot stop
-  okbot stop --port <端口> --data-dir <目录>
+  okbot stop --force
+  okbot stop --port <端口> --data-dir <目录> [--force]
 
 向该数据目录锁中记录的 OkBot 网关进程发送 SIGTERM，短暂等待后必要时 SIGKILL。
 自定义实例时 --port 与 --data-dir 必须同时指定。
-仅停止 owner 为 serve|electron 的进程；过期锁会被清理。`,
+仅停止 owner 为 serve|electron 的进程；过期锁会被清理。
+--force：在探测失败时仍按锁 pid 终止（pid 必须存活且 owner 为 serve|electron）。`,
 
   restartStopping: '正在重启：先停止…',
   restartStarting: '正在启动 serve…',
@@ -252,13 +265,24 @@ reset: 生成并保存新令牌（默认 access；可指定 admin）。`,
   dataOpened: (p) => `已打开: ${p}`,
   dataOpenFailed: (detail) => `无法打开数据目录: ${detail}`,
   dataUnknownSub: (sub) => `未知 data 子命令: ${sub}`,
+  dataResetJsonUsage: '用法: okbot data reset-json <文件名> [--force]（如 bots.json）',
+  dataResetJsonUnknown: (name, allowed) => `不支持重置 ${name}。允许: ${allowed}`,
+  dataResetJsonFailed: (detail) => `重置失败: ${detail}`,
+  dataResetJsonNotCorrupt: (file) =>
+    `拒绝覆盖合法文件 ${file}（当前 JSON 可解析）。若确认要重置，先加 --force（会先旁路备份）。`,
+  dataResetJsonFromBackup: (file, backup) => `已从备份恢复 ${file} ← ${backup}`,
+  dataResetJsonFallback: (file) => `已写入空默认值到 ${file}`,
+  dataResetJsonRestartHint:
+    '若网关仍在运行，读盘成功后会自动解除损坏锁；否则请 okbot restart。',
   dataHelp: `用法:
   okbot data
   okbot data path
   okbot data open
+  okbot data reset-json <文件名> [--force]
 
 path: 打印数据目录绝对路径（默认 ~/.okbot）。
-open: 在文件管理器中打开（macOS: open；Linux: xdg-open）。`,
+open: 在文件管理器中打开（macOS: open；Linux: xdg-open）。
+reset-json: 仅处理损坏（不可解析）的 JSON：从最新 *.corrupt.* 备份恢复，或写入空默认值，并清除损坏锁。数据文件（bots.json / squads.json / usage.json / api-token-usage.json）在 ~/.okbot/data/；设置（server.json / settings.json）在 ~/.okbot/ 根。合法文件默认拒绝；加 --force 会先旁路备份再覆盖。`,
 };
 
 const en: CliMessages = {
@@ -344,13 +368,17 @@ Exit codes: 0 = running and healthy; 1 = not running or unhealthy.`,
   stopStaleLockReleased: 'Released stale lock (process is gone).',
   stopOwnerElectron: 'Note: lock owner is electron; this will stop that Electron backend process.',
   stopNotOkbot: 'Lock/process could not be verified as an OkBot gateway; no signal sent.',
+  stopForceHint: 'If you are sure this is still your gateway (e.g. token reset without restart, or a stalled main thread), retry with --force (still requires lock.pid alive and owner serve|electron).',
+  stopForceUsed: 'Using --force: skipping HTTP probe; terminating lock pid.',
   stopHelp: `Usage:
   okbot stop
-  okbot stop --port <port> --data-dir <dir>
+  okbot stop --force
+  okbot stop --port <port> --data-dir <dir> [--force]
 
 Send SIGTERM to the OkBot gateway pid in that data-dir's lock; wait briefly, then SIGKILL if needed.
 For a custom instance, --port and --data-dir must both be set.
-Only stops owner serve|electron; stale locks are cleaned up.`,
+Only stops owner serve|electron; stale locks are cleaned up.
+--force: on probe failure, still kill by lock pid (pid must be alive and owner serve|electron).`,
 
   restartStopping: 'Restarting: stopping first…',
   restartStarting: 'Starting serve…',
@@ -410,13 +438,24 @@ reset: generate and save a new token (defaults to access/user; pass admin for su
   dataOpened: (p) => `Opened: ${p}`,
   dataOpenFailed: (detail) => `Could not open data directory: ${detail}`,
   dataUnknownSub: (sub) => `Unknown data subcommand: ${sub}`,
+  dataResetJsonUsage: 'Usage: okbot data reset-json <filename> [--force] (e.g. bots.json)',
+  dataResetJsonUnknown: (name, allowed) => `Cannot reset ${name}. Allowed: ${allowed}`,
+  dataResetJsonFailed: (detail) => `Reset failed: ${detail}`,
+  dataResetJsonNotCorrupt: (file) =>
+    `Refusing to overwrite valid file ${file} (JSON parses). To reset anyway, pass --force (backs up aside first).`,
+  dataResetJsonFromBackup: (file, backup) => `Restored ${file} from backup ${backup}`,
+  dataResetJsonFallback: (file) => `Wrote empty defaults to ${file}`,
+  dataResetJsonRestartHint:
+    'If the gateway is running, a successful re-read clears the corrupt lock; otherwise run okbot restart.',
   dataHelp: `Usage:
   okbot data
   okbot data path
   okbot data open
+  okbot data reset-json <filename> [--force]
 
 path: print the absolute data directory (default ~/.okbot).
-open: open in the file manager (macOS: open; Linux: xdg-open).`,
+open: open in the file manager (macOS: open; Linux: xdg-open).
+reset-json: only for corrupt (unparseable) JSON — restore from newest *.corrupt.* backup, or write empty defaults, and clear the corrupt lock. Data files (bots.json / squads.json / usage.json / api-token-usage.json) live under ~/.okbot/data/; settings (server.json / settings.json) at ~/.okbot/ root. Valid files are refused unless --force (backs up aside first).`,
 };
 
 export function detectLocale(env: NodeJS.ProcessEnv = process.env, argvLang?: string | null): Locale {

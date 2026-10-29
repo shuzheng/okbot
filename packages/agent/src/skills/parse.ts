@@ -1,4 +1,4 @@
-import { normalizeSkillDescription, type BotSkill } from '@okbot/shared';
+import { normalizeSkillDescription, type BotSkill, type BotSkillSource } from '@okbot/shared';
 
 /** Canonical skill directory / slug prefix. */
 export const OKBOT_SKILL_SLUG_PREFIX = 'okbot-';
@@ -46,34 +46,44 @@ export function parseSkillMarkdown(slug: string, raw: string): BotSkill {
   let name = slug;
   let description = '';
   let body = raw;
+  let source: BotSkillSource | undefined;
   const fm = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
   if (fm) {
     const meta = fm[1]!;
     body = fm[2]!;
     const n = meta.match(/^name:\s*(.*)$/m);
     const d = meta.match(/^description:\s*(.*)$/m);
+    const s = meta.match(/^source:\s*(.*)$/m);
     if (n) name = unquoteYamlScalar(n[1]!.trim()) || name;
     if (d) description = unquoteYamlScalar(d[1]!.trim());
+    if (s) {
+      const v = unquoteYamlScalar(s[1]!.trim()).toLowerCase();
+      if (v === 'user' || v === 'model') source = v;
+    }
   } else {
     const title = raw.match(/^#\s+(.+)$/m);
     if (title) name = title[1]!.trim();
   }
-  return { slug, name, description: description || name, body: body.trim() };
+  const skill: BotSkill = { slug, name, description: description || name, body: body.trim() };
+  if (source) skill.source = source;
+  return skill;
 }
 
 /** Serialize a BotSkill to SKILL.md with YAML frontmatter. */
-export function formatSkillMarkdown(skill: Pick<BotSkill, 'slug' | 'name' | 'description' | 'body'>): string {
+export function formatSkillMarkdown(
+  skill: Pick<BotSkill, 'slug' | 'name' | 'description' | 'body' | 'source'>,
+): string {
   const slug = normalizeSkillSlug(skill.slug);
   const nm = ensureOkbotSkillName(skill.name, slug).replace(/"/g, "'");
   const desc = normalizeSkillDescription(skill.description, nm).replace(/"/g, "'");
   const body = skill.body.trim();
-  return [
+  const source = skill.source === 'model' || skill.source === 'user' ? skill.source : undefined;
+  const lines = [
     '---',
     `name: "${nm}"`,
     `description: "${desc}"`,
-    '---',
-    '',
-    body,
-    '',
-  ].join('\n');
+  ];
+  if (source) lines.push(`source: ${source}`);
+  lines.push('---', '', body, '');
+  return lines.join('\n');
 }

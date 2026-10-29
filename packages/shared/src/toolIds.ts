@@ -2,7 +2,7 @@
 
 import type { AutoApprovalAction } from './approval.js';
 
-export const TOOL_IDS = ['read_file', 'read_skill', 'write_file', 'edit_file', 'run_shell', 'generate_image', 'search_history', 'manage_schedule', 'manage_task_progress', 'send_message', 'web_fetch', 'web_search'] as const;
+export const TOOL_IDS = ['read_file', 'read_skill', 'write_file', 'edit_file', 'run_shell', 'generate_image', 'search_history', 'manage_schedule', 'manage_task_progress', 'manage_memory', 'send_message', 'web_fetch', 'web_search'] as const;
 export type ToolId = (typeof TOOL_IDS)[number];
 
 export interface ToolPreference {
@@ -35,6 +35,11 @@ export const DEFAULT_TOOL_PREFERENCES: ToolPreferences = {
    */
   manage_task_progress: { enabled: true, approval: 'allow' },
   /**
+   * Pin / forget / promote durable memories for this assistant (and global when scoped).
+   * Default allow; forget still forces HITL via needsApproval.
+   */
+  manage_memory: { enabled: true, approval: 'allow' },
+  /**
    * Emit a standalone assistant chat bubble mid-run (1:1). Never HITL.
    * Default allow so the model can ack/progress without approval cards.
    */
@@ -56,6 +61,7 @@ export function normalizeToolPreferences(raw: unknown): ToolPreferences {
     search_history: { ...DEFAULT_TOOL_PREFERENCES.search_history },
     manage_schedule: { ...DEFAULT_TOOL_PREFERENCES.manage_schedule },
     manage_task_progress: { ...DEFAULT_TOOL_PREFERENCES.manage_task_progress },
+    manage_memory: { ...DEFAULT_TOOL_PREFERENCES.manage_memory },
     send_message: { ...DEFAULT_TOOL_PREFERENCES.send_message },
     web_fetch: { ...DEFAULT_TOOL_PREFERENCES.web_fetch },
     web_search: { ...DEFAULT_TOOL_PREFERENCES.web_search },
@@ -67,7 +73,8 @@ export function normalizeToolPreferences(raw: unknown): ToolPreferences {
     if (!item || typeof item !== 'object') continue;
     out[id] = {
       enabled: item.enabled !== false,
-      approval: item.approval === 'allow' ? 'allow' : 'ask',
+      // Missing / unknown → default allow (开启 + 自动允许). Explicit 'ask' kept.
+      approval: item.approval === 'ask' ? 'ask' : 'allow',
     };
   }
   return out;

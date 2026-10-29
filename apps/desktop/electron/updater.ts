@@ -29,6 +29,7 @@ import {
   listBundledChangelogs,
   localizeChangelog,
   markWhatsNewSeen as persistMarkWhatsNewSeen,
+  ensureWhatsNewBaseline,
   readUpdaterPrefs,
   shouldShowUpdatePrompt,
   shouldShowWhatsNew,
@@ -530,7 +531,10 @@ export function getChangelogHistory(lang?: ChangelogLang): LocalizedChangelogNot
 
 export function getWhatsNewIfNeeded(lang?: ChangelogLang): LocalizedChangelogNotes | null {
   const current = app.getVersion();
-  if (!shouldShowWhatsNew(prefsPath(), current)) return null;
+  const prefs = prefsPath();
+  // First install: silently mark current so future upgrades can show What's New.
+  ensureWhatsNewBaseline(prefs, current);
+  if (!shouldShowWhatsNew(prefs, current)) return null;
   return getBundledWhatsNew(current, lang ?? uiLang());
 }
 

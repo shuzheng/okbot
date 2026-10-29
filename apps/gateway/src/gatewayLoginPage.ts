@@ -63,7 +63,7 @@ export const GATEWAY_BRIDGE_METHOD_NAMES = [
   'backupExport',
   'backupRestore',
   'getSettings',
-  'getGatewayAccessToken', 'getGatewayAdminToken', 'getGatewayApiTokens',
+  'getGatewayAccessToken', 'getGatewayAdminToken', 'getGatewayApiTokens', 'getGatewayAuthRole',
   'saveSettings',
   'discoverModels',
   'testModelConnection',
@@ -435,6 +435,7 @@ export function gatewayBootJs(): string {
       blockMode:security.blockMode==='tripwire'?'tripwire':'reject'
     };
     if(Array.isArray(security.shellPatterns)) out.security.shellPatterns=security.shellPatterns;
+    if(security.agent&&typeof security.agent==='object') out.security.agent=security.agent;
     out.model=fillModel(s.model);
     out.autoApprovalEnabled=s.autoApprovalEnabled===true;
     out.autoApprovalRules=Array.isArray(s.autoApprovalRules)?s.autoApprovalRules:[];
@@ -516,6 +517,16 @@ export function gatewayBootJs(): string {
           var apiCfg=b&&b.settings&&b.settings.gatewayHttpApi;
           return apiCfg&&Array.isArray(apiCfg.apiTokens)?apiCfg.apiTokens:[];
         }, function(){ return []; });
+      },
+      /**
+       * Role of the credential this browser session is presenting (Bearer / cookie).
+       * SettingsModal uses this to show 网关端 for admin; without it hide is always true.
+       */
+      getGatewayAuthRole:function(){
+        return api('GET','/v1/gateway-token').then(function(json){
+          if(json&&(json.role==='admin'||json.role==='access')) return json.role;
+          return null;
+        }, function(){ return null; });
       },
       saveSettings:function(settings){
         return api('POST','/v1/settings', settings).then(function(json){

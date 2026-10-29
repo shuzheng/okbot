@@ -65,3 +65,26 @@ function fakeStorage(seed: { global?: Row[]; bot?: Row[] }) {
 }
 
 console.log('chatMaintenance.memory.test.ts: ok');
+
+{
+  // Fresh upserts without preferDurable → candidate tier.
+  const { storage, written } = fakeStorage({});
+  upsertBotMemoriesFromEntries(storage as any, 'b1', [
+    { scope: 'bot', memory: '用户喜欢早起', expires: null },
+  ]);
+  assert.equal(written[0]!.entry.tier, 'candidate');
+  assert.equal(written[0]!.entry.hits, 0);
+}
+
+{
+  const { storage, written } = fakeStorage({});
+  upsertBotMemoriesFromEntries(
+    storage as any,
+    'b1',
+    [{ scope: 'bot', memory: '请记住我叫小明', expires: null }],
+    { preferDurable: true },
+  );
+  assert.equal(written[0]!.entry.tier, 'durable');
+}
+
+console.log('chatMaintenance.memory.test.ts: candidate/durable ok');

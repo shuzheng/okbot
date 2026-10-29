@@ -1,7 +1,8 @@
-import { generateDistinctGatewayHttpApiToken } from '@okbot/shared';
+import { createGatewayApiTokenEntry, generateDistinctGatewayHttpApiToken } from '@okbot/shared';
 import { FileStorage } from '../../storage';
 import { isPidAlive, probeOkbotWithGatewayTokens, readServerLock } from '../../serverPresence';
 import type { CliMessages } from '../i18n';
+import { peelDataDirFlag, reportInstanceFlagError, resolveOkbotRoot } from '../instanceArgs';
 
 async function gatewayLooksRunning(storage: FileStorage): Promise<boolean> {
   const api = storage.getSettings().gatewayHttpApi;
@@ -21,9 +22,11 @@ function parseRole(raw: string | undefined): TokenRole | null {
 }
 
 export async function tokenCommand(args: string[], t: CliMessages): Promise<number> {
-  const storage = new FileStorage();
-  const sub = args[0];
-  const roleArg = args[1];
+  const peeled = peelDataDirFlag(args);
+  if (!peeled.ok) return reportInstanceFlagError(t, peeled.error);
+  const storage = new FileStorage(resolveOkbotRoot(peeled.dataDir));
+  const sub = peeled.rest[0];
+  const roleArg = peeled.rest[1];
 
   if (!sub || sub === 'show') {
     const role = parseRole(roleArg);
@@ -58,18 +61,29 @@ export async function tokenCommand(args: string[], t: CliMessages): Promise<numb
     const settings = storage.getSettings();
     const api = settings.gatewayHttpApi;
     if (role === 'access') {
-      const token = generateDistinctGatewayHttpApiToken(api.adminToken || '', 'access');
+      const avoid = api.adminToken || api.apiTokens?.find((e) => e.role === 'admin')?.token || '';
+      const token = generateDistinctGatewayHttpApiToken(avoid, 'access');
+      // Fail-closed: replace all access entries so normalize cannot reinsert the old secret.
+      const apiTokens = [
+        createGatewayApiTokenEntry({ name: 'User', role: 'access', token }),
+        ...(api.apiTokens || []).filter((e) => e.role !== 'access'),
+      ];
       storage.saveSettings({
         ...settings,
-        gatewayHttpApi: { ...api, token },
+        gatewayHttpApi: { ...api, token, apiTokens },
       });
       console.log(t.tokenResetAccessDone);
       console.log(token);
     } else {
-      const adminToken = generateDistinctGatewayHttpApiToken(api.token || '', 'admin');
+      const avoid = api.token || api.apiTokens?.find((e) => e.role === 'access')?.token || '';
+      const adminToken = generateDistinctGatewayHttpApiToken(avoid, 'admin');
+      const apiTokens = [
+        ...(api.apiTokens || []).filter((e) => e.role !== 'admin'),
+        createGatewayApiTokenEntry({ name: 'Admin', role: 'admin', token: adminToken }),
+      ];
       storage.saveSettings({
         ...settings,
-        gatewayHttpApi: { ...api, adminToken },
+        gatewayHttpApi: { ...api, adminToken, apiTokens },
       });
       console.log(t.tokenResetAdminDone);
       console.log(adminToken);

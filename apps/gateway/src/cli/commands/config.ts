@@ -1,6 +1,7 @@
 import { FileStorage } from '../../storage';
 import { isPidAlive, probeOkbotHealth, readServerLock } from '../../serverPresence';
 import type { CliMessages } from '../i18n';
+import { peelDataDirFlag, reportInstanceFlagError, resolveOkbotRoot } from '../instanceArgs';
 import { maskToken, parseBool, parsePort } from '../parse';
 
 async function gatewayLooksRunning(storage: FileStorage): Promise<boolean> {
@@ -72,8 +73,10 @@ export function parseConfigSetArgs(args: string[]):
 }
 
 export async function configCommand(args: string[], t: CliMessages): Promise<number> {
-  const storage = new FileStorage();
-  const sub = args[0];
+  const peeled = peelDataDirFlag(args);
+  if (!peeled.ok) return reportInstanceFlagError(t, peeled.error);
+  const storage = new FileStorage(resolveOkbotRoot(peeled.dataDir));
+  const sub = peeled.rest[0];
 
   if (!sub || sub === 'show') {
     printShow(storage, t);
@@ -81,7 +84,7 @@ export async function configCommand(args: string[], t: CliMessages): Promise<num
   }
 
   if (sub === 'set') {
-    const parsed = parseConfigSetArgs(args.slice(1));
+    const parsed = parseConfigSetArgs(peeled.rest.slice(1));
     if (!parsed.ok) {
       if (parsed.error === 'invalid_port') {
         console.error(t.configInvalidPort);

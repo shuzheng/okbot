@@ -13,6 +13,7 @@ import type { ScheduledJob } from './storage/schedules';
 import { formatScheduledTurnText } from './storage/schedules';
 import { startChatTurn } from './ipc/registerChat';
 import type { IpcContext } from './ipc/context';
+import { ownerHasRuns } from './ipc/ownerRuns';
 
 const DEFAULT_INTERVAL_MS = 20_000;
 
@@ -50,7 +51,7 @@ export function startScheduleTicker(deps: ScheduleTickerDeps): () => void {
         const key = `${job.ownerId}:${job.id}`;
         if (inflight.has(key)) continue;
         inflight.add(key);
-        void fireJob(deps, job, inflight, key);
+        void fireScheduledJob(deps, job, inflight, key);
       }
     } finally {
       ticking = false;
@@ -70,7 +71,12 @@ export function startScheduleTicker(deps: ScheduleTickerDeps): () => void {
   };
 }
 
-async function fireJob(
+/**
+ * Fire one due job. Exported for tests (once+busy must not claim/disable).
+ * All ownerHasRuns checks run *before* claim so once jobs are never left
+ * enabled=false / nextRunAt=null after a busy skip.
+ */
+export async function fireScheduledJob(
   deps: ScheduleTickerDeps,
   job: ScheduledJob,
   inflight: Set<string>,
@@ -83,11 +89,23 @@ async function fireJob(
     : { botId: ownerId, text, origin: 'schedule' as const };
   let claimed = false;
   try {
+    // Never claim while busy — once jobs disable on claim and must not be lost.
+    if (ownerHasRuns(deps.ctx.abortControllers, ownerId)) return;
     const claim = deps.storage.claimScheduledJobDue(ownerId, job.id);
     if (!claim) return;
     claimed = true;
-    await startChatTurn(deps.ctx, payload);
-    deps.storage.markScheduledJobFired(ownerId, job.id, { ok: true });
+    // Hold inflight until finally so the same due nextRunAt cannot stack while
+    // the turn runs (claim no longer advances nextRunAt).
+    // First turn only — AC continues in background (do not hold lastRunAt across AC).
+    const result = await startChatTurn(deps.ctx, payload, { awaitAutoContinue: false });
+    if (result?.aborted || result?.superseded) {
+      deps.storage.markScheduledJobFired(ownerId, job.id, {
+        ok: false,
+        error: result.aborted ? 'aborted' : 'superseded',
+      });
+    } else {
+      deps.storage.markScheduledJobFired(ownerId, job.id, { ok: true });
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error('[okbot] schedule fire failed', job.id, err);

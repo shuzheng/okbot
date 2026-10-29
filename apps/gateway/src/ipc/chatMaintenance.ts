@@ -19,6 +19,9 @@ import {
   getMaintenanceCounters,
   planPostTurnMaintenance,
 } from '../storage/maintenanceSchedule';
+import { consolidateMemoriesForBot } from '../storage/memoryConsolidate';
+import { desensitizeMemoryText } from '@okbot/shared';
+import { userAskedToRemember } from '../storage/maintenanceSchedule';
 
 /**
  * Persist model-chosen memory entries as-is.
@@ -29,17 +32,57 @@ import {
 export function upsertBotMemoriesFromEntries(
   storage: FileStorage,
   botId: string,
-  entries: Array<{ memory: string; expires: string | null; scope: 'global' | 'bot' }>,
+  entries: Array<{
+    memory: string;
+    expires: string | null;
+    scope: 'global' | 'bot';
+    replaceId?: string;
+    /** Phase 1 default candidate; durable when pinned / explicit remember / model says so. */
+    tier?: 'candidate' | 'durable';
+    pinned?: boolean;
+  }>,
+  opts?: { preferDurable?: boolean },
 ): void {
   if (!entries.length) return;
+  const preferDurable = opts?.preferDurable === true;
   for (const e of entries) {
-    const memory = (e.memory || '').trim();
+    const memory = desensitizeMemoryText(e.memory || '');
     if (!memory) continue;
+    const replaceId = (e.replaceId || '').trim();
+    const pinned = e.pinned === true;
+    let tier: 'candidate' | 'durable' =
+      e.tier === 'durable' || e.tier === 'candidate'
+        ? e.tier
+        : preferDurable || pinned
+          ? 'durable'
+          : 'candidate';
+    if (pinned) tier = 'durable';
+    // replaceId → overwrite that row (same id). Otherwise always insert a fresh id.
+    const id = replaceId || createId('mem');
+    let hits: number | undefined;
+    let createdAt: string | undefined;
+    if (replaceId) {
+      const prev =
+        (e.scope === 'global'
+          ? storage.listGlobalMemories()
+          : storage.listBotMemories(botId)
+        ).find((row) => row.id === replaceId);
+      if (prev) {
+        hits = prev.hits;
+        createdAt = prev.createdAt || undefined;
+        // Replacing a durable keeps durable unless model demotes via tier=candidate.
+        if (e.tier == null && prev.tier !== 'candidate') tier = 'durable';
+      }
+    }
     storage.upsertMemory(e.scope, {
-      id: createId('mem'),
+      id,
       bot_id: botId,
       memory,
       expires: e.expires,
+      tier,
+      ...(pinned ? { pinned: true } : {}),
+      ...(hits != null ? { hits } : { hits: 0 }),
+      ...(createdAt ? { createdAt } : { createdAt: new Date().toISOString() }),
     } satisfies MemoryEntry);
   }
 }
@@ -56,6 +99,9 @@ export async function extractMemoriesFromFoldedHistory(input: {
   const settings = input.storage.getSettings();
   const delta = input.deltaMessages.filter((m) => m.role === 'user' || m.role === 'assistant');
   if (!delta.length) return;
+  // Compress-time: mine the whole folded delta. Do NOT reuse post-turn
+  // analysis window `memoryEveryTurns` (default 2) — that would drop most of
+  // a large fold. refreshMemories clamps via normalizeMemoryRecentLimit (1–500).
   const memResult = await refreshMemories({
     model: input.model,
     botId: input.botId,
@@ -64,15 +110,13 @@ export async function extractMemoriesFromFoldedHistory(input: {
     existingBot: input.storage.listBotMemories(input.botId),
     recentMessages: delta,
     scopeInstruction: settings.memory.scopeInstruction,
-    recentMessageLimit: Math.min(
-      settings.maintenance.memoryEveryTurns,
-      Math.max(delta.length, 1),
-    ),
+    recentMessageLimit: Math.max(delta.length, 1),
     signal: input.signal,
   });
   if (memResult.action === 'upsert') {
     upsertBotMemoriesFromEntries(input.storage, input.botId, memResult.entries);
   }
+  consolidateMemoriesForBot(input.storage, input.botId);
 }
 
 export async function runThrottledPostTurnMaintenance(input: {
@@ -165,8 +209,11 @@ export async function runThrottledPostTurnMaintenance(input: {
       signal: input.signal,
     });
     if (memResult.action === 'upsert') {
-      upsertBotMemoriesFromEntries(input.storage, input.botId, memResult.entries);
+      upsertBotMemoriesFromEntries(input.storage, input.botId, memResult.entries, {
+        preferDurable: userAskedToRemember(input.userText),
+      });
     }
+    consolidateMemoriesForBot(input.storage, input.botId);
   }
 }
 

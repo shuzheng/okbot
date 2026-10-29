@@ -9,7 +9,7 @@
  * Over the entry/char cap: drop or fold oldest unpinned first. Globals are preferred
  * over locals — never wipe all globals while only newest locals remain.
  */
-export const MEMORY_PROMPT_MAX_ENTRIES = 40;
+export const MEMORY_PROMPT_MAX_ENTRIES = 16;
 export const MEMORY_PROMPT_MAX_CHARS = 4_000;
 
 export type MemoryPromptRow = {

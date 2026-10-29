@@ -33,7 +33,7 @@ export class OkbotFileSession implements Session {
     const items = await this.store.readItems(limit);
     // Model context: strip `<think>`, coerce UI/legacy item shapes to Responses
     // ModelItem forms (RunState checkpoint serialization), and drop nulls inside
-    // tool-call arguments (strict gateways e.g. MiniMax 400/2013 reject
+    // tool-call arguments (strict gateways e.g. HTTP 400/2013 reject
     // `"job_id":null` in history).
     return (items as AgentInputItem[]).map((item) => {
       const stripped = stripThinkFromAgentInputItem(item as Record<string, unknown>);

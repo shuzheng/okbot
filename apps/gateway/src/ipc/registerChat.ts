@@ -20,9 +20,18 @@ export type { ChatStartPayload, ChatStartResult } from './chat/turnContext';
 export { respondToToolApproval } from './chat/toolApproval';
 export { compressSessionNow } from './chat/compressSession';
 
+export type StartChatTurnOptions = {
+  /**
+   * When false, return after the initiating turn; auto-continue runs in the
+   * background. Default true (IPC / most callers). Schedule + HTTP SSE pass false.
+   */
+  awaitAutoContinue?: boolean;
+};
+
 export async function startChatTurn(
   ctx: IpcContext,
   payload: ChatStartPayload,
+  opts?: StartChatTurnOptions,
 ): Promise<ChatStartResult> {
   const text = (payload.text ?? '').trim();
   if (!text) throw new Error('请输入内容');
@@ -31,7 +40,9 @@ export async function startChatTurn(
     // Squads: parallel turns unchanged for now (orchestrator classify deferred).
     return startSquadTurn(ctx, payload, text);
   }
-  return orchestrateBotTurn(ctx, payload, text);
+  return orchestrateBotTurn(ctx, payload, text, {
+    awaitAutoContinue: opts?.awaitAutoContinue,
+  });
 }
 
 export function registerChatIpc(ctx: IpcContext): void {

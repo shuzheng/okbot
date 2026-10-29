@@ -141,9 +141,10 @@ export async function runGatewayRpc(
     const result = await fn(input);
     return { status: 200, body: { ok: true, result: result ?? null } };
   } catch (err) {
+    console.error('[okbot] gateway rpc failed', name, err);
     return {
       status: 400,
-      body: { ok: false, error: err instanceof Error ? err.message : String(err) },
+      body: { ok: false, error: 'rpc_failed' },
     };
   } finally {
     release();

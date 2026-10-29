@@ -252,7 +252,7 @@ Useful scripts: `pnpm test`, `pnpm build`, `pnpm typecheck`. Gateway CLI needs `
 
 ## Contributing
 
-Issues and pull requests are welcome. Please read [GUIDE.md](./GUIDE.md), [DESIGN.md](./DESIGN.md), and [AGENTS.md](./AGENTS.md) before large changes, and keep PRs focused.
+Issues and pull requests are welcome. Start with [CONTRIBUTING.md](./CONTRIBUTING.md). Please also read [GUIDE.md](./GUIDE.md), [DESIGN.md](./DESIGN.md), and [AGENTS.md](./AGENTS.md) before large changes, and keep PRs focused. Security reports: [SECURITY.md](./SECURITY.md).
 
 ## License
 

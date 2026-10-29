@@ -38,6 +38,8 @@ export type PendingHitlRecord = {
   requestId: string;
   messageId: string;
   toolName: string;
+  /** SDK function_call callId when known — preferred match on cold resume. */
+  callId?: string;
   arguments: unknown;
   serializedRunState: string;
   computerId?: string;
@@ -51,20 +53,6 @@ export type PendingHitlRecord = {
   /** Squad only: stable id of the user turn (bubble ids rotate between captain segments). */
   turnId?: string;
   createdAt: string;
-};
-
-/** @deprecated Use TaskStatus from @okbot/shared (multi-task tasks.jsonl). */
-export type TaskProgressItemStatus = import('@okbot/shared').TaskStatus;
-/** @deprecated Use TaskStep from @okbot/shared. */
-export type TaskProgressItem = import('@okbot/shared').TaskStep;
-/**
- * @deprecated Legacy single-plan view shape. Prefer TaskRecord / tasks.jsonl.
- */
-export type TaskProgressRecord = {
-  v: 1;
-  title?: string;
-  items: import('@okbot/shared').TaskStep[];
-  updatedAt: string;
 };
 
 export type { TaskStatus, TaskStep, TaskRecord } from '@okbot/shared';

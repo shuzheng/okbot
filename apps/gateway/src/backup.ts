@@ -116,10 +116,26 @@ function sameFields(a: Json | undefined, b: Json, keys: readonly string[]): bool
   return keys.every((k) => JSON.stringify(a[k] ?? null) === JSON.stringify(b[k] ?? null));
 }
 
+/** True when incoming URL equals old, or equals redactSecretUrl(old) (bootstrap round-trip). */
+function sameEndpointUrl(incoming: unknown, old: unknown): boolean {
+  if (typeof incoming !== 'string' || typeof old !== 'string') {
+    return (incoming ?? null) === (old ?? null);
+  }
+  if (incoming === old) return true;
+  return incoming === redactSecretUrl(old);
+}
+
 /**
  * Fill blank secrets in `restored` from `current`. An entry gets the old secret
  * only when its id and endpoint (provider baseURL, computer host/port, MCP
- * transport/command/args/url) are exactly the same as in the current settings.
+ * transport/command/args/url) match the current settings. Provider / web.search
+ * baseURL and marketplace savedSources also match when `incoming ===
+ * redactSecretUrl(old)` (gateway bootstrap projection), and then restore the
+ * original URL plus secrets.
+ *
+ * `gatewayHttpApi.apiTokens`: non-empty list → refill blank tokens by id
+ * (attach/WebUI placeholders). Explicit `[]` → intentional wipe (do not
+ * resurrect). Omitted / non-array → keep current list (legacy backups).
  */
 export function carryOverSecrets(restored: unknown, current: unknown): unknown {
   const r = asObj(restored);
@@ -143,7 +159,16 @@ export function carryOverSecrets(restored: unknown, current: unknown): unknown {
       providers: rModel.providers.map((p) => {
         const o = { ...(asObj(p) ?? {}) };
         const old = typeof o.id === 'string' ? prev.get(o.id) : undefined;
-        if (!o.apiKey && sameFields(old, o, ['baseURL']) && typeof old?.apiKey === 'string') o.apiKey = old.apiKey;
+        // Match exact baseURL or bootstrap-redacted form; restore original URL + key.
+        if (
+          old &&
+          !o.apiKey &&
+          typeof old.apiKey === 'string' &&
+          sameEndpointUrl(o.baseURL, old.baseURL)
+        ) {
+          o.apiKey = old.apiKey;
+          if (typeof old.baseURL === 'string') o.baseURL = old.baseURL;
+        }
         return o;
       }),
     };
@@ -153,15 +178,29 @@ export function carryOverSecrets(restored: unknown, current: unknown): unknown {
   if (rApi && cApi) {
     const nextApi = { ...rApi };
     let touched = false;
-    if (!rApi.token && typeof cApi.token === 'string') {
-      nextApi.token = cApi.token;
-      touched = true;
-    }
-    if (!rApi.adminToken && typeof cApi.adminToken === 'string') {
-      nextApi.adminToken = cApi.adminToken;
+    // Explicit apiTokens: [] = intentional wipe (WebUI delete-all). Do not
+    // resurrect the prior list or refill legacy dual fields — ensureGatewayToken
+    // remints access+admin on next gateway start if both are gone.
+    const intentionalClear =
+      Array.isArray(rApi.apiTokens) && rApi.apiTokens.length === 0;
+    if (!intentionalClear) {
+      if (!rApi.token && typeof cApi.token === 'string') {
+        nextApi.token = cApi.token;
+        touched = true;
+      }
+      if (!rApi.adminToken && typeof cApi.adminToken === 'string') {
+        nextApi.adminToken = cApi.adminToken;
+        touched = true;
+      }
+    } else {
+      // Keep restored blanks; do not copy current secrets back.
+      nextApi.token = typeof rApi.token === 'string' ? rApi.token : '';
+      nextApi.adminToken = typeof rApi.adminToken === 'string' ? rApi.adminToken : '';
+      nextApi.apiTokens = [];
       touched = true;
     }
     if (Array.isArray(rApi.apiTokens) && rApi.apiTokens.length > 0) {
+      // Attach/WebUI projection: empty-token placeholders → refill by id.
       const prevTok = byId(cApi.apiTokens);
       nextApi.apiTokens = rApi.apiTokens.map((t) => {
         const o = { ...(asObj(t) ?? {}) };
@@ -173,7 +212,8 @@ export function carryOverSecrets(restored: unknown, current: unknown): unknown {
         return o;
       });
       touched = true;
-    } else if (Array.isArray(cApi.apiTokens) && cApi.apiTokens.length) {
+    } else if (!Array.isArray(rApi.apiTokens) && Array.isArray(cApi.apiTokens) && cApi.apiTokens.length) {
+      // Omitted apiTokens (legacy backup / partial patch) → keep current list.
       nextApi.apiTokens = cApi.apiTokens;
       touched = true;
     }
@@ -227,14 +267,33 @@ export function carryOverSecrets(restored: unknown, current: unknown): unknown {
     const rSearch = asObj(rWeb.search);
     const cSearch = asObj(cWeb?.search);
     if (rSearch && !rSearch.apiKey && cSearch && typeof cSearch.apiKey === 'string') {
-      // Same provider (+ optional baseURL) before restoring the key.
-      if (sameFields(cSearch, rSearch, ['provider', 'baseURL', 'compat'])) {
+      // Same provider/compat + baseURL (exact or bootstrap-redacted) before restoring.
+      if (
+        sameFields(cSearch, rSearch, ['provider', 'compat']) &&
+        sameEndpointUrl(rSearch.baseURL, cSearch.baseURL)
+      ) {
+        const nextSearch: Json = { ...rSearch, apiKey: cSearch.apiKey };
+        if (typeof cSearch.baseURL === 'string') nextSearch.baseURL = cSearch.baseURL;
         out.web = {
           ...rWeb,
-          search: { ...rSearch, apiKey: cSearch.apiKey },
+          search: nextSearch,
         };
       }
     }
+  }
+  // assistantMarketplace.savedSources may arrive redacted from gateway projection.
+  const rMarket = asObj(r.assistantMarketplace);
+  const cMarket = asObj(c.assistantMarketplace);
+  if (rMarket && Array.isArray(rMarket.savedSources) && cMarket && Array.isArray(cMarket.savedSources)) {
+    const prevUrls = cMarket.savedSources.filter((u): u is string => typeof u === 'string');
+    out.assistantMarketplace = {
+      ...rMarket,
+      savedSources: rMarket.savedSources.map((u) => {
+        if (typeof u !== 'string') return u;
+        const match = prevUrls.find((old) => sameEndpointUrl(u, old));
+        return match ?? u;
+      }),
+    };
   }
   return out;
 }
@@ -278,6 +337,18 @@ function timestamp(): string {
   return new Date().toISOString().replace(/[:.]/g, '-');
 }
 
+
+/** Runtime / HITL state that must not travel in backups (may hold tool args / tokens). */
+function shouldSkipBackupSource(absRoot: string, src: string): boolean {
+  const base = path.basename(src);
+  if (path.dirname(src) === absRoot && SKIP_NAMES.has(base)) return true;
+  if (base === 'run-checkpoint.json' || base === 'pending-hitl.json') return true;
+  // data/<owner>/pending-hitl(/…) — tool args may include secrets
+  const rel = path.relative(absRoot, src);
+  if (rel.startsWith('..')) return false;
+  return rel.split(path.sep).includes('pending-hitl');
+}
+
 /** Write the backup archive. Returns the archive path. */
 export function exportDataBackup(root: string, outFile: string, opts: { excludeSecrets: boolean }): string {
   const absRoot = path.resolve(root);
@@ -290,7 +361,7 @@ export function exportDataBackup(root: string, outFile: string, opts: { excludeS
     fs.cpSync(absRoot, staging, {
       recursive: true,
       verbatimSymlinks: true,
-      filter: (src) => !(path.dirname(src) === absRoot && SKIP_NAMES.has(path.basename(src))),
+      filter: (src) => !shouldSkipBackupSource(absRoot, src),
     });
     const settingsFile = resolveSettingsFile(staging);
     if (opts.excludeSecrets) {

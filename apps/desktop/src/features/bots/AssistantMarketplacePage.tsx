@@ -68,6 +68,7 @@ export function AssistantMarketplacePage({
   onInstalled,
   onSettingsPatch,
   onOpenMcpSettings,
+  initialTab = 'assistants',
 }: {
   lang: UiLang;
   modelReady: boolean;
@@ -79,8 +80,10 @@ export function AssistantMarketplacePage({
   onSettingsPatch: (next: AppSettings) => void | Promise<void>;
   /** Jump to Settings → MCP extensions. */
   onOpenMcpSettings?: () => void;
+  /** Open on 助手 or 连接器 tab (sidebar hover segments). */
+  initialTab?: MarketTab;
 }) {
-  const [tab, setTab] = useState<MarketTab>('assistants');
+  const [tab, setTab] = useState<MarketTab>(initialTab);
   const [url, setUrl] = useState('');
   const [busy, setBusy] = useState(false);
   const [remoteError, setRemoteError] = useState('');
@@ -91,6 +94,10 @@ export function AssistantMarketplacePage({
   const assistantsTabRef = useRef<HTMLButtonElement>(null);
   const connectorsTabRef = useRef<HTMLButtonElement>(null);
   const [pill, setPill] = useState({ left: 0, width: 0 });
+
+  useEffect(() => {
+    setTab(initialTab);
+  }, [initialTab]);
 
   const syncPill = useCallback(() => {
     const track = tabTrackRef.current;

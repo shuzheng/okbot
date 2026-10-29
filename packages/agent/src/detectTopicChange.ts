@@ -2,6 +2,10 @@ import OpenAI from 'openai';
 import type { ChatMessage, ResolvedModelConfig } from '@okbot/shared';
 import { stripThinkContent } from '@okbot/shared';
 import { assertModel } from './model.js';
+import {
+  buildTopicChangeSystemPrompt,
+  buildTopicChangeUserPrompt,
+} from './topicChangePrompt.js';
 
 /**
  * Cheap yes/no: does `newUserText` start a new topic vs recent turns / session summary?
@@ -50,22 +54,12 @@ export async function detectTopicChange(input: {
     baseURL: input.model.baseURL.replace(/\/$/, ''),
   });
 
-  const system = [
-    '你是会话换题判定器。判断「新用户消息」是否开启了一个与近期对话明显不同的新话题。',
-    '只输出一个 JSON 对象，不要代码围栏，不要解释：{"newTopic":true} 或 {"newTopic":false}',
-    '判定为 true 的情况：主题/任务/领域明显切换（例如从写代码切到订机票、从项目A切到无关的项目B）。',
-    '判定为 false 的情况：同一任务的追问、补充、修正、继续、澄清，或同一主题下的下一小步。',
-    '不确定时输出 {"newTopic":false}。',
-  ].join('\n');
-
-  const user = [
-    summary ? `会话摘要（更早内容）：\n${summary}` : '会话摘要：（无）',
-    '',
-    '近期对话：',
-    recentParts.length ? recentParts.join('\n') : '（无）',
-    '',
-    `新用户消息：\n${text.slice(0, 1_500)}`,
-  ].join('\n');
+  const system = buildTopicChangeSystemPrompt();
+  const user = buildTopicChangeUserPrompt({
+    summary,
+    recentDialogue: recentParts.length ? recentParts.join('\n') : '',
+    newUserText: text.slice(0, 1_500),
+  });
 
   try {
     const completion = await client.chat.completions.create(

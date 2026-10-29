@@ -35,7 +35,7 @@ import {
   type ApiTokenUsageStats,
 } from './apiTokenUsageStore';
 import { assertSafeOwnerSegment } from './ids';
-import type { SessionRecordV2, PendingHitlRecord, TaskProgressRecord, RunCheckpointRecord, TaskRecord } from './types';
+import type { SessionRecordV2, PendingHitlRecord, RunCheckpointRecord, TaskRecord } from './types';
 import type { ScheduledJob } from './schedules';
 import { OwnerLifecycle } from './ownerLifecycle';
 import { SettingsStore } from './SettingsStore';
@@ -60,7 +60,7 @@ import {
   serverSettingsPath,
 } from './okbotLayout';
 
-export type { SessionRecordV2, PendingHitlRecord, TaskProgressRecord, RunCheckpointRecord, TaskRecord } from './types';
+export type { SessionRecordV2, PendingHitlRecord, RunCheckpointRecord, TaskRecord } from './types';
 
 /**
  * Thin facade over domain stores. Owns shared root paths, constructs stores,
@@ -538,8 +538,41 @@ export class FileStorage {
     this.memoryStore.writeSessionSummary(botId, entry);
   }
 
-  formatMemoriesForPrompt(botId: string): string {
-    return this.memoryStore.formatMemoriesForPrompt(botId);
+  readLastEffectiveModel(botId: string): string | null {
+    return this.memoryStore.readLastEffectiveModel(botId);
+  }
+
+  writeLastEffectiveModel(botId: string, modelKey: string): void {
+    this.memoryStore.writeLastEffectiveModel(botId, modelKey);
+  }
+
+  formatMemoriesForPrompt(
+    botId: string,
+    opts?: { query?: string; recordHits?: boolean },
+  ): string {
+    return this.memoryStore.formatMemoriesForPrompt(botId, opts);
+  }
+
+  recordMemoryHits(botId: string, ids: string[]): void {
+    this.memoryStore.recordMemoryHits(botId, ids);
+  }
+
+  setMemoryPinned(
+    scope: 'global' | 'bot',
+    botId: string,
+    memoryId: string,
+    pinned: boolean,
+  ) {
+    return this.memoryStore.setMemoryPinned(scope, botId, memoryId, pinned);
+  }
+
+  promoteMemory(scope: 'global' | 'bot', botId: string, memoryId: string) {
+    return this.memoryStore.promoteMemory(scope, botId, memoryId);
+  }
+
+  /** Replace all rows in a memory file (Phase 2 consolidation rewrite). */
+  replaceMemories(scope: 'global' | 'bot', botId: string, entries: import('@okbot/shared').MemoryEntry[]): void {
+    this.memoryStore.replaceAllMemories(scope, botId, entries);
   }
 
   // ── skills ──────────────────────────────────────────────────
@@ -563,7 +596,7 @@ export class FileStorage {
   resolveEnabledSkill(
     botId: string,
     slug: string,
-  ): (BotSkill & { source: 'local' | 'global' }) | null {
+  ): (BotSkill & { location: 'local' | 'global' }) | null {
     return this.skillsStore.resolveEnabledSkill(botId, slug);
   }
 
@@ -890,11 +923,6 @@ export class FileStorage {
     return this.taskProgressStore.loadOpen(ownerId);
   }
 
-  /** @deprecated Prefer loadTasks — returns a legacy single-plan view. */
-  loadTaskProgress(ownerId: string): TaskProgressRecord {
-    return this.taskProgressStore.load(ownerId);
-  }
-
   formatTaskProgressForPrompt(ownerId: string): string {
     return formatTasksForPrompt(this.taskProgressStore.loadAll(ownerId));
   }
@@ -946,31 +974,6 @@ export class FileStorage {
     },
   ): TaskRecord {
     return this.taskProgressStore.updateTask(ownerId, input);
-  }
-
-  /** @deprecated Legacy set_plan → addTask. */
-  setTaskProgressPlan(
-    ownerId: string,
-    input: {
-      title?: string;
-      items: Array<{ id?: string; title: string; status?: import('./types').TaskProgressItemStatus; note?: string }>;
-    },
-  ): TaskProgressRecord {
-    return this.taskProgressStore.setPlan(ownerId, input);
-  }
-
-  /** @deprecated Legacy update_item. */
-  updateTaskProgressItem(
-    ownerId: string,
-    input: {
-      id?: string;
-      title?: string;
-      status?: import('./types').TaskProgressItemStatus;
-      note?: string;
-      new_title?: string;
-    },
-  ): TaskProgressRecord {
-    return this.taskProgressStore.updateItem(ownerId, input);
   }
 
   clearTaskProgress(ownerId: string): void {

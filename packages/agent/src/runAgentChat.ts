@@ -18,7 +18,6 @@ import type {
 } from './types.js';
 import {
   buildAskAssistantTool,
-  meshAskToolAllowed,
   type MeshRuntimeContext,
 } from './mesh.js';
 
@@ -30,7 +29,7 @@ function attachMeshAskTool(
   const peers = input.meshPeers;
   if (peers == null || !input.ownerId || !input.resourcesDir) return input;
   const meshDepth = input.meshDepth ?? 0;
-  if (!peers.length || !meshAskToolAllowed()) {
+  if (!peers.length) {
     return input;
   }
   if (!input.onToolApprovalRequest) return input;

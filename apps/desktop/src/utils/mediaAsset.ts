@@ -1,5 +1,6 @@
 /**
- * Chat media under ~/.okbot/<owner>/{resources|uploads}/.
+ * Chat media under ~/.okbot/data/<owner>/{resources|uploads}/ (current) or
+ * legacy ~/.okbot/<owner>/{resources|uploads}/.
  * Canonical src is absolute gateway `/v1/media/<owner>/{resources|uploads}/<file>`
  * (also accept legacy okbot-asset:… / file://…/.okbot/…/(resources|uploads)/…);
  * rendered via the local gateway GET /v1/media/… (not file://, not remote https).
@@ -14,8 +15,9 @@ export type ParsedOwnerResource = {
   subdir: 'resources' | 'uploads';
 };
 
+/** Optional `data/` segment between `.okbot/` and `<ownerId>/`. */
 const OWNER_MEDIA_RE =
-  /(?:^|[\\/])\.okbot[\\/]([^/\\]+)[\\/](resources|uploads)[\\/]([^/\\?#]+)/i;
+  /(?:^|[\\/])\.okbot[\\/](?:data[\\/])?([^/\\]+)[\\/](resources|uploads)[\\/]([^/\\?#]+)/i;
 
 /** True for legacy okbot-asset: srcs (canonical form is `/v1/media/…`). */
 export function isOkbotAssetSrc(src: string | undefined): src is string {
@@ -34,7 +36,7 @@ export function isSafeDataImageSrc(src: string | undefined): src is string {
 
 /**
  * Parse `/v1/media/<ownerId>/{resources|uploads}/<file>`, okbot-asset:…, or a file://
- * (or absolute) path that points at ~/.okbot/<ownerId>/{resources|uploads}/<file>.
+ * (or absolute) path that points at ~/.okbot[/data]/<ownerId>/{resources|uploads}/<file>.
  */
 export function parseOwnerResourceSrc(src: string | undefined): ParsedOwnerResource | null {
   if (!src || typeof src !== 'string') return null;

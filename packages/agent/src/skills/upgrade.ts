@@ -23,17 +23,44 @@ function splitBodySections(body: string): Array<{ heading: string; text: string 
   const sections: Array<{ heading: string; text: string }> = [];
   let heading = '';
   let buf: string[] = [];
+  /** Inside a fenced code block (` ``` ` / `~~~`); do not treat `#` lines as headings. */
+  let inFence = false;
+  let fenceChar = '';
+  let fenceLen = 0;
   const flush = () => {
     const text = buf.join('\n').trim();
     if (heading || text) sections.push({ heading, text });
     buf = [];
   };
   for (const line of lines) {
-    const h = line.match(/^(#{1,6})\s+(.+?)\s*$/);
-    if (h) {
-      flush();
-      heading = line.trim();
-      continue;
+    const fence = line.match(/^(\s{0,3})(`{3,}|~{3,})(.*)$/);
+    if (fence) {
+      const marker = fence[2]!;
+      const ch = marker[0]!;
+      const info = fence[3] ?? '';
+      if (!inFence) {
+        inFence = true;
+        fenceChar = ch;
+        fenceLen = marker.length;
+        buf.push(line);
+        continue;
+      }
+      // Closing fence: same char, length >= open, info string empty/whitespace only.
+      if (ch === fenceChar && marker.length >= fenceLen && /^\s*$/.test(info)) {
+        inFence = false;
+        fenceChar = '';
+        fenceLen = 0;
+        buf.push(line);
+        continue;
+      }
+    }
+    if (!inFence) {
+      const h = line.match(/^(#{1,6})\s+(.+?)\s*$/);
+      if (h) {
+        flush();
+        heading = line.trim();
+        continue;
+      }
     }
     buf.push(line);
   }

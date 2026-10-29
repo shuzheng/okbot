@@ -11,6 +11,7 @@ import {
   holdOwnerBusy,
   listBusyOwnerIds,
   listOwnerRunIds,
+  ownerHasBusyHold,
   releaseOwnerBusyHold,
   waitOwnerRunUnregistered,
   type AbortControllerMap,
@@ -84,6 +85,22 @@ export function getSoftSteerEpoch(ownerId: string): number {
  * (or Stop / empty / superseded). Prevents listBusyOwnerIds flashing idle in the
  * unregister → re-register gap.
  */
+
+/** Wait until peer soft-steer registers a run or drops its busy hold (Stop/fail). */
+async function waitPeerRegisterOrHoldClear(
+  ctx: { abortControllers: AbortControllerMap },
+  ownerId: string,
+  epoch: number,
+): Promise<void> {
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    if (currentSoftSteerEpoch(ownerId) !== epoch) return;
+    if (listOwnerRunIds(ctx.abortControllers, ownerId).length > 0) return;
+    if (!ownerHasBusyHold(ownerId)) return;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
 export async function softSteerNewestRun(
   ctx: { abortControllers: AbortControllerMap },
   ownerId: string,
@@ -95,12 +112,25 @@ export async function softSteerNewestRun(
     const epoch = bumpSoftSteerEpoch(id);
     // Stop pending/next auto-continue kicks; in-flight AC is aborted below.
     cancelAutoContinues(id);
-    const ids = listOwnerRunIds(ctx.abortControllers, id);
+    let ids = listOwnerRunIds(ctx.abortControllers, id);
+    // Peer composer already claimed the post-steer slot (busy hold, not yet
+    // registered). Wait so we soft-steer that run instead of starting parallel.
+    if (ids.length === 0 && ownerHasBusyHold(id)) {
+      await waitPeerRegisterOrHoldClear(ctx, id, epoch);
+      if (currentSoftSteerEpoch(id) !== epoch) {
+        return { steered: false, superseded: true };
+      }
+      ids = listOwnerRunIds(ctx.abortControllers, id);
+    }
     if (ids.length === 0) {
-      return {
-        steered: false,
-        superseded: currentSoftSteerEpoch(id) !== epoch,
-      };
+      const superseded = currentSoftSteerEpoch(id) !== epoch;
+      if (superseded) {
+        return { steered: false, superseded: true };
+      }
+      // Hold across empty soft-steer → startTurn register so a peer soft-steer
+      // waiting on the chain sees busy and aborts rather than racing parallel.
+      holdOwnerBusy(id);
+      return { steered: false, superseded: false };
     }
     // Hold busy across abort → unregister → replacement register.
     holdOwnerBusy(id);

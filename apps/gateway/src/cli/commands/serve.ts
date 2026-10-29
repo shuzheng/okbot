@@ -13,6 +13,7 @@ import {
 } from '../../serverPresence';
 import { ensureGatewayToken, resolveGatewayUiRoot, startSkillWatch } from '../../gatewayRuntime';
 import { startScheduleTicker } from '../../scheduleTicker';
+import { closeMcp } from '../../mcpRuntime';
 import { resumeAllSafeCheckpoints } from '../../ipc/chat/coldRestoreCheckpoint';
 import { listBusyOwnerIds } from '../../ipc/ownerRuns';
 import { readDesktopAppVersion } from '../../appVersion';
@@ -56,6 +57,19 @@ export async function serve(t: CliMessages, args: string[] = []): Promise<number
   const root = resolveOkbotRoot(flags.dataDir);
   const storage = new FileStorage(root);
 
+  // Probe with the intended port first — do not persist --port until we know
+  // this instance is free (a failed start must not rewrite a running instance).
+  const intendedPort =
+    flags.port != null ? flags.port : storage.getSettings().gatewayHttpApi.port;
+  const configuredToken = storage.getSettings().gatewayHttpApi.token;
+  const existing = await inspectRunningServer(storage.root, intendedPort, configuredToken);
+  if (existing.state === 'running') {
+    const where = publicBase(existing.port);
+    const pidLabel = existing.pid ? ` (pid ${existing.pid})` : '';
+    console.error(t.serveAlreadyRunning(pidLabel, where));
+    return 1;
+  }
+
   // Custom pair: persist CLI port into this data dir's server.json for this instance.
   if (flags.port != null) {
     const cur = storage.getSettings();
@@ -65,16 +79,6 @@ export async function serve(t: CliMessages, args: string[] = []): Promise<number
         gatewayHttpApi: { ...cur.gatewayHttpApi, port: flags.port },
       });
     }
-  }
-
-  const configuredPort = storage.getSettings().gatewayHttpApi.port;
-  const configuredToken = storage.getSettings().gatewayHttpApi.token;
-  const existing = await inspectRunningServer(storage.root, configuredPort, configuredToken);
-  if (existing.state === 'running') {
-    const where = publicBase(existing.port);
-    const pidLabel = existing.pid ? ` (pid ${existing.pid})` : '';
-    console.error(t.serveAlreadyRunning(pidLabel, where));
-    return 1;
   }
 
   const configured = storage.getSettings().gatewayHttpApi;
@@ -181,8 +185,14 @@ export async function serve(t: CliMessages, args: string[] = []): Promise<number
     } catch (err) {
       console.error('[okbot] gatewayHttpApi stop failed', err);
     }
-    releaseServerLock(storage.root);
-    process.exit(0);
+    void closeMcp()
+      .catch((err) => {
+        console.error('[okbot] closeMcp on serve exit failed', err);
+      })
+      .finally(() => {
+        releaseServerLock(storage.root);
+        process.exit(0);
+      });
   };
 
   try {

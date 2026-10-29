@@ -21,6 +21,7 @@ import {
   gatewayTokenPrefixRole,
   generateComputerToken,
   normalizeComputerEntry,
+  normalizeComputers,
   normalizeDefaultComputerId,
   normalizePinnedOwnerIds,
   normalizeHiddenOwnerIds,
@@ -226,6 +227,44 @@ assert.equal(withAdmin.adminToken, 'admx');
 }
 
 
+
+// Gateway/WebUI projects blank computer tokens; hydrate must keep the row so
+// carryOverSecrets can refill by id (otherwise autosave writes computers=[]).
+{
+  const blanked = normalizeComputerEntry({
+    id: 'computer_sandbox',
+    name: 'Sandbox',
+    host: '127.0.0.1',
+    port: 18790,
+    token: '',
+    enabled: true,
+  });
+  assert.ok(blanked, 'empty-token computer must survive normalize');
+  assert.equal(blanked.token, '');
+  assert.equal(blanked.id, 'computer_sandbox');
+  const listed = normalizeComputers([
+    { id: 'computer_sandbox', name: 'Sandbox', host: '127.0.0.1', port: 18790, token: '' },
+    { id: 'computer_ok', name: 'Ok', host: '10.0.0.2', port: 18790, token: 'secret' },
+  ]);
+  assert.equal(listed.length, 2);
+  assert.equal(
+    normalizeDefaultComputerId('computer_sandbox', listed),
+    'computer_sandbox',
+    'defaultComputerId must not fall back to local when blanked row is kept',
+  );
+  // Invalid non-empty token still rejected.
+  assert.equal(
+    normalizeComputerEntry({
+      id: 'computer_bad',
+      name: 'Bad',
+      host: '127.0.0.1',
+      port: 18790,
+      token: 'has spaces!',
+    }),
+    null,
+  );
+}
+
 const keptComputer = normalizeComputerEntry({
   id: 'computer_a',
   name: 'A',
@@ -393,3 +432,27 @@ assert.deepEqual(
   ['g1', 'g2', UNGROUPED_OWNER_GROUP_ID],
 );
 console.log('normalizeOwnerGroupOrder ok');
+
+{
+  // Field-level null/'' must not clamp to the aggressive floor.
+  const fieldNull = normalizeContextCompression({
+    ratio: null,
+    keepRecentMin: '',
+    keepRecentMax: null,
+    summaryMaxChars: '',
+    estimateSafetyFactor: null,
+  });
+  assert.equal(fieldNull.ratio, DEFAULT_CONTEXT_COMPRESSION.ratio);
+  assert.equal(fieldNull.keepRecentMin, DEFAULT_CONTEXT_COMPRESSION.keepRecentMin);
+  assert.equal(fieldNull.keepRecentMax, DEFAULT_CONTEXT_COMPRESSION.keepRecentMax);
+  assert.equal(fieldNull.summaryMaxChars, DEFAULT_CONTEXT_COMPRESSION.summaryMaxChars);
+  assert.equal(fieldNull.estimateSafetyFactor, DEFAULT_CONTEXT_COMPRESSION.estimateSafetyFactor);
+}
+
+{
+  // Non-array deniedPathPrefixes must keep defaults (not fail-open to []).
+  const bad = normalizeSecuritySettings({ deniedPathPrefixes: '~/.ssh' });
+  assert.deepEqual(bad.deniedPathPrefixes, [...DEFAULT_DENIED_PATH_PREFIXES]);
+  const badObj = normalizeSecuritySettings({ deniedPathPrefixes: { path: '~/.ssh' } });
+  assert.deepEqual(badObj.deniedPathPrefixes, [...DEFAULT_DENIED_PATH_PREFIXES]);
+}

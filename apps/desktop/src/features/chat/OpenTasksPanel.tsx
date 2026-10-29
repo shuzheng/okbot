@@ -1,4 +1,4 @@
-import { memo, useCallback, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import type { TaskRecord, TaskStatus } from '@okbot/shared';
 import { ChevronDownIcon } from '../../components/ui/icons';
 import { useScrollFade } from '../../hooks/useScrollFade';
@@ -29,15 +29,17 @@ function statusLabel(lang: UiLang, status: TaskStatus): string {
 
 /**
  * All unfinished (pending/in_progress) tasks above the composer — not just the current one.
- * Header stays in flow (default collapsed). Expanding the list opens an absolute overlay
- * upward above the header so chat messages are not pushed; list/steps use drawer frost glass.
- * Each task expands/collapses its steps (default expanded when the list is shown);
- * per-task chevron matches sidebar.
+ * Header stays in flow (default collapsed). Expanding opens the list as an absolute overlay
+ * upward above the header so chat messages are not pushed — same card chrome as the header
+ * bar, joined by the panel top border as a divider (one unified card, not two floaters).
+ * Click outside (or Escape) collapses the list. Each task expands/collapses its steps
+ * (default expanded when the list is shown); per-task chevron matches sidebar.
  */
 export const OpenTasksPanel = memo(function OpenTasksPanel({ lang, tasks }: OpenTasksPanelProps) {
   const [listOpen, setListOpen] = useState(false);
   /** Per-task steps: missing key = expanded (default). Explicit false = user collapsed. */
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const panelRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
   useScrollFade(listRef, [tasks, expanded, listOpen]);
 
@@ -52,10 +54,42 @@ export const OpenTasksPanel = memo(function OpenTasksPanel({ lang, tasks }: Open
     });
   }, []);
 
+  // Collapse when clicking outside the unified card (detail + bar). Capture + deferred
+  // so the opening click on the header does not immediately close.
+  useEffect(() => {
+    if (!listOpen) return;
+    const onPointer = (e: PointerEvent) => {
+      const el = e.target as Node | null;
+      if (!el) return;
+      if (panelRef.current?.contains(el)) return;
+      setListOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setListOpen(false);
+    };
+    const timer = window.setTimeout(() => {
+      document.addEventListener('pointerdown', onPointer, true);
+      document.addEventListener('keydown', onKey, true);
+    }, 0);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener('pointerdown', onPointer, true);
+      document.removeEventListener('keydown', onKey, true);
+    };
+  }, [listOpen]);
+
   if (!tasks.length) return null;
 
   return (
-    <div className="open-tasks-panel" role="region" aria-label={t(lang, 'openTasksTitle')}>
+    <div
+      ref={panelRef}
+      className={`open-tasks-panel${listOpen ? ' is-expanded' : ''}`}
+      role="region"
+      aria-label={t(lang, 'openTasksTitle')}
+    >
+      {/* Sibling frost layer (not on the panel itself): parent backdrop-filter
+          would Backdrop-Root and block .open-tasks-list-fold from blurring chat. */}
+      <div className="open-tasks-glass" aria-hidden="true" />
       <button
         type="button"
         className={`open-tasks-header${listOpen ? ' expanded' : ''}`}

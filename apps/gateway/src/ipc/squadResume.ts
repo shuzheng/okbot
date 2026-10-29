@@ -92,7 +92,7 @@ export async function resumeSquadAfterRestart(
   const controller = new AbortController();
   const runId = createId('run');
   registerOwnerRun(ctx.abortControllers, squad.id, runId, controller);
-  ctx.storage.clearPendingHitlRequest(squad.id, disk.requestId);
+  // Retain pending HITL on disk until resume succeeds so a failed resume can retry.
 
   const settings = ctx.storage.getSettings();
   const modelConfig = resolveModelConfig(settings.model, {
@@ -236,6 +236,7 @@ export async function resumeSquadAfterRestart(
           ctx.storage.appendMessage(squad.id, exchangeMsg);
         } catch (err) {
           console.error('[okbot] append squad exchange failed', err);
+          return;
         }
         ctx.sendRuntimeEvent({ type: 'assistant_message', botId: squad.id, message: exchangeMsg });
       },
@@ -246,6 +247,10 @@ export async function resumeSquadAfterRestart(
       serializedRunState: disk.serializedRunState,
       requestId: disk.requestId,
       toolName: disk.toolName,
+      ...(typeof disk.callId === 'string' && disk.callId.trim()
+        ? { callId: disk.callId.trim() }
+        : {}),
+      ...(disk.arguments !== undefined ? { arguments: disk.arguments } : {}),
       decision,
       squadMember: disk.squadMember,
     });
@@ -288,6 +293,11 @@ export async function resumeSquadAfterRestart(
         if (hasUsage(usage)) ctx.storage.recordUsage(squad.id, usage);
         guards.finish(resolveRunFinishStatus({ aborted: false }));
         ctx.sendRuntimeEvent({ type: 'done', botId: squad.id, messageId: assistantId, content: '' });
+        try {
+          ctx.storage.clearPendingHitlRequest(squad.id, disk.requestId);
+        } catch (err) {
+          console.error('[okbot] clear pending squad hitl after resume failed', err);
+        }
         return { ok: true, resumed: true };
       }
       ctx.storage.writeSquadResumeReplies(squad.id, turnId, []);
@@ -324,6 +334,16 @@ export async function resumeSquadAfterRestart(
     guards.finish(
       resolveRunFinishStatus({ aborted: controller.signal.aborted }),
     );
+        try {
+          ctx.storage.clearPendingHitlRequest(squad.id, disk.requestId);
+        } catch (err) {
+          console.error('[okbot] clear pending squad hitl after resume failed', err);
+        }
+    try {
+      ctx.storage.clearRunCheckpoint(squad.id);
+    } catch (err) {
+      console.error('[okbot] clear squad run checkpoint after resume failed', err);
+    }
     return { ok: true, resumed: true };
   } catch (err) {
     if ((controller.signal.aborted || isAbortLikeError(err))) {
@@ -335,6 +355,16 @@ export async function resumeSquadAfterRestart(
         content: assistantMsg.content,
         aborted: true,
       });
+        try {
+          ctx.storage.clearPendingHitlRequest(squad.id, disk.requestId);
+        } catch (err) {
+          console.error('[okbot] clear pending squad hitl after resume failed', err);
+        }
+      try {
+        ctx.storage.clearRunCheckpoint(squad.id);
+      } catch (err) {
+        console.error('[okbot] clear squad run checkpoint after abort failed', err);
+      }
       return { ok: true, resumed: true, aborted: true };
     }
     const message = handleRunFailure({
@@ -358,11 +388,6 @@ export async function resumeSquadAfterRestart(
     // Not rejectPendingApprovalsForBot: that clears every pending file of the squad,
     // including other members' cold approvals and the collected replies of this turn.
     releaseRunApprovals(ctx, squad.id, parkedRequestIds, '已结束');
-    try {
-      ctx.storage.clearRunCheckpoint(squad.id);
-    } catch (err) {
-      console.error('[okbot] clear squad run checkpoint failed', err);
-    }
     runSlot.release();
   }
 }

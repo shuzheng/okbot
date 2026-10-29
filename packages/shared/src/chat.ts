@@ -15,7 +15,7 @@ export type MessageAttachmentKind = 'image' | 'file' | 'folder';
 export interface MessageAttachment {
   kind: MessageAttachmentKind;
   /**
-   * Absolute path on the **gateway host** (e.g. ~/.okbot/<ownerId>/uploads/…).
+   * Absolute path on the **gateway host** (e.g. ~/.okbot/data/<ownerId>/uploads/…).
    * Image/file pastes and picks are copied into uploads/ so multi-computer clients
    * never rely on client-local file:// paths. Folder attachments may still be a
    * gateway-local directory path from the desktop picker.
@@ -25,6 +25,11 @@ export interface MessageAttachment {
   name: string;
   /** Byte size when known (composer pill + persistence). */
   size?: number;
+  /**
+   * Gateway media pathname `/v1/media/<owner>/{resources|uploads}/<file>` when known.
+   * Preferred for display; survives attach when absolute disk path layout changes.
+   */
+  mediaPath?: string;
 }
 
 /**
@@ -138,8 +143,6 @@ export interface ChatMessage {
   role: ChatRole;
   content: string;
   createdAt: string;
-  /** @deprecated Unused. Full context is projected live from Session; kept optional for old payloads. */
-  hasPromptContext?: boolean;
   /** Squad chat: member bot id, or SQUAD_CAPTAIN_SPEAKER_ID for the virtual captain. */
   speakerBotId?: string;
   /**
@@ -347,10 +350,20 @@ export function normalizeChatStartPayload(raw: unknown): {
       const attPath = typeof a.path === 'string' ? a.path : '';
       const name = typeof a.name === 'string' ? a.name : '';
       if (!attPath) continue;
+      const size =
+        typeof a.size === 'number' && Number.isFinite(a.size) && a.size >= 0
+          ? Math.floor(a.size)
+          : undefined;
+      const mediaPath =
+        typeof a.mediaPath === 'string' && a.mediaPath.trim().startsWith('/v1/media/')
+          ? a.mediaPath.trim()
+          : undefined;
       atts.push({
         kind,
         path: attPath,
         name: name || attPath.split(/[/\\]/).pop() || attPath,
+        ...(size != null ? { size } : {}),
+        ...(mediaPath ? { mediaPath } : {}),
       });
     }
     if (atts.length) out.attachments = atts;

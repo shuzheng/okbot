@@ -10,7 +10,7 @@ import {
   normalizeSkillSlug,
   upgradeSkillFormat,
 } from '@okbot/agent';
-import { ensureDir } from './fs';
+import { ensureDir, writeText } from './fs';
 import { sanitizeSkillSlug } from './ids';
 import type { OwnerLifecycle } from './ownerLifecycle';
 import type { BotConfig } from '@okbot/shared';
@@ -83,18 +83,9 @@ export class SkillsStore {
       const file = this.skillFile(botId, name);
       if (!fs.existsSync(file) || !fs.statSync(path.join(root, name)).isDirectory()) continue;
       try {
-        const parsed = this.parseSkillMarkdown(name, fs.readFileSync(file, 'utf8'));
-        const upgraded = upgradeSkillFormat(parsed);
-        if (upgraded.changed) {
-          const prevBody = (parsed.body || '').trim();
-          const nextBody = (upgraded.skill.body || '').trim();
-          // Never persist an upgrade that empties a previously non-empty body.
-          if (!(prevBody && !nextBody)) {
-            // Persist professional skill-template body (when/how/examples/notes) once.
-            fs.writeFileSync(file, formatSkillMarkdown(upgraded.skill), 'utf8');
-          }
-        }
-        out.push(upgraded.skill);
+        // Read-only: never rewrite SKILL.md on list/prompt/catalog paths.
+        // Format upgrades run only on explicit writeSkill.
+        out.push(this.parseSkillMarkdown(name, fs.readFileSync(file, 'utf8')));
       } catch {
         /* skip bad skill */
       }
@@ -131,13 +122,13 @@ export class SkillsStore {
   resolveEnabledSkill(
     botId: string,
     slug: string,
-  ): (BotSkill & { source: 'local' | 'global' }) | null {
+  ): (BotSkill & { location: 'local' | 'global' }) | null {
     const clean = normalizeSkillSlug(slug) || slug.trim();
     if (!clean) return null;
     const local = this.listSkills(botId).find(
       (s) => s.slug === clean || normalizeSkillSlug(s.slug) === clean,
     );
-    if (local) return { ...local, source: 'local' };
+    if (local) return { ...local, location: 'local' };
     try {
       const config = this.deps.readBotConfig(botId);
       const enabled = config.enabledGlobalSkills.some(
@@ -147,7 +138,7 @@ export class SkillsStore {
         const global = this.listGlobalAgentsSkills().find(
           (s) => s.slug === clean || normalizeSkillSlug(s.slug) === clean || s.slug === slug.trim(),
         );
-        if (global) return { ...global, source: 'global' };
+        if (global) return { ...global, location: 'global' };
       }
     } catch {
       /* missing bot.json — local only */
@@ -215,16 +206,45 @@ export class SkillsStore {
     }
     const readme = path.join(dir, 'README.md');
     if (!fs.existsSync(readme)) {
-      fs.writeFileSync(readme, `# ${slug}\n\nSee SKILL.md.\n`, 'utf8');
+      writeText(readme, `# ${slug}\n\nSee SKILL.md.\n`);
     }
     const nm = stripThinkContent(skill.name).trim() || slug;
     const desc = stripThinkContent(skill.description).trim() || nm;
     const body = stripThinkContent(skill.body).trim();
-    fs.writeFileSync(
-      this.skillFile(botId, slug),
-      formatSkillMarkdown({ slug, name: nm, description: desc, body }),
-      'utf8',
-    );
+    // Preserve existing source when caller omits it; default missing → user (hand-written safe).
+    let source = skill.source === 'model' || skill.source === 'user' ? skill.source : undefined;
+    if (!source) {
+      try {
+        const prev = this.parseSkillMarkdown(slug, fs.readFileSync(this.skillFile(botId, slug), 'utf8'));
+        if (prev.source === 'model' || prev.source === 'user') source = prev.source;
+      } catch {
+        /* new skill */
+      }
+    }
+    if (!source) source = 'user';
+    // Model refresh must not clobber a hand-written body (missing source ≡ user).
+    let bodyOut = body;
+    if (source === 'model') {
+      try {
+        const prev = this.parseSkillMarkdown(slug, fs.readFileSync(this.skillFile(botId, slug), 'utf8'));
+        const prevSource = prev.source === 'model' ? 'model' : prev.source === 'user' ? 'user' : 'user';
+        if (prevSource === 'user' && (prev.body || '').trim()) {
+          bodyOut = prev.body.trim();
+          source = 'user';
+        }
+      } catch {
+        /* new skill */
+      }
+    }
+    // Upgrade only on explicit write (never on list/read).
+    const upgraded = upgradeSkillFormat({ slug, name: nm, description: desc, body: bodyOut });
+    const next = upgraded.skill;
+    // Never persist an upgrade that empties a previously non-empty body.
+    const toWrite =
+      bodyOut && !(next.body || '').trim()
+        ? { slug, name: nm, description: desc, body: bodyOut, source }
+        : { ...next, source };
+    writeText(this.skillFile(botId, slug), formatSkillMarkdown(toWrite));
   }
 
   deleteSkill(botId: string, slug: string): void {

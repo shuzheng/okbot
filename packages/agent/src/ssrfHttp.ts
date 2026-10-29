@@ -70,6 +70,44 @@ export function ipv4FromCompatibleIpv6(ip: string): string | null {
   return null;
 }
 
+/** NAT64 well-known prefix 64:ff9b::/96 → embedded IPv4 in last 32 bits. */
+export function ipv4FromNat64(ip: string): string | null {
+  const h = ip.toLowerCase().trim();
+  // Compact: 64:ff9b::a.b.c.d or 64:ff9b::xxxx:yyyy
+  const dotted = /^64:ff9b::(\d{1,3}(?:\.\d{1,3}){3})$/.exec(h);
+  if (dotted) return dotted[1]!;
+  const hex = /^64:ff9b::([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(h);
+  if (hex) {
+    const hi = parseInt(hex[1]!, 16);
+    const lo = parseInt(hex[2]!, 16);
+    if (!Number.isFinite(hi) || !Number.isFinite(lo)) return null;
+    return `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+  }
+  // Expanded forms with 64:ff9b:0:0:0:0:x:x
+  const expandedHex = /^64:ff9b:(?:0:){4}([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(h);
+  if (expandedHex) {
+    const hi = parseInt(expandedHex[1]!, 16);
+    const lo = parseInt(expandedHex[2]!, 16);
+    if (!Number.isFinite(hi) || !Number.isFinite(lo)) return null;
+    return `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+  }
+  const expandedDotted = /^64:ff9b:(?:0:){4}(\d{1,3}(?:\.\d{1,3}){3})$/.exec(h);
+  if (expandedDotted) return expandedDotted[1]!;
+  return null;
+}
+
+/** 6to4 2002::/16 → IPv4 in bits 16..47 (next 32 bits after 2002). */
+export function ipv4From6to4(ip: string): string | null {
+  const h = ip.toLowerCase().trim();
+  // 2002:aabb:ccdd:... where aabbccdd is the IPv4
+  const m = /^2002:([0-9a-f]{1,4}):([0-9a-f]{1,4})(?::|$)/.exec(h);
+  if (!m) return null;
+  const hi = parseInt(m[1]!, 16);
+  const lo = parseInt(m[2]!, 16);
+  if (!Number.isFinite(hi) || !Number.isFinite(lo)) return null;
+  return `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+}
+
 function isPrivateOrLocalIpv6(ip: string): boolean {
   const h = ip.toLowerCase();
   if (h === '::1' || h === '::') return true;
@@ -88,6 +126,9 @@ function isPrivateOrLocalIpv6(ip: string): boolean {
   if (mappedV4) return isPrivateOrLocalIpv4(mappedV4);
   const compatV4 = ipv4FromCompatibleIpv6(h);
   if (compatV4) return isPrivateOrLocalIpv4(compatV4);
+  // Reject NAT64 / 6to4 transition prefixes entirely — embedded IPv4 can hide
+  // loopback / link-local, and allowing public embeds still opens a bypass path.
+  if (h === '64:ff9b::' || h.startsWith('64:ff9b:') || h.startsWith('2002:')) return true;
   return false;
 }
 

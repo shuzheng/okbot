@@ -697,6 +697,21 @@ export function AboutIcon() {
   );
 }
 
+/** Globe — official website (官网) in settings footer expand. */
+export function WebsiteIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" aria-hidden>
+      <circle cx="12" cy="12" r="8" stroke="currentColor" strokeWidth="1.8" />
+      <path
+        d="M4.5 12h15M12 4.5c2.2 2.4 3.3 5 3.3 7.5s-1.1 5.1-3.3 7.5M12 4.5C9.8 6.9 8.7 9.5 8.7 12s1.1 5.1 3.3 7.5"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
 /** Link chain — copy local HTTP API request URL from chat header.
  *  Scaled to match About/theme optical weight inside the shared 19px header glyph. */
 export function CopyRequestUrlIcon() {

@@ -229,12 +229,29 @@ export function dismissUpdatePrompt(userDataPath: string, version: string): Upda
   return prefs;
 }
 
+/**
+ * First install: seed lastSeen to current without showing the dialog, so later
+ * upgrades can detect last !== current. No-op when already seeded or version empty.
+ */
+export function ensureWhatsNewBaseline(userDataPath: string, currentVersion: string): void {
+  const v = currentVersion.trim();
+  if (!v) return;
+  const prefs = readUpdaterPrefs(userDataPath);
+  const last = (prefs.lastSeenWhatsNewVersion || '').trim();
+  if (last) return;
+  markWhatsNewSeen(userDataPath, v);
+}
+
 export function shouldShowWhatsNew(userDataPath: string, currentVersion: string): boolean {
   const v = currentVersion.trim();
   if (!v) return false;
   if (!loadBundledChangelogEntry(v)) return false;
   const prefs = readUpdaterPrefs(userDataPath);
-  return prefs.lastSeenWhatsNewVersion !== v;
+  const last = (prefs.lastSeenWhatsNewVersion || '').trim();
+  // First install (never seen any What's New): do not pop the upgrade sheet.
+  // Caller must ensureWhatsNewBaseline so upgrades later can show.
+  if (!last) return false;
+  return last !== v;
 }
 
 export function shouldShowUpdatePrompt(

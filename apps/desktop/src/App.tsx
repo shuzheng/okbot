@@ -55,6 +55,7 @@ import {
   SIDEBAR_EXPAND_HYST,
   SPLITTER_CLICK_SLOP,
   MAIN_COLLAPSE_AT,
+  SIDEBAR_WIDTH_MS,
 } from './features/sidebar';
 import { SquadWizardModal } from './features/squads';
 import { WindowControls } from './features/window';
@@ -68,9 +69,10 @@ import {
   useSessions,
 } from './features/chat/hooks';
 import { countAssistantRepliesAfter } from './features/chat/unreadCounts';
-import { applyTheme, subscribeSystemTheme } from './utils/theme';
+import { applyTheme, subscribeSystemTheme, resolvedOrbTheme } from './utils/theme';
 import { mergeSettingsPatch } from './utils/settingsPatch';
 import { updateScrollFade } from './utils/scrollFade';
+import { reconcileById } from './utils/reconcileRoster';
 import { isWindowResizing, subscribeWindowResizeGate } from './utils/windowResizeGate';
 import {
   blobToWhisperAudio,
@@ -143,11 +145,6 @@ import {
   type LocalizedChangelogNotes,
 } from '@okbot/shared';
 
-
-function resolvedOrbTheme(): 'light' | 'dark' {
-  if (typeof document === 'undefined') return 'dark';
-  return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
-}
 
 export function App() {
   const {
@@ -254,6 +251,7 @@ export function App() {
   const [newBotDraft, setNewBotDraft] = useState<{ emoji: string; botAvatarType: BotAvatarShape } | null>(null);
   const [createMenu, setCreateMenu] = useState(false);
   const [galleryOpen, setGalleryOpen] = useState(false);
+  const [galleryTab, setGalleryTab] = useState<'assistants' | 'connectors'>('assistants');
   const [createMenuPos, setCreateMenuPos] = useState<{ top: number; left: number } | null>(null);
   const [listening, setListening] = useState(false);
   const [micStream, setMicStream] = useState<MediaStream | null>(null);
@@ -266,6 +264,12 @@ export function App() {
   const skipRenameCommitRef = useRef(false);
   const [error, setError] = useState('');
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
+  /** Icon-rail chrome (`.narrow` + SessionSidebar). Deferred on collapse until
+   *  `--sidebar-w` finishes so avatars stay left-aligned mid-animation. */
+  const [railLayout, setRailLayout] = useState(() => loadSidebarWidth() <= SIDEBAR_NARROW_AT);
+  const railLayoutRef = useRef(railLayout);
+  const railLayoutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const railLayoutOnEndRef = useRef<((ev: TransitionEvent) => void) | null>(null);
   const [immersiveChat, setImmersiveChat] = useState(loadImmersiveChat);
   const phoneLayout = usePhoneLayout();
   const [phoneNavOpen, setPhoneNavOpen] = useState(false);
@@ -289,6 +293,8 @@ export function App() {
   const immersiveChatRef = useRef(immersiveChat);
   immersiveChatRef.current = immersiveChat;
   const [resizing, setResizing] = useState(false);
+  /** Mid-drag MIN↔expanded snap: drop is-resizing so CSS transition can run, keep listeners. */
+  const [snapAnimating, setSnapAnimating] = useState(false);
   const [dockScales, setDockScales] = useState<Record<string, number>>({});
   const [dockTip, setDockTip] = useState<null | {
     id: string;
@@ -403,9 +409,13 @@ export function App() {
     startW: number;
     fromNarrow: boolean;
     pinnedCollapsed: boolean;
+    /** After mid-drag threshold snap: next meaningful move re-enters live tracking. */
+    resumeLive?: boolean;
+    /** performance.now() until which snapAnimating must stay on so --sidebar-w ease is not killed by is-resizing. */
+    snapUntil?: number;
   } | null>(null);
 
-  const narrow = sidebarWidth <= SIDEBAR_NARROW_AT;
+  const narrow = railLayout;
   const lang = resolveUiLang(settings?.language);
 
   const {
@@ -616,8 +626,8 @@ export function App() {
   const chatOwnerId = selectedBot?.id ?? selectedSquad?.id ?? null;
 
   useEffect(() => {
-    updateAttachments([]);
-  }, [chatOwnerId]);
+    clearAttachments();
+  }, [chatOwnerId, clearAttachments]);
 
   /** Active bot/squad resolved model → collapsible `<think>` (default off). */
   const showThinking = useMemo(() => {
@@ -768,8 +778,11 @@ export function App() {
   }, [refreshBootstrap]);
 
   // Hot client-gateway switch: reload roster/settings without app relaunch.
+  // Close settings first so a dirty modal cannot flush the old gateway payload
+  // into the new one (SettingsModal also discards pending on this event).
   useEffect(() => {
     const onReconnect = () => {
+      setSettingsOpen(false);
       setSelection(null);
       setMessages([]);
       void refreshBootstrap();
@@ -838,27 +851,96 @@ export function App() {
     return Math.max(SIDEBAR_MIN, winW - MAIN_COLLAPSE_AT - 5);
   }, []);
 
+  const clearRailLayoutTimer = useCallback(() => {
+    if (railLayoutTimerRef.current != null) {
+      clearTimeout(railLayoutTimerRef.current);
+      railLayoutTimerRef.current = null;
+    }
+    const onEnd = railLayoutOnEndRef.current;
+    if (onEnd) {
+      appRef.current?.removeEventListener('transitionend', onEnd);
+      railLayoutOnEndRef.current = null;
+    }
+  }, []);
+
+  /** Apply / clear icon-rail layout (`.narrow` + React `railLayout`) in one turn. */
+  const applyRailLayout = useCallback((want: boolean) => {
+    clearRailLayoutTimer();
+    railLayoutRef.current = want;
+    const el = appRef.current;
+    if (el && !el.classList.contains('phone-layout')) {
+      el.classList.toggle('narrow', want);
+    }
+    setRailLayout(want);
+  }, [clearRailLayoutTimer]);
+
   /** Write --sidebar-w on the shell without waiting for React.
-   *  Also toggle `.narrow` in the same turn so 置顶成员 names / topbar search+
-   *  (CSS-hidden under `.app.narrow`) track the rail width — not one paint later. */
-  const writeSidebarWidthCss = useCallback((px: number) => {
+   *  By default also syncs `.narrow` to the width band (live splitter drag).
+   *  Pass `syncRail: false` while a collapse width animation is in flight so
+   *  session/pin avatars stay left-aligned until `--sidebar-w` settles. */
+  const writeSidebarWidthCss = useCallback((px: number, syncRail = true) => {
     const el = appRef.current;
     if (!el) return;
     el.style.setProperty('--sidebar-w', `${px}px`);
-    // phone-layout never uses the icon rail; mirror className logic.
-    const wantNarrow =
-      px <= SIDEBAR_NARROW_AT && !el.classList.contains('phone-layout');
+    // Pin avatar footprint tracks the width band immediately (not deferred
+    // railLayout). Otherwise 置顶 stays 56px until transitionend then jumps to 36.
+    el.style.setProperty(
+      '--pin-avatar',
+      px <= SIDEBAR_NARROW_AT ? 'var(--rail-avatar)' : '56px',
+    );
+    if (!syncRail || el.classList.contains('phone-layout')) return;
+    const wantNarrow = px <= SIDEBAR_NARROW_AT;
     el.classList.toggle('narrow', wantNarrow);
+    if (railLayoutRef.current !== wantNarrow) {
+      railLayoutRef.current = wantNarrow;
+      setRailLayout(wantNarrow);
+    }
   }, []);
 
-  /** Set width; CSS transition on --sidebar-w handles smooth collapse/expand when idle. */
+  /** After collapse width eases to the rail, flip chrome to centered icon layout.
+   *  Expand flips immediately (caller); collapse waits so avatar X stays put. */
+  const scheduleRailLayoutAfterCollapse = useCallback((el: HTMLElement | null) => {
+    clearRailLayoutTimer();
+    const apply = () => {
+      clearRailLayoutTimer();
+      applyRailLayout(true);
+    };
+    const onEnd = (ev: TransitionEvent) => {
+      if (ev.target !== el) return;
+      if (ev.propertyName && ev.propertyName !== '--sidebar-w') return;
+      apply();
+    };
+    railLayoutOnEndRef.current = onEnd;
+    el?.addEventListener('transitionend', onEnd);
+    railLayoutTimerRef.current = setTimeout(apply, SIDEBAR_WIDTH_MS + 80);
+  }, [applyRailLayout, clearRailLayoutTimer]);
+
+  /** Set width; CSS transition on --sidebar-w handles smooth collapse/expand when idle.
+   *  Caller must not have `.is-resizing` / `html.is-window-resizing` (those set transition:none).
+   *  Collapse: keep expanded row layout (avatar left) until width transition ends. */
   const animateSidebarWidth = useCallback((target: number) => {
     const clamped = Math.min(SIDEBAR_MAX, maxSidebarForWindow(), target);
-    if (Math.abs(clamped - sidebarWidthRef.current) < 0.5) return;
+    const prev = sidebarWidthRef.current;
+    if (Math.abs(clamped - prev) < 0.5) return;
+    const el = appRef.current;
+    // If a live-drag class lingered, drop it and force a style pass so the
+    // subsequent --sidebar-w write actually runs the cubic-bezier transition.
+    if (el?.classList.contains('is-resizing')) {
+      el.classList.remove('is-resizing');
+      void el.offsetWidth;
+    }
+    const collapsing = prev > SIDEBAR_NARROW_AT && clamped <= SIDEBAR_NARROW_AT;
+    const expanding = prev <= SIDEBAR_NARROW_AT && clamped > SIDEBAR_NARROW_AT;
+    if (expanding) {
+      applyRailLayout(false);
+    }
     sidebarWidthRef.current = clamped;
-    writeSidebarWidthCss(clamped);
+    writeSidebarWidthCss(clamped, !collapsing);
     setSidebarWidth(clamped);
-  }, [maxSidebarForWindow, writeSidebarWidthCss]);
+    if (collapsing) {
+      scheduleRailLayoutAfterCollapse(el);
+    }
+  }, [maxSidebarForWindow, writeSidebarWidthCss, applyRailLayout, scheduleRailLayoutAfterCollapse]);
 
   const readSidebarRenderedWidth = useCallback(() => {
     const el = sidebarRef.current;
@@ -869,6 +951,8 @@ export function App() {
     return sidebarWidthRef.current;
   }, []);
 
+  useEffect(() => () => clearRailLayoutTimer(), [clearRailLayoutTimer]);
+
   useEffect(() => {
     if (sidebarWidth > SIDEBAR_NARROW_AT && !autoCollapsedRef.current) {
       lastExpandedWidthRef.current = Math.min(SIDEBAR_MAX, sidebarWidth);
@@ -878,26 +962,36 @@ export function App() {
   // Auto-collapse only while expanded (or already auto-collapsed). Never expand after manual collapse.
   useEffect(() => {
     let raf = 0;
-    /** Pending React commit while window-edge drag drives CSS only. */
-    let pendingCommit: number | null = null;
-    const commitWidth = (target: number) => {
+    let autoAnimClearTimer: ReturnType<typeof setTimeout> | null = null;
+    const clearAutoAnimClass = () => {
+      if (autoAnimClearTimer != null) {
+        clearTimeout(autoAnimClearTimer);
+        autoAnimClearTimer = null;
+      }
+      appRef.current?.classList.remove('is-sidebar-auto-animating');
+    };
+    /** Window-resize auto collapse/expand: same ~0.3s ease as click/drag snaps.
+     *  `html.is-window-resizing .app` sets transition:none — override with
+     *  `.is-sidebar-auto-animating` for this one-shot width change only. */
+    const animateAutoSidebarWidth = (target: number) => {
       const clamped = Math.min(SIDEBAR_MAX, maxSidebarForWindow(), target);
       const prev = sidebarWidthRef.current;
       if (Math.abs(clamped - prev) < 0.5) return;
+      const el = appRef.current;
+      clearAutoAnimClass();
+      if (el) {
+        el.classList.add('is-sidebar-auto-animating');
+        void el.offsetWidth;
+      }
+      const collapsing = prev > SIDEBAR_NARROW_AT && clamped <= SIDEBAR_NARROW_AT;
+      const expanding = prev <= SIDEBAR_NARROW_AT && clamped > SIDEBAR_NARROW_AT;
+      if (expanding) {
+        applyRailLayout(false);
+      }
       sidebarWidthRef.current = clamped;
-      writeSidebarWidthCss(clamped);
-      // Same-frame as CSS width: sync React when icon-rail narrow flips so
-      // `.app.narrow` / SessionPinStrip avatar-only chrome track the collapse
-      // (置顶成员). Non-threshold pixel updates still wait for settle.
-      // flushSync: setState alone would paint --sidebar-w one frame before
-      // React removes names / search / + (stutter).
+      writeSidebarWidthCss(clamped, !collapsing);
       const crossedNarrow =
         (prev <= SIDEBAR_NARROW_AT) !== (clamped <= SIDEBAR_NARROW_AT);
-      if (isWindowResizing() && !crossedNarrow) {
-        pendingCommit = clamped;
-        return;
-      }
-      pendingCommit = null;
       if (crossedNarrow) {
         flushSync(() => {
           setSidebarWidth(clamped);
@@ -905,6 +999,20 @@ export function App() {
       } else {
         setSidebarWidth(clamped);
       }
+      if (collapsing) {
+        scheduleRailLayoutAfterCollapse(el);
+      }
+      const onEnd = (ev: TransitionEvent) => {
+        if (ev.target !== el) return;
+        if (ev.propertyName && ev.propertyName !== '--sidebar-w') return;
+        el?.removeEventListener('transitionend', onEnd);
+        clearAutoAnimClass();
+      };
+      el?.addEventListener('transitionend', onEnd);
+      autoAnimClearTimer = setTimeout(() => {
+        el?.removeEventListener('transitionend', onEnd);
+        clearAutoAnimClass();
+      }, SIDEBAR_WIDTH_MS + 80);
     };
     const check = () => {
       if (immersiveChatRef.current) return;
@@ -914,40 +1022,30 @@ export function App() {
       const shouldCollapse = winW - expanded - 5 < MAIN_COLLAPSE_AT;
       if (shouldCollapse) {
         autoCollapsedRef.current = true;
-        // Only commit when leaving expanded — avoid setState every resize frame
-        // while already on the icon rail (React bails, but still costs JS).
+        // Only animate when leaving expanded — avoid work every resize frame
+        // while already on the icon rail.
         if (sidebarWidthRef.current > SIDEBAR_MIN + 0.5) {
-          commitWidth(SIDEBAR_MIN);
+          animateAutoSidebarWidth(SIDEBAR_MIN);
         }
         return;
       }
       if (autoCollapsedRef.current) {
         autoCollapsedRef.current = false;
-        commitWidth(expanded);
+        animateAutoSidebarWidth(expanded);
       }
     };
     const onResize = () => {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(check);
     };
-    const unsubSettle = subscribeWindowResizeGate(() => {
-      if (pendingCommit == null) return;
-      const w = pendingCommit;
-      pendingCommit = null;
-      if (Math.abs(w - sidebarWidthRef.current) > 0.5) {
-        sidebarWidthRef.current = w;
-        writeSidebarWidthCss(w);
-      }
-      setSidebarWidth(w);
-    });
     check();
     window.addEventListener('resize', onResize);
     return () => {
       window.removeEventListener('resize', onResize);
       cancelAnimationFrame(raf);
-      unsubSettle();
+      clearAutoAnimClass();
     };
-  }, [maxSidebarForWindow, writeSidebarWidthCss]);
+  }, [maxSidebarForWindow, writeSidebarWidthCss, applyRailLayout, scheduleRailLayoutAfterCollapse]);
 
   const tryExpandSidebar = useCallback(() => {
     const target = Math.min(
@@ -1203,9 +1301,11 @@ export function App() {
     };
 
     let pinRaf: number | null = null;
+    let resizePinRaf: number | null = null;
     const pinIfSticky = () => {
-      // During live window resize every bubble reflows; skip layout thrash and
-      // flush once on settle (subscribeWindowResizeGate below).
+      // During live window resize: skip RO/MO thrash (observers disconnected
+      // below). Stick-to-bottom still gets a cheap per-frame scrollTop pin via
+      // onWinResize so the transcript does not drift then snap on settle.
       if (isWindowResizing()) return;
       if (!stickToBottomRef.current) {
         // Content grew while user is reading history — refresh jump affordance.
@@ -1272,6 +1372,10 @@ export function App() {
     if (pinWatching) observePin();
 
     const unsubResize = subscribeWindowResizeGate(() => {
+      if (resizePinRaf != null) {
+        cancelAnimationFrame(resizePinRaf);
+        resizePinRaf = null;
+      }
       if (!pinWatching) {
         pinWatching = true;
         observePin();
@@ -1280,9 +1384,22 @@ export function App() {
       updateScrollFade(el);
     });
     const onWinResize = () => {
-      if (!isWindowResizing() || !pinWatching) return;
-      pinWatching = false;
-      disconnectPin();
+      if (!isWindowResizing()) return;
+      // Drop RO/MO for the drag; keep a light stick-to-bottom pin so height
+      // changes do not leave a gap then snap when the gate settles.
+      if (pinWatching) {
+        pinWatching = false;
+        disconnectPin();
+      }
+      if (!stickToBottomRef.current) return;
+      if (resizePinRaf != null) return;
+      resizePinRaf = requestAnimationFrame(() => {
+        resizePinRaf = null;
+        if (!stickToBottomRef.current || !isWindowResizing()) return;
+        pinningScrollRef.current = true;
+        el.scrollTop = el.scrollHeight;
+        pinningScrollRef.current = false;
+      });
     };
     window.addEventListener('resize', onWinResize);
 
@@ -1291,6 +1408,7 @@ export function App() {
       el.removeEventListener('scroll', syncStickFromUserScroll);
       window.removeEventListener('resize', onWinResize);
       if (pinRaf != null) cancelAnimationFrame(pinRaf);
+      if (resizePinRaf != null) cancelAnimationFrame(resizePinRaf);
       disconnectPin();
       unsubResize();
     };
@@ -1530,7 +1648,11 @@ export function App() {
         // Expand sidebar if collapsed to rail.
         if (sidebarWidthRef.current <= SIDEBAR_NARROW_AT) {
           const restore = lastExpandedWidthRef.current || SIDEBAR_DEFAULT;
-          setSidebarWidth(Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, restore)));
+          const w = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, restore));
+          sidebarWidthRef.current = w;
+          writeSidebarWidthCss(w, true);
+          setSidebarWidth(w);
+          applyRailLayout(false);
           manualCollapsedRef.current = false;
           autoCollapsedRef.current = false;
         }
@@ -1573,14 +1695,42 @@ export function App() {
           const owner = target.botId;
           const gen = ++historyLoadGenRef.current;
           try {
-            const all = await window.okbot.getMessages(owner);
+            // Prefer page API so older history remains loadable (getMessages is capped).
+            const page = await window.okbot.getMessagesPage(owner, {
+              limit: MESSAGE_PAGE_SIZE,
+            });
             if (gen !== historyLoadGenRef.current) return;
             if (selectionRef.current?.id !== owner) return;
-            setMessages(all);
-            setHasMoreOlder(false);
-            setOlderBeforeMessageId(null);
+            let msgs = page.messages || [];
+            let hasMore = page.hasMore === true;
+            let beforeId = page.nextBeforeMessageId ?? null;
+            // Walk older pages until the target is present, history ends, or page cap.
+            const maxJumpPages = 30;
+            let jumpPages = 0;
+            let foundTarget =
+              !target.messageId || msgs.some((m: ChatMessage) => m.id === target.messageId);
+            while (!foundTarget && hasMore && beforeId && jumpPages < maxJumpPages) {
+              jumpPages += 1;
+              const older = await window.okbot.getMessagesPage(owner, {
+                limit: MESSAGE_PAGE_SIZE,
+                beforeMessageId: beforeId,
+              });
+              if (gen !== historyLoadGenRef.current) return;
+              if (selectionRef.current?.id !== owner) return;
+              msgs = [...(older.messages || []), ...msgs];
+              hasMore = older.hasMore === true;
+              beforeId = older.nextBeforeMessageId ?? null;
+              foundTarget = msgs.some((m: ChatMessage) => m.id === target.messageId);
+            }
+            setMessages(msgs);
+            setHasMoreOlder(hasMore);
+            setOlderBeforeMessageId(beforeId);
             pendingMessageFocusRef.current = null;
-            setHighlightMessageId(target.messageId);
+            if (foundTarget && target.messageId) {
+              setHighlightMessageId(target.messageId);
+            } else if (target.messageId) {
+              toast.info(t(lang, 'jumpMessageTooOld'), { duration: 8000 });
+            }
           } catch (err) {
             toast.error(formatSystemError(err));
           }
@@ -1632,14 +1782,39 @@ export function App() {
 
       try {
         if (wantId) {
-          const all = await window.okbot.getMessages(owner);
+          const page = await window.okbot.getMessagesPage(owner, {
+            limit: MESSAGE_PAGE_SIZE,
+          });
           if (gen !== historyLoadGenRef.current) return;
           if (selectionRef.current?.id !== owner) return;
-          setMessages(all);
-          setHasMoreOlder(false);
-          setOlderBeforeMessageId(null);
+          let msgs = page.messages || [];
+          let hasMore = page.hasMore === true;
+          let beforeId = page.nextBeforeMessageId ?? null;
+          const maxJumpPages = 30;
+          let jumpPages = 0;
+          let foundTarget = !wantId || msgs.some((m: ChatMessage) => m.id === wantId);
+          while (!foundTarget && hasMore && beforeId && jumpPages < maxJumpPages) {
+            jumpPages += 1;
+            const older = await window.okbot.getMessagesPage(owner, {
+              limit: MESSAGE_PAGE_SIZE,
+              beforeMessageId: beforeId,
+            });
+            if (gen !== historyLoadGenRef.current) return;
+            if (selectionRef.current?.id !== owner) return;
+            msgs = [...(older.messages || []), ...msgs];
+            hasMore = older.hasMore === true;
+            beforeId = older.nextBeforeMessageId ?? null;
+            foundTarget = msgs.some((m: ChatMessage) => m.id === wantId);
+          }
+          setMessages(msgs);
+          setHasMoreOlder(hasMore);
+          setOlderBeforeMessageId(beforeId);
           pendingMessageFocusRef.current = null;
-          setHighlightMessageId(wantId);
+          if (foundTarget && wantId) {
+            setHighlightMessageId(wantId);
+          } else if (wantId) {
+            toast.info(t(lang, 'jumpMessageTooOld'), { duration: 8000 });
+          }
           setHistoryOwnerId(owner);
           return;
         }
@@ -1706,11 +1881,85 @@ export function App() {
 
   useEffect(() => {
     if (!resizing) return;
+
+    /** End live drag so `.is-resizing { transition: none }` lifts before --sidebar-w animates.
+     *  Optional `pinWidth` syncs React state to the live CSS width in the same
+     *  frame so clearing is-resizing does not flash a stale `--sidebar-w`. */
+    const endLiveResize = (pinWidth?: number) => {
+      flushSync(() => {
+        if (pinWidth != null && Number.isFinite(pinWidth)) {
+          sidebarWidthRef.current = pinWidth;
+          setSidebarWidth(pinWidth);
+        }
+        setSnapAnimating(false);
+        setResizing(false);
+      });
+      dragRef.current = null;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+
+    /** Threshold snap mid-drag: animate width but keep the drag session alive.
+     *  Clears is-resizing (via snapAnimating) so the cubic-bezier runs, rebases
+     *  startX/startW to the pointer + target so further mousemove works without
+     *  a new mousedown. Next meaningful move re-enters live tracking. */
+    const snapAnimateKeepDrag = (target: number, e: MouseEvent, drag: NonNullable<typeof dragRef.current>) => {
+      const clamped = Math.min(SIDEBAR_MAX, maxSidebarForWindow(), target);
+      const prev = sidebarWidthRef.current;
+      const collapsing = prev > SIDEBAR_NARROW_AT && clamped <= SIDEBAR_NARROW_AT;
+      const expanding = prev <= SIDEBAR_NARROW_AT && clamped > SIDEBAR_NARROW_AT;
+      flushSync(() => {
+        setSnapAnimating(true);
+      });
+      const el = appRef.current;
+      if (el) void el.offsetWidth;
+      if (expanding) {
+        applyRailLayout(false);
+      }
+      sidebarWidthRef.current = clamped;
+      writeSidebarWidthCss(clamped, !collapsing);
+      flushSync(() => {
+        setSidebarWidth(clamped);
+      });
+      if (collapsing) {
+        scheduleRailLayoutAfterCollapse(el);
+      }
+      drag.startX = e.clientX;
+      drag.startW = clamped;
+      drag.resumeLive = true;
+      // Hold snapAnimating through the width ease. Clearing it on the next
+      // mousemove (resumeLive) re-adds is-resizing / transition:none and made
+      // drag-expand jump with no animation while drag-collapse still "felt"
+      // animated from the pre-threshold live shrink.
+      drag.snapUntil = performance.now() + SIDEBAR_WIDTH_MS;
+    };
+
     const onMove = (e: MouseEvent) => {
       const drag = dragRef.current;
       if (!drag) return;
       // Hold width steady inside click slop so a click does not nudge then snap.
+      // Also lets a mid-drag threshold CSS animation finish if the pointer is still.
       if (Math.abs(e.clientX - drag.startX) <= SPLITTER_CLICK_SLOP) return;
+      // Re-enter live tracking after threshold snap (finger still down).
+      // Wait out the --sidebar-w ease first so drag-expand actually animates;
+      // then rebase to the rendered width before re-enabling is-resizing.
+      if (drag.resumeLive) {
+        if (drag.snapUntil != null && performance.now() < drag.snapUntil) {
+          return;
+        }
+        drag.resumeLive = false;
+        drag.snapUntil = undefined;
+        const rendered = readSidebarRenderedWidth();
+        sidebarWidthRef.current = rendered;
+        writeSidebarWidthCss(rendered, true);
+        drag.startW = rendered;
+        drag.startX = e.clientX;
+        flushSync(() => {
+          setSidebarWidth(rendered);
+          setSnapAnimating(false);
+        });
+        return;
+      }
       const maxW = Math.min(SIDEBAR_MAX, maxSidebarForWindow());
       let next = Math.min(
         maxW,
@@ -1725,22 +1974,45 @@ export function App() {
         if (next < SIDEBAR_NARROW_AT + SIDEBAR_EXPAND_HYST) {
           next = SIDEBAR_MIN;
         } else {
+          // Crossing out of rail: animate expand but keep drag session so the
+          // user can keep widening without a second mousedown.
           drag.pinnedCollapsed = false;
+          drag.fromNarrow = false;
+          const target = Math.min(
+            maxW,
+            Math.max(next, lastExpandedWidthRef.current, SIDEBAR_NARROW_AT + 1),
+          );
+          collapseReasonRef.current = null;
+          manualCollapsedRef.current = false;
+          autoCollapsedRef.current = false;
+          lastExpandedWidthRef.current = target;
+          snapAnimateKeepDrag(target, e, drag);
+          return;
         }
       } else if (next <= SIDEBAR_NARROW_AT) {
-        // Expanded drag crossed traffic-light-safe threshold → rail mode.
-        next = SIDEBAR_MIN;
+        // Expanded drag crossed traffic-light-safe threshold → animate to rail.
+        // Keep drag session + rebase so further moves (e.g. re-widen) still work.
         drag.pinnedCollapsed = true;
+        drag.fromNarrow = true;
+        collapseReasonRef.current = 'drag';
+        manualCollapsedRef.current = true;
+        autoCollapsedRef.current = false;
+        snapAnimateKeepDrag(SIDEBAR_MIN, e, drag);
+        return;
       }
       // Live drag: drive --sidebar-w via CSS only so chat/transcript do not
       // re-render on every mousemove. Commit to React when the icon-rail band
       // flips (SessionSidebar narrow layout) or on mouseup.
+      // If a collapse snap is still easing, do not force `.narrow` early on a
+      // wiggle that stays in the rail band — avatar X must stay left until end.
       const prev = sidebarWidthRef.current;
       sidebarWidthRef.current = next;
-      writeSidebarWidthCss(next);
+      const deferRail =
+        railLayoutTimerRef.current != null && next <= SIDEBAR_NARROW_AT;
+      writeSidebarWidthCss(next, !deferRail);
       const crossed =
         (prev <= SIDEBAR_NARROW_AT) !== (next <= SIDEBAR_NARROW_AT);
-      if (crossed) {
+      if (crossed && !deferRail) {
         flushSync(() => {
           setSidebarWidth(next);
         });
@@ -1750,6 +2022,13 @@ export function App() {
       const drag = dragRef.current;
       const dx = drag ? Math.abs(e.clientX - drag.startX) : SPLITTER_CLICK_SLOP + 1;
       const isClick = !!drag && dx <= SPLITTER_CLICK_SLOP;
+      // Capture before endLiveResize: clearing is-resizing re-enables the
+      // `if (!resizing) ref = state` sync, which would clobber the live CSS width.
+      const liveW = sidebarWidthRef.current;
+
+      // Lift transition:none before committing width so click toggle animates.
+      // Pin live width for drag-end so React style does not flash a stale value.
+      endLiveResize(isClick ? undefined : liveW);
 
       if (isClick && drag) {
         if (!drag.fromNarrow) {
@@ -1763,7 +2042,7 @@ export function App() {
           collapseReasonRef.current = 'click';
           manualCollapsedRef.current = true;
           autoCollapsedRef.current = false;
-          setSidebarWidth(SIDEBAR_MIN);
+          animateSidebarWidth(SIDEBAR_MIN);
         } else if (collapseReasonRef.current === 'click') {
           // Collapsed via click → restore remembered width.
           const target = Math.min(
@@ -1776,7 +2055,7 @@ export function App() {
             manualCollapsedRef.current = false;
             autoCollapsedRef.current = false;
             lastExpandedWidthRef.current = target;
-            setSidebarWidth(target);
+            animateSidebarWidth(target);
           }
         } else {
           // Collapsed via drag (or unknown) → expand to max.
@@ -1786,31 +2065,26 @@ export function App() {
             manualCollapsedRef.current = false;
             autoCollapsedRef.current = false;
             lastExpandedWidthRef.current = target;
-            setSidebarWidth(target);
+            animateSidebarWidth(target);
           }
         }
-      } else {
-        const w = sidebarWidthRef.current;
+      } else if (drag) {
+        const w = liveW;
         if (w <= SIDEBAR_NARROW_AT) {
           manualCollapsedRef.current = true;
           autoCollapsedRef.current = false;
           collapseReasonRef.current = 'drag';
-          sidebarWidthRef.current = SIDEBAR_MIN;
-          writeSidebarWidthCss(SIDEBAR_MIN);
-          setSidebarWidth(SIDEBAR_MIN);
+          animateSidebarWidth(SIDEBAR_MIN);
         } else {
           manualCollapsedRef.current = false;
           autoCollapsedRef.current = false;
           collapseReasonRef.current = null;
           lastExpandedWidthRef.current = w;
           // Sync React to the live CSS width (may have skipped setState mid-drag).
+          writeSidebarWidthCss(w);
           setSidebarWidth(w);
         }
       }
-      setResizing(false);
-      dragRef.current = null;
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
     };
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
@@ -1820,7 +2094,7 @@ export function App() {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
     };
-  }, [resizing, maxSidebarForWindow, writeSidebarWidthCss]);
+  }, [resizing, maxSidebarForWindow, writeSidebarWidthCss, animateSidebarWidth, applyRailLayout, scheduleRailLayoutAfterCollapse, readSidebarRenderedWidth]);
 
   function startCreateBot() {
     setCreateMenu(false);
@@ -1887,7 +2161,8 @@ export function App() {
     try {
       const updated = await persistBotForm(profileBot.id, values);
       const latest = await window.okbot.listBots();
-      setBots(latest.length ? latest : [updated]);
+      const next = latest.length ? latest : [updated];
+      setBots((prev) => reconcileById(prev, next));
       setProfileBot(updated);
     } catch (err) {
       toast.error(formatSystemError(err));
@@ -2098,12 +2373,13 @@ export function App() {
     }
   }
 
-  function openAssistantGallery() {
+  function openAssistantGallery(tab: 'assistants' | 'connectors' = 'assistants') {
     setCreateMenu(false);
     setCreateMenuPos(null);
     // Entering 市场 clears session selection (no active chat row while on market).
     setSelection(null);
     saveLastSelection(null);
+    setGalleryTab(tab);
     setGalleryOpen(true);
   }
 
@@ -2391,7 +2667,7 @@ async function handleSend(retry?: {
     const structuredAtts: ChatMessage['attachments'] = isRetry
       ? retry!.attachments
       : pendingAtts.length
-        ? pendingAtts.map(({ kind, path, name, size }) => ({ kind, path, name, ...(size != null ? { size } : {}) }))
+        ? pendingAtts.map(({ kind, path, name, size, mediaPath }) => ({ kind, path, name, ...(size != null ? { size } : {}), ...(mediaPath ? { mediaPath } : {}) }))
         : undefined;
     const text = isRetry
       ? rawBody
@@ -2652,13 +2928,38 @@ async function handleSend(retry?: {
     }
     const gen = ++historyLoadGenRef.current;
     try {
-      const all = await window.okbot.getMessages(owner);
+      const page = await window.okbot.getMessagesPage(owner, {
+        limit: MESSAGE_PAGE_SIZE,
+      });
       if (gen !== historyLoadGenRef.current) return;
       if (selectionRef.current?.id !== owner) return;
-      setMessages(all);
-      setHasMoreOlder(false);
-      setOlderBeforeMessageId(null);
-      setHighlightMessageId(id);
+      let msgs = page.messages || [];
+      let hasMore = page.hasMore === true;
+      let beforeId = page.nextBeforeMessageId ?? null;
+      const maxJumpPages = 30;
+      let jumpPages = 0;
+      let foundTarget = msgs.some((m: ChatMessage) => m.id === id);
+      while (!foundTarget && hasMore && beforeId && jumpPages < maxJumpPages) {
+        jumpPages += 1;
+        const older = await window.okbot.getMessagesPage(owner, {
+          limit: MESSAGE_PAGE_SIZE,
+          beforeMessageId: beforeId,
+        });
+        if (gen !== historyLoadGenRef.current) return;
+        if (selectionRef.current?.id !== owner) return;
+        msgs = [...(older.messages || []), ...msgs];
+        hasMore = older.hasMore === true;
+        beforeId = older.nextBeforeMessageId ?? null;
+        foundTarget = msgs.some((m: ChatMessage) => m.id === id);
+      }
+      setMessages(msgs);
+      setHasMoreOlder(hasMore);
+      setOlderBeforeMessageId(beforeId);
+      if (foundTarget) {
+        setHighlightMessageId(id);
+      } else {
+        toast.info(t(lang, 'jumpMessageTooOld'), { duration: 8000 });
+      }
     } catch (err) {
       if (gen !== historyLoadGenRef.current) return;
       if (selectionRef.current?.id !== owner) return;
@@ -3170,7 +3471,7 @@ async function handleSend(retry?: {
   return (
     <div
       ref={appRef}
-      className={`app ${(!phoneLayout && (narrow || sidebarWidthRef.current <= SIDEBAR_NARROW_AT)) ? 'narrow' : ''}${resizing ? ' is-resizing' : ''}${immersiveChat ? ' immersive' : ''}${phoneLayout ? ' phone-layout' : ''}${phoneLayout && phoneNavOpen ? ' phone-nav-open' : ''}`}
+      className={`app ${(!phoneLayout && narrow) ? 'narrow' : ''}${resizing && !snapAnimating ? ' is-resizing' : ''}${immersiveChat ? ' immersive' : ''}${phoneLayout ? ' phone-layout' : ''}${phoneLayout && phoneNavOpen ? ' phone-nav-open' : ''}`}
       style={{
         // While splitter-dragging, prefer the live ref so incidental re-renders
         // (stream deltas) do not snap --sidebar-w back to a stale React state.
@@ -3206,6 +3507,7 @@ async function handleSend(retry?: {
         sidebarRef={sidebarRef}
         lang={lang}
         narrow={phoneLayout ? false : narrow}
+        avatarCompact={phoneLayout ? false : sidebarWidth <= SIDEBAR_NARROW_AT}
         createMenu={createMenu}
         createMenuPos={createMenuPos}
         sessions={sessions}
@@ -3272,10 +3574,15 @@ async function handleSend(retry?: {
           e.preventDefault();
           // Sync to rendered width so a mid-transition drag starts from the visual position.
           const renderedW = readSidebarRenderedWidth();
+          // Interrupting a collapse ease: drop deferred-rail timer and sync chrome
+          // to the live width band so drag state matches what is on screen.
+          clearRailLayoutTimer();
           if (Math.abs(renderedW - sidebarWidthRef.current) > 0.5) {
             sidebarWidthRef.current = renderedW;
-            writeSidebarWidthCss(renderedW);
+            writeSidebarWidthCss(renderedW, true);
             setSidebarWidth(renderedW);
+          } else {
+            writeSidebarWidthCss(renderedW, true);
           }
           const fromNarrow = renderedW <= SIDEBAR_NARROW_AT;
           dragRef.current = {
@@ -3297,6 +3604,7 @@ async function handleSend(retry?: {
             modelReady={(settings?.model?.providers ?? []).some((p) => p.models.length > 0)}
             existingNames={bots.map((b) => b.name)}
             settings={settings}
+            initialTab={galleryTab}
             onClose={() => setGalleryOpen(false)}
             onInstalled={(bot) => void onGalleryAssistantInstalled(bot)}
             onSettingsPatch={async (next) => {

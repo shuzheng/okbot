@@ -1,4 +1,4 @@
-import { useEffect, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
+import { useEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import {
   plainTextFromMarkdown,
   stripThinkContent,
@@ -14,6 +14,7 @@ import { formatSystemError } from '../../../utils/formatSystemError';
 import { windowIsFocused } from '../../../utils/systemNotify';
 import { rememberReconciledLocalId } from '../../../utils/optimisticSend';
 import { saveLastSelection } from '../../sidebar';
+import { reconcileById } from '../../../utils/reconcileRoster';
 import {
   removeParallelTask,
   upsertParallelTask,
@@ -85,6 +86,9 @@ export function useChatEvents(deps: ChatEventsDeps): void {
     setParallelTasksByOwner,
     setOpenTasksByOwner,
   } = deps;
+
+  const langRef = useRef(lang);
+  langRef.current = lang;
 
   useEffect(() => {
   type PendingStream = {
@@ -201,8 +205,8 @@ export function useChatEvents(deps: ChatEventsDeps): void {
       void Promise.all([window.okbot.listBots(), window.okbot.listSquads()])
         .then(([nextBots, nextSquads]) => {
           if (ticket !== refreshSeq) return;
-          setBots(nextBots);
-          setSquads(nextSquads);
+          setBots((prev) => reconcileById(prev, nextBots as typeof prev));
+          setSquads((prev) => reconcileById(prev, nextSquads as typeof prev));
           const sel = selectionRef.current;
           if (!sel) return;
           const stillThere =
@@ -619,7 +623,7 @@ export function useChatEvents(deps: ChatEventsDeps): void {
               {
                 id: event.messageId,
                 role: 'assistant' as const,
-                content: `${t(lang, 'errorPrefix')}${event.error}`,
+                content: `${t(langRef.current, 'errorPrefix')}${event.error}`,
                 createdAt: new Date().toISOString(),
               },
             ];
@@ -643,7 +647,7 @@ export function useChatEvents(deps: ChatEventsDeps): void {
         const next = [...prev];
         const prevContent = next[idx].content || '';
         let nextContent =
-          event.type === 'done' ? event.content || '' : prevContent || `${t(lang, 'errorPrefix')}${event.error}`;
+          event.type === 'done' ? event.content || '' : prevContent || `${t(langRef.current, 'errorPrefix')}${event.error}`;
         // Done with no visible answer: drop the row (aborted mid-think / cleared).
         if (event.type === 'done' && !hasVisibleAssistantText(nextContent)) {
           // Keep prior visible content if we already showed a fuller bubble.

@@ -1,8 +1,8 @@
 /**
  * Regression: prefs may enable generate_image while inferImageCapability is null
- * (non-OpenAI host, no dall-e/gpt-image catalog). Prompt listing and buildTools
- * must agree (prefs-only, like web_search) — otherwise the model calls a missing
- * tool and the Agents SDK throws "Tool generate_image not found in agent".
+ * (non-Images host, no dall-e* / gpt-image* catalog heuristic). Prompt listing and
+ * buildTools must agree (prefs-only, like web_search) — otherwise the model calls a
+ * missing tool and the Agents SDK throws "Tool generate_image not found in agent".
  * Unsupported providers still register; execute returns a clear error.
  */
 import assert from 'node:assert/strict';
@@ -21,32 +21,34 @@ const prefsOff = {
   generate_image: { enabled: false, approval: 'allow' as const },
 };
 
-const openaiApi = {
+// Capable via openai_images host heuristic (api.openai.com).
+const imagesHostApi = {
   baseURL: 'https://api.openai.com/v1',
   apiKey: 'sk-test',
-  catalogModelIds: ['gpt-4o'],
-  providerName: 'OpenAI',
+  catalogModelIds: ['chat-model-a'],
+  providerName: 'Images Host',
 };
 
-const deepseekApi = {
-  baseURL: 'https://api.deepseek.com/v1',
+// Chat-only: generic host, no dall-e* / gpt-image* catalog entries.
+const chatOnlyApi = {
+  baseURL: 'https://api.example-llm.test/v1',
   apiKey: 'sk-test',
-  catalogModelIds: ['deepseek-chat'],
-  providerName: 'DeepSeek',
+  catalogModelIds: ['chat-model-a'],
+  providerName: 'Chat Only Provider',
 };
 
-assert.equal(resolveImageCapability(openaiApi) != null, true);
-assert.equal(resolveImageCapability(deepseekApi) != null, false);
+assert.equal(resolveImageCapability(imagesHostApi) != null, true);
+assert.equal(resolveImageCapability(chatOnlyApi) != null, false);
 assert.equal(resolveImageCapability(undefined) != null, false);
 assert.equal(resolveImageCapability({ baseURL: '', apiKey: 'x' }) != null, false);
 
-const minimaxApi = {
-  baseURL: 'https://api.minimax.cn/v1',
-  apiKey: 'sk-mm',
-  catalogModelIds: ['MiniMax-M2'],
-  providerName: 'MiniMax官网',
+const otherChatOnlyApi = {
+  baseURL: 'https://gateway.example.test/v1',
+  apiKey: 'sk-test',
+  catalogModelIds: ['chat-model-b'],
+  providerName: 'Another Chat Provider',
 };
-assert.equal(resolveImageCapability(minimaxApi) != null, true);
+assert.equal(resolveImageCapability(otherChatOnlyApi) != null, false);
 
 // Prompt list: prefs-only (imageCapable ignored).
 assert.equal(listEnabledToolIds(prefsOn).includes('generate_image'), true);
@@ -68,21 +70,21 @@ const instrPrefsOff = buildAgentInstructions('t', '', [], prefsOff);
 assert.equal(instrPrefsOff.includes('generate_image'), false);
 
 // buildTools registration must match the prompt gate (prefs-only).
-const toolsOpenAI = buildTools(prefsOn, DEFAULT_SECURITY, undefined, { imageApi: openaiApi });
+const toolsImagesHost = buildTools(prefsOn, DEFAULT_SECURITY, undefined, { imageApi: imagesHostApi });
 assert.equal(
-  toolsOpenAI.some((t) => (t as { name?: string }).name === 'generate_image'),
+  toolsImagesHost.some((t) => (t as { name?: string }).name === 'generate_image'),
   true,
-  'OpenAI host must register generate_image',
+  'Images-capable host must register generate_image',
 );
 
-const toolsDeepseek = buildTools(prefsOn, DEFAULT_SECURITY, undefined, { imageApi: deepseekApi });
+const toolsChatOnly = buildTools(prefsOn, DEFAULT_SECURITY, undefined, { imageApi: chatOnlyApi });
 assert.equal(
-  toolsDeepseek.some((t) => (t as { name?: string }).name === 'generate_image'),
+  toolsChatOnly.some((t) => (t as { name?: string }).name === 'generate_image'),
   true,
   'prefs-on chat-only host must still register generate_image (execute errors)',
 );
 
-const toolsOff = buildTools(prefsOff, DEFAULT_SECURITY, undefined, { imageApi: openaiApi });
+const toolsOff = buildTools(prefsOff, DEFAULT_SECURITY, undefined, { imageApi: imagesHostApi });
 assert.equal(
   toolsOff.some((t) => (t as { name?: string }).name === 'generate_image'),
   false,
@@ -91,8 +93,8 @@ assert.equal(
 
 // Lockstep: whatever listEnabledToolIds says, buildTools agrees.
 for (const [label, api] of [
-  ['openai', openaiApi],
-  ['deepseek', deepseekApi],
+  ['images-host', imagesHostApi],
+  ['chat-only', chatOnlyApi],
 ] as const) {
   const listed = listEnabledToolIds(prefsOn).includes('generate_image');
   const built = buildTools(prefsOn, DEFAULT_SECURITY, undefined, { imageApi: api }).some(

@@ -1,5 +1,6 @@
 import {
   createId,
+  effectiveModelKey,
   resolveModelConfig,
   type ChatMessage,
   type QuickChoice,
@@ -14,6 +15,8 @@ import {
 import { normalizeMessageAttachments } from '../../storage/sessionJsonl';
 import {
   ensureSessionCompressed,
+  mergeCompressForce,
+  resolveModelChangeCompressForce,
   resolveTopicCompressForce,
 } from '../../storage/sessionCompression';
 import {
@@ -43,6 +46,7 @@ import { mcpToolsForRun } from '../../mcpRuntime';
 import { buildMeshPeerSpecs, computerRouteFor, createMeshExchangeHandler, skillLookupFor } from '../chatTurnHelpers';
 import { historySearchForOwner } from '../historySearchTool';
 import { scheduleManageForOwner } from '../scheduleTool';
+import { memoryManageForBot } from '../memoryTool';
 import { taskProgressManageForOwner } from '../taskProgressTool';
 import {
   clearLiveAssistantForTools,
@@ -69,7 +73,9 @@ export async function startBotTurn(
       if (!bot) throw new Error('助手不存在');
 
       const quote = resolveQuoteFields(ctx.storage, bot.id, payload.quoteMessageId, text);
-      const attachments = normalizeMessageAttachments(payload.attachments);
+      const attachments = normalizeMessageAttachments(payload.attachments, bot.id, {
+        dataRoot: ctx.storage.dataRoot,
+      });
       const isAutoContinue = isQuietChatOrigin(payload.origin);
       const userMsg: ChatMessage = {
         id: createId('msg'),
@@ -171,7 +177,10 @@ export async function startBotTurn(
         const soulMd = ctx.storage.readSoulMd(bot.id);
         const skillsText = ctx.storage.formatSkillsForPrompt(bot.id);
         const skillLookup = skillLookupFor(ctx.storage, bot.id);
-        const memoriesText = ctx.storage.formatMemoriesForPrompt(bot.id);
+        const memoriesText = ctx.storage.formatMemoriesForPrompt(bot.id, {
+          query: text,
+          recordHits: true,
+        });
 
         // All prior turns (exclude the empty streaming assistant placeholder).
         const allMessages = ctx.storage
@@ -186,6 +195,11 @@ export async function startBotTurn(
           .filter(Boolean)
           .join('\n');
         const existingSummary = ctx.storage.readSessionSummary(bot.id);
+        const nextModelKey = effectiveModelKey(modelConfig);
+        const modelForce = resolveModelChangeCompressForce({
+          lastEffectiveModel: ctx.storage.readLastEffectiveModel(bot.id),
+          nextEffectiveModel: nextModelKey,
+        });
         const topicForce = await resolveTopicCompressForce({
           model: modelConfig,
           contextCompression: settings.contextCompression,
@@ -195,6 +209,7 @@ export async function startBotTurn(
           newUserText: text,
           signal: controller.signal,
         });
+        const compressForce = mergeCompressForce(topicForce, modelForce);
         guards.trace.beginSystem('compress');
         let sessionSummary: string;
         let summaryState: Awaited<ReturnType<typeof ensureSessionCompressed>>['summaryState'];
@@ -209,7 +224,7 @@ export async function startBotTurn(
             prior,
             sessionRows: ctx.storage.listSessionBudgetRows(bot.id),
             signal: controller.signal,
-            force: topicForce,
+            force: compressForce,
             enforceBudget: true,
             onHistoryFolded: async ({ deltaMessages }) => {
               await extractMemoriesFromFoldedHistory({
@@ -225,6 +240,13 @@ export async function startBotTurn(
           sessionSummary = compressed.sessionSummary;
           summaryState = compressed.summaryState;
           omitRecordIds = compressed.omitRecordIds;
+          // Seed / advance lastEffectiveModel only after a successful compress phase
+          // so a failed forced pass can retry on the next turn.
+          try {
+            ctx.storage.writeLastEffectiveModel(bot.id, nextModelKey);
+          } catch (err) {
+            console.error('[okbot] write lastEffectiveModel failed', err);
+          }
           guards.trace.endSystem('compress', { status: 'ok' });
         } catch (compressErr) {
           guards.trace.endSystem('compress', {
@@ -261,6 +283,7 @@ export async function startBotTurn(
           skillLookup,
           historySearch: historySearchForOwner(ctx.storage, bot.id),
           scheduleManage: scheduleManageForOwner(ctx.storage, bot.id),
+          memoryManage: memoryManageForBot(ctx.storage, bot.id),
           taskProgressManage: async (input) => {
             const result = await taskProgressManageForOwner(ctx.storage, bot.id)(input);
             try {
@@ -297,7 +320,6 @@ export async function startBotTurn(
           meshSettings: settings.mesh,
           meshDepth: 0,
           meshStack: [bot.id],
-          meshCallBudget: { calls: 0 },
           userText: text,
           signal: controller.signal,
           onClearLiveText: async () => {

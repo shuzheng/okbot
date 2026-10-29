@@ -23,7 +23,7 @@ export function estimateTokensFromText(text: string): number {
   return Math.max(1, Math.ceil(cjk / 2 + latin / 4));
 }
 
-/** Open/close tags MiniMax-style models emit for chain-of-thought. */
+/** Open/close tags some models emit for chain-of-thought. */
 const THINK_OPEN = '<think>';
 const THINK_CLOSE = '</think>';
 
@@ -173,9 +173,10 @@ export function redactSensitiveText(msg: string, apiKey?: string, maxLen = 500):
     s = s.replace(new RegExp(escaped, 'g'), '***');
   }
   s = s.replace(/Bearer\s+\S+/gi, 'Bearer ***');
-  s = s.replace(/sk-[A-Za-z0-9_\-]{8,}/g, 'sk-***');
-  s = s.replace(/sk-or-[A-Za-z0-9_\-]{8,}/g, 'sk-or-***');
-  s = s.replace(/key-[A-Za-z0-9_\-]{8,}/g, 'key-***');
+  // Boundary + length: avoid sk-learn / monkey-business-model (…key-business…).
+  s = s.replace(/(?<![A-Za-z0-9])sk-or-[A-Za-z0-9_\-]{16,}/g, 'sk-or-***');
+  s = s.replace(/(?<![A-Za-z0-9])sk-[A-Za-z0-9_\-]{16,}/g, 'sk-***');
+  s = s.replace(/(?<![A-Za-z0-9])key-[A-Za-z0-9_\-]{16,}/g, 'key-***');
   const lim = Number.isFinite(maxLen) && maxLen > 0 ? Math.floor(maxLen) : 500;
   return s.slice(0, lim);
 }
@@ -188,7 +189,7 @@ export function redactSensitiveText(msg: string, apiKey?: string, maxLen = 500):
 
 /**
  * Drop JSON `null` values from tool-call `arguments` / `params` (string or object).
- * Strict gateways (e.g. MiniMax 400/2013) reject history that still carries
+ * Strict gateways (e.g. HTTP 400/2013) reject history that still carries
  * `"timezone":null` / `"job_id":null` from models that fill every optional key.
  * Does not mutate `item`; returns the same reference when nothing changes.
  */

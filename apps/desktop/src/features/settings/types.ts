@@ -12,4 +12,4 @@ export type SettingsTab =
   | 'updates';
 
 /** Sub-section inside the 指令 settings page. */
-export type InstructionsSubTab = 'assistant' | 'squad' | 'soul' | 'memory' | 'skills';
+export type InstructionsSubTab = 'assistant' | 'squad' | 'soul' | 'memory' | 'skills' | 'builtin';

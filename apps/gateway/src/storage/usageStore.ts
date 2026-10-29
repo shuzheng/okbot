@@ -7,7 +7,7 @@ import {
   type TokenUsage,
   type UsageStats,
 } from '@okbot/shared';
-import { ensureDir, readJson, writeJson } from './fs';
+import { ensureDir, readJsonResult, handleCorruptJsonRead, writeJson } from './fs';
 
 /** Keep this many trailing calendar days in usage.json `daily` (inclusive of today). */
 export const USAGE_DAILY_RETENTION_DAYS = 90;
@@ -46,7 +46,18 @@ export function pruneUsageDaily(
 }
 
 export function loadUsageStats(file: string): UsageStats {
-  const raw = readJson<UsageStats>(file, emptyUsageStats());
+  const loaded = readJsonResult<UsageStats>(file, emptyUsageStats());
+  if (
+    handleCorruptJsonRead(
+      file,
+      loaded.status,
+      loaded.status === 'invalid' ? loaded.error : undefined,
+      'usage.json',
+    )
+  ) {
+    return emptyUsageStats();
+  }
+  const raw = loaded.data;
   const lifetime = normalizeTokenUsage(raw.lifetime) ?? emptyTokenUsage();
   const daily: Record<string, TokenUsage> = {};
   if (raw.daily && typeof raw.daily === 'object') {

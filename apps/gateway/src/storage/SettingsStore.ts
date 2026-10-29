@@ -37,7 +37,7 @@ import {
   stripClientSettingsKeys,
   mergeClientGatewaySettings,
 } from '@okbot/shared';
-import { readJson, readJsonResult, backupFileAside, writeJson } from './fs';
+import { readJsonResult, backupFileAside, writeJson } from './fs';
 import { normalizeAutoApprovalRules } from './ids';
 
 /**
@@ -133,6 +133,7 @@ export class SettingsStore {
           search_history: { ...DEFAULT_SETTINGS.tools.search_history },
           manage_schedule: { ...DEFAULT_SETTINGS.tools.manage_schedule },
           manage_task_progress: { ...DEFAULT_SETTINGS.tools.manage_task_progress },
+          manage_memory: { ...DEFAULT_SETTINGS.tools.manage_memory },
           send_message: { ...DEFAULT_SETTINGS.tools.send_message },
           web_fetch: { ...DEFAULT_SETTINGS.tools.web_fetch },
           web_search: { ...DEFAULT_SETTINGS.tools.web_search },
@@ -141,6 +142,7 @@ export class SettingsStore {
           ...DEFAULT_SETTINGS.security,
           deniedPathPrefixes: [...DEFAULT_SETTINGS.security.deniedPathPrefixes],
           allowedPathPrefixes: [...DEFAULT_SETTINGS.security.allowedPathPrefixes],
+          agent: { ...DEFAULT_SETTINGS.security.agent },
         },
         contextCompression: { ...DEFAULT_SETTINGS.contextCompression },
         instructions: { ...DEFAULT_SETTINGS.instructions },

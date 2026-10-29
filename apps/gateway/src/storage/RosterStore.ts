@@ -20,7 +20,7 @@ import {
   stripThinkContent,
   clampOwnerDescription,
 } from '@okbot/shared';
-import { ensureDir, readJson, writeJson, writeText } from './fs';
+import { ensureDir, readJson, readJsonResult, handleCorruptJsonRead, writeJson, writeText } from './fs';
 import { removeOwnerUsage } from './usageStore';
 import {
   localDateYyyyMmDd,
@@ -156,7 +156,18 @@ export class RosterStore {
 
 
   listRoster(): BotRosterEntry[] {
-    const raw = readJson<BotRosterEntry[]>(this.deps.botsPath, []);
+    const loaded = readJsonResult<BotRosterEntry[]>(this.deps.botsPath, []);
+    if (
+      handleCorruptJsonRead(
+        this.deps.botsPath,
+        loaded.status,
+        loaded.status === 'invalid' ? loaded.error : undefined,
+        'bots.json',
+      )
+    ) {
+      return [];
+    }
+    const raw = loaded.data;
     if (!Array.isArray(raw)) return [];
     return raw
       .filter((e) => e && typeof e.id === 'string' && e.id)
@@ -665,7 +676,18 @@ export class RosterStore {
 
 
   listSquads(): Squad[] {
-    const raw = readJson<unknown[]>(this.deps.squadsPath, []);
+    const loaded = readJsonResult<unknown[]>(this.deps.squadsPath, []);
+    if (
+      handleCorruptJsonRead(
+        this.deps.squadsPath,
+        loaded.status,
+        loaded.status === 'invalid' ? loaded.error : undefined,
+        'squads.json',
+      )
+    ) {
+      return [];
+    }
+    const raw = loaded.data;
     if (!Array.isArray(raw)) return [];
     const modelSettings = this.deps.getSettings().model;
     const out: Squad[] = [];

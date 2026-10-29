@@ -27,4 +27,16 @@ assert.equal(resolveToolApproval(schedOn, 'manage_schedule', { action: 'delete',
 assert.equal(resolveToolApproval(schedOn, 'manage_schedule', { action: 'list' }), 'allow');
 assert.equal(resolveToolApproval(schedOn, 'manage_schedule', { action: 'pause', job_id: 'j1' }), 'allow');
 
+// Single-char / too-short keywords must not globally allow.
+{
+  const short = [{ id: 's', description: 'a', action: 'allow', createdAt: '', updatedAt: '' }];
+  assert.equal(resolveAutoApproval(true, short, 'run_shell', { command: 'ls' }), 'ask');
+  const cjk = [{ id: 'cjk', description: '写', action: 'allow', createdAt: '', updatedAt: '' }];
+  assert.equal(resolveAutoApproval(true, cjk, 'run_shell', { command: 'echo 写' }), 'ask');
+  const ok = [{ id: 'ok', description: 'ls', action: 'allow', createdAt: '', updatedAt: '' }];
+  assert.equal(resolveAutoApproval(true, ok, 'run_shell', { command: 'ls -la' }), 'allow');
+  // Must not allow via path-segment substring (e.g. …/ls.txt).
+  assert.equal(resolveAutoApproval(true, ok, 'read_file', { path: '/home/x/ls.txt' }), 'ask');
+}
+
 console.log('approval.test.mjs: ok');

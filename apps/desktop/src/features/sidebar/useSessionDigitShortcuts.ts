@@ -134,6 +134,22 @@ export function useSessionDigitShortcuts(opts: {
       if (!/^[1-9]$/.test(e.key)) return;
       if (e.isComposing || e.keyCode === 229) return;
 
+      const target = e.target;
+      if (target instanceof HTMLElement) {
+        const tag = target.tagName;
+        if (
+          tag === 'INPUT' ||
+          tag === 'TEXTAREA' ||
+          tag === 'SELECT' ||
+          target.isContentEditable
+        ) {
+          return;
+        }
+        if (target.closest('[role="dialog"], [aria-modal="true"], .modal, .settings-modal')) {
+          return;
+        }
+      }
+
       const digit = Number(e.key);
       const slot = slotsRef.current.find((s) => s.digit === digit);
       if (!slot) return;

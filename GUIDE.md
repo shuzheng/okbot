@@ -22,12 +22,10 @@ OkBot 是 **本机个人桌面 AI 助手**（Electron）：
 ```text
 okbot/
   apps/desktop/                 # Electron 壳 + React UI
-    bin/okbot.mjs               # `okbot` bin → 加载 out/main/cli.js
-    electron/                   # main / preload / IPC / storage / updater
-      ipc/                      # registerChat / registerEntity / registerSystem
+    bin/okbot.mjs               # 兼容 shim → apps/gateway/bin/okbot.mjs
+    electron/                   # main / preload / 桌面 IPC 壳 / updater
+      ipc/                      # registerAllIpc 壳（聊天/实体 handler 在 gateway）
       attachPreload.ts          # 附着客户端 preload（令牌走请求头）
-      serverPresence.ts         # 端口探测与数据目录锁
-      storage/                  # FileStorage、sessionJsonl、usageStore…
       updater.ts                # electron-updater + GitHub Releases
     src/
       App.tsx                   # 状态编排、会话切换、发消息、未读、更新条
@@ -46,6 +44,9 @@ okbot/
   apps/gateway/                 # 网关 HTTP + okbot serve CLI + server.json 存储
     src/gatewayHttpApi.ts       # 网关 HTTP（Electron 与 okbot serve 共用）
     src/cli.ts                  # `okbot serve` 入口
+    src/entityOps.ts / modelProbe.ts
+    src/ipc/                    # registerChat / registerEntity / orchestrateBotTurn
+    src/storage/                # FileStorage 门面 + 域 Store（非 desktop）
   packages/shared/              # 类型、默认设置、IPC channel 常量
   packages/agent/               # 跑对话、工具、小队、压缩、用量、转写
   apps/sandbox-agent/           # 云电脑进程（HTTP shell/fs API + Dockerfile）
@@ -68,10 +69,10 @@ okbot/
 
 ### 3.1 侧栏（`features/sidebar`）
 
-- **展开态**：搜索、会话列表（助手 + 小队）、底部 FAB（搜索 / 设置 / 创建菜单）。会话行副标题默认是最后回复摘要（`lastReplyPreview`）；**非当前会话**若 composer 仍有未发送草稿，副标题改为 `草稿：` + 折叠空白后的草稿原文（CSS ellipsis 截断；当前会话仍显示最后回复，草稿只留在输入框）。会话行名称右上角显示**上次更新时间**（`formatSessionUpdatedAt`，用 `SessionItem.updatedAt`）：当天 `HH:mm`；昨天 `昨天 HH:mm`（EN: `Yesterday HH:mm`）；一周内为星期（`星期x` / EN 本地化短星期）；一月内为 `MM/DD`；更早为 `YYYY/MM/DD`。次要 muted 文案，不挤占标题/未读。  
+- **展开态**：搜索、会话列表（助手 + 小队）、底部圆形边框图标（设置 / 市场 / 更新；无可用更新时隐藏更新）。半透明开时，顶栏搜索/`+`（`.search-btn` / `.new-btn`）与底部手风琴 pill（`.footer-pill-expand`，蓝色更新钮除外）各自独立毛玻璃（浅色 `#fff` ~42%/56%、暗色 `#fff` white-alpha ~10%/10%（顶底统一）+ `blur(10px)`，浅偏白、暗偏灰；不把 `backdrop-filter` 挂在顶栏/底栏父级以免 Backdrop Root）；半透明关时回退为浅色 `#fff` ~72%/88%、暗色 `#fff` ~10%/10% 实色洗。折叠态 FAB：汉堡钮仍无底，弹出菜单仍有底。**始终恰好一个**为展开 pill（默认市场；悬停切换到该控件，指针离开后保持最后悬停的那个展开，不回弹）。展开内容：设置→设置+官网（https://okbot-ai.com）+关于；市场→市场+助手 Tab+连接器 Tab；更新→更新图标+「更新」文案。空间足够时理论总宽固定：其余保持圆点，`圆 + 圆 + 展开pill`（或无更新时 `圆 + 展开pill`）宽度之和不变。**宽度响应**（`footerPillFit` + 底栏 `ResizeObserver`）：不够显示全部时，**先**收起当前展开组内的子按钮（extras 2→1→0，主图标保留；设置/市场/更新均最多 2 个 extras），**再**从右到左隐藏整颗按钮（更新 → 市场 → 设置）；变宽时按相反优先级恢复。窄轨 FAB 模式不变。触控同样靠 `is-expanded` 保持默认/上次展开，点主图标即可。会话行副标题默认是最后回复摘要（`lastReplyPreview`）；**非当前会话**若 composer 仍有未发送草稿，副标题改为 `草稿：` + 折叠空白后的草稿原文（CSS ellipsis 截断；当前会话仍显示最后回复，草稿只留在输入框）。会话行名称右上角显示**上次更新时间**（`formatSessionUpdatedAt`，用 `SessionItem.updatedAt`）：当天 `HH:mm`；昨天 `昨天 HH:mm`（EN: `Yesterday HH:mm`）；一周内为星期（`星期x` / EN 本地化短星期）；一月内为 `MM/DD`；更早为 `YYYY/MM/DD`。次要 muted 文案，不挤占标题/未读。  
 - **折叠态**：窄轨头像列表；会话行悬停仍有 `--accent-soft` 底色；悬停约 **500ms** 后显示 dock tip（指针离开头像即隐藏，不保留 tip 卡片悬停；触控 / 手机不展示，点选会话时强制关闭）；底部紧凑 FAB。Mac Dock 式头像放大动效默认**关闭**（`settings.sidebarDockMagnify`，设置 → 通用 →「缩放特效」）；仅开关打开时才缩放。macOS 顶栏仍保留红绿灯占位（`--traffic-pad`）；Windows / Linux 折叠时去掉该空顶距。左侧 `.sidebar` 为毛玻璃：macOS 上 `BrowserWindow` `transparent` + `vibrancy: 'sidebar'`（html/body/#root/.app 透明，`.main` 仍用不透明 `--chat-bg`），侧栏浅色 panel 洗；透明窗用 `.app::after` 实色 0.5px 描边（`--window-rim-color`，圆角 `--window-radius` 对齐系统窗角）；其它平台用半透明 panel + CSS `backdrop-filter`。布局为栅格 `sidebar | splitter | main`（不再 overlay；先前 overlay 只采样到平坦 `--chat-bg`）。深色主题 splitter 描边更淡。  
 - **宽度**：可拖拽，上限约 **400px**；点击 splitter 可折叠/展开；宽度持久化（`sidebarPersistence`）。  
-- **创建菜单**：创建助手 / 创建小队 / **市场** / **导入助手**（各有独立图标）。侧栏底部也可直接打开**市场**（展开时设置/市场为图标+文字；侧栏变窄但未折叠到轨前隐藏文字且无 tooltip；收起轨用溢出菜单，设置/市场无 tooltip）。  
+- **创建菜单**：创建助手 / 创建小队 / **导入助手**（各有独立图标；顶栏 `+` 或展开底栏设置 pill 内的 `+`）。侧栏底部也可直接打开**市场**（展开时为 sticky 展开 pill，见上；收起轨用溢出菜单，设置/市场无 tooltip）。  
 - **会话项**：头像 + 名称 + 最近回复预览。助手右键分四组（组间分隔线；整组缺失时折叠分隔线，不出现相邻/首尾空分隔）：**置顶**（或 **取消置顶**）/ **移至** / **标为已读**（或 **标为未读**）｜**重命名** / **设为默认助手**（或 **取消默认助手**）｜（高级开启时）**请求地址** / **导出助手**｜**隐藏**（或 **显示**）/ **删除**。小队右键同样四组：**置顶** / **移至** / **标为已读未读**｜**重命名**｜（高级开启时）**请求地址**｜**隐藏** / **删除**（无默认助手、无导出）。修改助手/小队仅从对话顶栏左侧身份入口进入，不在右键菜单。**已隐藏**列表里的成员右键省略置顶、移至、设为默认助手，仅保留：**标为已读未读**｜**重命名**｜（高级开启时）**请求地址** /（仅助手）**导出助手**｜**显示** / **删除**。删除确认文案为「删除助手「…」」/「删除小队「…」」。分组标题右键：**重命名**｜**上移** / **下移**｜**删除**（「未分组」无重命名与删除，分隔线随之折叠）。菜单贴窗口边缘时会翻转到窗口内。默认可多选置顶（`settings.pinnedOwnerIds` 有序数组）；展开侧栏顶部为居中大头像+名称条（可并排换行），折叠轨仅显示与会话行同尺寸头像；置顶区与列表间有与会话行同宽的内缩分隔线。置顶项仍可选中，并从下方时间序列表中抽出。默认助手头像右下角有圆形描边星标（侧栏 / 顶栏 / 折叠 tip；与置顶独立，置顶时星标仍显示）。删除助手/小队时会从置顶列表移除。  
 - **两边列表与对话同步**：桌面窗口与局域网网关页面共用同一份 `~/.okbot`。新消息、改名、新建、删除会发 `sessions_changed`（桌面走 IPC，网关走 `GET /v1/events` 长连接）。`GET /v1/events` 同时转发回合 RuntimeEvent（user_message / delta / done 等），附着客户端与网关 WebUI 与 owner Electron 的 IPC 扇出一致。收到 `sessions_changed` 后约 **120ms** 内重新拉助手与小队列表；当前会话若已被删掉则清空选中。 若 `reason === 'message'` 且正打开该会话，附着端约 **160ms** 内再拉一页消息并按 id 去重追加（owner→attach 兜底，避免只靠回合 SSE）。  
 - **未读回复**：非当前会话、且该会话 `hasUnreadReply` 且不在「工作中」时，头像外壳加 **unread 脉冲光晕**（`session-avatar-shell.unread`，文案 `unreadReply`）。切回会话会清未读（IPC `setChatUnread`）。窗口不在前台时，当前会话的回复完成或工具等待批准也会标未读；窗口重新获得焦点时清掉当前会话的未读。桌面端把带未读的会话数汇总到 **Dock / 任务栏角标**（IPC `setBadgeCount` → Electron `app.setBadgeCount`；为 0 时清除）。聊天区未贴底时若有新助手回复，滚到底按钮显示「x条未读消息」（EN: `{count} unread messages`，文案键 `unreadBelowFold`）；回到底部后清除计数。  
@@ -83,7 +84,7 @@ okbot/
 - 当前会话名；主题循环按钮（`system` / `light` / `dark`）。 `system` 会解析成具体的 `data-theme="light|dark"`（`matchMedia` + 主进程 `nativeTheme.updated` IPC），避免仅依赖移除属性时部分样式无 `@media (prefers-color-scheme)` 双生而混色。  
 - **关于**：主题按钮右侧打开 `AboutModal`（应用信息、构建日期、复制信息）。  
 - **窗口控件（仅 Windows）**：关于按钮右侧为最小化 / 最大化(还原) / 关闭；macOS 仍用系统红绿灯，Linux 不加这组控件。关闭行为见上文「关闭窗口（托盘）」。  
-- **下载更新**：有可用/下载中/已下载更新时，侧栏底部「市场」右侧出现蓝色更新图标（见 §10）；无更新时隐藏。
+- **下载更新**：有可用/下载中/已下载更新时，侧栏底部「市场」右侧出现蓝色更新圆钮（展开态悬停变宽显示「更新」文案；见 §10）；无更新时隐藏。
 - **沉浸式对话**：控制不在顶栏，而在消息/转录区域（`.messages-shell`）**右下角**悬停浮层按钮（Maximize2 / Minimize2 图标）。鼠标进入消息/转录区域时淡入，离开时淡出（`opacity` 过渡；不可见时 `pointer-events: none` 不挡点击）。点击隐藏侧栏与 splitter（聊天区全宽），并隐藏对话顶栏右侧图标组（`.header-actions` 里的主题、关于）；Windows 最小化 / 最大化 / 关闭仍留在顶栏右侧。再点同一按钮还原侧栏与这些图标（保留进入前的宽度/折叠轨态）。偏好持久化 `localStorage` 键 `okbot.immersiveChat`。文案：`开启沉浸式对话` / `关闭沉浸式对话`（EN: Enable / Exit immersive chat）。
 - **macOS 沉浸式顶栏 inset**：沉浸且侧栏隐藏时，对话顶栏在 darwin 上增加左侧安全区（`--traffic-lights-inset: 76px`），避免助手头像/名称与系统红绿灯重叠；Windows / Linux 不加该左 padding。
 
@@ -96,7 +97,7 @@ okbot/
   - `bubble-body-row`：左侧悬停操作 + 右侧气泡。  
   - 悬停操作（左→右）：**复制**、查看本轮 Prompt 上下文、引用。  
   - 操作按钮用 `margin-top: 6px` 与气泡 **第一行文字** 光学垂直居中；长消息时 `.bubble-actions` 与成员头像同款纯 CSS sticky（`position: sticky; top: 0`），滚动该条时贴住视口顶，不随气泡底滚走。  
-  - **头像色洗涤**：1:1 助手会话若 `bot.color` 为 `#RRGGBB`，该会话用户发送气泡背景为该色相对 `--chat-bg` 的浅色洗涤（`.messages.has-user-bubble-tint` / `--user-bubble-accent`），文字用 `--text`；未设色则默认 `--bubble-user`。助手回复气泡不变。小队无小队级 `color` 字段，小队会话不染色。  
+  - **头像色洗涤**：1:1 助手会话若 `bot.color` 为 `#RRGGBB`，该会话用户发送气泡背景为该色相对 `--chat-bg` 的浅色洗涤（`.messages.has-user-bubble-tint` / `--user-bubble-accent`），文字用 `--text`；未设色则默认 `--bubble-user` / `--bubble-user-text`（浅色主题为**黑底白字**：bg=`var(--text)`、text 为原浅色洗涤混色；深色主题仍为相对 `--chat-bg` 的中性亮度差，略亮于助手 `#212121`）。助手回复气泡不变。小队无小队级 `color` 字段，小队会话不染色，但仍受益于默认 `--bubble-user` / `--bubble-bot` 区分。  
 - **助手气泡**（左对齐）：布局是用户侧的 **镜像**——`bubble-body-row-assistant` 内先气泡、后操作（token 用量 / 引用 / **复制**），同一套 `margin-top: 6px`，**不要**再用 absolute 叠在气泡角上。  
 - 小队助手气泡：成员用对应 bot 的 `FlatAvatar`（`.bubble-speaker-avatar` 在 `.messages` 内 `position: sticky; top: 0`，长消息滚动时头像贴住视口顶，直到该条 `bubble-row` 滚出）；**队长气泡不渲染头像**（无 `has-speaker` 间距，气泡左对齐）。侧栏/列表 `SquadAvatar` 不变。  
 - Markdown 渲染、代码块复制；工具调用以 `ToolCardView` 插入在对应消息附近。  
@@ -165,7 +166,7 @@ okbot/
 - 内置默认（顺序）：**编程助手**、写作助手、学习伙伴、计划助手、翻译助手、电脑小帮手。每个含人设（`SOUL.md`）和 0–2 个技能（**slug、frontmatter `name`、目录名均以 `okbot-` 开头**；落盘 `skills/<slug>/`：`SKILL.md` 必需，可选 `scripts/` / `references/` / `assets/` / `README.md`；`description` 描述何时使用；正文按「何时使用此技能 / 工作原理 / 示例 / 注意事项」），中英两套文案按界面语言安装。人设与技能用 ASD-STE100 风格的短句。编程助手面向入门、可用中文提问。
 - **远程 GitHub 来源**（助手 Tab）：在市场页粘贴公开仓库 URL、目录（`tree`）、`raw` 文件、release 资源或 `.okbot` 直链。解析后下载并走与本地导入同一套助手包管线（`manifest.json` + 可选 `SOUL.md` + `skills/`）。仓库根会尝试常见路径（`/`、`assistant`、`assistant-package` 等）或根目录 `.okbot`。仅公开源，不读环境变量令牌；失败时有明确错误与加载态。成功导入的 URL 写入 `settings.assistantMarketplace.savedSources`（最多 20，可一键再导入或移除）。
 - **连接器 Tab**：推荐 MCP 服务器预设（Memory / Sequential Thinking / Fetch）；一点即写入 `settings.mcp.servers`（**默认未启用**，需到「设置 → MCP扩展」打开并测试）。可跳转 MCP 设置。预设见 `features/bots/marketplaceConnectors.ts`。
-- 数据：内置包在 `packages/agent/gallery/<id>/{zh,en}/`（`manifest.json` + `SOUL.md` + `skills/`；顺序见 `order.json`）；加载在 `packages/agent/src/assistantGallery.ts`（离线读盘；打包进 desktop `Resources/assistant-gallery`）；URL 解析在 `packages/agent/src/githubAssistantSource.ts`；拉取在 `apps/desktop/electron/storage/fetchGithubAssistant.ts`。安装经 `FileStorage.installAssistantPackage`。IPC / 网关 RPC：`listAssistantGallery`、`installGalleryAssistant`、`importAssistantFromUrl`。UI：`features/bots/AssistantMarketplacePage.tsx`。
+- 数据：内置包在 `packages/agent/gallery/<id>/{zh,en}/`（`manifest.json` + `SOUL.md` + `skills/`；顺序见 `order.json`）；加载在 `packages/agent/src/assistantGallery.ts`（离线读盘；打包进 desktop `Resources/assistant-gallery`）；URL 解析在 `packages/agent/src/githubAssistantSource.ts`；拉取在 `apps/gateway/src/storage/fetchGithubAssistant.ts`。安装经 `FileStorage.installAssistantPackage`。IPC / 网关 RPC：`listAssistantGallery`、`installGalleryAssistant`、`importAssistantFromUrl`。UI：`features/bots/AssistantMarketplacePage.tsx`。
 
 ### 4.5 首次使用引导
 
@@ -203,7 +204,7 @@ okbot/
 **触发**：到点后，拥有网关的进程内 `scheduleTicker`（约每 20s）发起一轮普通对话（用户气泡带「【定时】」前缀；走与手动发送相同的并行上限、停止与任务条；工具审批与预算与交互轮次相同）。**应用或 `okbot serve` 没在跑时不会触发**；再次启动后若某任务的下次时间已过，会补跑一次并推进下次。同一任务若上一轮还在跑，不会叠跑。不是工作流引擎，也不做任务看板。
 
 
-实现：`packages/agent/src/squad.ts`（`runSquadChat` + 导出 `buildCaptainSquadInstructions` / `allocateAskToolNames` + `onSquadExchange`）；压缩共用 `apps/desktop/electron/storage/sessionCompression.ts`。
+实现：`packages/agent/src/squad.ts`（`runSquadChat` + 导出 `buildCaptainSquadInstructions` / `allocateAskToolNames` + `onSquadExchange`）；压缩共用 `apps/gateway/src/storage/sessionCompression.ts`。
 
 ---
 
@@ -235,7 +236,7 @@ okbot/
 | **模型接入** | **自定义供应商**（可多条；行右端统一展开/收起箭头，展开后在行内级联嵌套「请求接口」与「模型列表」，样式同前略收窄：名称 / BaseURL / API Format / API Key / 每供应商模型目录）；模型行**连通测试**（按该供应商 baseURL/apiKey/apiFormat 对模型 id 发最小探针，IPC `testModelConnection`）；全局**默认模型**（下方下拉，供应商→模型；列表行不再用星标设默认）；模型列表按显示名 A–Z 稳定排序（无显示名则用 id；启停不打乱相对序；供应商顺序不变）；助手/小队覆盖同为 `providerId`+`modelId`；上下文压缩（自动换题、比例、保留上下限、摘要字数；新装默认更早压缩、多留原文） |
 | **工具授权** | 内置工具启用 + 审批策略（自动允许 / 询问；含 `read_skill`、`manage_schedule`、`web_fetch`、`web_search`）；**网页**小节（`settings.web`：搜索服务商 Tavily/Brave/Serper/自定义、API Key；自定义时另填接口协议与 base URL；内置三家始终走官方端点；`web_fetch` 是否允许内网）；**自动审批规则（AAR）** 列表（允许/先询问、关键词、失焦自动保存草稿；空规则丢弃；重名校验；列表限高滚动） |
 | **安全防护** | 总开关、拦截模式（reject / tripwire）、限制在家目录、允许/拒绝路径前缀、可编辑的危险 shell 正则列表（缺省用内置，可恢复默认）；与审批关系说明 |
-| **网关服务** | 页内小节：**本机网关 / HTTP API**（常开；端口、**网关令牌列表**（任意多个；名称 / 用户|超管 / 密钥 / 消息与 Token 限额；可查看每令牌对各助手/小队用量）、局域网网关、提供 Web UI；见 §6.1；Web UI 开时左侧有「打开 Web UI」链接）、**电脑连接**（嵌在本页，见 §6.2）、**数据**（当前网关主机 `~/.okbot` 路径、备份时不含密钥、导出/恢复网关数据；见 §12.1；不含 `client.json` 等本机客户端偏好；仅拥有本机网关的桌面 App 可操作） |
+| **网关服务** | 页内小节：**本机网关 / HTTP API**（常开；端口、**网关令牌列表**（任意多个；名称 / 用户|超管 / 密钥 / 消息与 Token 限额；可查看每令牌对各助手/小队用量）、局域网网关、提供 Web UI；见 §6.1；Web UI 开时左侧有「打开 Web UI」链接）、**电脑连接**（嵌在本页，见 §6.2）、**数据**（当前网关主机 `~/.okbot` 路径、备份时不含密钥、导出/恢复网关数据；见 §12.1；不含 `client.json` 等本机客户端偏好；本机拥有网关的桌面 App，或附着超管经 HTTP 备份路由，可操作） |
 | **MCP扩展** | MCP 服务器（默认关，见 §7.1）。**超管令牌**可在远程/网页端改；用户令牌客户端只读或隐藏网关端 |
 | **电脑连接** | 列表表头「电脑名称 / 添加电脑」。本机在列表中但没有连通测试、编辑、删除、开关。远程行有这四项；关闭后不能当默认、也不参与路由。下拉只含本机和已启用的远程电脑。见 §6.2 |
 | **系统指令** | 仅开发者模式打开时出现在侧栏。子 Tab 顺序：助手 / 小队 / SOUL.md / 记忆 / 技能。「助手」：1:1 角色句模板（`settings.instructions.assistantRoleTemplate`，`{name}` 占位，空则恢复默认）；「小队」：队长人设、Playbook（`settings.squad`，与 1:1 无关；队长/队员 maxTurns 设置已移除）；「SOUL.md」：静默维护完整 system 模版（`soulMdRefreshSystemPrompt`）；「记忆」：范围判定说明（`settings.memory.scopeInstruction`）；「技能」：生成/更新 skill 判定指令（`skillsCreateUpdateInstruction`，仅替换 system 中那一行）。分析最近消息窗口与维护节流对齐：SOUL/花名册=`maintenance.soulEveryTurns`（默认 5）、记忆=`memoryEveryTurns`（默认 2）、技能=`skillsEveryTurns`（默认 5）；旧 JSON 的独立 `*RecentMessageLimit` 键读盘忽略、UI 不再暴露。空字符串恢复默认；缺字段读盘时由 normalize 填回，下次保存写回。侧栏图标为文档形（与小队区分）。 |
@@ -251,7 +252,7 @@ okbot/
 
 **最大输出窗口**（模型编辑对话框「最大输出窗口」）：每模型 `maxTokens: number | null`。**不填 / `null` = 跟随服务商默认**（请求不带 `max_tokens` / `max_output_tokens`）；填了正整数才经 `resolveModelConfig` → `Agent({ modelSettings: { maxTokens } })` 发出（Chat Completions → `max_tokens`，Responses → `max_output_tokens`）。缺字段或非法值解析为 `null`，不补数字默认；已保存的数字（含旧默认 `128000`）原样保留。仍受网关/模型硬上限约束。与工具输出截断（`MAX_TOOL_OUTPUT`）无关。
 
-**显示思考过程**（模型编辑对话框「显示思考过程」/ `showThinking`，缺省 **true**）：MiniMax 等模型回复中的 `<think>…</think>` 默认在助手气泡内以可折叠「思考过程」块展示（纯 CSS `<details>`，默认收起）；关闭后从展示路径剥离，并在落盘助手正文前剥离，历史更干净。1:1 与小队均按当前解析模型生效。
+**显示思考过程**（模型编辑对话框「显示思考过程」/ `showThinking`，缺省 **true**）：部分模型回复中的 `<think>…</think>` 默认在助手气泡内以可折叠「思考过程」块展示（纯 CSS `<details>`，默认收起）；关闭后从展示路径剥离，并在落盘助手正文前剥离，历史更干净。1:1 与小队均按当前解析模型生效。
 
 **运行最大回合**（无设置项）：硬编码 `DEFAULT_RUNNER_MAX_TURNS`（100），经 `buildRunOpts` → `runner.run({ maxTurns })` 作用于 1:1 `runAgentChat` / HITL 恢复、小队队长/队员子运行、以及 mesh `ask_assistant` 嵌套运行；避免落入 SDK `DEFAULT_MAX_TURNS=10`。旧配置里的根级 `settings.maxTurns` 与 `settings.squad.captainMaxTurns` / `memberMaxTurns` 已忽略。
 
@@ -292,40 +293,40 @@ curl -N -X POST "http://127.0.0.1:<port>/v1/bots/<botId>/messages" \
 
 **构建**
 
-源码入口 `apps/desktop/electron/cli.ts`。`apps/desktop/electron.vite.config.ts` 主进程 `input` 含 `cli`；`electron-vite build` 打成 `apps/desktop/out/main/cli.js`，并加 `#!/usr/bin/env node` shebang。在仓库根目录：
+源码入口 `apps/gateway/src/cli.ts`；`pnpm --filter @okbot/gateway build`（esbuild）打成 `apps/gateway/dist/cli.js`（带 `#!/usr/bin/env node` shebang）。桌面 `pnpm --filter @okbot/desktop build` / `pnpm dev` 会先构建 gateway。在仓库根目录：
 
 ```bash
-pnpm --filter @okbot/desktop build
+pnpm --filter @okbot/gateway build
 ```
 
-该命令先构建 `@okbot/agent`，再跑 `electron-vite build`。`pnpm dev` 同样会按 vite 配置产出 `out/main/cli.js`（与 build 同一套 main input）。没有单独下载成品的安装脚本，需在本仓库构建后使用。
+或 `pnpm --filter @okbot/desktop build`（会级联构建 shared / agent / gateway）。没有单独下载成品的安装脚本，需在本仓库构建后使用。
 
 **用法**
 
 构建完成后任选其一：
 
 ```bash
-node apps/desktop/out/main/cli.js serve
+node apps/gateway/dist/cli.js serve
 ```
 
 ```bash
 okbot serve
 ```
 
-或 `node apps/desktop/bin/okbot.mjs serve`。包的 bin 是 `okbot`（`apps/desktop/bin/okbot.mjs`），它只负责加载已构建的 `out/main/cli.js`；找不到时提示先构建。
+或 `node apps/gateway/bin/okbot.mjs serve`。包的 bin 是 `okbot`（`apps/gateway/bin/okbot.mjs`），它只负责加载已构建的 `apps/gateway/dist/cli.js`；找不到时提示先构建。
 
 命令读 `~/.okbot` 里已保存的端口、绑定（`bindLan`）、令牌与是否提供 Web UI（`serveUi`），在前台监听（HTTP API 常开）。令牌已经存在就原样复用，不会在启动时换一串；只有还没有保存过时才生成并写入。启动成功后打印地址、绑定和正在使用的访问令牌（只在这一次启动输出里，请求处理过程不打印令牌）。端口上已有 OkBot 时直接退出，不打印令牌。`Ctrl+C`（或 `SIGTERM`）停止。浏览器打开打印出来的地址并用该令牌登录（需已打开「提供 Web UI」）。curl / 其它客户端用 `Authorization: Bearer <token>` 或 `X-OkBot-Token`（示例勿贴真实令牌，可用 `$OKBOT_TOKEN`）。
 
 **单实例**
 
-同一 `~/.okbot` 只允许一个服务听端口：先 `GET /v1/health`（`service` 为 `okbot-local-http-api`），再看数据目录锁 `~/.okbot/server.json`（含 `pid` / `port` / `owner`：`serve` 或 `electron`）。已是 OkBot 或锁里的进程还活着 → 提示已在运行并退出，不再起一份。端口被别的程序占用（`EADDRINUSE` 且健康检查不是 OkBot）→ 提示占用，也不冒充已在运行。
+同一 `~/.okbot` 只允许一个服务听端口：先 `GET /v1/health`（`service` 为 `okbot-local-http-api`），再看数据目录锁 `~/.okbot/runtime.json`（含 `pid` / `port` / `owner`：`serve` 或 `electron`；遗留锁文件名 `server.json` 会迁到 `runtime.json`）。已是 OkBot 或锁里的进程还活着 → 提示已在运行并退出，不再起一份。端口被别的程序占用（`EADDRINUSE` 且健康检查不是 OkBot）→ 提示占用，也不冒充已在运行。
 
 **与 Electron 窗口的关系**
 
 Electron 启动时做同样检查：
 
 - **已有服务在听**：窗口只作界面客户端（`ownsServer=false`）。加载与普通启动相同的本地渲染端（`file://` 或 dev server），**不**导航到网关源站；`attach` preload（`electron/attachPreload.ts` → `out/preload/attach.mjs`）把已保存的地址与令牌交给渲染进程，请求带 `Authorization`。附着**不**生成新令牌。关掉窗口**不**停那个进程，也**不**删其锁。设置页不读 bootstrap 里的空令牌：远程 / Web 经鉴权后请求 `GET /v1/gateway-token`（只回显当前角色那一串）；**本机 loopback 附着**另经 IPC 从 `~/.okbot/server.json` 读出**用户令牌与超管令牌**并写入网关设置（HTTP 回显在 admin 会话下会把用户令牌留空）。**本机默认连接**（loopback / `activeId=local`）附着时优先使用 `adminToken`，设置里仍显示 **网关端**；`gatewayHttpApi` 的保存优先走本机 IPC（避免保存时重启正在写响应的 HTTP 服务）；远程**超管**亦可经 `POST /v1/settings` 改监听配置，鉴权每次从磁盘核对令牌，故本机重新生成后立即生效。仅**远程**附着且用用户令牌（`user_` / access）时隐藏网关端。远程探测仍按对方配置的令牌，不因本机可读而升级。
-- **端口空闲**：Electron 调同一个 `listen` 拉起服务，写入 `server.json`（`owner: electron`）。这次若是它拉起的，退出时停止监听并放开锁。
+- **端口空闲**：Electron 调同一个 `listen` 拉起服务，写入 `runtime.json`（`owner: electron`）。这次若是它拉起的，退出时停止监听并放开锁。
 
 实现：`cli.ts`、`serverPresence.ts`、`gatewayRuntime.ts`（`ensureGatewayToken` / UI 根路径 / 技能热重载）、`main.ts` 附着分支、`src/bridge/httpOkbot.ts`（读 `__okbotAttach`）。
 
@@ -359,7 +360,7 @@ Electron 启动时做同样检查：
 - `read_file` / `read_skill` / `write_file` / `edit_file` / `run_shell` / `generate_image` / `search_history` / `manage_schedule` / `web_fetch` / `web_search`  
 - `search_history(query, limit?)`：仅检索**当前**助手或小队会话（时间索引路径），结果截断；默认自动允许；不跨会话  
 - `read_skill(slug)`：加载本助手已启用技能（本地优先，其次启用的全局）的完整 SKILL.md；系统提示只含目录，属渐进披露  
-- `generate_image(prompt, aspect_ratio?, model?)`：用**当前对话**供应商的 `baseURL`/`apiKey` 自动推断文生图能力——MiniMax 主机 / 名称含 minimax / 目录含 `image-01*` → `POST {baseURL}/image_generation`；OpenAI / Azure 主机或目录含 `dall-e*`·`gpt-image*` → `POST {baseURL}/images/generations`（`b64_json`/`url`）。不跨供应商回退、不自动切换私有/其它模型供应商。**prefs 开启即暴露工具**（本机工具列表 / `buildTools` / 电脑路由文案同一门槛，与 `web_search` 未配置仍暴露一致）；推断失败时工具仍注册，调用返回明确错误（并禁止模型用 SVG / `data:image` / `write_file` 手绘冒充）。图片落盘 `~/.okbot/<botId|squadId>/resources/`，工具结果含绝对网关路径 markdown `/v1/media/<ownerId>/resources/…`（须原样写入回复；**禁止** `data:` / `file://` / 外链 https）；落盘时把遗留 `okbot-asset:` / `file://…/.okbot/…/resources/` 归一成 `/v1/media/…`。`react-markdown` 识别 `/v1/media/…`、遗留 `okbot-asset:` / `file://…/.okbot/…/resources/`，以及旧回复里的安全 `data:image/*`；渲染时经网关 `GET /v1/media/…`（`?token=` / cookie / Bearer；CSP 允许 loopback `img-src` 与 `data:`，不含任意 https）。网关不可用时 Electron 仍可经 IPC 读成 data URL 回退  
+- `generate_image(prompt, aspect_ratio?, model?)`：用**当前对话**供应商的 `baseURL`/`apiKey` 自动推断文生图能力——仅 OpenAI 兼容 Images API（`protocol: openai_images`）：OpenAI / Azure 主机或目录含 `dall-e*`·`gpt-image*` → `POST {baseURL}/images/generations`（`b64_json`/`url`）。不绑定任何供应商专有文生图协议；若当前供应商未提供 OpenAI Images 兼容端点，则 `generate_image` 会返回明确错误（不要改用 SVG/`data:image` 冒充）。不跨供应商回退、不自动切换私有/其它模型供应商。**prefs 开启即暴露工具**（本机工具列表 / `buildTools` / 电脑路由文案同一门槛，与 `web_search` 未配置仍暴露一致）；推断失败时工具仍注册，调用返回明确错误（并禁止模型用 SVG / `data:image` / `write_file` 手绘冒充）。图片落盘 `~/.okbot/data/<botId|squadId>/resources/`，工具结果含绝对网关路径 markdown `/v1/media/<ownerId>/resources/…`（须原样写入回复；**禁止** `data:` / `file://` / 外链 https）；落盘时把遗留 `okbot-asset:` / `file://…/.okbot/…/resources/` 归一成 `/v1/media/…`。`react-markdown` 识别 `/v1/media/…`、遗留 `okbot-asset:` / `file://…/.okbot/…/resources/`，以及旧回复里的安全 `data:image/*`；渲染时经网关 `GET /v1/media/…`（`?token=` / cookie / Bearer；CSP 允许 loopback `img-src` 与 `data:`，不含任意 https）。网关不可用时 Electron 仍可经 IPC 读成 data URL 回退  
 - `manage_schedule`：见 §5「定时任务」。默认 allow；create/delete 始终各确认一次；list 不审批；每 owner 上限 50  
 - `web_fetch(url)`：HTTP(S) 拉取公开网页并转成可读纯文本；超时约 20s、体积与正文截断；默认阻止 localhost / 私网 / 链路本地 / IPv4-mapped IPv6（含 `::ffff:a00:1` 等十六进制形式）；DNS `all:true` 校验后经 undici Agent **钉死连接**（防 DNS 重绑定 / 多 A），每跳重定向重新校验与钉死。可在设置 → 工具 → 网页打开「允许拉取内网地址」。工具结果正文包在不可信围栏内。无需 API Key；默认自动允许  
 - `web_search(query, limit?)`：经用户配置的第三方搜索（Tavily / Brave / Serper / 自定义，`settings.web.search`：provider、apiKey；自定义另需 baseURL + compat 协议）。内置三家始终用官方端点；仅自定义使用 baseURL。未配置时工具仍可用，但返回中文错误提示去设置配置。密钥只在桌面端可改；网关响应与不含密钥备份会清空；结果正文同样包在不可信围栏内；默认自动允许  
@@ -369,6 +370,7 @@ Electron 启动时做同样检查：
 安全（`guardrails.ts` + `settings.security`）：
 
 - **不是** OS 沙箱：`run_shell` 走本机 shell + 用户环境；防护 = 路径前缀 + 危险命令 denylist（`settings.security.shellPatterns`，缺省用内置正则，可在设置里增删改/恢复默认；无效正则跳过）+ HITL/AAR。  
+- 设置 → **安全防护** 顶部分 **Tool | Agent** 两个页签：Tool 为既有路径/Shell/拦截方式；Agent 为 `inputGuardrails` / `outputGuardrails`（空输入、长度、越狱启发式、注入标记、粘贴密钥/PII、最终回复密钥 tripwire）与 `defineToolOutputGuardrail`（`run_shell`/`read_file` 结果脱敏，遵循 `blockMode`）。均受 `security.enabled` 总开关约束；Agent 页新项默认关（可信个人本机、不过度激进）。  
 - 适合可信个人本机；勿当多租户沙箱。
 
 ### 7.1 MCP 扩展（可选，默认关）
@@ -428,8 +430,8 @@ HITL UI：工具卡上「允许 / 永久允许 / 拒绝」。
 |---|---|---|
 | 角色句（你是「某助手」…） | `settings.instructions.assistantRoleTemplate` + 当前 bot 名（`{name}`） | 设置 → 指令 → 助手；每轮现拼 |
 | **助手资料（花名册）** | `bots.json` 的 name / description（简介最多 200 字，只写职责/工作边界，不含通用工具能力或安全套话）；与 SOUL 冲突时以花名册为准 | 用户改名称/头像等立刻写盘；引导期间由模型经 `save_assistant_profile` 写入，并每步触发进化；之后由跑后静默维护按 SOUL 节流演进（`refreshOwnerDescription`）；创建/编辑弹层仅在「开发者模式」时于高级区只读可见；下一轮读到新值 |
-| **SOUL.md** | `~/.okbot/<botId>/SOUL.md` | 引导期间模型写入（`save_assistant_profile`）+ 每步进化；资料弹层「高级」可编；改名/描述时 `syncSoulMdProfile`；用户高级写入在同次保存中优先生效；**节流后的成功回合** `refreshSoulMd`（system=`settings.instructions.soulMdRefreshSystemPrompt`，窗口=`settings.maintenance.soulEveryTurns`）可能只修补有变化的章节（不整篇覆盖，下一轮生效） |
-| **记忆** | 全局 `memory.md` + 本助手 `memory.md`（JSONL）；过期过滤后 `formatMemoriesForPrompt`（**全局/钉住优先**，本机按新→旧；超限先折叠再丢）；写入由大模型决定（create/skip/merge/质量）；程序**只跳过空串**（存储不变量），**不做** turn/字数门控、碎屑启发式或字符串包含去重；设置 → 指令 → 记忆可编 scope 判定句；分析窗口=`maintenance.memoryEveryTurns`；`memory.promptMaxEntries` / `promptMaxChars` 控制注入上限；设置 → 记忆可编全局列表；高级列表可编辑本助手记忆 | **开跑前**读盘；**每成功回合** `refreshMemories`（模型可返回 none）；**压缩推进 coverage 时**对掉出窗口增量再走 LLM 抽记忆；下一轮生效 |
+| **SOUL.md** | `~/.okbot/data/<botId>/SOUL.md` | 引导期间模型写入（`save_assistant_profile`）+ 每步进化；资料弹层「高级」可编；改名/描述时 `syncSoulMdProfile`；用户高级写入在同次保存中优先生效；**节流后的成功回合** `refreshSoulMd`（system=`settings.instructions.soulMdRefreshSystemPrompt`，窗口=`settings.maintenance.soulEveryTurns`）可能只修补有变化的章节（不整篇覆盖，下一轮生效） |
+| **记忆** | 两阶段：Phase1 `refreshMemories` 默认写入 **candidate**（脱敏；默认不注入）；Phase2 `consolidateMemoriesForBot` / 读盘 lifecycle 按 **hits/置顶** 提升为 durable，demote 长期零命中未置顶，并对 durable **Top-N(80) 软封顶**（仅降级 hits<PROMOTE_MIN 的未置顶超额，高命中可暂时超限以免 promote↔demote 空转重写）。召回：`selectMemoriesForPrompt` 只注入 **pin + 相关/高 hits durable**（默认 cap **16** / `promptMaxChars`）；开跑记 hits 时同时给 **关键词命中但未注入的 unpinned candidate** 记 soft hits（使 hits≥2 自动提升可达）。工具 `manage_memory`（list/pin/unpin/promote/forget）。正交于会话 handoff 摘要，不改压缩。设置 → 指令 → 记忆可编 scope；列表 UI 可编全局/本助手 | **开跑前**读盘并记 hits（含 candidate soft hits）；**每成功回合**抽候选 + 巩固；**压缩折叠增量**再抽；下一轮生效 |
 | **更早对话摘要** | `session-summary.json` 的 `summary` | **开跑前**估 token ≥ `contextWindow × ratio` 且历史够长时增量压缩并写回，推进 `coveredThroughId`；摘要可含工具短摘要；**不删** `session.jsonl`；需要原文细节时可调用 `search_history`（仅本会话，需批准） |
 | **Skills（渐进披露）** | 本助手 `skills/<slug>/SKILL.md` +（可选）`~/.agents/skills` 已启用全局 → `formatSkillsForPrompt` **仅目录**（名称 / slug / 何时使用，有条数/字数上限）；完整正文不进静态系统提示，匹配后由模型调用 `read_skill(slug)`（`resolveEnabledSkill`，本地优先）加载。**SKILL.md**：frontmatter 必填 `name` + `description`（最多 1024 字，描述何时使用；第三人称）；`author` / `version` / `tags` / `license` 仅在有值时写入。正文顺序：`# <Name> 技能` → `## 何时使用此技能` → `## 工作原理` → `## 示例` → `## 注意事项`（无独立「何时不要使用」章节）。目录可含可选 `scripts/` / `references/` / `assets/` / `README.md`。slug / name 均以 `okbot-` 开头 | **开跑前**读盘目录（含热更新后的磁盘内容，见 §4.1）；`useGlobalSkills` / `enabledGlobalSkills` 在 `bot.json`；高级列表可改本地 skill / 开关全局；节流后的回合 `refreshBotSkills` 可能 upsert（system 含 description 格式约束；写入时 `normalizeSkillDescription` 软钳制）；下一轮生效；「查看完整上下文」同样只见目录（正文仅出现在本轮 tool 结果中） |
 | 工具说明 / 编码偏好句 | 设置里的工具开关与审批模式（含 `search_history`） | 改设置后下一轮生效 |
@@ -489,7 +491,7 @@ instructions **拼装顺序**：稳定块在前（角色 / 花名册 / SOUL / �
 ### 8.5 会话存储
 
 - 见 **8.2.3**；文件路径见 §12。  
-- 小队另有 `~/.okbot/<squadId>/session.jsonl` 与 `session-summary.json`。  
+- 小队另有 `~/.okbot/data/<squadId>/session.jsonl` 与 `session-summary.json`。  
 - **Finalize / rebind**（`upsertAssistantMessage`）：用 `mergeUiMessageOntoRecord` 只改 id / 纯文本 / meta，**保留** SDK 原始 `item`（Responses 的 array `content` 不得压成 Chat Completions 字符串）。无先验行时才 `legacyMessageToRecord` 追加。
 
 ### 8.6 全局搜索
@@ -497,7 +499,7 @@ instructions **拼装顺序**：稳定块在前（角色 / 花名册 / SOUL / �
 - 入口：侧栏搜索。分区：会话、设置项、消息命中。  
 - 可选中跳转会话 / 打开设置对应区块 / 跳到消息。  
 - 消息命中包括助手私聊和小队聊天（`MessageSearchHit.ownerKind` 区分）；点小队命中会打开该小队并定位到消息。
-- 实现：`electron/storage/messageSearch.ts`。用异步读取从每个聊天文件末尾往前读（`ReverseLineReader`），每次先读「读到的位置最新」的那个聊天，命中按时间从新到旧放进最多 `limit` 条的列表。已有 `limit` 条、且每个聊天读到的位置都不比最旧的那条新时就停，不再读更早的记录；所以不会读完所有文件，也不会长时间卡住主进程。一个聊天的命中多不会挤掉别的聊天的新命中。
+- 实现：`apps/gateway/src/storage/messageSearch.ts`。用异步读取从每个聊天文件末尾往前读（`ReverseLineReader`），每次先读「读到的位置最新」的那个聊天，命中按时间从新到旧放进最多 `limit` 条的列表。已有 `limit` 条、且每个聊天读到的位置都不比最旧的那条新时就停，不再读更早的记录；所以不会读完所有文件，也不会长时间卡住主进程。一个聊天的命中多不会挤掉别的聊天的新命中。
 - 聊天文件里的 `createdAt` 可能偶发回退（先写了较新的行，再补写较早的行）。每个文件有一份时间索引（约每 64 KiB 一个检查点，记下「此偏移之前的最大时间」），早期停止用检查点上界，不会因为回退行漏掉更早位置上的更新命中。索引按 inode / 头尾签名复用，文件只往后长时增量扩展。搜索过程中尚未打开的文件若被追加或重写，会按 size/mtime 刷新索引后再决定是否早停。只增长时增量扩展索引，缩小或头尾签名变了才整份重建。
 - 小队里的成员回复显示成员名（`MessageSearchHit.speakerName`）；没有发言人的运行中间记录不算消息。
 - 经网关调用时，搜索同时最多 2 个、每 10 秒最多 20 次，超出返回 429 `rate_limited`（`gatewayRpc.createRateLimiter`）。桌面端输入有 280 ms 去抖。
@@ -507,7 +509,7 @@ instructions **拼装顺序**：稳定块在前（角色 / 花名册 / SOUL / �
 ## 9. Token 用量
 
 - Agent 从 SDK 抽取 input / output / **cache**（`packages/agent/src/usage.ts`）。  
-- 写入助手消息 `usage`，并累计 `~/.okbot/usage.json`（lifetime、daily、byOwner）。`recordTokenUsage` 对写文件做简单串行化。  
+- 写入助手消息 `usage`，并累计 `~/.okbot/data/usage.json`（lifetime、daily、byOwner）。`recordTokenUsage` 对写文件做简单串行化。  
 - **小队归因**：一轮小队对话的队长+成员合计只 `recordUsage(squad.id, result.usage)` 一次；`byOwner` 下小队为**聚合**用量。成员在小队中的 token **只**挂在交换气泡的 `usage` 上，不再写入成员 `byOwner`（避免 UsagePanel「成员行 + 小队行」双计）。  
 - **设置 → 用量**：总量卡片、按助手/小队分解、近 14 日 SVG 折线（input/output/cache）。  
 - **助手气泡悬停**：图表图标打开该轮用量；引用；最右侧 **复制**（与用户侧「复制在最左」镜像）。
@@ -524,7 +526,7 @@ instructions **拼装顺序**：稳定块在前（角色 / 花名册 / SOUL / �
 - **签名现状**：Release CI 对 mac/win 关闭自动签名发现（`CSC_IDENTITY_AUTO_DISCOVERY=false`）。未签名包上自动更新可能被 OS 拦截；文档与设置文案需保持诚实，勿暗示已 notarize / 已签名。  
 - **下载稳定性**：`disableDifferentialDownload=true`（跳过 Windows blockmap 差分，避免慢网回退全量导致进度条从约 90% 跳回约 1%）；UI 侧对同一次下载会话做单调进度（`Math.max(floor, percent)`），且下载中忽略后台 `checking-for-update` 对状态的覆盖。  
 - UI：检查更新、下载、安装并重启；有可用更新时侧栏底部「市场」右侧蓝色更新图标（点击行为与原先顶栏一致）。
-- **双语更新说明**：`apps/desktop/changelogs/<version>.json` + `index.json`（随包 `extraResources`）；发现新版本时拉取 `https://github.com/shuzheng/okbot/releases/download/v{version}/changelog.json`（失败则仅提示版本、软更新）。按 UI 语言显示 en/zh；升级后首次打开弹出当前版本 What's New；设置 → 自动更新列出历史说明。`forceUpdate: true` 时更新弹窗不可关闭（无关闭/ESC/点遮罩）。
+- **双语更新说明**：`apps/desktop/changelogs/<version>.json` + `index.json`（随包 `extraResources`）；发现可用更新时拉取 `https://github.com/shuzheng/okbot/releases/download/v{version}/changelog.json`（失败则仅提示更新号、软更新）。按 UI 语言显示 en/zh；升级后首次打开弹出当前 What's New；设置 → 自动更新列出历史说明。`forceUpdate: true` 时更新弹窗不可关闭（无关闭/ESC/点遮罩）。
 - **macOS 自装**（`electron/macUpdateInstall.ts`）：按下载的 zip 文件名在更新清单里找 sha512（文件名不含 `?` 和 `#` 之后的部分）；安装前要求 app 所在目录可写、可用空间至少为 zip 大小的 5 倍（实测解压加暂存峰值约 4.4 倍）。退出时没能开始安装，或安装助手在退出后因 sha 不符、解压失败、替换失败、重新打开失败等停下，都会写入 `update-install-failed.json`（并记 `update-install.log`），下次启动弹提示。下次启动的自愈只把 `CFBundleIdentifier` 为 OkBot 的隐藏 `.*.app.previous` 改回原名。  
 - **关于**：应用信息、构建日期等（`getAppInfo`）。
 
@@ -552,28 +554,33 @@ instructions **拼装顺序**：稳定块在前（角色 / 花名册 / SOUL / �
 
 ```text
 ~/.okbot/
-  settings.json
+  client.json                  # 本机客户端偏好（通常不进网关备份）
+  server.json                  # 网关设置（AppSettings；0600）
+  server.json.corrupt-* / .pre-migrate-*
+  settings.json                # 遗留网关设置名（迁移到 server.json）
   settings.json.corrupt-*      # 解析失败备份（读失败不写回默认）
-  settings.json.pre-migrate-* # legacy 迁移写回前备份
-  server.json                  # 网关单实例锁（pid / port / owner；okbot serve 与 Electron 共用）
-  usage.json
-  bots.json
-  squads.json
-  memory.md
-  logs/
-    errors-YYYY-MM-DD.jsonl    # SDK/run 失败结构化日志（保留今天+前 2 个日历日）
-  <botId>/
-    bot.json
-    SOUL.md
-    memory.md
-    skills/<slug>/SKILL.md
-    session.jsonl
-    session-summary.json
-    resources/                  # generate_image 等中间媒体
-  <squadId>/
-    session.jsonl
-    session-summary.json
-    resources/                  # generate_image 等中间媒体（与 bot 同布局）
+  settings.json.pre-migrate-*  # legacy 迁移写回前备份
+  runtime.json                 # 网关进程锁（pid / port / owner；okbot serve 与 Electron 共用）
+  data/                        # 网关持久数据（apps/gateway storage.dataRoot）
+    usage.json
+    api-token-usage.json
+    bots.json
+    squads.json
+    memory.md                  # 全局记忆
+    logs/
+      errors-YYYY-MM-DD.jsonl  # SDK/run 失败结构化日志（保留今天+前 2 个日历日）
+    <botId>/
+      bot.json
+      SOUL.md
+      memory.md
+      skills/<slug>/SKILL.md
+      session.jsonl
+      session-summary.json
+      resources/                # generate_image 等中间媒体
+    <squadId>/
+      session.jsonl
+      session-summary.json
+      resources/                # generate_image 等中间媒体（与 bot 同布局）
 ```
 
 ### 12.1 备份与恢复
@@ -581,9 +588,9 @@ instructions **拼装顺序**：稳定块在前（角色 / 花名册 / SOUL / �
 - 设置 → **网关端 → 网关服务 → 数据**。**导出备份**把**当前网关主机**上的网关数据打成一个 `.zip`（默认存到下载文件夹，文件名带日期），根目录有标记文件 `okbot-backup.json`。只含 `data/` 与网关设置（`server.json` / 遗留 `settings.json`）；**不**打包本机客户端文件（`client.json`、遗留 `gateways.json` / `window.json`）与进程锁（`runtime.json`）。
 - **备份时不含密钥**（默认开）：网关设置里的模型 API Key、网关令牌、电脑令牌、MCP 环境变量与请求头的值被清空，`server.json.*` / `settings.json.*` 备份副本不打包。
 - **从备份恢复**：先确认（危险操作），再选 `.zip`。校验标记文件和压缩包内路径（拒绝绝对路径、`..` 和链接）。有助手正在工作时拒绝。当前网关数据目录先整体移到旁边的 `<目录名>-before-restore-<时间>`，再解压；恢复时**保留**本机现有的 `client.json` 等客户端文件。若备份不含密钥，沿用当前网关设置里的密钥，但只在端点相同时（模型供应商 BaseURL、电脑地址和端口、MCP 命令或地址都相同），避免把密钥交给备份里换过的地址。恢复后 MCP 总开关关闭，重启后提示用户（`restore-notice.json`，读一次即删）。不含密钥的备份里，像密钥的 MCP 参数也被清空。解压后总大小超过 16 GiB 的备份会被拒绝；读不出总大小时也拒绝。大小检查用 `unzip -Z -t`，并固定 `LC_ALL=C` 再解析；上限看的是 zip 声明的未压缩大小，不是解压时实测。选文件前后都会检查有没有助手在工作或等待批准。完成后应用自动重启。
-- 实现：`apps/gateway/src/backup.ts`，桌面 IPC `backupExport` / `backupRestore`（`apps/desktop/electron/ipc/registerExtensions.ts`）。网关 HTTP / RPC **不**提供备份路由（附着窗口 / Web UI 上该项不可操作）。
+- 实现：`apps/gateway/src/backup.ts`；桌面 IPC `backupExport` / `backupRestore`（`apps/desktop/electron/ipc/registerExtensions.ts`）；附着超管亦可经网关 HTTP `POST /v1/backup/export` 与 `POST /v1/backup/restore`（`gatewayHttpApi.ts`；用户令牌 403）。设置页在附着超管会话下开放导出/恢复（`gatewayHostReadOnly` 仅对非超管附着只读）。
 
-**错误日志**（`apps/desktop/electron/storage/errorLog.ts`）：1:1 `chatStart`、HITL `resumeHitl`、小队 `squadChat` 在 catch 并发 `type: 'error'` 时追加一行 JSON（`ts` / `ownerId` / `messageId?` / `phase` / `error` / `stack?`）。不写 API Key、不写用户正文；仍 `console.error`。每次写入时按日历日剪枝，删除早于「今天−2 天」的 `errors-*.jsonl`。按日汇总失败，不含用户正文与 API Key。
+**错误日志**（`apps/gateway/src/storage/errorLog.ts`）：1:1 `chatStart`、HITL `resumeHitl`、小队 `squadChat` 在 catch 并发 `type: 'error'` 时追加一行 JSON（`ts` / `ownerId` / `messageId?` / `phase` / `error` / `stack?`）。不写 API Key、不写用户正文；仍 `console.error`。每次写入时按日历日剪枝，删除早于「今天−2 天」的 `errors-*.jsonl`。按日汇总失败，不含用户正文与 API Key。
 
 ---
 
@@ -600,9 +607,9 @@ Preload 暴露 `window.okbot.*`；渲染进程不直连 Node fs。
 
 ## 14. UI / CSS 约定（聊天气泡）
 
-- **窗口实时缩放性能**：`windowResizeGate`（`apps/desktop/src/utils/windowResizeGate.ts`，`main.tsx` 启动即 `installWindowResizeGate`）在拖拽窗口边缘时给 `html` 加 `is-window-resizing`（约 120ms settle）。期间 CSS 关掉毛玻璃 `backdrop-filter` / scroll-fade mask / pill 过渡，并用更实的 panel 底色顶上；`--sidebar-w` 取消 0.22s transition；`.sidebar` / `.messages-shell` / `.main` 加 `contain: layout paint`，气泡 `content-visibility: auto`，侧栏暂停 `container-type`。JS 断开 stick-to-bottom / scroll-fade 的 ResizeObserver，settle 后再挂上；`useVisualViewportAppHeight` 仅在 phone/coarse 挂监听。侧栏自动折叠立刻写 `--sidebar-w`（CSS）；跨 icon-rail 阈值时同帧 `setState`（`.app.narrow` / 置顶成员头像轨与宽度同步），其它像素级更新延到 settle。**侧栏分隔条拖拽**用 DOM 写 `--sidebar-w`，仅在跨 icon-rail 阈值或 mouseup 时 `setState`。**Darwin**：半透明关时 `createWindow` 不装 `transparent`+vibrancy（关后拖窗仍卡的主因是 vibrancy 层仍在）；直播 **开启** 半透明会 recreate 窗口（`transparent` 仅 constructor 可用；热 `setVibrancy` 在不透明窗上会 CALayer 烧屏），并通过 `shellNavigate` 恢复 Settings（general + translucent）；直播 **关闭** 只热清 vibrancy + 不透明底。边缘拖拽 **不** 再 park `setVibrancy(null)`（会闪毛玻璃），缩放流畅靠 CSS/React `is-window-resizing`。空闲时 frost / 窄布局保持原样。勿在 live-resize 路径上对每个气泡挂 `ResizeObserver`。
+- **窗口实时缩放性能**：`windowResizeGate`（`apps/desktop/src/utils/windowResizeGate.ts`，`main.tsx` 启动即 `installWindowResizeGate`）在拖拽窗口边缘时给 `html` 加 `is-window-resizing`（约 120ms settle）。期间 CSS 关掉毛玻璃 `backdrop-filter` / scroll-fade mask / pill 过渡，并用更实的 panel 底色顶上；`--sidebar-w` 取消 transition（`.is-sidebar-auto-animating` 除外）；`.sidebar` 加 `contain: layout`；对话区 **不用** `content-visibility` / `contain-intrinsic-size`（估算高度会让文字上下跳），并临时把 `.messages` 的 `overflow-anchor` 打开以稳住可见消息。JS 断开 stick-to-bottom / scroll-fade 的 ResizeObserver，但 stick-to-bottom 时仍每帧轻量 `scrollTop = scrollHeight`，settle 后再挂上观察者；`useVisualViewportAppHeight` 仅在 phone/coarse 挂监听。侧栏自动折叠立刻写 `--sidebar-w`（CSS）；跨 icon-rail 阈值时同帧 `setState`（`.app.narrow` / 置顶成员头像轨与宽度同步），其它像素级更新延到 settle。**侧栏分隔条拖拽**用 DOM 写 `--sidebar-w`，仅在跨 icon-rail 阈值或 mouseup 时 `setState`。**Darwin**：半透明关时 `createWindow` 不装 `transparent`+vibrancy（关后拖窗仍卡的主因是 vibrancy 层仍在）；直播 **开启** 半透明会 recreate 窗口（`transparent` 仅 constructor 可用；热 `setVibrancy` 在不透明窗上会 CALayer 烧屏），并通过 `shellNavigate` 恢复 Settings（general + translucent）；直播 **关闭** 只热清 vibrancy + 不透明底。边缘拖拽 **不** 再 park `setVibrancy(null)`（会闪毛玻璃），缩放流畅靠 CSS/React `is-window-resizing`。空闲时 frost / 窄布局保持原样。勿在 live-resize 路径上对每个气泡挂 `ResizeObserver`。
 
-- 用户：`bubble-row.user` → `bubble-row-cluster` →（quote）→ `bubble-body-row`（**actions | bubble**）。助手有 accent 色时 `.messages.has-user-bubble-tint` 覆盖 `--bubble-user` / `--bubble-user-text`（浅色洗涤）；小队无小队级色。  
+- 用户：`bubble-row.user` → `bubble-row-cluster` →（quote）→ `bubble-body-row`（**actions | bubble**）。无 accent 时：浅色 `--bubble-user`/`--bubble-user-text` 为黑底白字（与 `--bubble-bot` 浅灰回复区分）；深色仍用中性亮度差区分 `--bubble-user` 与 `--bubble-bot`。助手有 accent 色时 `.messages.has-user-bubble-tint` 覆盖 `--bubble-user` / `--bubble-user-text`（浅色洗涤 30%/36%，文字 `--text`）；小队无小队级色，用默认 token。  
 - 助手：`bubble-row.assistant` → `bubble-body-row bubble-body-row-assistant`（**bubble | actions**）。  
 - 共用：`.bubble-actions` 默认透明，行 hover/focus-within 显示；`.bubble-body-row .bubble-actions { margin-top: 6px }`；长气泡 `.bubble-actions` 纯 CSS sticky（同 `.bubble-speaker-avatar`，勿在 `.messages` 祖先加会打断 sticky 的 `overflow: hidden`）。  
 - **短中文气泡宽度**：CJK 在 UAX#14 下 min-content ≈ 1 字；勿让助手行 `align-self: flex-start` 做 shrink-to-fit，也勿对气泡用相对「不定宽父级」的 `% max-width` / `min-width: 0` 链条。正确做法：助手行 `align-self: stretch; width: 100%`（父级定宽），气泡 `width: fit-content; max-width: min(720px, 100%)`，`overflow-wrap: break-word` + `word-break: normal`（禁止 legacy `word-break: break-word` / `break-all`）。会话存盘无零宽字符问题；根因在布局而非 markdown/流式 delta。  

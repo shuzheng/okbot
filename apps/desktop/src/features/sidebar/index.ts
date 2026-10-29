@@ -8,6 +8,7 @@ export {
   SIDEBAR_EXPAND_HYST,
   SPLITTER_CLICK_SLOP,
   MAIN_COLLAPSE_AT,
+  SIDEBAR_WIDTH_MS,
 } from './sidebarConstants';
 export {
   loadSidebarWidth,

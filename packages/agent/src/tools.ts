@@ -2,7 +2,7 @@ import { tool } from '@openai/agents';
 import { z } from 'zod';
 import type { SecuritySettings, ToolPreferences } from '@okbot/shared';
 import { DEFAULT_SECURITY } from '@okbot/shared';
-import { buildToolInputGuardrails } from './guardrails.js';
+import { buildToolInputGuardrails, buildToolOutputGuardrails } from './guardrails.js';
 
 import { wrapToolExecute, type ToolRunBudget } from './toolRunBudget.js';
 import {
@@ -12,11 +12,11 @@ import {
   IMAGE_ASPECT_RATIOS,
   inferImageCapability,
   OPENAI_DEFAULT_IMAGE_MODELS,
-  MINIMAX_IMAGE_MODELS,
   type ImageApiCredentials,
   type ImageCapability,
 } from './generateImage.js';
 import {
+  formatUntrusted,
   formatWebFetchToolOutput,
   webFetch,
 } from './webFetch.js';
@@ -112,6 +112,14 @@ export type TaskProgressManage = (input: {
   include_done?: boolean | null;
 }) => Promise<string> | string;
 
+/** Pin / forget / promote memories for the current bot (scoped by the desktop host). */
+export type MemoryManage = (input: {
+  action: 'list' | 'pin' | 'unpin' | 'promote' | 'forget';
+  memory_id?: string | null;
+  scope?: 'global' | 'bot' | null;
+  include_candidates?: boolean | null;
+}) => Promise<string> | string;
+
 /** Emit a standalone assistant chat bubble mid-run (host seals/rotates live id). */
 export type EmitAssistantMessage = (content: string) => Promise<void> | void;
 
@@ -132,6 +140,10 @@ export type BuildToolsOptions = {
    */
   taskProgressManage?: TaskProgressManage;
   /**
+   * Required for `manage_memory`. Host must scope to the current bot (global+bot memory.md).
+   */
+  memoryManage?: MemoryManage;
+  /**
    * Required for `send_message` to create a UI bubble. 1:1 hosts bind this;
    * omit on squad (execute returns a clear error).
    */
@@ -145,7 +157,7 @@ export type BuildToolsOptions = {
   /**
    * Credentials for `generate_image` (same provider baseURL/apiKey as chat).
    * When omitted/unsupported, the tool reports a clear error if invoked.
-   * Capability is auto-inferred: MiniMax host/name/image-01, or OpenAI/Azure / dall-e·gpt-image.
+   * Capability is auto-inferred: OpenAI/Azure host, or catalog dall-e·gpt-image.
    */
   imageApi?: ImageApiCredentials;
   /**
@@ -173,7 +185,7 @@ export type BuildToolsOptions = {
 
 
 /**
- * Whether the chat provider looks like MiniMax or OpenAI-compatible Images API.
+ * Whether the chat provider looks like an OpenAI-compatible Images API.
  * `buildTools` still registers `generate_image` when prefs enable it; this
  * result is used for model defaults and execute-time support checks.
  */
@@ -197,11 +209,16 @@ export function buildTools(
 ) {
   const list = [];
   const resourcesDir = options?.imageAssets?.resourcesDir?.trim() || '';
+  const route = options?.computerRoute;
   const inputGuardrails = buildToolInputGuardrails(security ?? DEFAULT_SECURITY, {
     resourcesDir: resourcesDir || null,
+    computerRoute: route ?? null,
   });
-  const guardrailOpts = inputGuardrails.length ? { inputGuardrails } : {};
-  const route = options?.computerRoute;
+  const outputGuardrails = buildToolOutputGuardrails(security ?? DEFAULT_SECURITY);
+  const guardrailOpts = {
+    ...(inputGuardrails.length ? { inputGuardrails } : {}),
+    ...(outputGuardrails.length ? { outputGuardrails } : {}),
+  };
   const backend =
     options?.backend ?? createLocalExecutionBackend({ resourcesDir: resourcesDir || null });
   const where = route ? defaultComputerLabel(route) : backend.label || '本机';
@@ -285,7 +302,11 @@ export function buildTools(
           async ({ path: filePath, computer }: { path: string; computer?: string | null }) => {
             const target = backendFor(computer ?? undefined);
             if (typeof target === 'string') return target;
-            return target.readFile(filePath);
+            const content = await target.readFile(filePath);
+            if (typeof content !== 'string') return content;
+            // Error strings from the backend stay bare; only file bodies are untrusted.
+            if (content.startsWith('错误：') || content.startsWith('Error:')) return content;
+            return formatUntrusted(content);
           },
         ),
       }),
@@ -364,7 +385,9 @@ export function buildTools(
             }
             const cap = typeof limit === 'number' && Number.isFinite(limit) ? Math.floor(limit) : 8;
             try {
-              return truncate(await search(q, Math.min(20, Math.max(1, cap))));
+              const body = truncate(await search(q, Math.min(20, Math.max(1, cap))));
+              // History may contain pasted web/file text — fence like read_file / MCP.
+              return formatUntrusted(body);
             } catch (err) {
               return `错误：检索失败 — ${err instanceof Error ? err.message : String(err)}`;
             }
@@ -518,6 +541,62 @@ export function buildTools(
     );
   }
 
+
+  if (prefs.manage_memory.enabled) {
+    list.push(
+      tool({
+        name: 'manage_memory',
+        description:
+          '管理长期记忆：list / pin / unpin / promote / forget。候选记忆默认不注入提示词；置顶或提升为 durable 后才会常驻召回。forget 会物理删除（需确认）。scope 默认 bot；全局记忆用 scope=global。未用到的可选字段请省略。',
+        parameters: z.object({
+          action: z
+            .enum(['list', 'pin', 'unpin', 'promote', 'forget'])
+            .describe('list / pin / unpin / promote / forget'),
+          memory_id: z.string().nullable().optional().describe('pin/unpin/promote/forget：记忆 id'),
+          scope: z
+            .enum(['global', 'bot'])
+            .nullable()
+            .optional()
+            .describe('global=全局记忆，bot=本助手（默认）'),
+          include_candidates: z
+            .boolean()
+            .nullable()
+            .optional()
+            .describe('list：为 true 时包含候选（默认只列 durable/pinned）'),
+        }),
+        needsApproval: async (_ctx, input) => {
+          const action =
+            input && typeof input === 'object' && input !== null && 'action' in input
+              ? String((input as { action?: unknown }).action || '')
+              : '';
+          if (action === 'forget') return true;
+          if (action === 'list') return false;
+          return prefs.manage_memory.approval === 'ask';
+        },
+        ...guardrailOpts,
+        execute: wrapExec(
+          'manage_memory',
+          async (args: {
+            action: 'list' | 'pin' | 'unpin' | 'promote' | 'forget';
+            memory_id?: string | null;
+            scope?: 'global' | 'bot' | null;
+            include_candidates?: boolean | null;
+          }) => {
+            const manage = options?.memoryManage;
+            if (!manage) {
+              return '错误：当前会话未绑定记忆管理。';
+            }
+            try {
+              return truncate(await manage(args));
+            } catch (err) {
+              return `错误：记忆操作失败 — ${err instanceof Error ? err.message : String(err)}`;
+            }
+          },
+        ),
+      }),
+    );
+  }
+
   if (prefs.send_message.enabled) {
     list.push(
       tool({
@@ -622,17 +701,14 @@ export function buildTools(
     const imageCapability = resolveImageCapability(options?.imageApi);
     const models = imageCapability?.models?.length
       ? imageCapability.models
-      : [...OPENAI_DEFAULT_IMAGE_MODELS, ...MINIMAX_IMAGE_MODELS];
+      : [...OPENAI_DEFAULT_IMAGE_MODELS];
     const defaultModel = imageCapability?.defaultModel || models[0]!;
     const modelHint = models.join(' / ');
     const protocolHint =
-      imageCapability?.protocol === 'minimax'
-        ? `MiniMax 原生 POST {baseURL}/image_generation（模型默认 ${defaultModel}）`
-        : imageCapability?.protocol === 'openai_images'
-          ? `OpenAI 兼容 POST {baseURL}/images/generations（模型默认 ${defaultModel}）`
-          : `自动选择当前对话供应商的 MiniMax /image_generation 或 OpenAI /images/generations（不支持则返回错误，不会改用其它供应商）`;
-    const promptMax =
-      imageCapability?.protocol === 'minimax' ? '最长 1500 字符' : '最长 4000 字符';
+      imageCapability?.protocol === 'openai_images'
+        ? `OpenAI 兼容 POST {baseURL}/images/generations（模型默认 ${defaultModel}）`
+        : `使用当前对话供应商的 OpenAI 兼容 /images/generations（不支持则返回错误，不会改用其它供应商）`;
+    const promptMax = '最长 4000 字符';
     list.push(
       tool({
         name: 'generate_image',
@@ -783,10 +859,11 @@ export const TOOL_BLURBS: Record<string, string> = {
   read_skill: '加载技能正文',
   write_file: '新建/整文件覆盖写入',
   edit_file: '精确单处替换',
-  generate_image: '文生图（MiniMax /image_generation 或 OpenAI /images/generations）',
+  generate_image: '文生图（OpenAI 兼容 /images/generations）',
   search_history: '检索本会话历史',
   manage_schedule: '管理定时任务',
   manage_task_progress: '管理多任务（tasks.jsonl）',
+  manage_memory: '置顶/遗忘/提升记忆',
   send_message: '回复消息',
   web_fetch: '拉取网页正文',
   web_search: '第三方网页搜索',

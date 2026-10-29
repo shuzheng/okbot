@@ -17,6 +17,10 @@ import {
 } from '@okbot/shared';
 import { FileStorage } from '@okbot/gateway';
 import { registerAllIpc, registerWindowControlIpc, registerClientGatewayIpc, registerUpdaterIpc, type PendingToolApproval } from './ipc';
+import {
+  installTrustedIpcGuard,
+  installWebContentsNavigationGuard,
+} from './rendererNavGuard';
 import { bindWindowChromeFns } from './windowChromeBridge';
 import { initAutoUpdater, onAutoUpdatePreferenceChanged } from './updater';
 import { recoverInterruptedMacUpdate } from './macUpdateInstall';
@@ -136,11 +140,14 @@ function flushPendingShellNavigate(win: BrowserWindow): void {
 function trayCallbacks(): AppTrayCallbacks {
   const settings = readUiSettings();
   const copy = closeDialogCopy(resolveMainUiLang(settings.language));
+  // Remote attach: local ~/.okbot roster is not the remote gateway's — omit session lists.
+  const remoteAttach =
+    !!gatewayClient && !isLoopbackGatewayClientBase(gatewayClient.base);
   const { pinned, recent } = collectTraySessions({
-    bots: storage.listBots(),
-    squads: storage.listSquads(),
-    pinnedOwnerIds: settings.pinnedOwnerIds || [],
-    hiddenOwnerIds: settings.hiddenOwnerIds || [],
+    bots: remoteAttach ? [] : storage.listBots(),
+    squads: remoteAttach ? [] : storage.listSquads(),
+    pinnedOwnerIds: remoteAttach ? [] : settings.pinnedOwnerIds || [],
+    hiddenOwnerIds: remoteAttach ? [] : settings.hiddenOwnerIds || [],
     recentLimit: 10,
   });
   const theme =
@@ -740,12 +747,50 @@ function registerAttachLocalGatewaySettingsIpc(): void {
     (_e, patch: unknown): GatewayHttpApiSettings => {
       const current = storage.getSettings();
       const prevApi = current.gatewayHttpApi;
-      const nextApi = normalizeGatewayHttpApiSettings({
-        ...prevApi,
-        ...(patch && typeof patch === 'object' && !Array.isArray(patch)
+      const patchObj =
+        patch && typeof patch === 'object' && !Array.isArray(patch)
           ? (patch as Record<string, unknown>)
-          : {}),
-      });
+          : {};
+      // Attach/WebUI blanks secrets in the patch. Refill apiTokens by id from disk
+      // and keep non-empty legacy dual fields when the patch sends "".
+      // Explicit apiTokens: [] = intentional wipe (do not resurrect list/legacy).
+      const intentionalClear =
+        Array.isArray(patchObj.apiTokens) && patchObj.apiTokens.length === 0;
+      const prevTokens = Array.isArray(prevApi?.apiTokens) ? prevApi.apiTokens : [];
+      const prevById = new Map(prevTokens.map((t) => [t.id, t]));
+      let apiTokens: unknown = patchObj.apiTokens;
+      if (intentionalClear) {
+        apiTokens = [];
+      } else if (Array.isArray(patchObj.apiTokens)) {
+        apiTokens = patchObj.apiTokens.map((t) => {
+          if (!t || typeof t !== 'object' || Array.isArray(t)) return t;
+          const o = { ...(t as Record<string, unknown>) };
+          if (!o.token) {
+            const old = prevById.get(String(o.id || ''));
+            if (old?.token) o.token = old.token;
+          }
+          return o;
+        });
+      }
+      const patchToken = typeof patchObj.token === 'string' ? patchObj.token : '';
+      const patchAdmin = typeof patchObj.adminToken === 'string' ? patchObj.adminToken : '';
+      const nextApi = normalizeGatewayHttpApiSettings(
+        intentionalClear
+          ? {
+              ...prevApi,
+              ...patchObj,
+              apiTokens: [],
+              token: '',
+              adminToken: '',
+            }
+          : {
+              ...prevApi,
+              ...patchObj,
+              ...(apiTokens !== undefined ? { apiTokens } : {}),
+              token: patchToken || prevApi?.token || '',
+              adminToken: patchAdmin || prevApi?.adminToken || '',
+            },
+      );
       const saved = storage.saveSettings({ ...current, gatewayHttpApi: nextApi });
       // Keep Authorization in sync when the credential this window presents was rotated.
       if (gatewayClient) {
@@ -945,6 +990,7 @@ function createWindow() {
     }
     return { action: 'deny' };
   });
+  installWebContentsNavigationGuard(win);
 }
 
 function sendRuntimeEvent(event: RuntimeEvent) {
@@ -980,6 +1026,8 @@ app.on('second-instance', () => {
 
 app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return;
+  // Must wrap ipcMain before any handle/on registration (owner or attach paths).
+  installTrustedIpcGuard(ipcMain);
   applyTheme(loadClientSettings().theme);
 
   // Hide the native File/Edit/View bar on Windows/Linux.

@@ -27,3 +27,11 @@ export function subscribeSystemTheme(onChange: () => void): () => void {
   mq.addEventListener('change', listener);
   return () => mq.removeEventListener('change', listener);
 }
+
+
+/** Concrete light|dark for ThinkingOrb from the document theme attribute (fallback dark). */
+export function resolvedOrbTheme(): 'light' | 'dark' {
+  if (typeof document === 'undefined') return 'dark';
+  return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+}
+

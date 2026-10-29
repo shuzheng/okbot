@@ -3,10 +3,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
+  attachmentBelongsToOwner,
   dedupeMeshInterimMessages,
   filterRecordsForModelSession,
   legacyMessageToRecord,
   mergeUiMessageOntoRecord,
+  normalizeMessageAttachments,
   readJsonlPage,
   recordToUiMessage,
   writeSessionRecordsAtomic,
@@ -348,6 +350,132 @@ function ui(id: string, role: 'user' | 'assistant', content: string): SessionRec
     model.map((r) => r.id),
     ['sdk'],
   );
+}
+
+
+{
+  // Owner-scoped attachment sanitize: A's upload must not stick on B.
+  const aPath = '/tmp/okbot-data/bot_a/uploads/clip.png';
+  const kept = normalizeMessageAttachments(
+    [
+      { kind: 'image', path: aPath, name: 'clip.png', mediaPath: '/v1/media/bot_a/uploads/clip.png' },
+      { kind: 'image', path: '/tmp/okbot-data/bot_b/uploads/other.png', name: 'other.png', mediaPath: '/v1/media/bot_b/uploads/other.png' },
+      { kind: 'folder', path: '/Users/me/docs', name: 'docs' },
+    ],
+    'bot_a',
+  );
+  assert.deepEqual(
+    kept?.map((a) => a.name),
+    ['clip.png', 'docs'],
+  );
+  assert.equal(attachmentBelongsToOwner('bot_a', { kind: 'image', path: aPath, mediaPath: '/v1/media/bot_a/uploads/clip.png' }), true);
+  assert.equal(attachmentBelongsToOwner('bot_b', { kind: 'image', path: aPath, mediaPath: '/v1/media/bot_a/uploads/clip.png' }), false);
+}
+
+{
+  // P2-R1: mediaPath alone must not short-circuit an arbitrary path.
+  assert.equal(
+    attachmentBelongsToOwner('bot_a', {
+      kind: 'image',
+      path: '/etc/passwd',
+      mediaPath: '/v1/media/bot_a/uploads/clip.png',
+    }),
+    false,
+  );
+  // Path/mediaPath must agree on basename + subdir.
+  assert.equal(
+    attachmentBelongsToOwner('bot_a', {
+      kind: 'image',
+      path: '/tmp/okbot-data/bot_a/uploads/clip.png',
+      mediaPath: '/v1/media/bot_a/uploads/other.png',
+    }),
+    false,
+  );
+  assert.equal(
+    attachmentBelongsToOwner('bot_a', {
+      kind: 'image',
+      path: '/tmp/okbot-data/bot_a/resources/clip.png',
+      mediaPath: '/v1/media/bot_a/uploads/clip.png',
+    }),
+    false,
+  );
+  // Reject path traversal segments.
+  assert.equal(
+    attachmentBelongsToOwner('bot_a', {
+      kind: 'image',
+      path: '/tmp/okbot-data/bot_a/uploads/../secrets/x.png',
+      mediaPath: '/v1/media/bot_a/uploads/x.png',
+    }),
+    false,
+  );
+  // Malformed / escaped mediaPath rejected when present.
+  assert.equal(
+    attachmentBelongsToOwner('bot_a', {
+      kind: 'image',
+      path: '/tmp/okbot-data/bot_a/uploads/clip.png',
+      mediaPath: '/v1/media/bot_a/uploads/../bot_b/uploads/clip.png',
+    }),
+    false,
+  );
+}
+
+{
+  // P2-R1: with dataRoot, substring forgery outside the real owner tree is denied.
+  const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'okbot-att-own-'));
+  const ownerUploads = path.join(dataRoot, 'bot_a', 'uploads');
+  fs.mkdirSync(ownerUploads, { recursive: true });
+  const realFile = path.join(ownerUploads, 'clip.png');
+  fs.writeFileSync(realFile, 'png');
+  const forged = path.join(os.tmpdir(), 'okbot-forged-bot_a', 'uploads', 'clip.png');
+  fs.mkdirSync(path.dirname(forged), { recursive: true });
+  fs.writeFileSync(forged, 'evil');
+
+  assert.equal(
+    attachmentBelongsToOwner(
+      'bot_a',
+      { kind: 'image', path: realFile, mediaPath: '/v1/media/bot_a/uploads/clip.png' },
+      { dataRoot },
+    ),
+    true,
+  );
+  assert.equal(
+    attachmentBelongsToOwner(
+      'bot_a',
+      { kind: 'image', path: forged, mediaPath: '/v1/media/bot_a/uploads/clip.png' },
+      { dataRoot },
+    ),
+    false,
+  );
+  // Symlink escape out of owner uploads → deny.
+  const escapeTarget = path.join(dataRoot, 'outside.png');
+  fs.writeFileSync(escapeTarget, 'out');
+  const linkPath = path.join(ownerUploads, 'link.png');
+  try {
+    fs.symlinkSync(escapeTarget, linkPath);
+    assert.equal(
+      attachmentBelongsToOwner(
+        'bot_a',
+        { kind: 'image', path: linkPath, mediaPath: '/v1/media/bot_a/uploads/link.png' },
+        { dataRoot },
+      ),
+      false,
+    );
+  } catch (err) {
+    // Some CI/filesystems disallow symlinks; skip rather than fail the suite.
+    if ((err as NodeJS.ErrnoException).code !== 'EPERM' && (err as NodeJS.ErrnoException).code !== 'EACCES') {
+      throw err;
+    }
+  }
+
+  const kept = normalizeMessageAttachments(
+    [
+      { kind: 'image', path: realFile, name: 'clip.png', mediaPath: '/v1/media/bot_a/uploads/clip.png' },
+      { kind: 'image', path: forged, name: 'clip.png', mediaPath: '/v1/media/bot_a/uploads/clip.png' },
+    ],
+    'bot_a',
+    { dataRoot },
+  );
+  assert.deepEqual(kept?.map((a) => a.path), [realFile]);
 }
 
 

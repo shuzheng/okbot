@@ -252,7 +252,7 @@ pnpm dev
 
 ## 参与贡献
 
-欢迎 Issue 与 Pull Request。较大改动前请阅读 [GUIDE.md](./GUIDE.md)、[DESIGN.md](./DESIGN.md) 与 [AGENTS.md](./AGENTS.md)，并保持 PR 聚焦。
+欢迎 Issue 与 Pull Request。请先阅读 [CONTRIBUTING.md](./CONTRIBUTING.md)。较大改动前另见 [GUIDE.md](./GUIDE.md)、[DESIGN.md](./DESIGN.md) 与 [AGENTS.md](./AGENTS.md)，并保持 PR 聚焦。安全漏洞请按 [SECURITY.md](./SECURITY.md) 私下报告。
 
 ## 许可证
 

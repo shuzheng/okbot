@@ -36,6 +36,7 @@ import {
   type AgentRunStreamResult,
 } from './hitl.js';
 import { buildTools, resolveImageCapability, type SkillLookup } from './tools.js';
+import { agentGuardrailsFromSecurity } from './guardrails.js';
 import type { ExecutionBackend } from './executionBackend.js';
 import { shellFsRoutingSection, type ComputerRoute } from './computerSelection.js';
 import { wrapToolExecute, type ToolRunBudget } from './toolRunBudget.js';
@@ -323,12 +324,23 @@ function createSquadRuntime(input: RunSquadChatInput & { resumeNote?: string }) 
         computerRoute: memberRoute,
         web: input.web,
       }),
+      ...agentGuardrailsFromSecurity(security),
     });
-    const runner = new Runner({ modelProvider: provider, model: input.model.model });
-    const runOpts: { stream: true; signal?: AbortSignal; maxTurns: number } = {
+    const runner = new Runner({
+      modelProvider: provider,
+      model: input.model.model,
+      toolNotFoundBehavior: 'return_error_to_model',
+    });
+    const runOpts: {
+      stream: true;
+      signal?: AbortSignal;
+      maxTurns: number;
+      toolNotFoundBehavior: 'return_error_to_model';
+    } = {
       stream: true,
       signal: input.signal,
       maxTurns: DEFAULT_RUNNER_MAX_TURNS,
+      toolNotFoundBehavior: 'return_error_to_model',
     };
     return { agent, runner, runOpts };
   };
@@ -478,9 +490,14 @@ function createSquadRuntime(input: RunSquadChatInput & { resumeNote?: string }) 
       ...memberTools,
       ...(input.extraTools ?? []),
     ],
+    ...agentGuardrailsFromSecurity(security),
   });
 
-  const runner = new Runner({ modelProvider: provider, model: input.model.model });
+  const runner = new Runner({
+    modelProvider: provider,
+    model: input.model.model,
+    toolNotFoundBehavior: 'return_error_to_model',
+  });
   const runOpts = buildRunOpts(input);
   return { captain, runner, runOpts, memberUsageState, askToolNames, buildMember, finishMember };
 }
@@ -523,6 +540,8 @@ export type ResumeSquadChatAfterHitlInput = RunSquadChatInput & {
   serializedRunState: string;
   requestId: string;
   toolName: string;
+  callId?: string;
+  arguments?: unknown;
   decision: ToolApprovalDecision;
   /** Set when the approval came from a member run (see ToolApprovalRequest.squadMember). */
   squadMember?: { botId: string; toolName: string; task: string };

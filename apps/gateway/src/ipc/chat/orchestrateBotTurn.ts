@@ -35,7 +35,6 @@ import {
 } from '../../storage/TaskProgressStore';
 import type { IpcContext } from '../context';
 import {
-  cancelAutoContinues,
   clearAutoContinueCancel,
   isAutoContinueCancelled,
 } from '../autoContinueGate';
@@ -57,7 +56,9 @@ function persistUserOnly(
   text: string,
 ): ChatMessage {
   const quote = resolveQuoteFields(ctx.storage, botId, payload.quoteMessageId, text);
-  const attachments = normalizeMessageAttachments(payload.attachments);
+  const attachments = normalizeMessageAttachments(payload.attachments, botId, {
+    dataRoot: ctx.storage.dataRoot,
+  });
   const userMsg: ChatMessage = {
     id: createId('msg'),
     role: 'user',
@@ -80,6 +81,13 @@ export function isComposerChatOrigin(origin: ChatStartPayload['origin']): boolea
 export type OrchestrateBotTurnDeps = {
   startTurn?: typeof startBotTurn;
   softSteer?: typeof softSteerNewestRun;
+  /**
+   * When true (default), await the full auto-continue chain before returning.
+   * Pass false for schedule / HTTP SSE so lastRunAt and the SSE lifecycle end
+   * with the initiating turn; AC continues in the background (events still fan
+   * out on /v1/events and desktop IPC).
+   */
+  awaitAutoContinue?: boolean;
 };
 
 /**
@@ -156,6 +164,23 @@ async function maybeAutoContinueTaskProgress(
   return current;
 }
 
+function finishWithAutoContinue(
+  ctx: IpcContext,
+  botId: string,
+  payload: ChatStartPayload,
+  result: ChatStartResult,
+  startTurn: typeof startBotTurn,
+  awaitAutoContinue: boolean,
+): Promise<ChatStartResult> {
+  if (awaitAutoContinue) {
+    return maybeAutoContinueTaskProgress(ctx, botId, payload, result, startTurn);
+  }
+  void maybeAutoContinueTaskProgress(ctx, botId, payload, result, startTurn).catch((err) => {
+    console.error('[okbot] tasks auto-continue failed', err);
+  });
+  return Promise.resolve(result);
+}
+
 export async function orchestrateBotTurn(
   ctx: IpcContext,
   payload: ChatStartPayload,
@@ -164,6 +189,7 @@ export async function orchestrateBotTurn(
 ): Promise<ChatStartResult> {
   const startTurn = deps.startTurn ?? startBotTurn;
   const softSteer = deps.softSteer ?? softSteerNewestRun;
+  const awaitAutoContinue = deps.awaitAutoContinue !== false;
 
   const botId = (payload.botId || '').trim();
   if (!botId) throw new Error('助手不存在');
@@ -193,7 +219,7 @@ export async function orchestrateBotTurn(
     // Re-enable auto-continue after a prior Stop.
     clearAutoContinueCancel(botId);
     result = await startTurn(ctx, payload, text);
-    return maybeAutoContinueTaskProgress(ctx, botId, payload, result, startTurn);
+    return finishWithAutoContinue(ctx, botId, payload, result, startTurn, awaitAutoContinue);
   }
 
   // Composer (idle or busy): always soft-steer so an in-flight / just-started
@@ -215,5 +241,5 @@ export async function orchestrateBotTurn(
     releaseOwnerBusyHold(botId);
     throw err;
   }
-  return maybeAutoContinueTaskProgress(ctx, botId, payload, result, startTurn);
+  return finishWithAutoContinue(ctx, botId, payload, result, startTurn, awaitAutoContinue);
 }

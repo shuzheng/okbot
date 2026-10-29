@@ -1,6 +1,11 @@
 import OpenAI from 'openai';
 import type { ChatMessage, ResolvedModelConfig } from '@okbot/shared';
 import { CONTEXT_SUMMARY_MAX_CHARS, clampSessionSummary, stripThinkContent } from '@okbot/shared';
+import {
+  buildCompressHandoffSystemPrompt,
+  buildCompressHandoffUserPrompt,
+  stripCompressHandoffPreamble,
+} from './compressHandoffPrompt.js';
 import { assertModel } from './model.js';
 
 export const SUMMARY_DELTA_MAX_CHARS = 24_000;
@@ -297,14 +302,18 @@ export type SessionHistoryCompressResult = {
 };
 
 /**
- * Summary+Buffer compressor (SlimContext / ConversationSummaryBuffer style).
+ * Summary+Buffer compressor (SlimContext / ConversationSummaryBuffer style),
+ * framed as a Codex-style **handoff document** for the next model turn
+ * (same or another model continuing the work)—not a dry plain summary.
  * Merges `previousSummary` with ONLY the newly uncovered older turns (`deltaMessages`)
- * into a structured summary ≤ summaryMaxChars (default CONTEXT_SUMMARY_MAX_CHARS).
- * `consumedThroughId` stops at the last item actually placed in the summary input.
- * One item bigger than the summarizer input is folded across calls; its id advances only
+ * into a structured handoff ≤ summaryMaxChars (default CONTEXT_SUMMARY_MAX_CHARS).
+ * Output keeps the five section headings (`目标` / `约定` / `路径/命令` / `未完成` / `其他`)
+ * so durableFacts / UI parsers stay compatible.
+ * `consumedThroughId` stops at the last item actually placed in the handoff input.
+ * One item bigger than the handoff input is folded across calls; its id advances only
  * after the unread tail has been included.
- * A partial prefix is not part of the returned summary unless that same call consumes the item.
- * Otherwise an abort would persist the prefix and the next call would summarize it again.
+ * A partial prefix is not part of the returned handoff unless that same call consumes the item.
+ * Otherwise an abort would persist the prefix and the next call would fold it again.
  */
 export async function compressSessionHistory(input: {
   model: ResolvedModelConfig;
@@ -338,27 +347,8 @@ export async function compressSessionHistory(input: {
       apiKey: input.model.apiKey,
       baseURL: input.model.baseURL.replace(/\/$/, ''),
     });
-    const system = [
-      '你是桌面助手的会话摘要器，采用 Summary+Buffer：把「旧摘要」与「新掉出窗口的对话增量」合并成一份结构化滚动摘要。',
-      `硬性限制：全文不超过 ${maxChars} 字（汉字+标点），不要代码围栏，不要前言。`,
-      '必须使用下面五个小标题（无内容写「无」）：',
-      '目标：',
-      '约定：',
-      '路径/命令：',
-      '未完成：',
-      '其他：',
-      '规则：保留稳定事实、决定、文件路径、命令、未完成事项；丢掉寒暄、重复确认、大段代码/日志。',
-      '工具行若出现为「[工具调用]/或「[工具结果]」短摘要，保留工具名与关键参数/结果要点即可。',
-      '合并时更新过时信息，不要简单把旧摘要和新内容首尾拼接。',
-      '稳定约定和决定写在「约定：」下，每条一行，供长期记忆。',
-      '细节若被压缩掉，可提示稍后用 search_history 按关键词检索本会话。',
-    ].join('\n');
-    const user = [
-      previous ? `旧摘要：\n${previous}` : '旧摘要：（无，这是首次压缩）',
-      '',
-      '新掉出最近窗口的对话增量：',
-      dialogue,
-    ].join('\n');
+    const system = buildCompressHandoffSystemPrompt(maxChars);
+    const user = buildCompressHandoffUserPrompt(previous, dialogue);
     const completion = await client.chat.completions.create(
       {
         model: input.model.model,
@@ -370,11 +360,9 @@ export async function compressSessionHistory(input: {
       },
       input.signal ? { signal: input.signal } : undefined,
     );
-    let raw = stripThinkContent(completion.choices[0]?.message?.content ?? '').trim();
-    if (raw.startsWith('```')) {
-      raw = raw.replace(/^```(?:\w+)?\s*/i, '').replace(/\s*```$/, '').trim();
-    }
-    raw = raw.replace(/^摘要[:：]\s*/u, '').trim();
+    const raw = stripCompressHandoffPreamble(
+      stripThinkContent(completion.choices[0]?.message?.content ?? ''),
+    );
     if (!raw) return { summary: previous, produced: false };
     return { summary: raw, produced: true };
   };

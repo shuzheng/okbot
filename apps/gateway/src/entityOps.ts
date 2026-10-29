@@ -15,7 +15,6 @@ import {
   galleryAssistantPackage,
   listAssistantGallery,
   resolveImageCapability,
-  meshAskToolAllowed,
   type GalleryLang,
 } from '@okbot/agent';
 import { fetchAssistantPackageFromUrl } from './storage/fetchGithubAssistant';
@@ -226,7 +225,7 @@ export function buildPromptContext(
       ),
       imageCapable,
       meshPeers.map((p) => ({ id: p.id, name: p.name, description: p.description })),
-      meshPeers.length > 0 && meshAskToolAllowed(),
+      meshPeers.length > 0,
       settings.defaultAssistantId === bot.id,
     );
     const { items, found } = ctx.storage.getSessionItemsThroughMessage(bot.id, payload.messageId, {

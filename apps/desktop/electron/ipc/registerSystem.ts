@@ -312,15 +312,31 @@ export function registerSystemIpc(ctx: IpcContext): void {
       ) {
         return { ok: false, error: 'asset must be <ownerId>/{resources|uploads}/<file>' };
       }
+      // Current layout: ~/.okbot/data/<owner>/{resources|uploads}/; legacy flat under ~/.okbot/.
       const okbotRoot = path.resolve(os.homedir(), '.okbot');
-      const filePath = path.resolve(okbotRoot, rel);
-      if (filePath !== okbotRoot && !filePath.startsWith(okbotRoot + path.sep)) {
-        return { ok: false, error: 'path outside okbot root' };
+      const dataRoot = path.resolve(okbotRoot, 'data');
+      const candidates = [
+        path.resolve(dataRoot, rel),
+        path.resolve(okbotRoot, rel),
+      ];
+      let filePath: string | null = null;
+      let mediaDir: string | null = null;
+      for (const candidate of candidates) {
+        const root = candidate.startsWith(dataRoot + path.sep) || candidate === dataRoot ? dataRoot : okbotRoot;
+        if (candidate !== root && !candidate.startsWith(root + path.sep)) continue;
+        const dir = path.resolve(root, parts[0]!, subdir!);
+        if (candidate !== dir && !candidate.startsWith(dir + path.sep)) continue;
+        try {
+          await fs.access(candidate);
+          filePath = candidate;
+          mediaDir = dir;
+          break;
+        } catch {
+          /* try next */
+        }
       }
-      // Must stay inside that owner's resources/ or uploads/ dir.
-      const mediaDir = path.resolve(okbotRoot, parts[0], subdir);
-      if (filePath !== mediaDir && !filePath.startsWith(mediaDir + path.sep)) {
-        return { ok: false, error: 'path outside owner media' };
+      if (!filePath || !mediaDir) {
+        return { ok: false, error: 'asset not found' };
       }
       try {
         const buf = await fs.readFile(filePath);

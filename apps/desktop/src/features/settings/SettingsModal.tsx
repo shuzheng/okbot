@@ -171,12 +171,15 @@ export function SettingsModal({
   const [gatewayNavExpanded, setGatewayNavExpanded] = useState(
     () => settings.settingsGatewayGroupExpanded === true,
   );
+  // Avoid expand-then-collapse flash: tab effect waits until first getSettings hydrate.
+  const [settingsHydrated, setSettingsHydrated] = useState(false);
 
   useEffect(() => {
+    if (!settingsHydrated) return;
     // Keep the group that owns the active tab open when selection changes.
     if (isClientNavTab(tab)) setClientNavExpanded(true);
     else setGatewayNavExpanded(true);
-  }, [tab]);
+  }, [tab, settingsHydrated]);
 
   const [mcpDraft, setMcpDraft] = useState<McpSettings>(() => normalizeMcpSettings(settings.mcp));
   const [webDraft, setWebDraft] = useState<WebSettings>(() => normalizeWebSettings(settings.web));
@@ -377,6 +380,29 @@ export function SettingsModal({
   );
   const [shellPatternAddRequest, setShellPatternAddRequest] = useState(0);
   const [blockMode, setBlockMode] = useState<SecurityBlockMode>(initialSecurity.blockMode);
+  const [securitySubTab, setSecuritySubTab] = useState<'tool' | 'agent'>('tool');
+  const [agentMaxInputCharsEnabled, setAgentMaxInputCharsEnabled] = useState(
+    initialSecurity.agent.maxInputCharsEnabled,
+  );
+  const [agentMaxInputChars, setAgentMaxInputChars] = useState(
+    String(initialSecurity.agent.maxInputChars),
+  );
+  const [agentRejectEmptyInput, setAgentRejectEmptyInput] = useState(
+    initialSecurity.agent.rejectEmptyInput,
+  );
+  const [agentJailbreakEnabled, setAgentJailbreakEnabled] = useState(
+    initialSecurity.agent.jailbreakEnabled,
+  );
+  const [agentInjectionHygiene, setAgentInjectionHygiene] = useState(
+    initialSecurity.agent.injectionHygiene,
+  );
+  const [agentPiiPasteWarn, setAgentPiiPasteWarn] = useState(initialSecurity.agent.piiPasteWarn);
+  const [agentOutputSecretsEnabled, setAgentOutputSecretsEnabled] = useState(
+    initialSecurity.agent.outputSecretsEnabled,
+  );
+  const [agentToolOutputSecretsEnabled, setAgentToolOutputSecretsEnabled] = useState(
+    initialSecurity.agent.toolOutputSecretsEnabled,
+  );
   const [modelSettings, setModelSettings] = useState<ModelSettings>(() =>
     normalizeModelSettings(settings.model),
   );
@@ -458,6 +484,7 @@ export function SettingsModal({
         setCloseAction(normalizeCloseAction(latest.closeAction));
         setClientNavExpanded(latest.settingsClientGroupExpanded !== false);
         setGatewayNavExpanded(latest.settingsGatewayGroupExpanded === true);
+        setSettingsHydrated(true);
         setMcpDraft(normalizeMcpSettings(latest.mcp));
         setWebDraft(normalizeWebSettings(latest.web));
         const api = normalizeGatewayHttpApiSettings(latest.gatewayHttpApi);
@@ -482,6 +509,14 @@ export function SettingsModal({
         setShellPatternsEnabled(security.shellPatternsEnabled);
         setShellPatterns(security.shellPatterns);
         setBlockMode(security.blockMode);
+        setAgentMaxInputCharsEnabled(security.agent.maxInputCharsEnabled);
+        setAgentMaxInputChars(String(security.agent.maxInputChars));
+        setAgentRejectEmptyInput(security.agent.rejectEmptyInput);
+        setAgentJailbreakEnabled(security.agent.jailbreakEnabled);
+        setAgentInjectionHygiene(security.agent.injectionHygiene);
+        setAgentPiiPasteWarn(security.agent.piiPasteWarn);
+        setAgentOutputSecretsEnabled(security.agent.outputSecretsEnabled);
+        setAgentToolOutputSecretsEnabled(security.agent.toolOutputSecretsEnabled);
         setModelSettings(normalizeModelSettings(latest.model));
         const cc = normalizeContextCompression(latest.contextCompression);
         setCompressRatioPct(String(Math.round(cc.ratio * 100)));
@@ -557,7 +592,26 @@ export function SettingsModal({
     else if (id.startsWith('soulMd')) setInstructionsSubTab('soul');
     else if (id === 'scopeInstruction')
       setInstructionsSubTab('memory');
-    else if (id.startsWith('skills')) setInstructionsSubTab('skills');
+    else if (id.startsWith('skills') && id !== 'skillsRefreshSystem')
+      setInstructionsSubTab('skills');
+    else if (
+      id === 'instructionsBuiltinHint' ||
+      id.startsWith('compressHandoff') ||
+      id.startsWith('topicChange') ||
+      id === 'sessionSummarySection' ||
+      id === 'replyStyle' ||
+      id === 'userFacingProductLanguage' ||
+      id === 'meshUserFacingReply' ||
+      id === 'sendMessageInstruction' ||
+      id.startsWith('taskProgress') ||
+      id === 'midRunUserInput' ||
+      id === 'skillsRefreshSystem' ||
+      id === 'memoryRefreshSystem' ||
+      id === 'ownerDescriptionSystem' ||
+      id.startsWith('onboarding') ||
+      id === 'visionTurn'
+    )
+      setInstructionsSubTab('builtin');
     let tries = 0;
     const tick = () => {
       const el = document.querySelector<HTMLElement>(`[data-settings-id="${CSS.escape(id)}"]`);
@@ -625,6 +679,16 @@ export function SettingsModal({
         shellPatternsEnabled,
         shellPatterns,
         blockMode,
+        agent: {
+          maxInputCharsEnabled: agentMaxInputCharsEnabled,
+          maxInputChars: Number(agentMaxInputChars),
+          rejectEmptyInput: agentRejectEmptyInput,
+          jailbreakEnabled: agentJailbreakEnabled,
+          injectionHygiene: agentInjectionHygiene,
+          piiPasteWarn: agentPiiPasteWarn,
+          outputSecretsEnabled: agentOutputSecretsEnabled,
+          toolOutputSecretsEnabled: agentToolOutputSecretsEnabled,
+        },
       });
       const payload = {
         theme,
@@ -770,6 +834,14 @@ export function SettingsModal({
     shellPatternsEnabled,
     shellPatterns,
     blockMode,
+    agentMaxInputCharsEnabled,
+    agentMaxInputChars,
+    agentRejectEmptyInput,
+    agentJailbreakEnabled,
+    agentInjectionHygiene,
+    agentPiiPasteWarn,
+    agentOutputSecretsEnabled,
+    agentToolOutputSecretsEnabled,
     modelSettings,
     compressRatioPct,
     keepRecentMax,
@@ -785,7 +857,23 @@ export function SettingsModal({
     squadPlaybook,
   ]);
 
+  // Hot gateway switch: drop debounced/unmount flush so the previous gateway's
+  // hydrated draft cannot POST into the newly connected gateway.
+  useEffect(() => {
+    const discard = () => {
+      allowAutosaveRef.current = false;
+      if (saveTimerRef.current != null) {
+        window.clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+      pendingSaveRef.current = null;
+    };
+    window.addEventListener('okbot:gateway-reconnected', discard);
+    return () => window.removeEventListener('okbot:gateway-reconnected', discard);
+  }, []);
+
   // Flush ≤350ms debounced edits when the settings modal unmounts (close).
+  // Skipped when discard() already cleared pending (gateway switch).
   useEffect(() => {
     return () => {
       if (saveTimerRef.current != null) {
@@ -1162,6 +1250,7 @@ export function SettingsModal({
             ) : tab === 'tools' ? (
               <ToolsSettingsPanel
                 gatewayClient={gatewayHostReadOnly}
+                developerMode={developerMode}
                 lang={lang}
                 aarAddRequest={aarAddRequest}
                 autoApprovalEnabled={autoApprovalEnabled}
@@ -1180,6 +1269,8 @@ export function SettingsModal({
               <SecuritySettingsPanel
                 lang={lang}
                 readOnly={gatewayHostReadOnly}
+                securitySubTab={securitySubTab}
+                setSecuritySubTab={setSecuritySubTab}
                 allowedPathsText={allowedPathsText}
                 blockMode={blockMode}
                 deniedPathsText={deniedPathsText}
@@ -1196,6 +1287,22 @@ export function SettingsModal({
                 shellPatternAddRequest={shellPatternAddRequest}
                 shellPatterns={shellPatterns}
                 shellPatternsEnabled={shellPatternsEnabled}
+                agentMaxInputCharsEnabled={agentMaxInputCharsEnabled}
+                setAgentMaxInputCharsEnabled={setAgentMaxInputCharsEnabled}
+                agentMaxInputChars={agentMaxInputChars}
+                setAgentMaxInputChars={setAgentMaxInputChars}
+                agentRejectEmptyInput={agentRejectEmptyInput}
+                setAgentRejectEmptyInput={setAgentRejectEmptyInput}
+                agentJailbreakEnabled={agentJailbreakEnabled}
+                setAgentJailbreakEnabled={setAgentJailbreakEnabled}
+                agentInjectionHygiene={agentInjectionHygiene}
+                setAgentInjectionHygiene={setAgentInjectionHygiene}
+                agentPiiPasteWarn={agentPiiPasteWarn}
+                setAgentPiiPasteWarn={setAgentPiiPasteWarn}
+                agentOutputSecretsEnabled={agentOutputSecretsEnabled}
+                setAgentOutputSecretsEnabled={setAgentOutputSecretsEnabled}
+                agentToolOutputSecretsEnabled={agentToolOutputSecretsEnabled}
+                setAgentToolOutputSecretsEnabled={setAgentToolOutputSecretsEnabled}
               />
             ) : tab === 'model' ? (
               <div>

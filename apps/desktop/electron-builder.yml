@@ -36,6 +36,8 @@ mac:
   darkModeSupport: true
   hardenedRuntime: false
   gatekeeperAssess: false
+  extendInfo:
+    NSMicrophoneUsageDescription: OkBot 需要使用麦克风，以便进行语音输入。
 dmg:
   artifactName: ${productName}-${version}-mac-${arch}.${ext}
 win:

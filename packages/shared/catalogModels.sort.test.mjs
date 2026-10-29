@@ -7,9 +7,9 @@ import {
   dedupeCatalogModels,
 } from './dist/index.js';
 
-assert.equal(catalogModelSortKey({ id: 'gpt-4o', name: 'GPT-4o' }), 'GPT-4o');
-assert.equal(catalogModelSortKey({ id: 'gpt-4o', name: '  ' }), 'gpt-4o');
-assert.equal(catalogModelSortKey({ id: 'gpt-4o', name: '' }), 'gpt-4o');
+assert.equal(catalogModelSortKey({ id: 'model-x', name: 'Model X' }), 'Model X');
+assert.equal(catalogModelSortKey({ id: 'model-x', name: '  ' }), 'model-x');
+assert.equal(catalogModelSortKey({ id: 'model-x', name: '' }), 'model-x');
 
 const unsorted = [
   { id: 'z-id', name: 'Zeta' },

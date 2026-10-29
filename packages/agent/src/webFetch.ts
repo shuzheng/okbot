@@ -44,6 +44,11 @@ export const UNTRUSTED_WEB_GUIDANCE =
 export const UNTRUSTED_WEB_FENCE_OPEN = '<<<UNTRUSTED_WEB_CONTENT>>>';
 export const UNTRUSTED_WEB_FENCE_CLOSE = '<<<END_UNTRUSTED_WEB_CONTENT>>>';
 
+/** Same fence style for any untrusted tool output (web, MCP, read_file, …). */
+export function formatUntrusted(body: string): string {
+  return wrapUntrustedWebContent(body);
+}
+
 export function wrapUntrustedWebContent(body: string): string {
   return [UNTRUSTED_WEB_GUIDANCE, UNTRUSTED_WEB_FENCE_OPEN, body, UNTRUSTED_WEB_FENCE_CLOSE].join(
     '\n',

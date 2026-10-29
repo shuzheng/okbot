@@ -7,6 +7,8 @@ export type SettingsSearchItem = {
   labelKey: I18nKey;
   /** Extra searchable terms (zh/en literals, aliases). */
   keywords?: string[];
+  /** Hidden from search unless developer mode is on (e.g. 工具管理 / 系统指令其他). */
+  developerOnly?: boolean;
 };
 
 /** Jumpable settings rows / sections for global search. */
@@ -190,19 +192,19 @@ export const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
   { id: 'usageTotal', tab: 'usage', labelKey: 'usageTotal', keywords: ['token', '用量', 'usage'] },
   { id: 'usageDailyChart', tab: 'usage', labelKey: 'usageDailyChart', keywords: ['chart', 'daily', '图表'] },
   { id: 'usageByMember', tab: 'usage', labelKey: 'usageByMember', keywords: ['member', '助手'] },
-  { id: 'toolManagement', tab: 'tools', labelKey: 'toolManagement', keywords: ['工具'] },
-  { id: 'toolRunShell', tab: 'tools', labelKey: 'toolRunShell', keywords: ['shell', '命令'] },
-  { id: 'toolReadFile', tab: 'tools', labelKey: 'toolReadFile', keywords: ['read'] },
-  { id: 'toolReadSkill', tab: 'tools', labelKey: 'toolReadSkill', keywords: ['skill', '技能', 'read_skill'] },
-  { id: 'toolWriteFile', tab: 'tools', labelKey: 'toolWriteFile', keywords: ['write'] },
-  { id: 'toolEditFile', tab: 'tools', labelKey: 'toolEditFile', keywords: ['edit'] },
-  { id: 'toolGenerateImage', tab: 'tools', labelKey: 'toolGenerateImage', keywords: ['image', 'generate', 'openai', 'dall-e', 'gpt-image', 'minimax', 'image-01', '画图', '生图', '文生图'] },
-  { id: 'toolSearchHistory', tab: 'tools', labelKey: 'toolSearchHistory', keywords: ['history', 'search_history', '会话', '历史'] },
-  { id: 'toolManageSchedule', tab: 'tools', labelKey: 'toolManageSchedule', keywords: ['schedule', 'cron', '定时'] },
-  { id: 'toolManageTaskProgress', tab: 'tools', labelKey: 'toolManageTaskProgress', keywords: ['task', 'progress', 'checklist', 'queue', '进度', '清单', '队列', '任务进度', 'manage_task_progress'] },
-  { id: 'toolSendMessage', tab: 'tools', labelKey: 'toolSendMessage', keywords: ['send', 'message', 'bubble', '气泡', 'reply', '回复消息', '回复', 'send_message', '多气泡'] },
-  { id: 'toolWebFetch', tab: 'tools', labelKey: 'toolWebFetch', keywords: ['fetch', 'url', 'html', '网页', '拉取'] },
-  { id: 'toolWebSearch', tab: 'tools', labelKey: 'toolWebSearch', keywords: ['search', 'tavily', 'brave', 'serper', '搜索'] },
+  { id: 'toolManagement', tab: 'tools', labelKey: 'toolManagement', keywords: ['工具'] , developerOnly: true },
+  { id: 'toolRunShell', tab: 'tools', labelKey: 'toolRunShell', keywords: ['shell', '命令'] , developerOnly: true },
+  { id: 'toolReadFile', tab: 'tools', labelKey: 'toolReadFile', keywords: ['read'] , developerOnly: true },
+  { id: 'toolReadSkill', tab: 'tools', labelKey: 'toolReadSkill', keywords: ['skill', '技能', 'read_skill'] , developerOnly: true },
+  { id: 'toolWriteFile', tab: 'tools', labelKey: 'toolWriteFile', keywords: ['write'] , developerOnly: true },
+  { id: 'toolEditFile', tab: 'tools', labelKey: 'toolEditFile', keywords: ['edit'] , developerOnly: true },
+  { id: 'toolGenerateImage', tab: 'tools', labelKey: 'toolGenerateImage', keywords: ['image', 'generate', 'openai', 'dall-e', 'gpt-image', '画图', '生图', '文生图'] , developerOnly: true },
+  { id: 'toolSearchHistory', tab: 'tools', labelKey: 'toolSearchHistory', keywords: ['history', 'search_history', '会话', '历史'] , developerOnly: true },
+  { id: 'toolManageSchedule', tab: 'tools', labelKey: 'toolManageSchedule', keywords: ['schedule', 'cron', '定时'] , developerOnly: true },
+  { id: 'toolManageTaskProgress', tab: 'tools', labelKey: 'toolManageTaskProgress', keywords: ['task', 'progress', 'checklist', 'queue', '进度', '清单', '队列', '任务进度', 'manage_task_progress'] , developerOnly: true },
+  { id: 'toolSendMessage', tab: 'tools', labelKey: 'toolSendMessage', keywords: ['send', 'message', 'bubble', '气泡', 'reply', '回复消息', '回复', 'send_message', '多气泡'] , developerOnly: true },
+  { id: 'toolWebFetch', tab: 'tools', labelKey: 'toolWebFetch', keywords: ['fetch', 'url', 'html', '网页', '拉取'] , developerOnly: true },
+  { id: 'toolWebSearch', tab: 'tools', labelKey: 'toolWebSearch', keywords: ['search', 'tavily', 'brave', 'serper', '搜索'] , developerOnly: true },
   { id: 'webTools', tab: 'tools', labelKey: 'webTools', keywords: ['web', 'tavily', 'brave', 'serper', 'api key', '网页搜索'] },
   { id: 'webSearchProvider', tab: 'tools', labelKey: 'webSearchProvider', keywords: ['provider', 'tavily', 'brave', 'serper', 'custom', '自定义'] },
   { id: 'webSearchApiKey', tab: 'tools', labelKey: 'webSearchApiKey', keywords: ['api key', '密钥', 'tavily', 'brave', 'serper'] },
@@ -256,6 +258,48 @@ export const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
     tab: 'security',
     labelKey: 'securityBlockMode',
     keywords: ['拦截', 'tripwire', 'reject'],
+  },
+  {
+    id: 'securityAgentRejectEmpty',
+    tab: 'security',
+    labelKey: 'securityAgentRejectEmpty',
+    keywords: ['空输入', 'empty', 'agent'],
+  },
+  {
+    id: 'securityAgentMaxInput',
+    tab: 'security',
+    labelKey: 'securityAgentMaxInput',
+    keywords: ['长度', 'max chars', 'input size', 'agent'],
+  },
+  {
+    id: 'securityAgentJailbreak',
+    tab: 'security',
+    labelKey: 'securityAgentJailbreak',
+    keywords: ['越狱', 'jailbreak', 'override', 'agent'],
+  },
+  {
+    id: 'securityAgentInjection',
+    tab: 'security',
+    labelKey: 'securityAgentInjection',
+    keywords: ['注入', 'injection', 'mesh', 'squad', 'agent'],
+  },
+  {
+    id: 'securityAgentPiiPaste',
+    tab: 'security',
+    labelKey: 'securityAgentPiiPaste',
+    keywords: ['PII', '密钥', 'secret', 'paste', 'agent'],
+  },
+  {
+    id: 'securityAgentOutputSecrets',
+    tab: 'security',
+    labelKey: 'securityAgentOutputSecrets',
+    keywords: ['输出', 'output', 'secret', 'agent'],
+  },
+  {
+    id: 'securityAgentToolOutputSecrets',
+    tab: 'security',
+    labelKey: 'securityAgentToolOutputSecrets',
+    keywords: ['工具输出', 'tool output', 'redact', '脱敏'],
   },
   { id: 'model', tab: 'model', labelKey: 'model', keywords: ['LLM', 'API'] },
   {
@@ -343,6 +387,27 @@ export const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
     tab: 'instructions',
     labelKey: 'skillsCreateUpdateInstruction',
     keywords: ['技能', 'skill', '判定', '更新', '生成', 'skills', 'refresh'],
+  },
+  {
+    id: 'instructionsBuiltinHint',
+    tab: 'instructions',
+    labelKey: 'instructionsBuiltin',
+    keywords: [
+      '其他',
+      '内置',
+      '压缩',
+      '交接',
+      '上下文压缩',
+      '换题',
+      'other',
+      'compress',
+      'handoff',
+      'hardcoded',
+      'system prompt',
+      'builtin',
+      'topic',
+    ],
+    developerOnly: true,
   },
   {
     id: 'globalMemories',
