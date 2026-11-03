@@ -197,7 +197,7 @@ export function SessionPinStrip({
                   botIsWorking(bot.id),
                   <>
                     <span
-                      className={`session-avatar-shell session-pin-avatar-shell${unread ? ' unread' : ''}`}
+                      className={`session-avatar-shell session-pin-avatar-shell${unread ? ' unread' : ''}${botIsWorking(bot.id) ? ' is-busy' : ''}`}
                       title={unread ? t(lang, 'unreadReply') : undefined}
                     >
                       <FlatAvatar

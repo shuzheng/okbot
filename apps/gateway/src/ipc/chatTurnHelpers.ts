@@ -1,6 +1,7 @@
 import { createId, stripThinkContent, type ChatMessage, type Squad, type TokenUsage } from '@okbot/shared';
 import type { ComputerRoute, MeshPeerSpec, SkillLookup, SquadMemberAgentSpec } from '@okbot/agent';
 import type { IpcContext } from './context';
+import { memoryManageForBot } from './memoryTool';
 
 /** Bind `read_skill` to this bot's local + enabled-global skills. */
 export function skillLookupFor(storage: IpcContext['storage'], botId: string): SkillLookup {
@@ -30,12 +31,33 @@ export function computerRouteFor(
   };
 }
 
-/** Member specs for a squad run (live turn and cold resume share this). Throws on a missing member. */
+/** Turn-scoped memory recall options for squad/mesh member specs. */
+export type MemberMemoryRecallOpts = {
+  /** Relevance query (squad: this turn's user text; mesh: supplied at ask time via resolve). */
+  query?: string;
+  /** Mutable set of memory ids already bumped this turn (global + bot-local; dedupe across members/peers and same-seat re-resolve). */
+  recordedGlobalHitIds?: Set<string>;
+  /**
+   * When false, rebuild recall text for ranking/injection only (cold restore / checkpoint /
+   * squad cold resume). Default true so live turns still bump hits.
+   */
+  recordHits?: boolean;
+};
+
+/**
+ * Member specs for a squad run (live turn and cold resume share this). Throws on a missing member.
+ * Memories are resolved lazily when the member enters a model call (see resolveMemoriesText),
+ * so unused seats do not bump hits; query ranks recall for that turn's user text.
+ */
 export function buildSquadMemberSpecs(
   storage: IpcContext['storage'],
   squad: Pick<Squad, 'members'>,
+  opts?: MemberMemoryRecallOpts,
 ): SquadMemberAgentSpec[] {
   const byId = new Map(storage.listBots().map((b) => [b.id, b]));
+  const recorded = opts?.recordedGlobalHitIds ?? new Set<string>();
+  const query = opts?.query;
+  const recordHits = opts?.recordHits ?? true;
   return squad.members.map((m) => {
     const bot = byId.get(m.botId);
     if (!bot) throw new Error(`成员不存在：${m.botId}`);
@@ -46,16 +68,27 @@ export function buildSquadMemberSpecs(
       soulMd: storage.readSoulMd(bot.id),
       skillsText: storage.formatSkillsForPrompt(bot.id),
       skillLookup: skillLookupFor(storage, bot.id),
-      memoriesText: storage.formatMemoriesForPrompt(bot.id, { recordHits: true }),
+      resolveMemoriesText: () =>
+        storage.formatMemoriesForPrompt(bot.id, {
+          query,
+          recordHits,
+          recordedGlobalHitIds: recorded,
+        }),
     };
   });
 }
 
-/** Other assistants for 1:1 mesh roster + ask_assistant (exclude self). Squads must not use this. */
+/**
+ * Other assistants for 1:1 mesh roster + ask_assistant (exclude self). Squads must not use this.
+ * Do not record hits at roster build — ask_assistant resolves memories with `task` as query.
+ */
 export function buildMeshPeerSpecs(
   storage: IpcContext['storage'],
   currentBotId: string,
+  opts?: MemberMemoryRecallOpts,
 ): MeshPeerSpec[] {
+  const recorded = opts?.recordedGlobalHitIds ?? new Set<string>();
+  const recordHits = opts?.recordHits ?? true;
   return storage
     .listBots()
     .filter((b) => b.id !== currentBotId)
@@ -66,7 +99,13 @@ export function buildMeshPeerSpecs(
       soulMd: storage.readSoulMd(bot.id),
       skillsText: storage.formatSkillsForPrompt(bot.id),
       skillLookup: skillLookupFor(storage, bot.id),
-      memoriesText: storage.formatMemoriesForPrompt(bot.id, { recordHits: true }),
+      memoryManage: memoryManageForBot(storage, bot.id),
+      resolveMemoriesText: (askQuery: string) =>
+        storage.formatMemoriesForPrompt(bot.id, {
+          query: askQuery,
+          recordHits,
+          recordedGlobalHitIds: recorded,
+        }),
     }));
 }
 

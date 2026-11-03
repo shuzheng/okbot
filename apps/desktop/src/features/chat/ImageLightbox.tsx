@@ -39,8 +39,9 @@ function ZoomOutIcon() {
   );
 }
 
-async function downloadImage(src: string, fileName: string): Promise<void> {
-  const name = (fileName || 'image.png').replace(/[\\/]/g, '_');
+/** Download a URL (blob preferred) or fall back to <a download>. */
+export async function downloadBlobFromUrl(src: string, fileName: string): Promise<void> {
+  const name = (fileName || 'download').replace(/[\\/]/g, '_');
   try {
     const res = await fetch(src);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -66,6 +67,25 @@ async function downloadImage(src: string, fileName: string): Promise<void> {
   }
 }
 
+async function downloadImage(src: string, fileName: string): Promise<void> {
+  await downloadBlobFromUrl(src, fileName || 'image.png');
+}
+
+/** Trigger a local Blob download (no network). */
+export function downloadTextBlob(text: string, fileName: string, mime = 'text/plain;charset=utf-8'): void {
+  const name = (fileName || 'download.txt').replace(/[\\/]/g, '_');
+  const blob = new Blob([text], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 /**
  * Fullscreen image preview: fixed viewport cover, centered image, top-center zoom,
  * top-right download/close. Instant open/close (no FLIP / WAAPI morph) for reliability.
@@ -77,8 +97,10 @@ export function ImageLightbox(props: {
   onClose: () => void;
   /** `cover` = fixed full-viewport (chat + resources). `pane` = absolute inset over parent. */
   variant?: 'pane' | 'cover';
+  /** When false, hide zoom controls / shortcuts (download + close remain). Default true. */
+  showZoom?: boolean;
 }) {
-  const { lang, target, onClose, variant = 'cover' } = props;
+  const { lang, target, onClose, variant = 'cover', showZoom = true } = props;
   const [scale, setScale] = useState(1);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
@@ -97,17 +119,17 @@ export function ImageLightbox(props: {
         e.preventDefault();
         e.stopPropagation();
         requestClose();
-      } else if (e.key === '+' || e.key === '=') {
+      } else if (showZoom && (e.key === '+' || e.key === '=')) {
         e.preventDefault();
         setScale((s) => Math.min(ZOOM_MAX, s * ZOOM_STEP));
-      } else if (e.key === '-') {
+      } else if (showZoom && e.key === '-') {
         e.preventDefault();
         setScale((s) => Math.max(ZOOM_MIN, s / ZOOM_STEP));
       }
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [requestClose]);
+  }, [requestClose, showZoom]);
 
   const zoomIn = useCallback(() => {
     setScale((s) => Math.min(ZOOM_MAX, s * ZOOM_STEP));
@@ -144,28 +166,30 @@ export function ImageLightbox(props: {
         onClick={requestClose}
       />
 
-      <div className="chat-image-lightbox-zoom">
-        <button
-          type="button"
-          className="chat-image-lightbox-btn chat-image-lightbox-zoom-btn"
-          onClick={zoomOut}
-          title={t(lang, 'imagePreviewZoomOut')}
-          aria-label={t(lang, 'imagePreviewZoomOut')}
-          disabled={scale <= ZOOM_MIN + 0.001}
-        >
-          <ZoomOutIcon />
-        </button>
-        <button
-          type="button"
-          className="chat-image-lightbox-btn chat-image-lightbox-zoom-btn"
-          onClick={zoomIn}
-          title={t(lang, 'imagePreviewZoomIn')}
-          aria-label={t(lang, 'imagePreviewZoomIn')}
-          disabled={scale >= ZOOM_MAX - 0.001}
-        >
-          <ZoomInIcon />
-        </button>
-      </div>
+      {showZoom ? (
+        <div className="chat-image-lightbox-zoom">
+          <button
+            type="button"
+            className="chat-image-lightbox-btn chat-image-lightbox-zoom-btn"
+            onClick={zoomOut}
+            title={t(lang, 'imagePreviewZoomOut')}
+            aria-label={t(lang, 'imagePreviewZoomOut')}
+            disabled={scale <= ZOOM_MIN + 0.001}
+          >
+            <ZoomOutIcon />
+          </button>
+          <button
+            type="button"
+            className="chat-image-lightbox-btn chat-image-lightbox-zoom-btn"
+            onClick={zoomIn}
+            title={t(lang, 'imagePreviewZoomIn')}
+            aria-label={t(lang, 'imagePreviewZoomIn')}
+            disabled={scale >= ZOOM_MAX - 0.001}
+          >
+            <ZoomInIcon />
+          </button>
+        </div>
+      ) : null}
 
       <div className="chat-image-lightbox-toolbar">
         <button

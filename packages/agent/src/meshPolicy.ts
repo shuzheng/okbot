@@ -20,7 +20,18 @@ export type MeshPeerSpec = MeshPeerRosterEntry & {
   soulMd?: string;
   skillsText?: string;
   skillLookup?: SkillLookup;
+  /** Static fallback; prefer resolveMemoriesText at ask time. */
   memoriesText?: string;
+  /**
+   * Lazy memories when this peer enters a model call (ask_assistant).
+   * Host should pass `task` as query, select + record hits then (turn-deduped).
+   */
+  resolveMemoriesText?: (query: string) => string;
+  /**
+   * Bound manage_memory for this peer (global + peer bot memory.md).
+   * Host should pass memoryManageForBot(storage, peer.id); omit → tool returns unbound error.
+   */
+  memoryManage?: import('./tools.js').MemoryManage;
 };
 
 export type MeshRuntimeContext = {

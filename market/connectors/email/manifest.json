@@ -1,0 +1,85 @@
+{
+  "format": "okbot-market-connector",
+  "version": 1,
+  "id": "email",
+  "displayName": "邮箱",
+  "displayNameEn": "Email (IMAP/SMTP)",
+  "type": "mcp",
+  "transport": "stdio",
+  "endpointTemplate": null,
+  "auth": {
+    "kind": "env",
+    "env": {
+      "IMAP_HOST": "{{IMAP_HOST}}",
+      "IMAP_PORT": "{{IMAP_PORT}}",
+      "IMAP_USER": "{{IMAP_USER}}",
+      "IMAP_PASS": "{{IMAP_PASS}}",
+      "SMTP_HOST": "{{SMTP_HOST}}",
+      "SMTP_PORT": "{{SMTP_PORT}}",
+      "SMTP_USER": "{{SMTP_USER}}",
+      "SMTP_PASS": "{{SMTP_PASS}}",
+      "SMTP_SEND_ENABLED": "{{SMTP_SEND_ENABLED}}"
+    },
+    "notes": "通用 IMAP/SMTP 投影；适配 QQ 邮箱 / 163 / 企业邮等（通常需开启 IMAP 与客户端专用密码）。发送默认关闭（SMTP_SEND_ENABLED=false）直至用户明确开启。勿写入仓库。"
+  },
+  "providerPresets": [
+    {
+      "id": "qq-mail",
+      "displayName": "QQ 邮箱",
+      "imapHost": "imap.qq.com",
+      "imapPort": 993,
+      "smtpHost": "smtp.qq.com",
+      "smtpPort": 465
+    },
+    {
+      "id": "netease-163",
+      "displayName": "网易 163 邮箱",
+      "imapHost": "imap.163.com",
+      "imapPort": 993,
+      "smtpHost": "smtp.163.com",
+      "smtpPort": 465
+    },
+    {
+      "id": "corporate-generic",
+      "displayName": "企业邮箱（通用 IMAP/SMTP）",
+      "imapHost": "{{CORP_IMAP_HOST}}",
+      "smtpHost": "{{CORP_SMTP_HOST}}"
+    }
+  ],
+  "referenceImplementations": [
+    {
+      "name": "@aiwerk/mcp-server-imap",
+      "notes": "通用 IMAP/SMTP MCP 参考实现；非推文点名厂商，作投影模板。"
+    }
+  ],
+  "okbotMcpProjection": {
+    "name": "email",
+    "transport": "stdio",
+    "command": "npx",
+    "args": ["-y", "@aiwerk/mcp-server-imap"],
+    "env": {
+      "IMAP_HOST": "{{IMAP_HOST}}",
+      "IMAP_USER": "{{IMAP_USER}}",
+      "IMAP_PASS": "{{IMAP_PASS}}",
+      "SMTP_HOST": "{{SMTP_HOST}}",
+      "SMTP_USER": "{{SMTP_USER}}",
+      "SMTP_PASS": "{{SMTP_PASS}}",
+      "SMTP_SEND_ENABLED": "false"
+    },
+    "notes": "投影为通用 IMAP/SMTP MCP 模板；宿主可换成其他兼容实现。推文仅列出「邮箱」，无特定 MCP 品牌。"
+  },
+  "toolsSummary": [
+    "列出 / 搜索 / 读取邮件",
+    "文件夹与已读/星标标记",
+    "附件列表与下载",
+    "发送 / 回复（需显式开启 SMTP_SEND_ENABLED）",
+    "预设：QQ / 163 / 企业邮 IMAP·SMTP 主机"
+  ],
+  "docsUrls": [
+    "https://github.com/AIWerk/mcp-server-imap"
+  ],
+  "status": "stub",
+  "wave": 2,
+  "tags": ["cn", "office", "email", "imap", "smtp"],
+  "notes": "Wave-2 办公邮箱渠道。推文与飞书/钉钉/企微/语雀并列「邮箱」，无点名单一 MCP；本连接器为通用 email 清单，日后可接 CN 网页邮或专用 MCP。"
+}

@@ -58,6 +58,126 @@ export function ownerHasBusyHold(ownerId: string): boolean {
   return (busyHolds.get(id) ?? 0) > 0;
 }
 
+/**
+ * Sync flush invoked immediately before AbortController.abort on Stop / soft-steer /
+ * abortOwnerRun. Host registers a callback that serializes the live HITL RunState
+ * via the same onRunCheckpoint → RunCheckpointStore path (freshest safe boundary).
+ */
+const checkpointFlushes = new Map<string, Map<string, () => void>>();
+
+/** Last heartbeat ms per in-flight owner run (Watchdog zombie detection). */
+const runHeartbeats = new Map<string, Map<string, number>>();
+/** Keepalive timers so long tool waits still look alive to Watchdog. */
+const runHeartbeatTimers = new Map<string, Map<string, ReturnType<typeof setInterval>>>();
+
+const RUN_HEARTBEAT_TICK_MS = 10_000;
+
+export function touchOwnerRunHeartbeat(ownerId: string, runId: string): void {
+  const id = (ownerId || '').trim();
+  const rid = (runId || '').trim();
+  if (!id || !rid) return;
+  let inner = runHeartbeats.get(id);
+  if (!inner) {
+    inner = new Map();
+    runHeartbeats.set(id, inner);
+  }
+  inner.set(rid, Date.now());
+}
+
+export function getOwnerRunLastHeartbeatMs(ownerId: string, runId: string): number | null {
+  const id = (ownerId || '').trim();
+  const rid = (runId || '').trim();
+  if (!id || !rid) return null;
+  const ts = runHeartbeats.get(id)?.get(rid);
+  return typeof ts === 'number' ? ts : null;
+}
+
+function startOwnerRunHeartbeat(ownerId: string, runId: string): void {
+  const id = (ownerId || '').trim();
+  const rid = (runId || '').trim();
+  if (!id || !rid) return;
+  touchOwnerRunHeartbeat(id, rid);
+  let inner = runHeartbeatTimers.get(id);
+  if (!inner) {
+    inner = new Map();
+    runHeartbeatTimers.set(id, inner);
+  }
+  const prev = inner.get(rid);
+  if (prev) clearInterval(prev);
+  const timer = setInterval(() => {
+    touchOwnerRunHeartbeat(id, rid);
+  }, RUN_HEARTBEAT_TICK_MS);
+  timer.unref?.();
+  inner.set(rid, timer);
+}
+
+function stopOwnerRunHeartbeat(ownerId: string, runId: string): void {
+  const id = (ownerId || '').trim();
+  const rid = (runId || '').trim();
+  if (!id || !rid) return;
+  const timers = runHeartbeatTimers.get(id);
+  const t = timers?.get(rid);
+  if (t) {
+    clearInterval(t);
+    timers!.delete(rid);
+    if (timers!.size === 0) runHeartbeatTimers.delete(id);
+  }
+  const beats = runHeartbeats.get(id);
+  if (beats) {
+    beats.delete(rid);
+    if (beats.size === 0) runHeartbeats.delete(id);
+  }
+}
+
+
+/** Register (or replace) a sync checkpoint flush for an in-flight owner run. */
+export function setOwnerRunCheckpointFlush(
+  ownerId: string,
+  runId: string,
+  flush: () => void,
+): void {
+  const id = (ownerId || '').trim();
+  const rid = (runId || '').trim();
+  if (!id || !rid || typeof flush !== 'function') return;
+  let inner = checkpointFlushes.get(id);
+  if (!inner) {
+    inner = new Map();
+    checkpointFlushes.set(id, inner);
+  }
+  inner.set(rid, flush);
+  touchOwnerRunHeartbeat(id, rid);
+}
+
+/** Drop a registered flush (unregister / replace). */
+export function clearOwnerRunCheckpointFlush(ownerId: string, runId: string): void {
+  const id = (ownerId || '').trim();
+  const rid = (runId || '').trim();
+  if (!id || !rid) return;
+  const inner = checkpointFlushes.get(id);
+  if (!inner) return;
+  inner.delete(rid);
+  if (inner.size === 0) checkpointFlushes.delete(id);
+}
+
+function flushOwnerRunCheckpoint(ownerId: string, runId: string): void {
+  const id = (ownerId || '').trim();
+  const rid = (runId || '').trim();
+  if (!id || !rid) return;
+  const flush = checkpointFlushes.get(id)?.get(rid);
+  if (!flush) return;
+  try {
+    flush();
+  } catch (err) {
+    console.error('[okbot] run checkpoint flush before abort failed', err);
+  }
+}
+
+function clearOwnerCheckpointFlushes(ownerId: string): void {
+  const id = (ownerId || '').trim();
+  if (!id) return;
+  checkpointFlushes.delete(id);
+}
+
 function queueFor(ownerId: string): OwnerQueue {
   let q = queues.get(ownerId);
   if (!q) {
@@ -151,6 +271,7 @@ export function registerOwnerRun(
     map.set(id, inner);
   }
   inner.set(runId, controller);
+  startOwnerRunHeartbeat(id, runId);
   // Replacement turn after soft-steer: drop the abort→restart busy hold.
   releaseOwnerBusyHold(id);
 }
@@ -169,6 +290,8 @@ export function unregisterOwnerRun(
   if (controller && cur && cur !== controller) return;
   inner.delete(runId);
   if (inner.size === 0) map.delete(id);
+  clearOwnerRunCheckpointFlush(id, runId);
+  stopOwnerRunHeartbeat(id, runId);
 }
 
 /** Abort every in-flight controller for this owner and drop queued waits. */
@@ -184,13 +307,18 @@ export function abortAllOwnerRuns(map: AbortControllerMap, ownerId: string): boo
     map.delete(id);
     return hadQueued;
   }
-  for (const ctrl of inner.values()) {
+  for (const [runId, ctrl] of inner.entries()) {
+    flushOwnerRunCheckpoint(id, runId);
     try {
       ctrl.abort();
     } catch {
       /* ignore */
     }
+    // Stop keepalive before map.delete — otherwise finally unregisterOwnerRun
+    // early-returns (map empty) and the 10s setInterval + runHeartbeats entry leak.
+    stopOwnerRunHeartbeat(id, runId);
   }
+  clearOwnerCheckpointFlushes(id);
   map.delete(id);
   return true;
 }
@@ -228,6 +356,7 @@ export function abortOwnerRun(
   const inner = map.get(id);
   const ctrl = inner?.get(rid);
   if (!ctrl) return false;
+  flushOwnerRunCheckpoint(id, rid);
   try {
     ctrl.abort();
   } catch {
@@ -352,6 +481,12 @@ export async function withOwnerSessionWriteLock<T>(
 export function resetOwnerRunQueuesForTests(): void {
   queues.clear();
   busyHolds.clear();
+  checkpointFlushes.clear();
+  for (const timers of runHeartbeatTimers.values()) {
+    for (const t of timers.values()) clearInterval(t);
+  }
+  runHeartbeatTimers.clear();
+  runHeartbeats.clear();
   exclusiveChains.clear();
   maintenanceChains.clear();
   sessionWriteChains.clear();

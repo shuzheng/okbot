@@ -14,13 +14,16 @@ const manageTaskProgressArgs = z.object({
   id: optionalToolId,
   title: z.string().nullable().optional(),
   note: z.string().nullable().optional(),
-  status: z.enum(['pending', 'in_progress', 'done', 'cancelled', 'failed']).nullable().optional(),
+  status: z.enum(['backlog', 'pending', 'in_progress', 'done']).nullable().optional(),
   steps: z
     .array(
       z.object({
         id: optionalToolId,
         title: z.string(),
-        status: z.enum(['pending', 'in_progress', 'done', 'cancelled', 'failed']).nullable().optional(),
+        status: z
+          .enum(['pending', 'in_progress', 'blocked', 'succeeded', 'failed', 'cancelled'])
+          .nullable()
+          .optional(),
         note: z.string().nullable().optional(),
       }),
     )
@@ -28,7 +31,10 @@ const manageTaskProgressArgs = z.object({
     .optional(),
   step_id: optionalToolId,
   step_title: z.string().nullable().optional(),
-  step_status: z.enum(['pending', 'in_progress', 'done', 'cancelled', 'failed']).nullable().optional(),
+  step_status: z
+    .enum(['pending', 'in_progress', 'blocked', 'succeeded', 'failed', 'cancelled'])
+    .nullable()
+    .optional(),
   step_note: z.string().nullable().optional(),
   step_new_title: z.string().nullable().optional(),
   include_done: z.boolean().nullable().optional(),
@@ -51,7 +57,7 @@ const upd = manageTaskProgressArgs.parse({
   action: 'update',
   id: 'task_abc',
   step_id: 3,
-  step_status: 'done',
+  step_status: 'succeeded',
 });
 assert.equal(upd.id, 'task_abc');
 assert.equal(upd.step_id, '3');
@@ -64,6 +70,21 @@ const omitted = manageTaskProgressArgs.parse({
   steps: [{ title: 'only title' }],
 });
 assert.equal(omitted.steps?.[0]?.id, undefined);
+
+const backlog = manageTaskProgressArgs.parse({
+  action: 'add',
+  status: 'backlog',
+  title: '池',
+  steps: [{ title: '一步', status: 'pending' }],
+});
+assert.equal(backlog.status, 'backlog');
+
+const blocked = manageTaskProgressArgs.parse({
+  action: 'update',
+  id: 't1',
+  step_status: 'blocked',
+});
+assert.equal(blocked.step_status, 'blocked');
 
 // OpenAI strict: bare `.optional()` without `.nullable()` throws UserError at tool().
 tool({

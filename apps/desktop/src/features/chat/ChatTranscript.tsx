@@ -28,6 +28,7 @@ import {
   TurnTraceIcon,
 } from '../../components/ui/icons';
 import { BubbleMoreMenu } from './BubbleMoreMenu';
+import { BubbleReactionBadge } from './BubbleReactionBadge';
 import { resolveMessageAttachments } from '../../utils/messageAttachments';
 import {
   mediaPathFromAbsolute,
@@ -40,6 +41,7 @@ import {
   shouldShowMessageTimeDivider,
 } from '../../utils/formatSessionUpdatedAt';
 import { QuickChoiceCard } from './QuickChoiceCard';
+import { NoteCard } from './NoteCard';
 import { AssistantContent } from './AssistantContent';
 import { MentionsText } from './MentionsText';
 import { ToolCardView } from './ToolCardView';
@@ -57,12 +59,15 @@ import {
   isMeshReceived,
   meshStatusChipRef,
 } from './meshStatusDisplay';
+import type { MentionEntityRef } from '../../utils/entityMentions';
 
 export type ChatTranscriptProps = {
   lang: UiLang;
   messages: ChatMessage[];
   toolCards: ToolCard[];
   bots: Bot[];
+  /** Multi-kind @ mention catalog for chips / markdown. */
+  mentionCatalog?: readonly MentionEntityRef[];
   selectedBot: Bot | null;
   selectedSquad: Squad | null;
   busy: boolean;
@@ -79,6 +84,8 @@ export type ChatTranscriptProps = {
   bottomRef: RefObject<HTMLDivElement | null>;
   onOpenPromptContext: (messageId: string) => void;
   onQuoteMessage: (message: ChatMessage) => void;
+  /** User picked an emoji reaction on an assistant bubble (or clear via same emoji). */
+  onReactMessage: (message: ChatMessage, emoji: string) => void;
   onCopyMessage: (message: ChatMessage) => boolean | Promise<boolean>;
   /** `ProviderDisplayName/modelNameOrId` for the active chat (usage popover). */
   usageModelRef?: string;
@@ -203,6 +210,7 @@ function AssistantBubbleActions({
   onCopyMessage,
   onQuoteMessage,
   onViewTurnTrace,
+  onReactMessage,
 }: {
   lang: UiLang;
   message: ChatMessage;
@@ -211,6 +219,7 @@ function AssistantBubbleActions({
   onCopyMessage: (message: ChatMessage) => boolean | Promise<boolean>;
   onQuoteMessage: (message: ChatMessage) => void;
   onViewTurnTrace: (message: ChatMessage) => void;
+  onReactMessage: (message: ChatMessage, emoji: string) => void;
 }) {
   const moreBtnRef = useRef<HTMLButtonElement | null>(null);
   const [usageOpen, setUsageOpen] = useState(false);
@@ -242,14 +251,17 @@ function AssistantBubbleActions({
         <QuoteReplyIcon />
       </button>
       <BubbleCopyButton lang={lang} message={message} onCopyMessage={onCopyMessage} />
-      {moreItems.length ? (
-        <BubbleMoreMenu
-          lang={lang}
-          items={moreItems}
-          preferLeft
-          buttonRef={moreBtnRef}
-        />
-      ) : null}
+      <BubbleMoreMenu
+        lang={lang}
+        items={moreItems}
+        preferLeft
+        buttonRef={moreBtnRef}
+        enableReactions
+        currentReactionEmoji={
+          message.reaction?.from === 'user' ? message.reaction.emoji : undefined
+        }
+        onPickReaction={(emoji) => onReactMessage(message, emoji)}
+      />
       <BubbleUsageFromMenu
         lang={lang}
         message={message}
@@ -402,6 +414,7 @@ export const ChatTranscript = memo(function ChatTranscript({
   messages,
   toolCards,
   bots,
+  mentionCatalog,
   selectedBot,
   selectedSquad,
   busy,
@@ -416,6 +429,7 @@ export const ChatTranscript = memo(function ChatTranscript({
   bottomRef,
   onOpenPromptContext,
   onQuoteMessage,
+  onReactMessage,
   onCopyMessage,
   usageModelRef,
   onViewTurnTrace,
@@ -750,9 +764,12 @@ export const ChatTranscript = memo(function ChatTranscript({
                                 m.sendStatus === 'pending' ? ' send-pending' : ''
                               }${m.sendStatus === 'failed' ? ' send-failed' : ''}${
                                 hasUserBody ? '' : ' bubble-attach-only'
-                              }`}
+                              }${m.reaction ? ' has-reaction' : ''}`}
                             >
-                              {hasUserBody ? <MentionsText text={userBody} bots={bots} preferBotId={sessionOwnerId} /> : null}
+                              {hasUserBody ? <MentionsText text={userBody} bots={bots} catalog={mentionCatalog} preferBotId={sessionOwnerId} /> : null}
+                              {m.reaction && m.reaction.from === 'assistant' ? (
+                                <BubbleReactionBadge reaction={m.reaction} placement="br" />
+                              ) : null}
                               {m.sendStatus === 'failed' ? (
                                 <button
                                   type="button"
@@ -783,7 +800,7 @@ export const ChatTranscript = memo(function ChatTranscript({
                       </div>
                     ) : (
                       <div className="bubble-body-row bubble-body-row-assistant">
-                        <div className={`bubble assistant${showMemberAvatar ? ' has-speaker-label' : ''}`}>
+                        <div className={`bubble assistant${showMemberAvatar ? ' has-speaker-label' : ''}${m.reaction ? ' has-reaction' : ''}`}>
                           {speakerLabel ? (
                             <div className="bubble-speaker-label">{speakerLabel}</div>
                           ) : null}
@@ -792,8 +809,16 @@ export const ChatTranscript = memo(function ChatTranscript({
                             content={m.content}
                             showThinking={showThinking}
                             bots={bots}
+                            mentionCatalog={mentionCatalog}
                             preferBotId={speakerId || sessionOwnerId}
                           />
+                          {m.reaction && m.reaction.from === 'user' ? (
+                            <BubbleReactionBadge
+                              reaction={m.reaction}
+                              placement="bl"
+                              onClick={() => onReactMessage(m, m.reaction!.emoji)}
+                            />
+                          ) : null}
                         </div>
                         <AssistantBubbleActions
                           lang={lang}
@@ -803,11 +828,19 @@ export const ChatTranscript = memo(function ChatTranscript({
                           onCopyMessage={onCopyMessage}
                           onQuoteMessage={onQuoteMessage}
                           onViewTurnTrace={onViewTurnTrace}
+                          onReactMessage={onReactMessage}
                         />
                       </div>
                     )}
                   </BubbleSwipeRow>
                 )}
+                {m.noteCard && (selectedSquad?.id || selectedBot?.id) ? (
+                  <NoteCard
+                    lang={lang}
+                    ownerId={(selectedSquad?.id || selectedBot?.id)!}
+                    note={m.noteCard}
+                  />
+                ) : null}
                 {m.id === choiceTargetId && m.choice ? (
                   <QuickChoiceCard
                     lang={lang}

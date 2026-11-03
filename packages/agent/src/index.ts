@@ -15,7 +15,18 @@ export {
   toolRootDir,
   expandHome,
   isAbsoluteOrHomePath,
+  OWNER_TEMP_DIR_NAME,
+  OWNER_RESERVED_BASENAMES,
+  OWNER_DATA_ROOT_RESERVED_BASENAMES,
+  ownerWorkDirFromResourcesDir,
+  ensureOwnerTempDir,
   resolveOwnerWorkPath,
+  isOwnerDurableWriteTarget,
+  checkOwnerDurableWriteAllowed,
+  findReservedOwnerShellWrite,
+  resolveShellPathToken,
+  isPathInsideDir,
+  resolveOwnerLibraryIndexTarget,
 } from './guardrails.js';
 export {
   formatSessionPromptContext,
@@ -51,6 +62,7 @@ export { runAgentChat, resumeAgentChatAfterHitl, resumeAgentChatFromCheckpoint }
 export {
   runSquadChat,
   resumeSquadChatAfterHitl,
+  resumeSquadChatFromCheckpoint,
   formatSquadResumeNote,
   dropUnansweredToolCalls,
   type SquadResumedReply,
@@ -179,6 +191,7 @@ export {
   type BuildToolsOptions,
   type ScheduleManage,
   type TaskProgressManage,
+  type NoteManage,
   type EmitAssistantMessage,
 } from './tools.js';
 export {
@@ -220,6 +233,7 @@ export {
   parseOwnerResourceMarkdownSrc,
   normalizeMediaMarkdownSrc,
   normalizeReplyMediaMarkdown,
+  listOwnerResourceMediaRefsFromMarkdown,
   stripInternalImageStorageHints,
   ownerResourceAssetRel,
   ownerResourcesDir,
@@ -314,3 +328,4 @@ export type {
   ContextMaterialCadence,
   ContextMaterialKind,
 } from './contextMaterials/index.js';
+

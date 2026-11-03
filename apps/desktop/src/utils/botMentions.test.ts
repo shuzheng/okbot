@@ -71,7 +71,7 @@ assert.equal(isBotMentionHref('https://example.com'), false);
 
 {
   const out = linkifyBotMentions('向 @翻译助手 求助：\n翻这段', [translator]);
-  assert.match(out, /\[@翻译助手\]\(okbot-mention:bot-tr\)/);
+  assert.match(out, /\[@翻译助手\]\(okbot-mention:bot:bot-tr\)/);
   assert.match(out, /翻这段/);
 }
 
@@ -80,7 +80,7 @@ assert.equal(isBotMentionHref('https://example.com'), false);
   const out = linkifyBotMentions(md, [translator]);
   assert.match(out, /`@翻译助手`/);
   assert.match(out, /```\n@翻译助手\n```/);
-  assert.match(out, /ok \[@翻译助手\]\(okbot-mention:bot-tr\)/);
+  assert.match(out, /ok \[@翻译助手\]\(okbot-mention:bot:bot-tr\)/);
 }
 
 
@@ -109,7 +109,7 @@ assert.equal(isBotMentionHref('https://example.com'), false);
 
 {
   const out = linkifyBotMentions('请「翻译助手」看一下', [translator]);
-  assert.match(out, /\[@翻译助手\]\(okbot-mention:bot-tr\)/);
+  assert.match(out, /\[@翻译助手\]\(okbot-mention:bot:bot-tr\)/);
 }
 
 console.log('botMentions.test.ts: ok');
@@ -149,6 +149,6 @@ console.log('botMentions.test.ts: ok');
   assert.equal(byId.some((s) => s.kind === 'mention' && s.bot.id === 'bot_b'), true);
 
   const linked = linkifyBotMentions('我是「新建助手」', [a, b], { preferBotId: 'bot_b' });
-  assert.match(linked, /okbot-mention:bot_b/);
-  assert.doesNotMatch(linked, /okbot-mention:bot_a/);
+  assert.match(linked, /okbot-mention:bot:bot_b/);
+  assert.doesNotMatch(linked, /okbot-mention:bot:bot_a/);
 }

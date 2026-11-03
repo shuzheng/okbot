@@ -4,7 +4,7 @@ import { CheckIcon } from '../../components/ui/icons';
 import { AssistantGalleryList } from '../bots';
 
 /**
- * First-run guide on the empty main pane:
+ * First-run guide as a full-window overlay (sidebar + chat underneath):
  * 1) add one model provider, 2) pick a starter assistant, 3) send the first message.
  */
 export function QuickStartPanel({

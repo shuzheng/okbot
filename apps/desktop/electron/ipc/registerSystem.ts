@@ -78,7 +78,7 @@ export function registerWindowControlIpc(): void {
 
   // Owner + attach: translucent/vibrancy must work without full entity IPC.
   ipcMain.handle(IpcChannels.applyWindowTranslucent, (_e, translucent: unknown) => {
-    invokeApplyWindowTranslucent(translucent !== false);
+    invokeApplyWindowTranslucent(translucent === true);
     return true;
   });
 
@@ -377,6 +377,94 @@ export function registerSystemIpc(ctx: IpcContext): void {
       isPackaged: app.isPackaged,
     };
   });
+
+  ipcMain.handle(
+    IpcChannels.openOwnerResource,
+    async (_e, payload: { ownerId?: string; resourceId?: string }) => {
+      const ownerId = (payload?.ownerId || '').trim();
+      const resourceId = (payload?.resourceId || '').trim();
+      if (!ownerId || !resourceId) {
+        return { ok: false as const, error: 'missing_ids' };
+      }
+      try {
+        const rec = ctx.storage.getOwnerResource(ownerId, resourceId);
+        if (!rec) return { ok: false as const, error: 'not_found' };
+        if (rec.type === 'url') {
+          const url = (rec.path || '').trim();
+          if (!/^https?:\/\//i.test(url)) {
+            return { ok: false as const, error: 'invalid_url' };
+          }
+          await shell.openExternal(url);
+          return { ok: true as const };
+        }
+        const target = (rec.path || '').trim();
+        if (!target) return { ok: false as const, error: 'missing_path' };
+        // Prefer reveal in Finder/Explorer for files; openPath for folders.
+        if (rec.type === 'folder') {
+          const err = await shell.openPath(target);
+          if (err) return { ok: false as const, error: err };
+          return { ok: true as const };
+        }
+        try {
+          shell.showItemInFolder(target);
+          return { ok: true as const };
+        } catch {
+          const err = await shell.openPath(target);
+          if (err) return { ok: false as const, error: err };
+          return { ok: true as const };
+        }
+      } catch (err) {
+        console.error('[okbot] openOwnerResource failed', err);
+        return {
+          ok: false as const,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    },
+  );
+
+
+  ipcMain.handle(
+    IpcChannels.captureNoteHtmlPreview,
+    async (_e, payload: { html?: string; width?: number; height?: number }) => {
+      const html = typeof payload?.html === 'string' ? payload.html : '';
+      if (!html.trim()) {
+        return { ok: false as const, error: 'html required' };
+      }
+      const width = Math.min(Math.max(Number(payload?.width) || 720, 320), 1280);
+      const height = Math.min(Math.max(Number(payload?.height) || 900, 240), 1600);
+      let win: BrowserWindow | null = null;
+      try {
+        win = new BrowserWindow({
+          show: false,
+          width,
+          height,
+          webPreferences: {
+            offscreen: true,
+            sandbox: true,
+            contextIsolation: true,
+            nodeIntegration: false,
+          },
+        });
+        const dataUrl = `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+        await win.loadURL(dataUrl);
+        // Brief settle for layout/fonts (no continuous refresh).
+        await new Promise((r) => setTimeout(r, 120));
+        const image = await win.webContents.capturePage();
+        const png = image.toDataURL();
+        return { ok: true as const, dataUrl: png };
+      } catch (err) {
+        console.error('[okbot] captureNoteHtmlPreview failed', err);
+        return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
+      } finally {
+        try {
+          if (win && !win.isDestroyed()) win.destroy();
+        } catch {
+          /* ignore */
+        }
+      }
+    },
+  );
 
   registerUpdaterIpc();
 }

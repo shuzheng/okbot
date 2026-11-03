@@ -5,6 +5,9 @@ import {
   isLoopbackHostname,
   isInsecureRemoteMcpUrl,
   isSecretName,
+  normalizeMcpSettings,
+  DEFAULT_MCP_SETTINGS,
+  DEFAULT_SETTINGS,
 } from './dist/index.js';
 
 const r = (args) => redactSecretArgs(args);
@@ -95,5 +98,25 @@ for (const h of ['127.evil.com', '[::ffff:10.0.0.1]', '[::ffff:a00:1]', '10.0.0.
 }
 assert.equal(isInsecureRemoteMcpUrl('http://[::ffff:127.0.0.1]:3000/mcp'), false);
 assert.equal(isInsecureRemoteMcpUrl('http://[::ffff:10.0.0.1]:3000/mcp'), true);
+
+// Factory / missing mcp → enabled on; explicit false preserved.
+assert.equal(DEFAULT_MCP_SETTINGS.enabled, true);
+assert.equal(DEFAULT_SETTINGS.mcp.enabled, true);
+assert.deepEqual(normalizeMcpSettings(undefined), { enabled: true, servers: [] });
+assert.deepEqual(normalizeMcpSettings(null), { enabled: true, servers: [] });
+assert.deepEqual(normalizeMcpSettings({}), { enabled: true, servers: [] });
+assert.deepEqual(normalizeMcpSettings({ servers: [] }), { enabled: true, servers: [] });
+assert.deepEqual(normalizeMcpSettings({ enabled: false, servers: [] }), { enabled: false, servers: [] });
+assert.deepEqual(normalizeMcpSettings({ enabled: true, servers: [] }), { enabled: true, servers: [] });
+{
+  const kept = normalizeMcpSettings({
+    enabled: false,
+    servers: [{ id: 's1', name: 'S1', enabled: true, transport: 'stdio', command: 'echo' }],
+  });
+  assert.equal(kept.enabled, false);
+  assert.equal(kept.servers.length, 1);
+  assert.equal(kept.servers[0].id, 's1');
+}
+
 
 console.log('mcp.test.mjs: ok');

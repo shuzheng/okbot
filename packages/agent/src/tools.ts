@@ -2,7 +2,12 @@ import { tool } from '@openai/agents';
 import { z } from 'zod';
 import type { SecuritySettings, ToolPreferences } from '@okbot/shared';
 import { DEFAULT_SECURITY } from '@okbot/shared';
-import { buildToolInputGuardrails, buildToolOutputGuardrails } from './guardrails.js';
+import {
+  buildToolInputGuardrails,
+  buildToolOutputGuardrails,
+  ownerWorkDirFromResourcesDir,
+  resolveOwnerLibraryIndexTarget,
+} from './guardrails.js';
 
 import { wrapToolExecute, type ToolRunBudget } from './toolRunBudget.js';
 import {
@@ -97,19 +102,42 @@ export type TaskProgressManage = (input: {
   id?: string | null;
   title?: string | null;
   note?: string | null;
-  status?: 'pending' | 'in_progress' | 'done' | 'cancelled' | 'failed' | null;
+  status?: 'backlog' | 'pending' | 'in_progress' | 'done' | null;
   steps?: Array<{
     id?: string | null;
     title: string;
-    status?: 'pending' | 'in_progress' | 'done' | 'cancelled' | 'failed' | null;
+    status?:
+      | 'pending'
+      | 'in_progress'
+      | 'blocked'
+      | 'succeeded'
+      | 'failed'
+      | 'cancelled'
+      | null;
     note?: string | null;
   }> | null;
   step_id?: string | null;
   step_title?: string | null;
-  step_status?: 'pending' | 'in_progress' | 'done' | 'cancelled' | 'failed' | null;
+  step_status?:
+    | 'pending'
+    | 'in_progress'
+    | 'blocked'
+    | 'succeeded'
+    | 'failed'
+    | 'cancelled'
+    | null;
   step_note?: string | null;
   step_new_title?: string | null;
   include_done?: boolean | null;
+}) => Promise<string> | string;
+
+/** Create/update HTML notes in the per-owner resources library (scoped by the host). */
+export type NoteManage = (input: {
+  action: 'create' | 'update' | 'list' | 'get';
+  title?: string | null;
+  html?: string | null;
+  id?: string | null;
+  path?: string | null;
 }) => Promise<string> | string;
 
 /** Pin / forget / promote memories for the current bot (scoped by the desktop host). */
@@ -121,7 +149,21 @@ export type MemoryManage = (input: {
 }) => Promise<string> | string;
 
 /** Emit a standalone assistant chat bubble mid-run (host seals/rotates live id). */
-export type EmitAssistantMessage = (content: string) => Promise<void> | void;
+/** Plain string = text bubble (legacy). Object may be text, reaction, or both. */
+export type EmitAssistantMessageInput =
+  | string
+  | {
+      /** Markdown bubble body. Omit for reaction-only. */
+      content?: string;
+      /** User bubble id: place/clear an emoji reaction (no new timeline row). */
+      reactToMessageId?: string;
+      /** Emoji for reactToMessageId; empty string clears the assistant reaction. */
+      emoji?: string;
+    };
+
+export type EmitAssistantMessage = (
+  input: EmitAssistantMessageInput,
+) => Promise<void> | void;
 
 export type BuildToolsOptions = {
   /** Required for `read_skill` to return bodies; omit when no skill catalog is bound. */
@@ -140,7 +182,11 @@ export type BuildToolsOptions = {
    */
   taskProgressManage?: TaskProgressManage;
   /**
-   * Required for `manage_memory`. Host must scope to the current bot (global+bot memory.md).
+   * Required for `manage_note`. Host must scope to the current bot/squad only.
+   */
+  noteManage?: NoteManage;
+  /**
+   * Required for `manage_memory`. Bot host: global+bot memory.md; squad host: global only.
    */
   memoryManage?: MemoryManage;
   /**
@@ -161,10 +207,22 @@ export type BuildToolsOptions = {
    */
   imageApi?: ImageApiCredentials;
   /**
-   * Where to save generated images: bot/squad `resources/` dir + owner id for
-   * `/v1/media/<ownerId>/resources/…` markdown.
+   * Owner `resources/` dir + id for generate_image media URLs, and for indexing
+   * library files written under that dir (`generate_image`, `write_file`, `edit_file`).
    */
-  imageAssets?: { ownerId: string; resourcesDir: string };
+  imageAssets?: {
+    ownerId: string;
+    resourcesDir: string;
+    /** Index into resources.jsonl after a successful library save (host-provided). */
+    onSaved?: (info: { filePath: string; assetRel: string; title?: string }) => void;
+  };
+  /**
+   * Host same-topic gate for write_file under owner resources/.
+   * Return a tool error string to reject create of a colliding new path;
+   * null/undefined allows. Same-path overwrite is decided by the host
+   * (typically allowed). Remote computers skip this gate.
+   */
+  assertLibraryWriteAllowed?: (input: { filePath: string }) => string | null | undefined;
   /**
    * Shell + fs execution target. Default = local desktop host.
    * Skills + image gen always stay on the desktop host (not routed here).
@@ -209,9 +267,11 @@ export function buildTools(
 ) {
   const list = [];
   const resourcesDir = options?.imageAssets?.resourcesDir?.trim() || '';
+  const workDir = resourcesDir ? ownerWorkDirFromResourcesDir(resourcesDir) : '';
   const route = options?.computerRoute;
   const inputGuardrails = buildToolInputGuardrails(security ?? DEFAULT_SECURITY, {
     resourcesDir: resourcesDir || null,
+    workDir: workDir || null,
     computerRoute: route ?? null,
   });
   const outputGuardrails = buildToolOutputGuardrails(security ?? DEFAULT_SECURITY);
@@ -220,7 +280,11 @@ export function buildTools(
     ...(outputGuardrails.length ? { outputGuardrails } : {}),
   };
   const backend =
-    options?.backend ?? createLocalExecutionBackend({ resourcesDir: resourcesDir || null });
+    options?.backend ??
+    createLocalExecutionBackend({
+      resourcesDir: resourcesDir || null,
+      workDir: workDir || null,
+    });
   const where = route ? defaultComputerLabel(route) : backend.label || '本机';
   const onBeforeToolExecute = options?.onBeforeToolExecute;
   /** Local wrap: always attach tool-boundary seal hook when provided. */
@@ -249,7 +313,33 @@ export function buildTools(
       computerId: picked.id,
       computers: route.computers,
       resourcesDir: resourcesDir || null,
+      workDir: workDir || null,
     });
+  }
+
+  function localFsForComputer(computer?: string | null): boolean {
+    if (!route) return true;
+    const picked = selectComputerForTool(route, computer);
+    if (!picked.ok) return false;
+    return picked.id === 'local';
+  }
+
+  /** Index a successful local write/edit under owner resources/ into resources.jsonl. */
+  function indexLibraryWriteIfNeeded(filePath: string, computer?: string | null): void {
+    const assets = options?.imageAssets;
+    if (!assets?.onSaved) return;
+    const target = resolveOwnerLibraryIndexTarget({
+      filePath,
+      resourcesDir: assets.resourcesDir,
+      ownerId: assets.ownerId,
+      localFs: localFsForComputer(computer),
+    });
+    if (!target) return;
+    try {
+      assets.onSaved(target);
+    } catch (err) {
+      console.error('[okbot] library file index failed', err);
+    }
   }
 
   const shellHint = route
@@ -267,7 +357,15 @@ export function buildTools(
           : `在「${where}」通过系统命令行执行一条命令（${shellHint}）。仅在用户明确需要时使用；危险命令会先请求用户批准。`,
         parameters: z.object({
           command: z.string().describe('要执行的命令'),
-          cwd: z.string().nullable().optional().describe('可选工作目录，支持 ~'),
+          cwd: z
+            .string()
+            .nullable()
+            .optional()
+            .describe(
+              workDir
+                ? `可选工作目录，支持 ~；省略时默认当前助手/小队 temp/（${workDir}/temp）；持久状态勿覆盖；资料库用 resources/…`
+                : '可选工作目录，支持 ~；省略时默认用户主目录',
+            ),
           computer: computerParam,
         }),
         needsApproval: prefs.run_shell.approval === 'ask',
@@ -290,9 +388,13 @@ export function buildTools(
         name: 'read_file',
         description: route
           ? `读取电脑上的一个文本文件（默认「${where}」）。用户点名电脑时传 computer。`
-          : `读取「${where}」上的一个文本文件；相对路径默认在当前助手/小队 resources/。`,
+          : `读取「${where}」上的一个文本文件；相对路径默认在当前助手/小队工作根目录（资料用 resources/，临时用 temp/；shell 默认 cwd 为 temp/）。`,
         parameters: z.object({
-          path: z.string().describe('文件路径：相对路径默认落到当前助手/小队 resources/；也可用绝对路径或 ~/…'),
+          path: z
+            .string()
+            .describe(
+              '文件路径：相对路径默认落到当前助手/小队工作根目录；资料库文件用 resources/…，临时脚本/产出用 temp/…；勿覆盖 session.jsonl 等持久状态；也可用绝对路径或 ~/…',
+            ),
           computer: computerParam,
         }),
         needsApproval: prefs.read_file.approval === 'ask',
@@ -402,7 +504,7 @@ export function buildTools(
       tool({
         name: 'manage_schedule',
         description:
-          '管理当前助手/小队的定时任务（到点后会像用户发消息一样唤醒一轮对话；定时轮次沿用当前工具审批/预算，无单独收紧）。action=create|list|pause|resume|delete。create 时传 schedule（如 daily 09:00、每天 09:00、hourly、every 15m、cron 0 9 * * 1-5）与 prompt；可选 title、timezone（IANA，省略则用 settings.timezone，再否则用运行 OkBot 的机器本地时区）、once。pause/resume/delete 传 job_id（或唯一 title）。未用到的可选字段请省略，不要传 null。create/delete 始终需要用户确认；list 不需确认。',
+          '管理当前助手/小队的定时任务（到点后会像用户发消息一样唤醒一轮对话；定时轮次沿用当前工具审批/预算，无单独收紧）。action=create|list|pause|resume|delete。create 时传 schedule（如 daily 09:00、每天 09:00、hourly、every 15m、cron 0 9 * * 1-5）与 prompt；可选 title、timezone（IANA，省略则用 settings.timezone，再否则用运行 OkBot 的机器本地时区）、once。pause/resume/delete 传 job_id（或唯一 title）。未用到的可选字段请省略，不要传 null。create/delete 始终需要用户确认；list 不需确认。边界：明确时间/周期用本工具；无排期的当场事项/需求池用 manage_task_progress。',
         parameters: z.object({
           action: z
             .enum(['create', 'list', 'pause', 'resume', 'delete'])
@@ -461,27 +563,27 @@ export function buildTools(
       tool({
         name: 'manage_task_progress',
         description:
-          '管理当前助手/小队的多任务（持久 tasks.jsonl：一行一任务；add 追加；update 按任务 id 原地改写该行；list 查看）。主机不判断新任务/更新/取消——由你用本工具维护。status=pending|in_progress|done|cancelled|failed。任一步 in_progress ⇒ 任务 in_progress；全部步骤 done ⇒ 任务 done。按添加顺序串行推进，不要并行开多个任务。新任务 add（可带 steps；任务 id 由主机生成 ULID，add 可不传 id）；推进用 update（id + step_id/step_status，或替换 steps）。软接管/中断后磁盘保留未完成任务：先 list/对照系统提示「当前任务」，再继续。有未完成任务时自动继续，不要问要不要继续。未用到的可选字段请省略，不要传 null。向用户汇报进度时只用产品语言（任务/未完成任务），不要说「队列」，不要在回复里写出本工具名或 tasks.jsonl。',
+          '管理当前助手/小队的多任务（持久 tasks.jsonl：一行一任务；add 追加；update 按任务 id 原地改写该行；list 查看）。主机不判断新任务/更新/取消——由你用本工具维护。任务 status=backlog|pending|in_progress|done（backlog=未做池，仅显式设置；出池设 pending）。步骤 status=pending|in_progress|blocked|succeeded|failed|cancelled（无 backlog；旧 done 已改为 succeeded）。推导：任一步 in_progress/blocked ⇒ 任务 in_progress；全部步骤终态 ⇒ 任务 done；全 pending ⇒ pending。整任务取消：update status=done（未终态步骤→cancelled，任务→done）。backlog 中禁止把步骤标 in_progress。按添加顺序串行推进。软接管后先 list/对照再继续。有可推进的未完成任务时自动继续；步骤 blocked 时暂停自动续跑。未用到的可选字段请省略，不要传 null。对用户只用产品语言（任务/未完成任务），不要说「队列」或工具名/tasks.jsonl。边界：有明确时间点或周期（明天9点、每周一、cron等）→用 manage_schedule，不要建成任务；当场要办或只记需求、无排期 →用本工具（可 backlog）。',
         parameters: z.object({
           action: z.enum(['add', 'update', 'list']).describe('add / update / list'),
           id: optionalToolId.describe('update：任务 id（ULID）；add：可选，须为 ULID，否则主机自动生成'),
           title: z.string().nullable().optional().describe('任务标题（add/update）'),
           note: z.string().nullable().optional().describe('任务备注（空字符串清除）'),
           status: z
-            .enum(['pending', 'in_progress', 'done', 'cancelled', 'failed'])
+            .enum(['backlog', 'pending', 'in_progress', 'done'])
             .nullable()
             .optional()
-            .describe('任务状态；通常由步骤自动推导，cancelled/failed 可显式设置'),
+            .describe('任务状态；通常由步骤推导。backlog 仅显式入池；出池用 pending；done 取消/结束整任务'),
           steps: z
             .array(
               z.object({
                 id: optionalToolId.describe('可选步骤 id；省略时主机生成 ULID'),
                 title: z.string().describe('步骤标题'),
                 status: z
-                  .enum(['pending', 'in_progress', 'done', 'cancelled', 'failed'])
+                  .enum(['pending', 'in_progress', 'blocked', 'succeeded', 'failed', 'cancelled'])
                   .nullable()
                   .optional()
-                  .describe('默认 pending'),
+                  .describe('默认 pending；完成用 succeeded'),
                 note: z.string().nullable().optional().describe('可选备注'),
               }),
             )
@@ -491,17 +593,17 @@ export function buildTools(
           step_id: optionalToolId.describe('update：按步骤 id 单条更新'),
           step_title: z.string().nullable().optional().describe('update：按唯一步骤标题定位'),
           step_status: z
-            .enum(['pending', 'in_progress', 'done', 'cancelled', 'failed'])
+            .enum(['pending', 'in_progress', 'blocked', 'succeeded', 'failed', 'cancelled'])
             .nullable()
             .optional()
-            .describe('update：步骤新状态'),
+            .describe('update：步骤新状态（完成用 succeeded）'),
           step_note: z.string().nullable().optional().describe('update：步骤备注（空字符串清除）'),
           step_new_title: z.string().nullable().optional().describe('update：重命名步骤'),
           include_done: z
             .boolean()
             .nullable()
             .optional()
-            .describe('list：true 时含已完成/取消/失败历史；默认仅未完成'),
+            .describe('list：true 时含已完成历史；默认仅未完成'),
         }),
         needsApproval: prefs.manage_task_progress.approval === 'ask',
         ...guardrailOpts,
@@ -512,16 +614,30 @@ export function buildTools(
             id?: string | null;
             title?: string | null;
             note?: string | null;
-            status?: 'pending' | 'in_progress' | 'done' | 'cancelled' | 'failed' | null;
+            status?: 'backlog' | 'pending' | 'in_progress' | 'done' | null;
             steps?: Array<{
               id?: string | null;
               title: string;
-              status?: 'pending' | 'in_progress' | 'done' | 'cancelled' | 'failed' | null;
+              status?:
+                | 'pending'
+                | 'in_progress'
+                | 'blocked'
+                | 'succeeded'
+                | 'failed'
+                | 'cancelled'
+                | null;
               note?: string | null;
             }> | null;
             step_id?: string | null;
             step_title?: string | null;
-            step_status?: 'pending' | 'in_progress' | 'done' | 'cancelled' | 'failed' | null;
+            step_status?:
+              | 'pending'
+              | 'in_progress'
+              | 'blocked'
+              | 'succeeded'
+              | 'failed'
+              | 'cancelled'
+              | null;
             step_note?: string | null;
             step_new_title?: string | null;
             include_done?: boolean | null;
@@ -541,6 +657,53 @@ export function buildTools(
     );
   }
 
+
+
+  if (prefs.manage_note.enabled) {
+    list.push(
+      tool({
+        name: 'manage_note',
+        description:
+          '管理当前助手/小队的 HTML 笔记（持久 resources.jsonl + resources/*.html）。action=create|update|list|get。' +
+          '用户只要「记一下 / 维护笔记 / 写设计稿/需求/报告」且无明确排期、也不是要你当场逐步执行的任务清单时，用本工具；不要建成 manage_task_progress 任务。' +
+          'create：传 title 与完整自包含 html（inline CSS，可读浅色/深色优先，无重依赖；非报告类默认文首 TOC/大纲，href="#id" 对齐标题 id）。' +
+          'update（维护同一篇）：传 id（或 path）与新的完整 html，可选 title。' +
+          'list / get：查看已有笔记；不要把整库塞进对用户的回复。' +
+          '未用到的可选字段请省略，不要传 null。对用户只用产品语言（笔记/已记下/已维护），不要说工具名或 resources.jsonl。',
+        parameters: z.object({
+          action: z.enum(['create', 'update', 'list', 'get']),
+          title: z.string().nullable().optional().describe('笔记标题（列表/卡片不显示 .html）'),
+          html: z
+            .string()
+            .nullable()
+            .optional()
+            .describe('完整自包含 HTML 文档（create/update 必填）'),
+          id: z.string().nullable().optional().describe('update/get：笔记资源 id'),
+          path: z
+            .string()
+            .nullable()
+            .optional()
+            .describe('update：资料库内绝对路径（与 id 二选一）'),
+        }),
+        needsApproval: prefs.manage_note.approval === 'ask',
+        ...guardrailOpts,
+        execute: wrapExec(
+          'manage_note',
+          async (args: {
+            action: 'create' | 'update' | 'list' | 'get';
+            title?: string | null;
+            html?: string | null;
+            id?: string | null;
+            path?: string | null;
+          }) => {
+            const manage = options?.noteManage;
+            if (!manage) return '错误：当前会话未绑定 manage_note。';
+            return await manage(args);
+          },
+        ),
+      }),
+    );
+  }
 
   if (prefs.manage_memory.enabled) {
     list.push(
@@ -602,23 +765,63 @@ export function buildTools(
       tool({
         name: 'send_message',
         description:
-          '向用户界面回复一条独立消息（markdown）。用于多条进度/确认：先 ack、再干活、再汇报，而不是把整段挤进同一条流式回复。content 即消息正文；调用后继续工具与最终回复。不要把同一段文字既写入本工具又在最终流式回复里重复。未用到的可选字段请省略，不要传 null。',
+          '向用户界面回复：① content=markdown 独立气泡（多条进度/确认）；② reactToMessageId+emoji=在用户气泡上放/清表情回应（不新增时间线）。纯表情回应只传 reactToMessageId+emoji，不要再传 content，也不要在最终流式回复里再输出同一个表情；下一轮也禁止把该表情当作正文重发，需表态则再次 react，否则写有字 content。简单确认、轻量情绪优先用表情回应，不必再写「好的/收到」。清除回应时必须显式传 emoji 为空字符串；仅传 reactToMessageId 会报错。不要把同一段文字既写入本工具又在最终流式回复里重复。未用到的可选字段请省略，不要传 null。',
         parameters: z.object({
-          content: z.string().describe('消息正文（markdown）'),
+          content: z
+            .string()
+            .optional()
+            .describe('消息正文（markdown）。纯表情回应时省略'),
+          reactToMessageId: z
+            .string()
+            .optional()
+            .describe('用户气泡 id；与 emoji 一起传入时在该气泡放表情回应'),
+          emoji: z
+            .string()
+            .optional()
+            .describe('单个 emoji；与 reactToMessageId 一起用（必填）。空字符串=清除此前回应；省略会报错，不会清除'),
         }),
         // Never HITL: emitting a bubble must not park an approval card.
         needsApproval: false,
         ...guardrailOpts,
         execute: wrapExec(
           'send_message',
-          async (args: { content: string }) => {
+          async (args: {
+            content?: string;
+            reactToMessageId?: string;
+            emoji?: string;
+          }) => {
             const emit = options?.emitAssistantMessage;
             if (!emit) {
               return '错误：当前会话未绑定 send_message（仅 1:1 助手支持）。';
             }
-            const content = String(args?.content ?? '').trim();
-            if (!content) return '错误：content 不能为空';
+            const content = typeof args?.content === 'string' ? args.content.trim() : '';
+            const reactToMessageId =
+              typeof args?.reactToMessageId === 'string' ? args.reactToMessageId.trim() : '';
+            const emojiRaw = args?.emoji;
+            const hasEmojiArg = typeof emojiRaw === 'string';
+            const emoji = hasEmojiArg ? emojiRaw.trim() : undefined;
+            if (!reactToMessageId && !content) {
+              return '错误：请传 content，或传 reactToMessageId + emoji 做表情回应';
+            }
             try {
+              if (reactToMessageId) {
+                if (!hasEmojiArg) {
+                  return '错误：表情回应请传 emoji；清除时传 emoji 为空字符串 ""';
+                }
+                // Host drops content when it is solely this emoji / emoji-only.
+                await emit({
+                  reactToMessageId,
+                  emoji,
+                  ...(content ? { content } : {}),
+                });
+                const bits: string[] = [];
+                bits.push(
+                  emoji ? `已在用户气泡上回应 ${emoji}` : '已清除该气泡上的表情回应',
+                );
+                // Only claim a text bubble when content is non-emoji prose.
+                if (content && content !== emoji) bits.push('并已回复消息');
+                return `${bits.join('，')}。`;
+              }
               await emit(content);
               return '已回复消息。';
             } catch (err) {
@@ -636,9 +839,13 @@ export function buildTools(
         name: 'write_file',
         description: route
           ? `写入（覆盖）电脑上的一个文本文件（默认「${where}」）；必要时创建父目录。用户点名电脑时传 computer。`
-          : `写入（覆盖）「${where}」上的一个文本文件；相对路径默认写到当前助手/小队 resources/；必要时创建父目录。适合新建文件或整文件重写。`,
+          : `写入（覆盖）「${where}」上的一个文本文件；相对路径默认写到当前助手/小队工作根目录；交付资料用 resources/…，临时脚本/产出用 temp/…；禁止覆盖 session.jsonl / resources.jsonl / tasks.jsonl / memory.md 等持久状态；必要时创建父目录。适合新建文件或整文件重写。`,
         parameters: z.object({
-          path: z.string().describe('文件路径：相对路径默认落到当前助手/小队 resources/；也可用绝对路径或 ~/…'),
+          path: z
+            .string()
+            .describe(
+              '文件路径：相对路径默认落到当前助手/小队工作根目录；资料库文件用 resources/…，临时脚本/产出用 temp/…；勿覆盖 session.jsonl 等持久状态；也可用绝对路径或 ~/…',
+            ),
           content: z.string().describe('要写入的完整 UTF-8 文本内容'),
           computer: computerParam,
         }),
@@ -649,7 +856,15 @@ export function buildTools(
           async ({ path: filePath, content, computer }: { path: string; content: string; computer?: string | null }) => {
             const target = backendFor(computer ?? undefined);
             if (typeof target === 'string') return target;
-            return target.writeFile(filePath, content);
+            // Same-topic host gate (local resources/ only): block create of a
+            // second file with the same filename/title; same-path overwrite OK.
+            if (localFsForComputer(computer ?? undefined) && options?.assertLibraryWriteAllowed) {
+              const blocked = options.assertLibraryWriteAllowed({ filePath });
+              if (blocked?.trim()) return blocked.trim();
+            }
+            const result = await target.writeFile(filePath, content);
+            indexLibraryWriteIfNeeded(filePath, computer ?? undefined);
+            return result;
           },
         ),
       }),
@@ -662,9 +877,13 @@ export function buildTools(
         name: 'edit_file',
         description: route
           ? `对电脑上已存在的文本文件做一次精确替换（默认「${where}」）。用户点名电脑时传 computer。匹配 0 次或多于 1 次则不改。`
-          : `对「${where}」上已存在的文本文件做一次精确字符串替换（old_text → new_text）；相对路径默认在当前助手/小队 resources/。适合小范围修改；若匹配 0 次或多于 1 次则报错不改。`,
+          : `对「${where}」上已存在的文本文件做一次精确字符串替换（old_text → new_text）；相对路径默认在当前助手/小队工作根目录（资料 resources/，临时 temp/）；禁止改写 session.jsonl 等持久状态。适合小范围修改；若匹配 0 次或多于 1 次则报错不改。`,
         parameters: z.object({
-          path: z.string().describe('文件路径：相对路径默认落到当前助手/小队 resources/；也可用绝对路径或 ~/…'),
+          path: z
+            .string()
+            .describe(
+              '文件路径：相对路径默认落到当前助手/小队工作根目录；资料库文件用 resources/…，临时脚本/产出用 temp/…；勿覆盖 session.jsonl 等持久状态；也可用绝对路径或 ~/…',
+            ),
           old_text: z.string().describe('要替换的原文本（须在文件中恰好出现一次）'),
           new_text: z.string().describe('替换后的新文本'),
           computer: computerParam,
@@ -686,7 +905,9 @@ export function buildTools(
           }) => {
             const target = backendFor(computer ?? undefined);
             if (typeof target === 'string') return target;
-            return target.editFile(filePath, old_text, new_text);
+            const result = await target.editFile(filePath, old_text, new_text);
+            indexLibraryWriteIfNeeded(filePath, computer ?? undefined);
+            return result;
           },
         ),
       }),
@@ -768,6 +989,15 @@ export function buildTools(
                   signal: budget?.signal,
                 },
               );
+              try {
+                assets.onSaved?.({
+                  filePath: result.filePath,
+                  assetRel: result.assetRel,
+                  title: prompt.length > 80 ? `${prompt.slice(0, 77)}…` : prompt,
+                });
+              } catch (err) {
+                console.error('[okbot] generate_image onSaved index failed', err);
+              }
               return formatGenerateImageToolOutput(result);
             } catch (err) {
               const msg = err instanceof Error ? err.message : String(err);
@@ -863,8 +1093,9 @@ export const TOOL_BLURBS: Record<string, string> = {
   search_history: '检索本会话历史',
   manage_schedule: '管理定时任务',
   manage_task_progress: '管理多任务（tasks.jsonl）',
+  manage_note: '管理 HTML 笔记（resources.jsonl）',
   manage_memory: '置顶/遗忘/提升记忆',
-  send_message: '回复消息',
+  send_message: '回复消息或表情回应',
   web_fetch: '拉取网页正文',
   web_search: '第三方网页搜索',
 };

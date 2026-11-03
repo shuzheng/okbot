@@ -8,7 +8,15 @@ import {
   type Tool,
 } from '@openai/agents';
 import type { ChatMessage, ResolvedModelConfig, SecuritySettings, ToolPreferences, WebSettings } from '@okbot/shared';
-import { createId, DEFAULT_RUNNER_MAX_TURNS, DEFAULT_SECURITY, DEFAULT_TOOL_PREFERENCES } from '@okbot/shared';
+import {
+  createId,
+  DEFAULT_RUNNER_MAX_TURNS,
+  DEFAULT_SECURITY,
+  DEFAULT_TOOL_PREFERENCES,
+  DEFAULT_WATCHDOG_SETTINGS,
+  isAbortLikeError,
+  isTransientRunError,
+} from '@okbot/shared';
 import { buildAgentInstructions } from './instructions.js';
 import { shellFsRoutingSection, type ComputerRoute } from './computerSelection.js';
 import { buildTools, resolveImageCapability, type SkillLookup } from './tools.js';
@@ -130,6 +138,7 @@ export function createAgentAndRunner(input: {
   skillLookup?: SkillLookup;
   historySearch?: import('./tools.js').HistorySearch;
   scheduleManage?: import('./tools.js').ScheduleManage;
+  noteManage?: import('./tools.js').NoteManage;
   taskProgressManage?: import('./tools.js').TaskProgressManage;
   memoryManage?: import('./tools.js').MemoryManage;
   emitAssistantMessage?: import('./tools.js').EmitAssistantMessage;
@@ -138,6 +147,8 @@ export function createAgentAndRunner(input: {
   memoriesText?: string;
   sessionSummary?: string;
   taskProgressText?: string;
+  /** Host soft-steer / cold-restore resume block (system-side). */
+  resumeContextText?: string;
   /** settings.instructions.assistantRoleTemplate */
   assistantRoleTemplate?: string;
   /** User-chosen default assistant (identity hint in system prompt). */
@@ -156,6 +167,14 @@ export function createAgentAndRunner(input: {
   ownerId?: string;
   /** Absolute owner `resources/` dir for generate_image. */
   resourcesDir?: string;
+  /** Index library files under resources/ (generate_image / write_file / edit_file) into resources.jsonl. */
+  onGeneratedImageSaved?: (info: {
+    filePath: string;
+    assetRel: string;
+    title?: string;
+  }) => void;
+  /** Host same-topic gate for write_file under resources/. */
+  assertLibraryWriteAllowed?: (input: { filePath: string }) => string | null | undefined;
   /** Shell/fs backend (local or remote cloud computer). Ignored when computerRoute is set. */
   executionBackend?: ExecutionBackend;
   /** Per-call computer selection for shell/fs tools. */
@@ -223,6 +242,7 @@ export function createAgentAndRunner(input: {
       input.isDefaultAssistant === true,
       input.taskProgressText,
       input.onboardingGuide,
+      input.resumeContextText,
     ),
     model: input.model.model,
     ...(typeof input.model.maxTokens === 'number' && input.model.maxTokens >= 1
@@ -235,13 +255,19 @@ export function createAgentAndRunner(input: {
       scheduleManage: input.scheduleManage,
       memoryManage: input.memoryManage,
       taskProgressManage: input.taskProgressManage,
+          noteManage: input.noteManage,
       emitAssistantMessage: input.emitAssistantMessage,
       onBeforeToolExecute: input.onBeforeToolExecute,
       imageApi,
       imageAssets:
         input.ownerId && input.resourcesDir
-          ? { ownerId: input.ownerId, resourcesDir: input.resourcesDir }
+          ? {
+              ownerId: input.ownerId,
+              resourcesDir: input.resourcesDir,
+              onSaved: input.onGeneratedImageSaved,
+            }
           : undefined,
+      assertLibraryWriteAllowed: input.assertLibraryWriteAllowed,
       backend: input.computerRoute ? undefined : input.executionBackend,
       computerRoute: input.computerRoute,
       web: input.web,
@@ -332,18 +358,44 @@ export function resolveFinalContent(
 export async function runModelSegment(
   hooks: HitlLoopHooks,
   run: () => Promise<{ result: AgentRunStreamResult; streamed: string }>,
+  opts?: { transientRetries?: number },
 ): Promise<{ result: AgentRunStreamResult; streamed: string }> {
-  const started = hooks.onModelTurnStart?.();
-  const spanId = typeof started === 'string' ? started : undefined;
-  try {
-    const out = await run();
-    hooks.onModelTurnEnd?.({ ok: true, ...(spanId ? { spanId } : {}) });
-    return out;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    hooks.onModelTurnEnd?.({ ok: false, error: message, ...(spanId ? { spanId } : {}) });
-    throw err;
+  const maxAttempts = Math.min(
+    5,
+    Math.max(1, Math.floor(opts?.transientRetries ?? hooks.transientRetries ?? DEFAULT_WATCHDOG_SETTINGS.transientRetries)),
+  );
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (hooks.signal?.aborted) {
+      throw lastErr ?? new Error('aborted');
+    }
+    const started = hooks.onModelTurnStart?.();
+    const spanId = typeof started === 'string' ? started : undefined;
+    try {
+      const out = await run();
+      hooks.onModelTurnEnd?.({ ok: true, ...(spanId ? { spanId } : {}) });
+      return out;
+    } catch (err) {
+      lastErr = err;
+      const message = err instanceof Error ? err.message : String(err);
+      hooks.onModelTurnEnd?.({ ok: false, error: message, ...(spanId ? { spanId } : {}) });
+      if (
+        hooks.signal?.aborted ||
+        isAbortLikeError(err) ||
+        !isTransientRunError(err) ||
+        attempt >= maxAttempts - 1
+      ) {
+        throw err;
+      }
+      const delayMs = Math.min(2_000, 250 * (attempt + 1));
+      console.warn(
+        `[okbot] transient model error; retry ${attempt + 1}/${maxAttempts - 1} in ${delayMs}ms`,
+        message,
+      );
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
   }
+  throw lastErr ?? new Error('model segment failed');
 }
 
 
@@ -360,6 +412,34 @@ function emitRunCheckpoint(hooks: HitlLoopHooks, state: { toString: (options?: {
   }
 }
 
+/** Mutable holder for the freshest serializable RunState during a live turn. */
+export type RunCheckpointBox = {
+  state: { toString: (options?: { includeTracingApiKey?: boolean }) => string } | null;
+};
+
+export function createRunCheckpointBox(): RunCheckpointBox {
+  return { state: null };
+}
+
+/**
+ * Register a sync flush with the host (gateway setOwnerRunCheckpointFlush) that
+ * re-emits the box's latest RunState via onRunCheckpoint. Soft-steer / Stop call
+ * this flush immediately before AbortController.abort.
+ */
+export function wireRunCheckpointFlush(hooks: HitlLoopHooks, box: RunCheckpointBox): void {
+  if (!hooks.registerCheckpointFlush || !hooks.onRunCheckpoint) return;
+  hooks.registerCheckpointFlush(() => {
+    if (box.state) emitRunCheckpoint(hooks, box.state);
+  });
+}
+
+export function noteRunCheckpointState(
+  box: RunCheckpointBox,
+  state: { toString: (options?: { includeTracingApiKey?: boolean }) => string } | null | undefined,
+): void {
+  if (state) box.state = state;
+}
+
 export async function runHitlStreamLoop(
   agent: Agent<any, any>,
   runner: Runner,
@@ -368,14 +448,21 @@ export async function runHitlStreamLoop(
   streamedIn: string,
   hooks: HitlLoopHooks,
   streamReset?: StreamResetHandle | null,
+  checkpointBox?: RunCheckpointBox,
 ): Promise<RunChatResult> {
   let streamed = streamedIn;
   let current = result;
+  const box = checkpointBox ?? createRunCheckpointBox();
+  // Outer runAgentChat/runSquadChat may already have wired flush + first-segment state.
+  if (!checkpointBox) wireRunCheckpointFlush(hooks, box);
+  noteRunCheckpointState(box, current.state);
   // Persist mid-run state at each safe model+tools boundary (crash recovery).
   emitRunCheckpoint(hooks, current.state);
 
   while (current.interruptions?.length) {
     if (hooks.signal?.aborted) {
+      noteRunCheckpointState(box, current.state);
+      emitRunCheckpoint(hooks, current.state);
       return { content: streamed, usage: tokenUsageFromRunResult(current) };
     }
 
@@ -386,6 +473,8 @@ export async function runHitlStreamLoop(
 
     for (const interruption of current.interruptions) {
       if (hooks.signal?.aborted) {
+        noteRunCheckpointState(box, current.state);
+        emitRunCheckpoint(hooks, current.state);
         return { content: streamed, usage: tokenUsageFromRunResult(current) };
       }
 
@@ -432,6 +521,8 @@ export async function runHitlStreamLoop(
       }
 
       if (hooks.signal?.aborted) {
+        noteRunCheckpointState(box, current.state);
+        emitRunCheckpoint(hooks, current.state);
         return { content: streamed, usage: tokenUsageFromRunResult(current) };
       }
 
@@ -456,6 +547,8 @@ export async function runHitlStreamLoop(
 
     const resumed = await runModelSegment(hooks, async () => {
       const next = (await runner.run(agent, current.state, runOpts)) as AgentRunStreamResult;
+      // Available during stream — prefer this over the previous boundary if Stop hits mid-stream.
+      noteRunCheckpointState(box, next.state);
       const piece = await consumeAgentTextStream(
         next,
         hooks.onDelta,
@@ -466,10 +559,15 @@ export async function runHitlStreamLoop(
     });
     current = resumed.result;
     streamed += resumed.streamed;
+    noteRunCheckpointState(box, current.state);
     emitRunCheckpoint(hooks, current.state);
   }
 
   if (hooks.signal?.aborted) {
+    // Belt-and-suspenders: ownerRuns already flushed before abort(); emit once more
+    // if we still hold state (no-op when identical to last boundary write).
+    noteRunCheckpointState(box, current.state);
+    emitRunCheckpoint(hooks, current.state);
     return { content: streamed, usage: tokenUsageFromRunResult(current) };
   }
 

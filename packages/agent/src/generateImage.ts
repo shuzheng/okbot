@@ -224,6 +224,44 @@ export function normalizeReplyMediaMarkdown(content: string): string {
   return stripInternalImageStorageHints(out);
 }
 
+export type OwnerResourceMediaRef = {
+  ownerId: string;
+  fileName: string;
+  assetRel: string;
+  /** Markdown image alt text when present (trimmed / clipped). */
+  title?: string;
+};
+
+/**
+ * Collect owner `resources/` image refs from assistant markdown (`![alt](/v1/media/…)`).
+ * Used by the host to index library rows when media was saved outside generate_image
+ * (e.g. shell-written binaries that still appear in the chat bubble).
+ */
+export function listOwnerResourceMediaRefsFromMarkdown(
+  content: string,
+): OwnerResourceMediaRef[] {
+  if (!content || !content.includes('](')) return [];
+  const out: OwnerResourceMediaRef[] = [];
+  const seen = new Set<string>();
+  const re = /!\[([^\]]*)\]\(([^)\s]+)\)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(content))) {
+    const alt = (m[1] || '').trim();
+    const parsed = parseOwnerResourceMarkdownSrc(m[2]);
+    if (!parsed) continue;
+    if (seen.has(parsed.assetRel)) continue;
+    seen.add(parsed.assetRel);
+    const ref: OwnerResourceMediaRef = {
+      ownerId: parsed.ownerId,
+      fileName: parsed.fileName,
+      assetRel: parsed.assetRel,
+    };
+    if (alt) ref.title = alt.length > 120 ? `${alt.slice(0, 117)}…` : alt;
+    out.push(ref);
+  }
+  return out;
+}
+
 /** Build assetRel stored in markdown: `<ownerId>/resources/<fileName>`. */
 export function ownerResourceAssetRel(ownerId: string, fileName: string): string {
   const id = (ownerId || '').trim();

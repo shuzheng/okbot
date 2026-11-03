@@ -1,0 +1,36 @@
+{
+  "format": "okbot-market-connector",
+  "version": 1,
+  "id": "luckin",
+  "displayName": "瑞幸咖啡",
+  "displayNameEn": "Luckin Coffee",
+  "type": "mcp",
+  "transport": "http",
+  "endpointTemplate": "https://gwmcp.lkcoffee.com/order/user/mcp",
+  "auth": {
+    "kind": "bearer",
+    "headerName": "Authorization",
+    "headerValueTemplate": "Bearer {{BEARER_TOKEN}}",
+    "notes": "登录瑞幸开放平台后复制 Token；勿写入仓库。"
+  },
+  "okbotMcpProjection": {
+    "name": "luckin",
+    "transport": "http",
+    "url": "https://gwmcp.lkcoffee.com/order/user/mcp",
+    "headers": {
+      "Authorization": "Bearer {{BEARER_TOKEN}}"
+    }
+  },
+  "toolsSummary": [
+    "附近门店查询",
+    "商品选择",
+    "优惠券匹配",
+    "一句话下单（人工确认后支付）"
+  ],
+  "docsUrls": [
+    "https://open01.luckincoffeecdn.com/"
+  ],
+  "status": "stub",
+  "wave": 1,
+  "tags": ["cn", "lifestyle", "coffee", "order"]
+}

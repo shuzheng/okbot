@@ -17,7 +17,10 @@ import {
 } from '../autoContinueGate';
 import {
   cancelSoftSteers,
+  clearSoftSteerCheckpointHandoff,
   getSoftSteerEpoch,
+  hasSoftSteerCheckpointHandoff,
+  markSoftSteerCheckpointHandoff,
   resetSoftSteerStateForTests,
 } from '../softSteerGate';
 import { orchestrateBotTurn } from './orchestrateBotTurn';
@@ -327,7 +330,7 @@ resetSoftSteerStateForTests();
   const map: AbortControllerMap = new Map();
   const startCalls: string[] = [];
   let progressItems: Array<{ id: string; title: string; status: string }> = [
-    { id: '1', title: 'A', status: 'done' },
+    { id: '1', title: 'A', status: 'succeeded' },
     { id: '2', title: 'B', status: 'pending' },
   ];
   const ctx = {
@@ -366,8 +369,8 @@ resetSoftSteerStateForTests();
         if (payload.origin === 'auto_continue') {
           // Simulate progress advancing so the next loop can finish.
           progressItems = [
-            { id: '1', title: 'A', status: 'done' },
-            { id: '2', title: 'B', status: 'done' },
+            { id: '1', title: 'A', status: 'succeeded' },
+            { id: '2', title: 'B', status: 'succeeded' },
           ];
         }
         return {
@@ -402,7 +405,7 @@ resetSoftSteerStateForTests();
     v: 1,
     title: 't',
     items: [
-      { id: '1', title: 'A', status: 'done' },
+      { id: '1', title: 'A', status: 'succeeded' },
       { id: '2', title: 'B', status: 'pending' },
     ],
     updatedAt: '2026-01-01T00:00:00.000Z',
@@ -476,7 +479,7 @@ resetSoftSteerStateForTests();
   const startCalls: string[] = [];
   let acCount = 0;
   let progressItems: Array<{ id: string; title: string; status: string }> = [
-    { id: '1', title: 'A', status: 'done' },
+    { id: '1', title: 'A', status: 'succeeded' },
     { id: '2', title: 'B', status: 'in_progress' },
   ];
   const ctx = {
@@ -516,8 +519,8 @@ resetSoftSteerStateForTests();
           // First AC: text-only stall (fingerprint unchanged). Second (escalated): mark done.
           if (acCount >= 2) {
             progressItems = [
-              { id: '1', title: 'A', status: 'done' },
-              { id: '2', title: 'B', status: 'done' },
+              { id: '1', title: 'A', status: 'succeeded' },
+              { id: '2', title: 'B', status: 'succeeded' },
             ];
           }
         }
@@ -815,7 +818,7 @@ resetSoftSteerStateForTests();
       startTurn: async (_c, payload, text) => {
         startCalls.push(payload.origin || 'unset');
         if (payload.origin === 'auto_continue') {
-          progressItems = [{ id: '1', title: 'A', status: 'done' }];
+          progressItems = [{ id: '1', title: 'A', status: 'succeeded' }];
           acResolve();
         }
         return {
@@ -839,6 +842,214 @@ resetSoftSteerStateForTests();
     startCalls.includes('auto_continue'),
     `expected background AC, got ${JSON.stringify(startCalls)}`,
   );
+}
+
+
+{
+  // Soft-steer that aborted in-flight work must forward softSteered to startTurn.
+  resetSoftSteerStateForTests();
+  resetOwnerRunQueuesForTests();
+  resetAutoContinueStateForTests();
+  const payloads: Array<{ softSteered?: boolean }> = [];
+  const ctx = {
+    abortControllers: new Map(),
+    storage: {
+      appendMessage: () => undefined,
+      touchBot: () => undefined,
+      getMessageById: () => null,
+      loadTasks: () => [],
+    },
+    sendRuntimeEvent: () => undefined,
+  };
+  await orchestrateBotTurn(
+    ctx as never,
+    { botId: 'bot_steer_flag', text: '补充', origin: 'composer' },
+    '补充',
+    {
+      softSteer: async () => ({ steered: true, superseded: false }),
+      startTurn: async (_c, payload, text) => {
+        payloads.push({ softSteered: payload.softSteered });
+        return {
+          userMessage: {
+            id: 'm',
+            role: 'user',
+            content: text,
+            createdAt: '2026-01-01T00:00:00.000Z',
+          },
+        };
+      },
+    },
+  );
+  assert.equal(payloads.length, 1);
+  assert.equal(payloads[0]!.softSteered, true);
+
+  payloads.length = 0;
+  await orchestrateBotTurn(
+    ctx as never,
+    { botId: 'bot_steer_flag2', text: '新开', origin: 'composer' },
+    '新开',
+    {
+      softSteer: async () => ({ steered: false, superseded: false }),
+      startTurn: async (_c, payload, text) => {
+        payloads.push({ softSteered: payload.softSteered });
+        return {
+          userMessage: {
+            id: 'm',
+            role: 'user',
+            content: text,
+            createdAt: '2026-01-01T00:00:00.000Z',
+          },
+        };
+      },
+    },
+  );
+  assert.equal(payloads[0]!.softSteered, undefined);
+}
+
+
+{
+  // Steered startTurn throw before consume: abandon handoff + checkpoint (not sticky).
+  resetSoftSteerStateForTests();
+  resetOwnerRunQueuesForTests();
+  resetAutoContinueStateForTests();
+  const botId = 'bot_steer_fail_ckpt';
+  let cleared: string[] = [];
+  let loaded = {
+    kind: 'bot' as const,
+    runId: 'run_kept',
+    messageId: 'msg_kept',
+    serializedRunState: '{"x":1}',
+    createdAt: '2026-01-01T00:00:00.000Z',
+  };
+  markSoftSteerCheckpointHandoff(botId);
+  assert.equal(hasSoftSteerCheckpointHandoff(botId), true);
+
+  const ctx = {
+    abortControllers: new Map(),
+    storage: {
+      appendMessage: () => undefined,
+      touchBot: () => undefined,
+      getMessageById: () => null,
+      loadTasks: () => [],
+      loadRunCheckpoint: () => loaded,
+      clearRunCheckpoint: (id: string) => {
+        cleared.push(id);
+        loaded = null as never;
+      },
+    },
+    sendRuntimeEvent: () => undefined,
+  };
+
+  await assert.rejects(
+    () =>
+      orchestrateBotTurn(
+        ctx as never,
+        { botId, text: '补充失败', origin: 'composer' },
+        '补充失败',
+        {
+          softSteer: async () => ({ steered: true, superseded: false }),
+          startTurn: async (_c, payload) => {
+            assert.equal(payload.softSteered, true);
+            // Fail before consume/clear inside startBotTurn (e.g. compress).
+            throw new Error('compress failed before soft-steer consume');
+          },
+        },
+      ),
+    /compress failed before soft-steer consume/,
+  );
+
+  assert.equal(hasSoftSteerCheckpointHandoff(botId), false, 'orchestrate catch must clear handoff');
+  assert.deepEqual(cleared, [botId], 'orchestrate catch must abandon checkpoint');
+
+  // Successful consume path still clears handoff when startTurn does it.
+  resetSoftSteerStateForTests();
+  cleared = [];
+  markSoftSteerCheckpointHandoff(botId);
+  loaded = {
+    kind: 'bot',
+    runId: 'run_ok',
+    messageId: 'msg_ok',
+    serializedRunState: '{"y":2}',
+    createdAt: '2026-01-01T00:00:00.000Z',
+  };
+  await orchestrateBotTurn(
+    ctx as never,
+    { botId, text: '补充成功', origin: 'composer' },
+    '补充成功',
+    {
+      softSteer: async () => ({ steered: true, superseded: false }),
+      startTurn: async (_c, payload) => {
+        assert.equal(payload.softSteered, true);
+        // Mimic consume-once + clear handoff after compress.
+        ctx.storage.clearRunCheckpoint(botId);
+        clearSoftSteerCheckpointHandoff(botId);
+        return {
+          userMessage: {
+            id: 'm',
+            role: 'user',
+            content: payload.text || '补充成功',
+            createdAt: '2026-01-01T00:00:00.000Z',
+          },
+        };
+      },
+    },
+  );
+  assert.equal(hasSoftSteerCheckpointHandoff(botId), false);
+  assert.deepEqual(cleared, [botId]);
+}
+
+
+{
+  // Superseded soft-steer (Stop won epoch): clear handoff flag, keep checkpoint file.
+  resetSoftSteerStateForTests();
+  resetOwnerRunQueuesForTests();
+  resetAutoContinueStateForTests();
+  const botId = 'bot_superseded_keep_ckpt';
+  let cleared: string[] = [];
+  let loaded: {
+    kind: 'bot';
+    runId: string;
+    messageId: string;
+    serializedRunState: string;
+    createdAt: string;
+  } | null = {
+    kind: 'bot',
+    runId: 'run_super',
+    messageId: 'msg_super',
+    serializedRunState: '{"z":3}',
+    createdAt: '2026-01-01T00:00:00.000Z',
+  };
+  markSoftSteerCheckpointHandoff(botId);
+  const ctx = {
+    abortControllers: new Map(),
+    storage: {
+      appendMessage: () => undefined,
+      touchBot: () => undefined,
+      getMessageById: () => null,
+      loadTasks: () => [],
+      loadRunCheckpoint: () => loaded,
+      clearRunCheckpoint: (id: string) => {
+        cleared.push(id);
+        loaded = null;
+      },
+    },
+    sendRuntimeEvent: () => undefined,
+  };
+  const result = await orchestrateBotTurn(
+    ctx as never,
+    { botId, text: '继续', origin: 'composer' },
+    '继续',
+    {
+      softSteer: async () => ({ steered: true, superseded: true }),
+      startTurn: async () => {
+        throw new Error('must not start after superseded');
+      },
+    },
+  );
+  assert.equal(result.superseded, true);
+  assert.equal(hasSoftSteerCheckpointHandoff(botId), false, 'superseded clears handoff flag');
+  assert.deepEqual(cleared, [], 'superseded Stop must keep checkpoint file');
+  assert.ok(loaded, 'checkpoint record must remain');
 }
 
 console.log('orchestrateBotTurn.test.ts OK');

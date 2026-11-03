@@ -1,0 +1,25 @@
+# Used when build context is the repository root (deploy/docker/docker-compose.yml).
+# Keep deploy/docker/.dockerignore in sync (documentation / alternate copy).
+.git
+.github
+.tmp-shots
+tmp
+**/node_modules
+**/dist
+**/out
+apps/desktop/release
+release
+coverage
+.vite
+**/*.log
+.env
+.env.*
+!.env.example
+**/.DS_Store
+apps/desktop/**
+!apps/desktop/package.json
+apps/sandbox-agent/**
+!apps/sandbox-agent/package.json
+docs
+market
+*.md

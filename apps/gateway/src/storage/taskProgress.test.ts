@@ -5,6 +5,7 @@ import path from 'node:path';
 import { isUlid } from '@okbot/shared';
 import { FileStorage } from './FileStorage';
 import {
+  canAutoContinueTasks,
   deriveTaskStatus,
   fingerprintTasks,
   formatTasksForPrompt,
@@ -15,11 +16,13 @@ import {
 
 // --- normalize step ---
 assert.equal(normalizeTaskStep({ title: '' }, 0), null);
-assert.deepEqual(normalizeTaskStep({ title: '  A  ', status: 'done' }, 0), {
+assert.deepEqual(normalizeTaskStep({ title: '  A  ', status: 'succeeded' }, 0), {
   id: '1',
   title: 'A',
-  status: 'done',
+  status: 'succeeded',
 });
+// legacy step done → succeeded
+assert.equal(normalizeTaskStep({ title: 'x', status: 'done' }, 2)?.status, 'succeeded');
 assert.equal(normalizeTaskStep({ title: 'x', status: 'nope' }, 2)?.status, 'pending');
 assert.equal(normalizeTaskStep({ title: 'x', status: 'nope' }, 2)?.id, '3');
 assert.deepEqual(
@@ -28,20 +31,28 @@ assert.deepEqual(
 );
 assert.equal(normalizeTaskStep({ id: 2, title: 'B' }, 9)?.id, '2');
 assert.equal(normalizeTaskStep({ title: 'f', status: 'failed' }, 0)?.status, 'failed');
+assert.equal(normalizeTaskStep({ title: 'b', status: 'blocked' }, 0)?.status, 'blocked');
 
 // --- derive status ---
 assert.equal(deriveTaskStatus([{ id: '1', title: 'A', status: 'pending' }]), 'pending');
 assert.equal(
   deriveTaskStatus([
-    { id: '1', title: 'A', status: 'done' },
+    { id: '1', title: 'A', status: 'succeeded' },
     { id: '2', title: 'B', status: 'in_progress' },
   ]),
   'in_progress',
 );
 assert.equal(
   deriveTaskStatus([
-    { id: '1', title: 'A', status: 'done' },
-    { id: '2', title: 'B', status: 'done' },
+    { id: '1', title: 'A', status: 'succeeded' },
+    { id: '2', title: 'B', status: 'blocked' },
+  ]),
+  'in_progress',
+);
+assert.equal(
+  deriveTaskStatus([
+    { id: '1', title: 'A', status: 'succeeded' },
+    { id: '2', title: 'B', status: 'succeeded' },
   ]),
   'done',
 );
@@ -51,9 +62,22 @@ assert.equal(
       { id: '1', title: 'A', status: 'pending' },
       { id: '2', title: 'B', status: 'pending' },
     ],
-    'cancelled',
+    'done',
   ),
-  'cancelled',
+  'done',
+);
+// backlog preserved when explicit and steps still pending
+assert.equal(
+  deriveTaskStatus([{ id: '1', title: 'A', status: 'pending' }], 'backlog'),
+  'backlog',
+);
+// mix pending + succeeded → in_progress
+assert.equal(
+  deriveTaskStatus([
+    { id: '1', title: 'A', status: 'succeeded' },
+    { id: '2', title: 'B', status: 'pending' },
+  ]),
+  'in_progress',
 );
 
 // --- normalize task ---
@@ -78,18 +102,59 @@ assert.ok(formatTasksForPrompt([dup!]).includes('进行中'));
 assert.equal(formatTasksForPrompt([]), '');
 assert.equal(hasUnfinishedTasks([]), false);
 assert.equal(hasUnfinishedTasks([dup!]), true);
+assert.equal(canAutoContinueTasks([dup!]), true);
 assert.equal(
   hasUnfinishedTasks([
     {
       v: 1,
       id: 'x',
       status: 'done',
-      steps: [{ id: '1', title: 'A', status: 'done' }],
+      steps: [{ id: '1', title: 'A', status: 'succeeded' }],
       updatedAt: 't',
     },
   ]),
   false,
 );
+
+// legacy task cancelled/failed → done; step done → succeeded
+const legacyCancel = normalizeTaskRecord({
+  id: 'legacy-c',
+  status: 'cancelled',
+  steps: [{ title: '一步', status: 'done' }],
+});
+assert.equal(legacyCancel?.status, 'done');
+assert.equal(legacyCancel?.steps[0]?.status, 'succeeded');
+
+const legacyFail = normalizeTaskRecord({
+  id: 'legacy-f',
+  status: 'failed',
+  steps: [{ title: '一步', status: 'failed' }],
+});
+assert.equal(legacyFail?.status, 'done');
+
+// blocked unfinished but pauses auto-continue
+const blocked = normalizeTaskRecord({
+  id: 'blk',
+  title: 'Blocked',
+  steps: [
+    { id: '1', title: 'A', status: 'succeeded' },
+    { id: '2', title: 'B', status: 'blocked' },
+  ],
+});
+assert.equal(blocked?.status, 'in_progress');
+assert.equal(hasUnfinishedTasks([blocked!]), true);
+assert.equal(canAutoContinueTasks([blocked!]), false);
+
+// backlog unfinished but does not auto-continue
+const backlog = normalizeTaskRecord({
+  id: 'bl',
+  status: 'backlog',
+  title: 'Pool',
+  steps: [{ id: '1', title: 'A', status: 'pending' }],
+});
+assert.equal(backlog?.status, 'backlog');
+assert.equal(hasUnfinishedTasks([backlog!]), true);
+assert.equal(canAutoContinueTasks([backlog!]), false);
 
 const fp1 = fingerprintTasks([dup!]);
 const fp2 = fingerprintTasks([{ ...dup!, updatedAt: 'other' }]);
@@ -111,7 +176,7 @@ const bot = storage.createBot({ name: 'A' });
 const t1 = storage.addTask(bot.id, {
   title: '迁移',
   steps: [
-    { title: '备份', status: 'done' },
+    { title: '备份', status: 'succeeded' },
     { id: 'step2', title: '切换', status: 'in_progress' },
   ],
 });
@@ -125,14 +190,14 @@ assert.ok(fs.existsSync(path.join(storage.dataRoot, bot.id, 'tasks.jsonl')));
 const t1u = storage.updateTask(bot.id, {
   id: t1.id,
   step_id: 'step2',
-  step_status: 'done',
+  step_status: 'succeeded',
   step_note: 'ok',
 });
 assert.equal(t1u.status, 'done');
 assert.ok(t1u.endedAt);
 assert.equal(t1u.steps.find((s) => s.id === 'step2')?.note, 'ok');
 
-// done tasks stay on disk (history) but not in open list
+// done tasks stay on disk (history) but not in open (in_progress-only) list
 assert.equal(storage.loadOpenTasks(bot.id).length, 0);
 assert.equal(storage.loadTasks(bot.id).length, 1);
 
@@ -142,8 +207,17 @@ const t2 = storage.addTask(bot.id, {
 });
 assert.ok(isUlid(t2.id), `second task id must be ULID, got ${t2.id}`);
 assert.ok(t2.id > t1.id || t2.id !== t1.id, 'ULIDs should differ');
-assert.equal(storage.loadOpenTasks(bot.id).length, 1);
+// pending is not in_progress → not in open chat list
+assert.equal(storage.loadOpenTasks(bot.id).length, 0);
 assert.equal(storage.loadTasks(bot.id).length, 2);
+
+const t2run = storage.updateTask(bot.id, {
+  id: t2.id,
+  step_title: '调研',
+  step_status: 'in_progress',
+});
+assert.equal(t2run.status, 'in_progress');
+assert.equal(storage.loadOpenTasks(bot.id).length, 1);
 
 // FIFO order preserved in jsonl
 const all = storage.loadTasks(bot.id);
@@ -172,6 +246,54 @@ const t4 = storage.addTask(bot.id, {
   steps: [{ id: 's1', title: '一步', status: 'pending' }],
 });
 assert.equal(t4.id, custom);
+
+// backlog: cannot start step until leave pool
+const t5 = storage.addTask(bot.id, {
+  title: '池中',
+  status: 'backlog',
+  steps: [{ id: 's1', title: '一步', status: 'pending' }],
+});
+assert.equal(t5.status, 'backlog');
+assert.throws(
+  () =>
+    storage.updateTask(bot.id, {
+      id: t5.id,
+      step_id: 's1',
+      step_status: 'in_progress',
+    }),
+  /backlog/,
+);
+const t5out = storage.updateTask(bot.id, { id: t5.id, status: 'pending' });
+assert.equal(t5out.status, 'pending');
+const t5run = storage.updateTask(bot.id, {
+  id: t5.id,
+  step_id: 's1',
+  step_status: 'in_progress',
+});
+assert.equal(t5run.status, 'in_progress');
+
+// cancel whole task via status=done
+const t6 = storage.addTask(bot.id, {
+  title: '取消我',
+  steps: [
+    { id: 'a', title: 'A', status: 'succeeded' },
+    { id: 'b', title: 'B', status: 'pending' },
+  ],
+});
+const t6c = storage.updateTask(bot.id, { id: t6.id, status: 'done' });
+assert.equal(t6c.status, 'done');
+assert.equal(t6c.steps.find((s) => s.id === 'b')?.status, 'cancelled');
+assert.equal(t6c.steps.find((s) => s.id === 'a')?.status, 'succeeded');
+
+// delete only backlog
+const t7 = storage.addTask(bot.id, {
+  title: '可删',
+  status: 'backlog',
+  steps: [{ title: '一步', status: 'pending' }],
+});
+storage.deleteTask(bot.id, t7.id);
+assert.equal(storage.loadTasks(bot.id).some((t) => t.id === t7.id), false);
+assert.throws(() => storage.deleteTask(bot.id, t6c.id), /backlog|未做/);
 
 storage.clearTaskProgress(bot.id);
 assert.equal(storage.loadTasks(bot.id).length, 0);

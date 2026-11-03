@@ -2,6 +2,7 @@ import { memo, useMemo } from 'react';
 import { parseThinkContent, stripInternalImageStorageHints } from '@okbot/shared';
 import { t, type UiLang } from '../../i18n';
 import type { MentionBotRef } from '../../utils/botMentions';
+import type { MentionEntityRef } from '../../utils/entityMentions';
 import { MarkdownContent } from './MarkdownContent';
 
 export type AssistantContentProps = {
@@ -11,6 +12,8 @@ export type AssistantContentProps = {
   showThinking?: boolean;
   /** Roster for `@助手` mention chips inside markdown. */
   bots?: readonly MentionBotRef[];
+  /** Multi-kind mention catalog (bots/squads/schedules/skills). */
+  mentionCatalog?: readonly MentionEntityRef[];
   /** Open-session owner id — duplicate names resolve to this bot's profile. */
   preferBotId?: string;
 };
@@ -28,6 +31,7 @@ export const AssistantContent = memo(function AssistantContent({
   content,
   showThinking = false,
   bots = [],
+  mentionCatalog,
   preferBotId,
 }: AssistantContentProps) {
   const parsed = useMemo(
@@ -38,7 +42,7 @@ export const AssistantContent = memo(function AssistantContent({
   if (!showThinking) {
     if (!parsed.answer) return null;
     return (
-      <MarkdownContent lang={lang} bots={bots} preferBotId={preferBotId}>
+      <MarkdownContent lang={lang} bots={bots} catalog={mentionCatalog} preferBotId={preferBotId}>
         {parsed.answer}
       </MarkdownContent>
     );
@@ -48,7 +52,7 @@ export const AssistantContent = memo(function AssistantContent({
     // Use parsed.answer (not raw content) so mid-stream `<think` prefixes stay held.
     if (!parsed.answer) return null;
     return (
-      <MarkdownContent lang={lang} bots={bots} preferBotId={preferBotId}>
+      <MarkdownContent lang={lang} bots={bots} catalog={mentionCatalog} preferBotId={preferBotId}>
         {parsed.answer}
       </MarkdownContent>
     );
@@ -62,7 +66,7 @@ export const AssistantContent = memo(function AssistantContent({
           <div className="md-thinking-body">
             {parsed.thinking.map((block, i) => (
               <div key={i} className="md-thinking-block">
-                <MarkdownContent lang={lang} bots={bots} preferBotId={preferBotId}>
+                <MarkdownContent lang={lang} bots={bots} catalog={mentionCatalog} preferBotId={preferBotId}>
                   {block}
                 </MarkdownContent>
               </div>
@@ -71,7 +75,7 @@ export const AssistantContent = memo(function AssistantContent({
         </details>
       ) : null}
       {parsed.answer ? (
-        <MarkdownContent lang={lang} bots={bots} preferBotId={preferBotId}>
+        <MarkdownContent lang={lang} bots={bots} catalog={mentionCatalog} preferBotId={preferBotId}>
           {parsed.answer}
         </MarkdownContent>
       ) : null}

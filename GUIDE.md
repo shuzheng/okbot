@@ -63,7 +63,7 @@ okbot/
 - **Windows**：`titleBarStyle: 'hidden'`（无系统标题栏），主顶栏操作区在「关于」右侧放自定义最小化 / 最大化(还原) / 关闭（`WindowControls`，仅 `platform === 'win32'`）。无会话时按钮浮在主区右上角。IPC：`windowMinimize` / `windowMaximizeToggle` / `windowClose` / `windowIsMaximized`（及 `windowMaximizedChanged` 推送）。
 - **Linux**：保持改动前行为（既有 `titleBarStyle` + `autoHideMenuBar` / 隐藏应用菜单）；不加 Windows 式自定义窗口控件。
 - **Windows / Linux** 均设 `autoHideMenuBar: true` 隐藏系统原生 File/Edit/View 菜单栏。 Windows 用最小 **Edit** 子菜单（undo/redo/cut/copy/paste/selectAll；**不要** `null`——会破坏 IME；空 `[]` 在部分 Electron 上仍缺 Edit role）； Linux 仍 `Menu.setApplicationMenu(null)`。
-- **关闭窗口（托盘）**：首次点击窗口关闭（Windows 自定义关闭 / macOS 红绿灯关闭 / Linux 原生关闭）弹出「退出」或「最小化到托盘」（macOS 文案为「隐藏到菜单栏」）；可勾选「记住我的选择」。偏好写入 `settings.closeAction`：`ask`（默认）/ `tray` / `quit`。设置 → 通用 →「关闭窗口」可随时改。托盘（macOS 为菜单栏图标，优先 `trayTemplate` 模板图；启动即显示）提供 **打开窗口**、**主题**子菜单（跟随系统 / 浅色 / 深色，勾选当前 `settings.theme`）、带 **置顶** 小标题的置顶成员、**最近会话**（最多 10 条）、**设置** / **退出**（成员行：emoji 头像用自身 emoji；立体头像 `bot-avatar` 统一 👤，因原生 Tray Menu 无法可靠渲染 3D）；主窗口激活时 **⌘/Win+1…9** 按侧栏从上到下（置顶 → 分组/未分组 → 已隐藏）切换会话，长按修饰键约 **0.5s** 显示快捷键提示（亮/暗主题，不挤动会话名）；隐藏到托盘时 macOS 会一并隐藏 Dock 图标，再次打开时恢复。**Cmd+Q** / 托盘「退出」会请求退出；若仍有任务或待审批在跑，`before-quit` 会先转入后台并在再次退出时确认。实现：`electron/appTray.ts`、`main.ts` 的 `close` 拦截。
+- **关闭窗口（托盘）**：首次点击窗口关闭（Windows 自定义关闭 / macOS 红绿灯关闭 / Linux 原生关闭）弹出「退出」或「最小化到托盘」（macOS 文案为「隐藏到菜单栏」）；可勾选「记住我的选择」。偏好写入 `settings.closeAction`：`ask`（默认）/ `tray` / `quit`。设置 → 通用 →「关闭窗口」可随时改。托盘（macOS 为菜单栏图标，优先 `trayTemplate` 模板图；启动即显示）提供 **打开窗口**、**主题**子菜单（跟随系统 / 浅色 / 深色，勾选当前 `settings.theme`）、紧挨主题的 **半透明** 勾选（`settings.translucent`，与设置 → 通用同一开关）、带 **置顶** 小标题的置顶成员、**最近会话**（最多 10 条）、**设置** / **退出**（成员行：emoji 头像用自身 emoji；立体头像 `bot-avatar` 统一 👤，因原生 Tray Menu 无法可靠渲染 3D）；主窗口激活时 **⌘/Win+1…9** 按侧栏从上到下（置顶 → 分组/未分组 → 已隐藏）切换会话，长按修饰键约 **0.5s** 显示快捷键提示（亮/暗主题，不挤动会话名）；隐藏到托盘时 macOS 会一并隐藏 Dock 图标，再次打开时恢复。**Cmd+Q** / 托盘「退出」会请求退出；若仍有任务或待审批在跑，`before-quit` 会先转入后台并在再次退出时确认。实现：`electron/appTray.ts`、`main.ts` 的 `close` 拦截。
 - **BotFormModal / SquadWizardModal**：右侧抽屉（`.drawer-backdrop` + `.form-drawer` / `.modal.form-drawer`），与左侧边栏同为**通高**：贴齐视口上/下/右缘、无浮动短面板边距与圆角；打开时**快速滑入**、关闭时**滑出后卸载**（约 0.2s，`prefers-reduced-motion` 时跳过动画直接关）；标题栏粘性固定（**无**底部分割线），关闭钮为 **»** 形双 chevron（`ChevronsRightIcon`，指向右=收起抽屉），正文滚动。顶区为居中头像（`.avatar-preview-stack`）→ 可编辑名称 → **纯文本**描述（非 textarea，无「对话后自动演进…」提示）；小队顶区为 `SquadAvatar`。autoApply：名称在 IME `composition` 期间不 `onApply`，结束后/失焦再持久化，并 350ms 防抖；Windows 聚焦名称不 `select()`。backdrop / drawer / 表单控件显式 `-webkit-app-region: no-drag`。抽屉本体为毛玻璃半透明底（`backdrop-filter: blur(28px)` + `color-mix(--panel 10%, transparent)`），左侧 `box-shadow`（浅色 `-6px 0 18px rgba(0,0,0,0.14)`；深色加强为 `-8px 0 28px rgba(0,0,0,0.55)`）；**无**页面遮罩/变暗（`.drawer-backdrop` 全透明，已去掉 `::before` dim），以便毛玻璃直接取样底层 UI；深色主题左侧描边更浅。头像色板为圆形色点；选中为白缝 + 墨线圈（`.color-swatch.active` 的 border + box-shadow，非 outline 椭圆）。名称输入无底色（`background: none`）。
 - **删除确认**：助手/小队/供应商/模型/定时任务删除使用应用内 `ConfirmHost` + `requestConfirm`（`components/ui/ConfirmModal`），不用系统 `window.confirm`；主进程 `dialog.showMessageBox` 仅用于自动更新/退出等 OS 流程。
 
@@ -98,6 +98,7 @@ okbot/
   - 悬停操作（左→右）：**复制**、查看本轮 Prompt 上下文、引用。  
   - 操作按钮用 `margin-top: 6px` 与气泡 **第一行文字** 光学垂直居中；长消息时 `.bubble-actions` 与成员头像同款纯 CSS sticky（`position: sticky; top: 0`），滚动该条时贴住视口顶，不随气泡底滚走。  
   - **头像色洗涤**：1:1 助手会话若 `bot.color` 为 `#RRGGBB`，该会话用户发送气泡背景为该色相对 `--chat-bg` 的浅色洗涤（`.messages.has-user-bubble-tint` / `--user-bubble-accent`），文字用 `--text`；未设色则默认 `--bubble-user` / `--bubble-user-text`（浅色主题为**黑底白字**：bg=`var(--text)`、text 为原浅色洗涤混色；深色主题仍为相对 `--chat-bg` 的中性亮度差，略亮于助手 `#212121`）。助手回复气泡不变。小队无小队级 `color` 字段，小队会话不染色，但仍受益于默认 `--bubble-user` / `--bubble-bot` 区分。  
+- **表情回应**：助手气泡「更多」内可点表情（见 §8.1.1）；徽章贴在气泡角上（用户气泡右下 / 助手气泡左下）。
 - **助手气泡**（左对齐）：布局是用户侧的 **镜像**——`bubble-body-row-assistant` 内先气泡、后操作（token 用量 / 引用 / **复制**），同一套 `margin-top: 6px`，**不要**再用 absolute 叠在气泡角上。  
 - 小队助手气泡：成员用对应 bot 的 `FlatAvatar`（`.bubble-speaker-avatar` 在 `.messages` 内 `position: sticky; top: 0`，长消息滚动时头像贴住视口顶，直到该条 `bubble-row` 滚出）；**队长气泡不渲染头像**（无 `has-speaker` 间距，气泡左对齐）。侧栏/列表 `SquadAvatar` 不变。  
 - Markdown 渲染、代码块复制；工具调用以 `ToolCardView` 插入在对应消息附近。  
@@ -106,18 +107,19 @@ okbot/
 - **助手回复显示**：主进程不再向 UI 推送 token `delta`；助手气泡在 `send_message`（`assistant_message`）、自动允许/HITL 工具边界前的可见旁白落盘、或 `done` 时整条出现，不做逐字流式。长任务应尽早 `send_message` 确认；即使用户只说「继续」、模型未调 `send_message`，工具一开始也会把缓冲旁白封成气泡。同轮开场「收到」只保留一条（短确认之后若最终/旁白再以「收到」开头，去重或去掉开头确认句）。UI 不展示空白或仅 `<think>`（含未闭合）的气泡。侧栏预览仍可在收齐后更新。`MarkdownContent` / `CodeBlock` / `ChatTranscript` / `SessionSidebar` 用 `memo`。  
 - 忙碌时 transcript **末行** ThinkingOrb + 阶段文案（思考中 / 正在回复 / 工具与命令 / **正在进化**——`done` 后、`chatStart` IPC 返回前的 persist 与 SOUL/skills/memory 刷新），排在最新用户/助手气泡下方，不遮挡；可「跳到底部」。
 - **贴底滚动**：用户未主动上滑时，新气泡 / 工具卡片 / 阶段切换 / Markdown 布局增高会通过 `ResizeObserver`（含子节点与 `.messages` 视口）+ `MutationObserver` + 双 `rAF` 继续钉在底部，并在约 220ms 后再钉一次以覆盖 bubble-enter / 晚到布局；程序化滚动用 `pinningScrollRef` 忽略，避免误判「已离开底部」。距底 ≤16px 视为真正触底（贴底 + 隐藏「回到底部」+ 清除未读计数），距底 >24px 才显示「回到底部」（紧滞回，消化亚像素抖动；不以末条消息进入视口为准）。发送（含并行加任务）会强制重新贴底；用户上滑后不抢滚动。
-- **进行中的任务**（`OpenTasksPanel`）：composer 上方折叠卡，默认收起；展开时任务/步骤列表**向上**以 absolute 浮层叠在消息区上（不挤占消息高度），列表区毛玻璃同右侧抽屉（`--panel` ~10% + `blur(28px)`）；展开 chevron 逆时针旋至朝上（`rotate(-180deg)`），收起顺时针回位。
+- **进行中的任务**（`OpenTasksPanel`）：仅展示 `status === 'in_progress'` 的任务及其步骤（pending/backlog/done 不进该卡）。composer 上方折叠卡，默认收起；展开时任务/步骤列表**向上**以 absolute 浮层叠在消息区上（不挤占消息高度），列表区毛玻璃同右侧抽屉（`--panel` ~10% + `blur(28px)`）；展开 chevron 逆时针旋至朝上（`rotate(-180deg)`），收起顺时针回位。编辑助手 **任务** tab 分三栏：未做（backlog，可手动删除）/ 进行中（pending+in_progress）/ 结束（done）。
 
 ### 3.4 输入区（`ChatComposer`）
 
 - 多行输入：随行数**自动增高**，最多 **5** 行后内部滚动。单行保持左右紧凑（左 `+`、中文本、右麦克风 / 发送）；超过 1 行时文本区改为**顶部全宽**，动作按钮落到**底下一行**（左 `+`，右麦克风 / 发送或停止）。空闲时描边强调。桌面默认 `font-size: 13.5px` / `line-height: 18px`；**窄屏或触摸**（`max-width: 768px` 或 `(hover: none) and (pointer: coarse)`）升到 **≥16px** / `22px`，避免 iOS Safari 聚焦输入框后页面放大且缩不回去（不靠 `maximum-scale=1`，保留双指缩放）。自动增高从 computed `line-height` 读取，与 CSS 同步。设置内 input / textarea / select、会话重命名同规则。网关登录页令牌输入已是 16px。  
+- **Composer `@` 提及**：输入 `@` 弹出分组候选（助手/小队、自动化、技能），↑↓ 选择、Enter/Tab 插入、Esc 关闭。选中项写入可往返的结构化 token `@[kind:id|label]`（kind=`bot|squad|schedule|skill`），气泡与 markdown 渲染为同款 chip（kind emoji + 名称；无单字 kind 徽章）；发送正文原样携带 token，便于模型/主机识别实体。自动化 / 技能目录只取**当前会话 owner**（助手=该助手本地技能与其名下定时任务；小队=该小队名下定时任务 + 成员本地技能并集），**不跨成员**、不混入全局技能。选中后按**光标位置**写入 `@[kind:id|label]`（与前后明文按插入顺序混排；发送正文仍带 token）。输入区为 contenteditable：与气泡 MentionsText **同款** EntityMentionChip 作为原子节点夹在文本之间（Grok/Slack 式），**不是**输入框前的 chip 条。可点 chip 或在 chip 后 Backspace 整颗删除；不走附件条或消息「引用」条样式。
 - **会话草稿**：composer 正文按 `chatOwnerId` 分桶（`draftsByOwnerRef`），切换助手/小队会话时恢复该会话未发送草稿，并把光标放到文末；发送或清空后移除。引用草稿切换会话时丢弃。侧栏副标题对**非当前**会话读取同一份草稿映射（`draftPreviewsByOwner`）：有非空草稿时显示 `草稿：xxx`（i18n `draftPrefix`），切回该会话或清空/发送后恢复最后回复摘要。
 - **引用草稿**：上方 quote 条（可关闭）；发送时写入 `quoteMessageId` + `quotePreview`（**不**把 `>` 拼进正文）。
 - **滚动条**：composer textarea 与聊天区 `.scroll-fade` 同为 5px 半透明 thumb（含 light 主题）。
 - **输入性能**：已达 5 行上限且内容仍溢出时跳过 `height:0` 测量；`ChatComposer` 经 `memo`。  
 - **麦克风**：点击开始录音，再点停止；`MediaRecorder` 采集音频 → 渲染进程 **本地 Whisper**（`@xenova/transformers` + 内置 `whisper-tiny`）转写写入 Composer；`VoiceBeam` 可视化。**不**走 Google Web Speech，也**不**走 provider `/audio/transcriptions`。需系统麦克风权限；识别可离线。失败时有模型加载 / 识别错误的中英提示。  
 - **附件**：图片 / 文件 / 文件夹，**单次最多 10 个**（超出 toast 提示）。左侧 `+` 打开扇形菜单（图片 / 文件 / 文件夹项保留悬停 tip；**`+` / 关闭本身不显示**「添加附件」「关闭附件菜单」悬停 tip）。**粘贴**：在输入框粘贴剪贴板中的图片 / 文件（含截图）会写入网关主机 `~/.okbot/data/<ownerId>/uploads/`，不依赖客户端本地 `file://`。亦可把文件 / 图片 / 文件夹**拖进聊天区**（含输入区）；图片 / 文件同样上传到网关 `uploads/`；文件夹仍作为单个 `folder` 路径附件（不展开、不上传）。拖入时聊天区有放下提示。Composer 内附件行在文本上方：非图片为 pill（图标 + 文件名 + 大小），图片为圆角方缩略图（右上角 X 移除）。正文前可带 `[Attached]` 块（网关绝对路径给工具）；图片另走视觉通道（`input_image` data URL），且必须通过与 `read_file` 相同的路径防护、魔数校验，并有张数与总量上限。引用前缀下的 `[Attached]` 同样会去掉图片路径。聊天气泡：文件仅图标 + 名称；图片经网关 `GET /v1/media/<ownerId>/uploads/…`（`?token=` / cookie / Bearer）展示。上传上限单文件 25MB。
-- **发送 / 停止（并行任务）**：忙碌时输入框仍可编辑；有草稿时可继续发送（composer 忙碌一律软改向当前在途回合），Enter 同样可发送（尊重 IME）。**停止**保持独立：忙碌且草稿为空只显示停止；忙碌且有草稿时 **停止 + 发送** 同时显示。发送不会仅因忙碌而灰掉。BorderBeam / busy 在该助手/小队**任一**回合仍在跑时保持点亮，全部结束后熄灭。本机 HTTP API 发起的回合同样会点亮忙碌 / 停止（收到 `user_message`）。
+- **发送 / 停止（并行任务）**：忙碌时输入框仍可编辑；有草稿时可继续发送（composer 忙碌一律软改向当前在途回合），Enter 同样可发送（尊重 IME）。**停止**保持独立：忙碌且草稿为空只显示停止；忙碌且有草稿时 **停止 + 发送** 同时显示。发送不会仅因忙碌而灰掉。Composer 输入框外包的 BorderBeam（`size="md"`）与停止按钮外包的 **pulse-outside**（特效库外边框发光）在该助手/小队**任一**回合仍在跑时保持点亮，全部结束后熄灭；idle 时停止按钮卸掉，发光随之消失。本机 HTTP API 发起的回合同样会点亮忙碌 / 停止（收到 `user_message`）。
 - **发送失败重试**：乐观用户气泡带渲染期 `sendStatus`（`pending` | `sent` | `failed`，不落盘）。`chatStart` / `chatStartSquad` 拒绝或抛错时，气泡保留并在**右下角**显示红色重试按钮（i18n `retrySend`）；点击以原文 + 引用（若有）重发。失败时不再用 `getMessagesPage` 整页替换把本地气泡冲掉。
 
 ---
@@ -133,7 +135,7 @@ okbot/
 - **引导期每步进化**：引导未完成时，每次用户回复 / 点选后都异步触发一次跑后维护（同「正在进化」那套 `runThrottledPostTurnMaintenance`，SOUL / 简介不受 `soulEveryTurns` 节流），不阻塞界面与下一轮回复；同一助手同时最多一次，进行中的新步骤合并为一次补跑；不改会话排序。模型标记结束后，等最后一次进化跑完再 `finishBotOnboarding`（兜底：可见用户消息满 12 条也会结束）；之后恢复常规节流。  
 - **选项卡片**（`QuickChoiceCard`）：白色圆角卡片，粗体问题 + 右上 ×，竖排选项带 A/B/C/D 灰色圆角方块角标，卡片下灰字「或直接在下方输入回答」。点选项即发送该文字；× 只收起卡片。载荷存于该条助手消息的 `choice`（会话 jsonl `meta.choice`），刷新后仍在；只在最后一条可见回复下显示，有新消息即消失。任何回合模型调用 `ask_choice` 都可复用。
 - 编辑资料：名称、描述、头像、颜色、可选 **模型覆盖**（`providerId` + `modelId`，皆空则用全局默认；同模型 id 可跨供应商）。  
-- 编辑抽屉分区（`OwnerFormTabs`）：**详情** / **任务** / **自动化** / **记忆** / **技能** / **资源**（小队无记忆/技能）。**任务**与**资源**列表新→旧，每次加载 10 条（「加载更多」）。记忆 / 技能为限高列表（仅本助手；全局记忆在设置 → 记忆）；全局技能总开关（默认关）+ 按 slug 选用 `~/.agents/skills`（`bot.json`：`useGlobalSkills` / `enabledGlobalSkills`）。详情 → Advanced 标签为「灵魂」（`SOUL.md` 正文，无下一行提示）。  
+- 编辑抽屉分区（`OwnerFormTabs`）：**详情** / **任务** / **自动化** / **记忆** / **技能** / **资料库**（小队无记忆/技能）。**任务**与**资料库**列表新→旧，每次加载 10 条（「加载更多」）。**资料库**为每助手轻量附件柜（`resources.jsonl`；**HTML 笔记**（`type=note`，`manage_note` 创建/维护；聊天气泡一帧预览卡片）/ URL / 文件夹与文件引用 / 收入副本；可预览项（md / 笔记 / 代码文本 / 图片）点开为整屏预览（图片保留缩放；其它仅下载；无缩略图落盘）；预览 md/代码复用聊天气泡栈，笔记为 iframe 可编辑预览（srcdoc + allow-same-origin 注入 base about:srcdoc；大纲/锚点在预览内 scroll，不整页白屏；勿 allow-scripts）；不整库注入模型上下文；升级不迁移旧目录散落文件）。记忆 / 技能为限高列表（仅本助手；全局记忆在设置 → 记忆）；全局技能总开关（默认关）+ 按 slug 选用 `~/.agents/skills`（`bot.json`：`useGlobalSkills` / `enabledGlobalSkills`）。详情 → Advanced 标签为「灵魂」（`SOUL.md` 正文，无下一行提示）。  
 - 系统提示：`SOUL.md`（引导写入 + 高级可编 + 跑后静默维护）；Skills：**渐进披露**——目录（名称 / slug / 何时使用）进系统提示，完整正文经 `read_skill` 按需加载（本助手 `skills/<slug>/SKILL.md` + 可选全局）；记忆：全局 `memory.md`（设置 → 记忆）+ 每助手 `memory.md`（JSONL）。  
 - **技能热更新**：主进程对每个助手的 `skills/` 以及（若启用）`~/.agents/skills` 做 `fs.watch`（约 120ms 去抖），变更发 `skills_changed`。不改当前转录；**下一轮**开跑和 `read_skill` 都从磁盘重读，改完文件不用重启应用。
 
@@ -170,7 +172,7 @@ okbot/
 
 ### 4.5 首次使用引导
 
-没有任何助手和小队、且未选中会话时，主区显示「三步开始使用 OkBot」（`features/onboarding/QuickStartPanel`）：
+没有任何助手和小队、且未选中会话时，全窗口覆盖层显示「三步开始使用 OkBot」（`features/onboarding/QuickStartPanel`，盖住侧栏与聊天区；装好助手或创建后恢复正常布局）：
 
 1. **接入一个模型**：还没有带模型的供应商时，按钮打开设置 → 模型接入。完成后显示勾。
 2. **选一个助手**：内嵌市场卡片，一点即用；或「自己创建」走原有新建助手流程。没有模型前这一步看起来不可操作。
@@ -191,7 +193,7 @@ okbot/
   - 默认 Playbook 覆盖准备→澄清→拆解→路由→校验→冲突→汇总→异常→边界→跨队员传递；空字符串回落 `DEFAULT_SQUAD_PLAYBOOK`，已存自定义同样不覆盖。  
 - 会话 UI：成员呼叫/回复气泡带 speaker 头像；队长终泡无头像。列表仍用 `SquadAvatar`。队长分段封印后若终泡为空，聚合 usage 挂到最后一段已封印队长气泡；用量统计只记在小队 owner（不向成员 byOwner 分摊）。  
 - 全局搜索包括小队聊天消息，与私聊一致。  
-- **编排器与忙碌发送**：`chatStart` 先进入主进程编排。**空闲**时开一轮主回合（用户可见回复由该回合发出）。**忙碌 + composer**（以及看似空闲但可能刚踢出 auto-continue 时）软改向：取消待续跑、中止该 owner **全部**在途回合（含 auto_continue），再带上新用户消息重开同一活跃上下文（模型自行判断补充 vs 额外事项；桌面不再做意图分类或并行 composer 分叉）。**忙碌 + schedule/api** 不软改向，可走并行门闩（每 owner 默认最多 **3** 路，超出 FIFO 排队；任务条在未完成回合 > 1 时显示）。**任务进度 auto-continue**：回合干净结束后若该 owner 的 `task-progress` 仍有 pending/in_progress，主机自动发起静默续跑（合成用户提示写入会话供模型看，**不**显示用户气泡）；不限次数，直到清单无未完成项、用户 **停止** / abort / 中途 composer 软改向、硬错误，或续跑后进度指纹连续两次未变（先加严提示再试一次，仍不变则停，防空转）。显式 **停止**（`chatAbort`）中止该 owner **全部**在途回合并取消排队与待续跑；被停止的回合以 `done.aborted` 结束（**不**把 AbortError 抛回 `ipcRenderer.invoke`）。会话 jsonl 按 owner 串行；并行回合用 `runId` 隔离模型上下文。**小队**暂仍为忙碌即并行。
+- **编排器与忙碌发送**：`chatStart` 先进入主进程编排。**空闲**时开一轮主回合（用户可见回复由该回合发出）。**忙碌 + composer**（以及看似空闲但可能刚踢出 auto-continue 时）软改向：取消待续跑、中止该 owner **全部**在途回合（含 auto_continue），再带上新用户消息重开同一活跃上下文（模型自行判断补充 vs 额外事项；桌面不再做意图分类或并行 composer 分叉）。**忙碌 + schedule/api** 不软改向，可走并行门闩（每 owner 默认最多 **3** 路，超出 FIFO 排队；任务条在未完成回合 > 1 时显示）。**任务进度 auto-continue**：回合干净结束后若该 owner 仍有可推进的 pending/in_progress（`canAutoContinueTasks`），主机自动发起静默续跑（合成用户提示写入会话供模型看，**不**显示用户气泡）；步骤 `blocked` 或任务仍在 `backlog` 时**暂停**续跑。不限次数，直到无可续跑项、用户 **停止** / abort / 中途 composer 软改向、硬错误，或续跑后进度指纹不变时加严提示（指纹逻辑见实现）。显式 **停止**（`chatAbort`）中止该 owner **全部**在途回合并取消排队与待续跑；被停止的回合以 `done.aborted` 结束（**不**把 AbortError 抛回 `ipcRenderer.invoke`）。会话 jsonl 按 owner 串行；并行回合用 `runId` 隔离模型上下文。**小队**暂仍为忙碌即并行。
 
 ### 定时任务
 
@@ -232,7 +234,7 @@ okbot/
 
 | Tab（侧栏文案） | 内容 |
 |-----|------|
-| **通用设置** | 主题（系统/浅/深）、语言（系统/中/英）、**时区**（`settings.timezone`：可搜索 IANA 下拉；默认「自动检测」并显示当前主机时区与当地时间；显式选定后供定时任务等在 job 未写 timezone 时回退）、**半透明**（`settings.translucent`，默认开；关则去毛玻璃/vibrancy/透明窗）、缩放特效（默认关；? 说明仿 MacOS Dock 动效）、麦克风、**硬件加速**（改后需重启）、**系统通知**（默认开，见 §3.1）、**关闭窗口**（`closeAction`：每次询问 / 最小化到托盘 / 退出，见 §3）。**高级**：**开发者模式**（`developerMode`，默认关；仅控制系统指令与若干调试入口，见上）。**不含**更新控件、网关服务、电脑连接与数据备份。**默认助手**仍可由侧栏右键设/取消（`settings.defaultAssistantId`），通用页不再展示该下拉 |
+| **通用设置** | 主题（系统/浅/深）、语言（系统/中/英）、**时区**（`settings.timezone`：可搜索 IANA 下拉；默认「自动检测」并显示当前主机时区与当地时间；显式选定后供定时任务等在 job 未写 timezone 时回退）、**半透明**（`settings.translucent`，默认关；开则侧栏毛玻璃/vibrancy/透明窗）、缩放特效（默认关；? 说明仿 MacOS Dock 动效）、麦克风、**硬件加速**（改后需重启）、**系统通知**（默认开，见 §3.1）、**关闭窗口**（`closeAction`：每次询问 / 最小化到托盘 / 退出，见 §3）。**高级**：**开发者模式**（`developerMode`，默认关；仅控制系统指令与若干调试入口，见上）。**不含**更新控件、网关服务、电脑连接与数据备份。**默认助手**仍可由侧栏右键设/取消（`settings.defaultAssistantId`），通用页不再展示该下拉 |
 | **模型接入** | **自定义供应商**（可多条；行右端统一展开/收起箭头，展开后在行内级联嵌套「请求接口」与「模型列表」，样式同前略收窄：名称 / BaseURL / API Format / API Key / 每供应商模型目录）；模型行**连通测试**（按该供应商 baseURL/apiKey/apiFormat 对模型 id 发最小探针，IPC `testModelConnection`）；全局**默认模型**（下方下拉，供应商→模型；列表行不再用星标设默认）；模型列表按显示名 A–Z 稳定排序（无显示名则用 id；启停不打乱相对序；供应商顺序不变）；助手/小队覆盖同为 `providerId`+`modelId`；上下文压缩（自动换题、比例、保留上下限、摘要字数；新装默认更早压缩、多留原文） |
 | **工具授权** | 内置工具启用 + 审批策略（自动允许 / 询问；含 `read_skill`、`manage_schedule`、`web_fetch`、`web_search`）；**网页**小节（`settings.web`：搜索服务商 Tavily/Brave/Serper/自定义、API Key；自定义时另填接口协议与 base URL；内置三家始终走官方端点；`web_fetch` 是否允许内网）；**自动审批规则（AAR）** 列表（允许/先询问、关键词、失焦自动保存草稿；空规则丢弃；重名校验；列表限高滚动） |
 | **安全防护** | 总开关、拦截模式（reject / tripwire）、限制在家目录、允许/拒绝路径前缀、可编辑的危险 shell 正则列表（缺省用内置，可恢复默认）；与审批关系说明 |
@@ -244,7 +246,7 @@ okbot/
 | **用量分析** | 见 §9；按助手/小队列表有内边距 |
 | **自动更新** | `autoUpdate` 开关与手动检查/下载/安装（从通用迁出；route id 仍为 `updates`） |
 
-默认工具策略（`DEFAULT_TOOL_PREFERENCES`）：内置工具默认全开；多数默认自动允许（含 `read_file` / `read_skill` / `write_file` / `edit_file` / `run_shell` / `generate_image` / `search_history` / `manage_schedule` / `web_fetch` / `web_search`）。**`manage_schedule` 的 create / delete 始终需要确认一次**（与工具审批设置、AAR 均无关；`resolveToolApproval` 对 create/delete 强制 ask）；`list` 永不审批；pause / resume 跟随该工具的审批策略并可走 AAR。写/执行仍可走 AAR，未命中再 HITL（当审批设为询问时）。`web_search` 未配置搜索（缺 API Key，或自定义缺接口地址）时仍暴露工具，调用会返回明确错误提示去设置配置。
+默认工具策略（`DEFAULT_TOOL_PREFERENCES`）：内置工具默认全开；**多数默认 `approval: allow`（自动允许）**，含危险面工具 `run_shell` / `write_file` / `edit_file`，以及 `read_file` / `read_skill` / `generate_image` / `search_history` / `manage_schedule` / `manage_task_progress` / `manage_note` / `manage_memory` / `send_message` / `web_fetch` / `web_search`。HITL 审批卡只在工具设为 `ask`、或命中强制确认动作、或启用 MCP 时出现：**`manage_schedule` create / delete** 与 **`manage_memory` forget** 始终要确认一次（与工具审批设置、AAR 均无关）；`list` 永不审批；pause / resume（及 memory 非 forget 动作）跟随该工具的审批策略并可走 AAR。写/执行在设为询问时仍可走 AAR，未命中再 HITL。MCP 工具每次调用都要审批（AAR 不可旁路）。`web_search` 未配置搜索（缺 API Key，或自定义缺接口地址）时仍暴露工具，调用会返回明确错误提示去设置配置。
 
 设置内可深链 `focusSection` / `data-settings-id`（全局搜索跳转）。`SettingsHelpTip` 经 portal 挂到 `document.body`（高 z-index），避免被 settings shell / body / card 的 overflow 裁切。
 
@@ -369,13 +371,13 @@ Electron 启动时做同样检查：
 
 安全（`guardrails.ts` + `settings.security`）：
 
-- **不是** OS 沙箱：`run_shell` 走本机 shell + 用户环境；防护 = 路径前缀 + 危险命令 denylist（`settings.security.shellPatterns`，缺省用内置正则，可在设置里增删改/恢复默认；无效正则跳过）+ HITL/AAR。  
+- **不是** OS 沙箱：`run_shell` 走本机 shell + 用户环境（无 seatbelt/容器隔离）；路径前缀与危险命令 denylist（`settings.security.shellPatterns`，缺省用内置正则，可在设置里增删改/恢复默认；无效正则跳过）是软护栏，不是隔离。HITL/AAR 仅在工具设为 `ask`（或强制确认 / MCP）时参与；多数工具默认 `allow`，不会因「有 HITL 能力」而默认挡下 shell/写文件。  
 - 设置 → **安全防护** 顶部分 **Tool | Agent** 两个页签：Tool 为既有路径/Shell/拦截方式；Agent 为 `inputGuardrails` / `outputGuardrails`（空输入、长度、越狱启发式、注入标记、粘贴密钥/PII、最终回复密钥 tripwire）与 `defineToolOutputGuardrail`（`run_shell`/`read_file` 结果脱敏，遵循 `blockMode`）。均受 `security.enabled` 总开关约束；Agent 页新项默认关（可信个人本机、不过度激进）。  
 - 适合可信个人本机；勿当多租户沙箱。
 
-### 7.1 MCP 扩展（可选，默认关）
+### 7.1 MCP 扩展（可选，默认开）
 
-- 设置 → **网关端 → MCP扩展**。总开关 `settings.mcp.enabled` 默认关。服务器列表与添加/编辑对话框和电脑连接同一套样式。
+- 设置 → **网关端 → MCP扩展**。总开关 `settings.mcp.enabled` 默认开（已有显式 `enabled: false` 的配置保持关闭，不会被强制翻开）。服务器列表与添加/编辑对话框和电脑连接同一套样式。
 - 两种连接：**本地命令（stdio）**（命令、每行一个参数、`KEY=VALUE` 环境变量）与 **HTTP（Streamable HTTP）**（地址、`Name: Value` 请求头）。每台可单独启停，可「测试连接」看到工具数。
 - 运行时（`packages/agent/src/mcp/mcpHub.ts` + `apps/desktop/electron/mcpRuntime.ts`）：每次开跑前按设置同步连接，把每个 MCP 工具包成函数工具，名字为 `mcp_<服务器名前 20 字符>_<标签>_<工具名>`（标签是服务器 id 的 sha256 前 4 位十六进制；最长 64 字符，重名加后缀；按服务器 id 排序后命名，所以改名或增删别的服务器不会让已有工具改名），经 `extraTools` 交给 1:1 助手、HITL 恢复和小队队长。
 - **每次调用都要审批**（`needsApproval: true`），走与 `run_shell` 相同的工具卡。自动审批规则对 MCP 工具无效（`resolveToolApproval`），工具卡不显示「总是允许」。
@@ -400,6 +402,12 @@ HITL UI：工具卡上「允许 / 永久允许 / 拒绝」。
 - 悬停气泡 → 引用 → 输入区出现预览条。  
 - 发出的用户消息带 `quoteMessageId` + `quotePreview`；气泡上方可点引用条 **跳转到原消息**（高亮）。`quotePreview` 与送给模型的引用正文会先去掉 `[Attached]` 里的图片路径。  
 - Agent 侧：按消息 id 取原文，再交给本轮 `sessionInputCallback`（引用不是把 `>` 写进气泡正文）。
+
+### 8.1.1 气泡表情回应（reactions）
+
+- 反应写在消息记录上（`ChatMessage.reaction` / `session.jsonl` meta），**不**新增时间线气泡。详见 [`docs/design/message-reactions.md`](./docs/design/message-reactions.md)。
+- 用户在助手气泡悬停「更多」：上方 2×3 表情格（5 个 MRU + `…` 打开与头像相同的 emoji-mart）；点选/更换会静默唤醒助手（`origin: 'reaction'`，引用该消息 + emoji）；再点同一表情则清除且不唤醒。用户唤醒无需额外系统提示教学。
+- 助手复用 `send_message`：`{ reactToMessageId, emoji }` 在用户气泡上放/清表情（右下角）；需要说清事情时仍用 `content`。系统提示（`SEND_MESSAGE_INSTRUCTION`）教导：简单确认可用纯表情回应。用户的回应在助手气泡左下角。新设/更换时徽章有 **pop** 动画。
 
 ### 8.2 多轮上下文结构（模型每轮所见）
 
@@ -626,8 +634,8 @@ Preload 暴露 `window.okbot.*`；渲染进程不直连 Node fs。
 
 ## 15. 明确未做 / 边界
 
-- MCP 只接工具，不接 resources / prompts；默认关闭。  
-- `run_shell` 非容器/seatbelt 沙箱。  
+- MCP 只接工具，不接 resources / prompts；总开关默认开启（已有 `enabled: false` 保持不变）。  
+- `run_shell` 非容器/seatbelt 沙箱；默认也不走 HITL（`approval: allow`）。  
 - 模型目录 **仅手动 + discover**，无复杂厂商 OAuth。  
 - 虚拟队长非真实 bot；小队消息搜索按 `ownerKind: 'squad'` 跳转——改相关逻辑时勿回归。  
 - 本地 HTTP API **默认仅 loopback**。只有打开局域网网关才绑定 `0.0.0.0`，仍靠访问令牌；没有面向公网的入口。不打开窗口时用 `okbot serve`（见 §6.1.1）。
@@ -637,7 +645,7 @@ Preload 暴露 `window.okbot.*`；渲染进程不直连 Node fs。
 ## 16. 文档维护
 
 1. 合并功能或重要 UI 变更时：**同一 PR/提交或紧随提交** 更新本文件对应章节。  
-2. 根目录用户文档：`README.md`（英文）与 `README_zh.md`（中文）保持短述 + 指向本指南；文首保留 `English | 中文` 相对链接，两边结构同步；勿在用户 README 写技术栈 / 当前范围 / `run_shell` 诚实边界等开发向内容（边界说明留在本指南对应章节）。  
+2. 根目录用户文档：`README.md`（英文）与 `README_zh.md`（中文）保持短述 + 指向本指南；文首保留 `English | 中文` 相对链接，两边结构同步；勿在用户 README 写技术栈 / 实现细节。**须**用一两句写清：多数工具（含 shell / 写文件）默认 `approval: allow`，以及本机执行不是 OS 沙箱；细则仍留在本指南。  
 3. 本指南不要写死产品号（以 Releases / `package.json` 为准）。  
 4. 以代码与近期 commit 为准，避免凭记忆写「计划中」能力。
 

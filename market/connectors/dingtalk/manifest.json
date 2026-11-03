@@ -1,0 +1,56 @@
+{
+  "format": "okbot-market-connector",
+  "version": 1,
+  "id": "dingtalk",
+  "displayName": "钉钉",
+  "displayNameEn": "DingTalk",
+  "type": "mcp",
+  "transport": "stdio",
+  "endpointTemplate": null,
+  "auth": {
+    "kind": "env",
+    "env": {
+      "DINGTALK_Client_ID": "{{DINGTALK_CLIENT_ID}}",
+      "DINGTALK_Client_Secret": "{{DINGTALK_CLIENT_SECRET}}",
+      "ACTIVE_PROFILES": "{{DINGTALK_ACTIVE_PROFILES}}"
+    },
+    "notes": "企业内部应用 AppKey / AppSecret；ACTIVE_PROFILES 按需加载模块（如 dingtalk-contacts,dingtalk-notable,dingtalk-calendar）或 ALL。勿写入仓库。"
+  },
+  "okbotMcpProjection": {
+    "name": "dingtalk",
+    "transport": "stdio",
+    "command": "npx",
+    "args": [
+      "-y",
+      "dingtalk-mcp@latest"
+    ],
+    "env": {
+      "DINGTALK_Client_ID": "{{DINGTALK_CLIENT_ID}}",
+      "DINGTALK_Client_Secret": "{{DINGTALK_CLIENT_SECRET}}",
+      "ACTIVE_PROFILES": "dingtalk-contacts,dingtalk-notable,dingtalk-calendar,dingtalk-tasks"
+    }
+  },
+  "toolsSummary": [
+    "通讯录 & 部门：搜人、查部门、组织架构",
+    "AI 表格（Notable）：建表 / 读写记录 / 字段",
+    "日程：创建会议、查日程、管理参与者",
+    "待办 / 机器人消息 / 工作通知（按 ACTIVE_PROFILES）",
+    "TB 项目、日志、荣誉等扩展模块"
+  ],
+  "docsUrls": [
+    "https://open.dingtalk.com/document/ai-dev/second-level-node-1",
+    "https://open.dingtalk.com/document/ai-dev/dingtalk-server-api-mcp-overview.md",
+    "https://open.dingtalk.com/document/ai-dev/advanced-configuration.md",
+    "https://open.dingtalk.com/document/ai-dev/dingtalk-mcp-feature-list.md"
+  ],
+  "status": "stub",
+  "wave": 2,
+  "tags": [
+    "cn",
+    "office",
+    "dingtalk",
+    "calendar",
+    "contacts"
+  ],
+  "notes": "Wave-2 办公。官方包 dingtalk-mcp；stdio + 企业应用凭证。"
+}

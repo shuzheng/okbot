@@ -132,6 +132,36 @@ assert(
   'buildAgentInstructions: soft-steer unfinished plan still gets mid-run continue rules',
 );
 
+const withResume = buildAgentInstructions(
+  '001',
+  '',
+  [],
+  prefs,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  [
+    '## 主机恢复上下文（系统侧；用户不可见）',
+    '上一轮运行因「软接管」中断。',
+    '### 已有资料（path / title / type；新→旧）',
+    '- path=bot/resources/贪吃蛇游戏.html title=贪吃蛇游戏 type=html id=r1',
+  ].join('\n'),
+);
+assert(
+  withResume.includes('主机恢复上下文') && withResume.includes('贪吃蛇游戏'),
+  'buildAgentInstructions: host resumeContextText must appear in system instructions',
+);
+
 const full = formatSessionPromptContext({
   instructions: instr,
   items: [],

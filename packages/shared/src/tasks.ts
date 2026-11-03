@@ -1,11 +1,25 @@
 /** Durable multi-task queue (per-bot `tasks.jsonl`). */
 
-export type TaskStatus = 'pending' | 'in_progress' | 'done' | 'cancelled' | 'failed';
+/** Task-level status (4). `backlog` only via explicit set — never derived. */
+export type TaskStatus = 'backlog' | 'pending' | 'in_progress' | 'done';
+
+/**
+ * Step-level status (6). No backlog.
+ * In-progress phase: pending | in_progress | blocked
+ * Terminal: succeeded | failed | cancelled
+ */
+export type StepStatus =
+  | 'pending'
+  | 'in_progress'
+  | 'blocked'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled';
 
 export type TaskStep = {
   id: string;
   title: string;
-  status: TaskStatus;
+  status: StepStatus;
   note?: string;
   startedAt?: string;
   endedAt?: string;
@@ -26,24 +40,70 @@ export type TaskRecord = {
 };
 
 export const TASK_STATUSES: readonly TaskStatus[] = [
+  'backlog',
   'pending',
   'in_progress',
   'done',
-  'cancelled',
+] as const;
+
+export const STEP_STATUSES: readonly StepStatus[] = [
+  'pending',
+  'in_progress',
+  'blocked',
+  'succeeded',
   'failed',
+  'cancelled',
 ] as const;
 
 export function isTaskStatus(raw: unknown): raw is TaskStatus {
   return typeof raw === 'string' && (TASK_STATUSES as readonly string[]).includes(raw);
 }
 
-/** Open = still in the UI queue (hidden once terminal). */
+export function isStepStatus(raw: unknown): raw is StepStatus {
+  return typeof raw === 'string' && (STEP_STATUSES as readonly string[]).includes(raw);
+}
+
+/**
+ * Migrate legacy task status from disk/tool input.
+ * Old task `cancelled` / `failed` → `done`.
+ */
+export function coerceTaskStatus(raw: unknown): TaskStatus | undefined {
+  if (raw === 'cancelled' || raw === 'failed') return 'done';
+  if (isTaskStatus(raw)) return raw;
+  return undefined;
+}
+
+/**
+ * Migrate legacy step status from disk/tool input.
+ * Old step `done` → `succeeded`. Unknown / backlog → undefined (caller defaults).
+ */
+export function coerceStepStatus(raw: unknown): StepStatus | undefined {
+  if (raw === 'done') return 'succeeded';
+  if (isStepStatus(raw)) return raw;
+  return undefined;
+}
+
+/** Chat 「进行中的任务」: only actively running tasks. */
 export function isOpenTaskStatus(status: TaskStatus): boolean {
-  return status === 'pending' || status === 'in_progress';
+  return status === 'in_progress';
+}
+
+/** Non-terminal task (pool / ready / running). */
+export function isNonTerminalTaskStatus(status: TaskStatus): boolean {
+  return status === 'backlog' || status === 'pending' || status === 'in_progress';
 }
 
 export function isTerminalTaskStatus(status: TaskStatus): boolean {
-  return status === 'done' || status === 'cancelled' || status === 'failed';
+  return status === 'done';
+}
+
+/** In-progress phase steps (not yet terminal). */
+export function isActiveStepStatus(status: StepStatus): boolean {
+  return status === 'pending' || status === 'in_progress' || status === 'blocked';
+}
+
+export function isTerminalStepStatus(status: StepStatus): boolean {
+  return status === 'succeeded' || status === 'failed' || status === 'cancelled';
 }
 
 /** Crockford Base32 (ULID alphabet; no I, L, O, U). */
@@ -80,18 +140,3 @@ export function createUlid(nowMs: number = Date.now()): string {
   return out;
 }
 
-
-/** One file under `~/.okbot/<ownerId>/resources/` (edit 资源 tab). */
-export type OwnerResourceInfo = {
-  name: string;
-  /** Absolute path on disk. */
-  path: string;
-  /** Bytes. */
-  size: number;
-  /** ISO mtime (sort newest→oldest). */
-  createdAt: string;
-  /** MIME guess from extension (image/* for preview). */
-  mime: string;
-  /** `<ownerId>/resources/<name>` for readGeneratedAssetDataUrl / media gateway. */
-  assetRel: string;
-};

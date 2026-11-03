@@ -265,7 +265,7 @@ function McpServerDialog({
 }
 
 /**
- * MCP servers ("advanced extensions"). Off by default. Every MCP tool call asks
+ * MCP servers ("advanced extensions"). On by default (global toggle). Every MCP tool call asks
  * for approval. List layout matches ComputersSettingsPanel / the model list.
  * `readOnly` (user-token / non-admin gateway clients): MCP starts processes on the host; admin remote clients may edit via HTTP.
  */

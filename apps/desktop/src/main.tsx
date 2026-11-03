@@ -11,7 +11,7 @@ installWindowResizeGate();
 void window.okbot.getAppInfo().then((info) => {
   document.documentElement.dataset.platform = info.platform;
     if (document.documentElement.dataset.translucent == null) {
-      document.documentElement.dataset.translucent = 'true';
+      document.documentElement.dataset.translucent = 'false';
     }
 });
 

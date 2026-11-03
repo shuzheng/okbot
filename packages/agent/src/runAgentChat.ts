@@ -5,8 +5,11 @@ import {
   buildRunOpts,
   consumeAgentTextStream,
   createAgentAndRunner,
+  createRunCheckpointBox,
+  noteRunCheckpointState,
   runHitlStreamLoop,
   runModelSegment,
+  wireRunCheckpointFlush,
   type AgentRunStreamResult,
   type StreamResetHandle,
 } from './hitl.js';
@@ -56,6 +59,8 @@ function attachMeshAskTool(
     web: input.web,
     ownerId: input.ownerId,
     resourcesDir: input.resourcesDir,
+    onGeneratedImageSaved: input.onGeneratedImageSaved,
+    assertLibraryWriteAllowed: input.assertLibraryWriteAllowed,
     executionBackend: input.executionBackend,
     computerRoute: input.computerRoute,
     rosterForCallee: (calleeId) => peerRoster.filter((p) => p.id !== calleeId),
@@ -87,8 +92,8 @@ export async function runAgentChat(input: RunAgentChatInput): Promise<RunChatRes
       streamReset.committedInterim = true;
       streamReset.reset();
     },
-    emitAssistantMessage: async (content: string) => {
-      await input.emitAssistantMessage?.(content);
+    emitAssistantMessage: async (payload) => {
+      await input.emitAssistantMessage?.(payload);
       streamReset.committedInterim = true;
       streamReset.reset();
     },
@@ -108,9 +113,12 @@ export async function runAgentChat(input: RunAgentChatInput): Promise<RunChatRes
   };
   const { agent, runner } = createAgentAndRunner(withMesh);
   const runOpts = buildRunOpts(withMesh);
+  const checkpointBox = createRunCheckpointBox();
+  wireRunCheckpointFlush(withMesh, checkpointBox);
 
   const first = await runModelSegment(withMesh, async () => {
     const result = (await runner.run(agent, withMesh.userText, runOpts)) as AgentRunStreamResult;
+    noteRunCheckpointState(checkpointBox, result.state);
     const streamed = await consumeAgentTextStream(
       result,
       withMesh.onDelta,
@@ -120,7 +128,16 @@ export async function runAgentChat(input: RunAgentChatInput): Promise<RunChatRes
     return { result, streamed };
   });
 
-  return runHitlStreamLoop(agent, runner, runOpts, first.result, first.streamed, withMesh, streamReset);
+  return runHitlStreamLoop(
+    agent,
+    runner,
+    runOpts,
+    first.result,
+    first.streamed,
+    withMesh,
+    streamReset,
+    checkpointBox,
+  );
 }
 
 /**
@@ -141,8 +158,8 @@ export async function resumeAgentChatAfterHitl(
       streamReset.committedInterim = true;
       streamReset.reset();
     },
-    emitAssistantMessage: async (content: string) => {
-      await input.emitAssistantMessage?.(content);
+    emitAssistantMessage: async (payload) => {
+      await input.emitAssistantMessage?.(payload);
       streamReset.committedInterim = true;
       streamReset.reset();
     },
@@ -162,12 +179,15 @@ export async function resumeAgentChatAfterHitl(
   };
   const { agent, runner } = createAgentAndRunner(withMesh);
   const runOpts = buildRunOpts(withMesh);
+  const checkpointBox = createRunCheckpointBox();
+  wireRunCheckpointFlush(withMesh, checkpointBox);
 
   const state = await RunState.fromString(agent, withMesh.serializedRunState);
   applyResumeDecision(state, withMesh);
 
   const first = await runModelSegment(withMesh, async () => {
     const result = (await runner.run(agent, state, runOpts)) as AgentRunStreamResult;
+    noteRunCheckpointState(checkpointBox, result.state);
     const streamed = await consumeAgentTextStream(
       result,
       withMesh.onDelta,
@@ -177,7 +197,16 @@ export async function resumeAgentChatAfterHitl(
     return { result, streamed };
   });
 
-  return runHitlStreamLoop(agent, runner, runOpts, first.result, first.streamed, withMesh, streamReset);
+  return runHitlStreamLoop(
+    agent,
+    runner,
+    runOpts,
+    first.result,
+    first.streamed,
+    withMesh,
+    streamReset,
+    checkpointBox,
+  );
 }
 
 /**
@@ -198,8 +227,8 @@ export async function resumeAgentChatFromCheckpoint(
       streamReset.committedInterim = true;
       streamReset.reset();
     },
-    emitAssistantMessage: async (content: string) => {
-      await input.emitAssistantMessage?.(content);
+    emitAssistantMessage: async (payload) => {
+      await input.emitAssistantMessage?.(payload);
       streamReset.committedInterim = true;
       streamReset.reset();
     },
@@ -219,11 +248,14 @@ export async function resumeAgentChatFromCheckpoint(
   };
   const { agent, runner } = createAgentAndRunner(withMesh);
   const runOpts = buildRunOpts(withMesh);
+  const checkpointBox = createRunCheckpointBox();
+  wireRunCheckpointFlush(withMesh, checkpointBox);
 
   const state = await RunState.fromString(agent, withMesh.serializedRunState);
 
   const first = await runModelSegment(withMesh, async () => {
     const result = (await runner.run(agent, state, runOpts)) as AgentRunStreamResult;
+    noteRunCheckpointState(checkpointBox, result.state);
     const streamed = await consumeAgentTextStream(
       result,
       withMesh.onDelta,
@@ -233,6 +265,15 @@ export async function resumeAgentChatFromCheckpoint(
     return { result, streamed };
   });
 
-  return runHitlStreamLoop(agent, runner, runOpts, first.result, first.streamed, withMesh, streamReset);
+  return runHitlStreamLoop(
+    agent,
+    runner,
+    runOpts,
+    first.result,
+    first.streamed,
+    withMesh,
+    streamReset,
+    checkpointBox,
+  );
 }
 

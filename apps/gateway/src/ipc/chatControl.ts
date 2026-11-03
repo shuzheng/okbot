@@ -1,22 +1,55 @@
 import type { IpcContext } from './context';
 import { abortAllOwnerRuns } from './ownerRuns';
 import { cancelAutoContinues } from './autoContinueGate';
-import { cancelSoftSteers } from './softSteerGate';
+import { cancelSoftSteers, clearSoftSteerCheckpointHandoff } from './softSteerGate';
 
 /**
  * Stop one bot or squad the same way the desktop Stop button does:
  * cancel queued parallel waits, abort every in-flight run for that owner,
  * and reject live HITL waiters.
+ * Flushes the live HITL RunState (setOwnerRunCheckpointFlush → onRunCheckpoint)
+ * immediately before abort, then keeps mid-run run-checkpoint.json so a later
+ * composer「继续」can load/consume a near-current state. Still clears the
+ * soft-steer handoff *flag* so no in-flight soft-steer replacement races after Stop.
  */
 export function abortChatOwner(
-  ctx: Pick<IpcContext, 'abortControllers' | 'rejectPendingApprovalsForBot'>,
+  ctx: Pick<IpcContext, 'abortControllers' | 'rejectPendingApprovalsForBot'> & {
+    /**
+     * Optional. Stop keeps run-checkpoint for later「继续」, but marks
+     * autoResumeEligible=false so Watchdog does not silent-resume.
+     */
+    storage?: Pick<
+      IpcContext['storage'],
+      'clearRunCheckpoint' | 'loadRunCheckpoint' | 'saveRunCheckpoint'
+    >;
+  },
   ownerId: string,
 ): boolean {
   const id = (ownerId || '').trim();
   if (!id) return false;
   cancelSoftSteers(id);
+  clearSoftSteerCheckpointHandoff(id);
   cancelAutoContinues(id);
+  // Do NOT clear run-checkpoint.json on Stop — next composer turn may resume.
   const had = abortAllOwnerRuns(ctx.abortControllers, id);
+  // Flush already wrote the latest state; suppress silent Watchdog auto-resume.
+  try {
+    const disk = ctx.storage?.loadRunCheckpoint?.(id);
+    if (disk && disk.autoResumeEligible !== false && ctx.storage?.saveRunCheckpoint) {
+      ctx.storage.saveRunCheckpoint(id, {
+        kind: disk.kind,
+        runId: disk.runId,
+        messageId: disk.messageId,
+        serializedRunState: disk.serializedRunState,
+        createdAt: disk.createdAt,
+        computerId: disk.computerId,
+        userText: disk.userText,
+        autoResumeEligible: false,
+      });
+    }
+  } catch (err) {
+    console.error('[okbot] mark checkpoint suppressAutoResume on Stop failed', err);
+  }
   ctx.rejectPendingApprovalsForBot(id, '已取消');
   return had;
 }

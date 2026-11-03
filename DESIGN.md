@@ -71,7 +71,7 @@ gatewayHttpApi          网关 HTTP。不是独立服务
 
 网关 HTTP 在进程内直接调 `startChatTurn`，不再绕一圈 IPC。
 
-1:1 忙碌发送经 `orchestrateBotTurn`（`apps/gateway/src/ipc/chat/orchestrateBotTurn.ts`）：composer（含看似空闲）经 `softSteerGate` 取消 auto-continue 并 abort 该 owner 全部在途回合后重启（把新用户消息并入同一活跃上下文；不按意图分叉并行 composer 回合）。schedule/api 忙碌时不软改向，走既有并行门闩。干净 `done` 后若 `task-progress` 仍有 pending/in_progress，主机静默 auto-continue（无可见用户气泡、不限次数；Stop/abort/composer 软改向/硬错误则停；进度指纹连续两次未变则停，中间一次加严提示）。助手气泡非流式：主机不推送 token `delta`；`send_message` / 自动允许与 HITL 工具边界可见旁白（`onBeforeToolExecute`→`clearLiveAssistantForTools`）/ `done` 时整条显示；同轮开场「收到」去重（含短确认后的长 bullet 开场）；禁止插入空白或仅 `<think>` 行。小队仍直接 `startSquadTurn`。
+1:1 忙碌发送经 `orchestrateBotTurn`（`apps/gateway/src/ipc/chat/orchestrateBotTurn.ts`）：composer（含看似空闲）经 `softSteerGate` 取消 auto-continue 并 abort 该 owner 全部在途回合后重启（把新用户消息并入同一活跃上下文；不按意图分叉并行 composer 回合）。**软接管 abort 后的替换回合**（及冷恢复 / 检查点续跑）由主机注入不可见的 `resumeContextText`（未完成任务摘要 + 资料库 path/title/type 清单 + 须就地续做说明；见 `softSteerResumeContext.ts`），优先结构化主机注入而非只靠提示词散文。软接管 abort **与手动 Stop** 均 **保留** mid-run `run-checkpoint.json`（成功结束 / consume-once / 强制退出仍清除；软接管替换失败于 consume 前仍 abandon）；替换回合或 Stop 后的下次 composer「继续」**读取并 consume-once**：有检查点则 `resumeAgentChatFromCheckpoint` 续跑 RunState，并把工具调用摘要与打断原文注入 resume 块。**同题产物门闩**：本 owner 上 `write_file` 新建（非同路径覆盖）与 `manage_note` create 若资料库已有同文件名/同标题，工具直接报错并要求 `edit_file` / `manage_note` update（`sameTopicArtifactGate.ts`）；故意更新/同路径覆盖不拦。schedule/api 忙碌时不软改向，走既有并行门闩。干净 `done` 后若 `task-progress` 仍有 pending/in_progress，主机静默 auto-continue（无可见用户气泡、不限次数；Stop/abort/composer 软改向/硬错误则停；进度指纹连续两次未变则停，中间一次加严提示）。助手气泡非流式：主机不推送 token `delta`；`send_message` / 自动允许与 HITL 工具边界可见旁白（`onBeforeToolExecute`→`clearLiveAssistantForTools`）/ `done` 时整条显示；同轮开场「收到」去重（含短确认后的长 bullet 开场）；禁止插入空白或仅 `<think>` 行。小队仍直接 `startSquadTurn`。真·队列/不 abort（layer 3）未做。
 
 助手、小队、记忆、技能、助手市场（含 GitHub URL 导入）、模型探测这些操作写在 `apps/gateway/src/entityOps.ts`（`createEntityOps(ctx)`），不带传输层。`apps/gateway/src/ipc/registerEntity.ts` 的 IPC 和网关 `POST /v1/rpc/:op` 都调它，两边行为一致。模型探测的实现在 `apps/gateway/src/modelProbe.ts`。
 
@@ -156,9 +156,10 @@ gatewayHttpApi          网关 HTTP。不是独立服务
     logs/errors-YYYY-MM-DD.jsonl
     <botId>/  bot.json、SOUL.md、memory.md、skills/、session.jsonl、
               session-summary.json、pending-hitl/、resources/、
-              schedules.jsonl
+              resources.jsonl、tasks.jsonl、schedules.jsonl
     <squadId>/  session.jsonl、session-summary.json、
-                pending-hitl/、pending-hitl-replies/、resources/、schedules.jsonl
+                pending-hitl/、pending-hitl-replies/、resources/、
+                resources.jsonl、tasks.jsonl、schedules.jsonl
 ```
 
 定时任务：`~/.okbot/data/<botId|squadId>/schedules.jsonl`（一行一个任务；新 id 为 ULID；旧 `schedules.json` 在加载时迁移并保留原 id）（`manage_schedule`；默认审批 allow；create/delete 始终 HITL（含 AAR 不可旁路）；list 不审批；编辑助手/小队可 pause/resume/delete）。每 owner 上限 50；`every N m` 要求 N 整除 60；`once` 触发后停用。拥有网关的进程（Electron 或 `okbot serve`）内 `scheduleTicker` 约每 20s 扫描到期任务，调用与 UI 相同的 `startChatTurn`（走并行上限 / Stop / 任务条；审批/预算与交互轮次相同）。进程未运行时不会触发；再次起来后若 `nextRunAt` 已过期则补跑一次并推进下次。同一 job 在途中不会叠跑。

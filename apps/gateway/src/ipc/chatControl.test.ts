@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict';
 import { abortChatOwner, armPendingToolTimeout, resolveLiveToolApproval } from './chatControl';
+import {
+  registerOwnerRun,
+  resetOwnerRunQueuesForTests,
+  setOwnerRunCheckpointFlush,
+  type AbortControllerMap,
+} from './ownerRuns';
+import { resetSoftSteerStateForTests } from './softSteerGate';
 
 const cleared: string[] = [];
 const resolved: Array<{ approved: boolean; message?: string }> = [];
@@ -121,5 +128,35 @@ await (async () => {
   await new Promise((r) => setTimeout(r, 50));
   assert.equal(late, 1);
 })();
+
+{
+  // Stop (abortChatOwner) flushes latest checkpoint before abort; resume can read it.
+  resetOwnerRunQueuesForTests();
+  resetSoftSteerStateForTests();
+  const map: AbortControllerMap = new Map();
+  const ctrl = new AbortController();
+  const order: string[] = [];
+  let savedPayload = '';
+  registerOwnerRun(map, 'bot_stop_ckpt', 'run_stop', ctrl);
+  setOwnerRunCheckpointFlush('bot_stop_ckpt', 'run_stop', () => {
+    order.push('flush');
+    savedPayload = 'stop-flushed-latest';
+    assert.equal(ctrl.signal.aborted, false, 'Stop flush precedes abort');
+  });
+  ctrl.signal.addEventListener('abort', () => {
+    order.push('abort');
+  });
+  const stopCtx = {
+    abortControllers: map,
+    rejectPendingApprovalsForBot: () => undefined,
+    pendingToolApprovals: new Map(),
+    storage: { clearPendingHitlRequest: () => undefined },
+  };
+  assert.equal(abortChatOwner(stopCtx as never, 'bot_stop_ckpt'), true);
+  assert.deepEqual(order, ['flush', 'abort']);
+  assert.equal(savedPayload, 'stop-flushed-latest');
+  assert.equal(ctrl.signal.aborted, true);
+  assert.equal(map.has('bot_stop_ckpt'), false);
+}
 
 console.log('chatControl.test.ts OK');

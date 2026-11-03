@@ -1,4 +1,4 @@
-import { memo, useLayoutEffect, useState, type RefObject } from 'react';
+import { memo, useCallback, useLayoutEffect, useMemo, useState, type KeyboardEvent, type RefObject } from 'react';
 import { BorderBeam } from 'border-beam';
 import { ThinkingOrb } from 'thinking-orbs';
 import { VoiceBeam } from 'voice-glow';
@@ -12,7 +12,20 @@ import {
   MicStopIcon,
 } from '../../components/ui/icons';
 import { ComposerAttachMenu, type AttachKind } from './ComposerAttachMenu';
+import {
+  ComposerMentionPopover,
+  flattenGrouped,
+} from './mentions/ComposerMentionPopover';
+import { ComposerEditable } from './ComposerEditable';
 import { formatBytes } from '../../utils/ownerUpload';
+import {
+  extractMentionEntities,
+  filterMentionCatalog,
+  insertMentionInDraft,
+  mentionQueryAtCaret,
+  removeMentionTokenFromDraft,
+  type MentionEntityRef,
+} from '../../utils/entityMentions';
 
 export type ComposerQuoteDraft = {
   messageId: string;
@@ -43,7 +56,11 @@ export type ChatComposerProps = {
   /** Overrides placeholder while listening (e.g. recording / recognizing). */
   voiceStatusLabel?: string;
   placeholder: string;
-  composerRef: RefObject<HTMLTextAreaElement | null>;
+  composerRef: RefObject<HTMLElement | null>;
+  /** Bumped when parent restores a session draft — place caret at end. */
+  seekEndToken?: number;
+  /** Active chat owner; mention picker must close when this changes (session switch). */
+  ownerId?: string | null;
   onDraftChange: (value: string) => void;
   onClearQuote: () => void;
   onRemoveAttachment: (id: string) => void;
@@ -53,6 +70,8 @@ export type ChatComposerProps = {
   onSend: () => void;
   onStop: () => void;
   onToggleVoice: () => void;
+  /** Catalog for `@` autocomplete (bots / squads / schedules / skills). */
+  mentionCatalog?: readonly MentionEntityRef[];
 };
 
 function resolvedOrbTheme(): 'light' | 'dark' {
@@ -77,6 +96,8 @@ export const ChatComposer = memo(function ChatComposer({
   voiceStatusLabel,
   placeholder,
   composerRef,
+  seekEndToken = 0,
+  ownerId = null,
   onDraftChange,
   onClearQuote,
   onRemoveAttachment,
@@ -85,6 +106,7 @@ export const ChatComposer = memo(function ChatComposer({
   onSend,
   onStop,
   onToggleVoice,
+  mentionCatalog = [],
 }: ChatComposerProps) {
   // Auto-grow up to 5 lines (matches .composer-inner textarea max-height).
   // Toggle is-multiline when taller than 1 line so CSS can stack textarea full-width
@@ -100,6 +122,79 @@ export const ChatComposer = memo(function ChatComposer({
   //   oscillate when the class itself changes textarea width.
   // - Skip height=0 reset while already at max and content still overflows.
   const [isMultiline, setIsMultiline] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState<{ start: number; query: string } | null>(null);
+  const [mentionHighlight, setMentionHighlight] = useState(0);
+  /** After @ insert: rebuild editable and place caret at this draft offset. */
+  const [applyCaret, setApplyCaret] = useState<number | null>(null);
+
+  // Session switch (or leave chat): dismiss @ picker so it does not leak across conversations.
+  // seekEndToken also bumps on restore; ownerId is the durable identity signal.
+  // useLayoutEffect: close before paint so the popover never flashes on the new session.
+  useLayoutEffect(() => {
+    setMentionQuery(null);
+    setMentionHighlight(0);
+  }, [ownerId, seekEndToken]);
+
+  const filteredMentions = useMemo(
+    () => (mentionQuery ? filterMentionCatalog(mentionCatalog, mentionQuery.query) : []),
+    [mentionCatalog, mentionQuery],
+  );
+  const flatMentions = useMemo(() => flattenGrouped(filteredMentions), [filteredMentions]);
+  const mentionOpen = Boolean(mentionQuery) && !listening && mentionCatalog.length > 0;
+
+  // Structured @[kind:id|label] stay inline in draft (send payload) at caret order.
+  // Contenteditable renders EntityMentionChip atoms between text nodes (Grok/Slack-style).
+  const draftMentionChips = useMemo(
+    () => extractMentionEntities(draft, mentionCatalog),
+    [draft, mentionCatalog],
+  );
+
+  const syncMentionFromCaret = useCallback(
+    (value: string, caret: number) => {
+      if (!mentionCatalog.length) {
+        setMentionQuery(null);
+        return;
+      }
+      const hit = mentionQueryAtCaret(value, caret);
+      setMentionQuery((prev) => {
+        if (!hit) return null;
+        if (prev && prev.start === hit.start && prev.query === hit.query) return prev;
+        // New @ session → reset highlight; typing within same @ keeps highlight.
+        if (!prev || prev.start !== hit.start) setMentionHighlight(0);
+        return hit;
+      });
+    },
+    [mentionCatalog.length],
+  );
+
+  const applyMention = useCallback(
+    (entity: MentionEntityRef) => {
+      if (!mentionQuery) return;
+      const { draft: next, caret } = insertMentionInDraft(
+        draft,
+        mentionQuery.start,
+        mentionQuery.query,
+        entity,
+      );
+      onDraftChange(next);
+      setMentionQuery(null);
+      setApplyCaret(caret);
+      requestAnimationFrame(() => {
+        setApplyCaret(null);
+        composerRef.current?.focus({ preventScroll: true });
+      });
+    },
+    [composerRef, draft, mentionQuery, onDraftChange],
+  );
+
+  const removeMentionToken = useCallback(
+    (entity: MentionEntityRef) => {
+      onDraftChange(removeMentionTokenFromDraft(draft, entity));
+      requestAnimationFrame(() => composerRef.current?.focus({ preventScroll: true }));
+    },
+    [composerRef, draft, onDraftChange],
+  );
+
   useLayoutEffect(() => {
     const el = composerRef.current;
     if (!el) return;
@@ -206,7 +301,7 @@ export const ChatComposer = memo(function ChatComposer({
     el.style.overflowY = atCap ? 'auto' : 'hidden';
 
     setIsMultiline((prev) => (prev === nextMultiline ? prev : nextMultiline));
-  }, [draft, listening, composerRef, attachments.length]);
+  }, [draft, listening, composerRef, attachments.length, draftMentionChips.length]);
 
   const hasDraft = Boolean(draft.trim());
   const hasAttachments = attachments.length > 0;
@@ -291,39 +386,90 @@ export const ChatComposer = memo(function ChatComposer({
       ) : (
         <ComposerAttachMenu lang={lang} onPick={onPickAttach} />
       )}
-      <textarea
-        spellCheck={false}
-        ref={composerRef}
-        readOnly={listening}
-        placeholder={listening ? (voiceStatusLabel || t(lang, 'listeningRecord')) : placeholder}
-        value={draft}
-        rows={1}
-        onChange={listening ? () => undefined : (e) => onDraftChange(e.target.value)}
-        onPaste={(e) => {
-          if (listening || !onPasteFiles) return;
-          const dt = e.clipboardData;
-          // Peek synchronously; if files present, prevent text paste and upload.
-          const types = Array.from(dt?.types ?? []);
-          const maybeFiles =
-            types.includes('Files') ||
-            types.some((t) => /^image\//i.test(t)) ||
-            (dt?.files?.length ?? 0) > 0;
-          if (!maybeFiles) return;
-          e.preventDefault();
-          void onPasteFiles(dt);
-        }}
-        onKeyDown={(e) => {
-          if (listening) {
-            e.preventDefault();
-            return;
+      <div className="composer-input-wrap">
+        {mentionOpen ? (
+          <ComposerMentionPopover
+            lang={lang}
+            items={filteredMentions}
+            highlightIndex={Math.min(mentionHighlight, Math.max(0, flatMentions.length - 1))}
+            onHighlight={setMentionHighlight}
+            onSelect={applyMention}
+          />
+        ) : null}
+        <ComposerEditable
+          draft={draft}
+          catalog={mentionCatalog}
+          readOnly={listening}
+          placeholder={
+            listening
+              ? (voiceStatusLabel || t(lang, 'listeningRecord'))
+              : placeholder
           }
-          if (e.key !== 'Enter' || e.shiftKey) return;
-          if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-          if (!canSend) return;
-          e.preventDefault();
-          onSend();
-        }}
-      />
+          removeAriaLabel={t(lang, 'mentionRemove')}
+          editableRef={composerRef}
+          seekEndToken={seekEndToken}
+          applyCaret={applyCaret}
+          onDraftChange={onDraftChange}
+          onCaretDraftOffset={syncMentionFromCaret}
+          onRemoveMention={removeMentionToken}
+          onPaste={(e) => {
+            if (listening || !onPasteFiles) return;
+            const dt = e.clipboardData;
+            const types = Array.from(dt?.types ?? []);
+            const maybeFiles =
+              types.includes('Files') ||
+              types.some((t) => /^image\//i.test(t)) ||
+              (dt?.files?.length ?? 0) > 0;
+            if (!maybeFiles) return;
+            e.preventDefault();
+            void onPasteFiles(dt);
+          }}
+          onKeyDown={(e: KeyboardEvent<HTMLDivElement>) => {
+            if (listening) {
+              e.preventDefault();
+              return;
+            }
+            if (mentionOpen) {
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                setMentionQuery(null);
+                return;
+              }
+              if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                setMentionHighlight((i) =>
+                  flatMentions.length ? (i + 1) % flatMentions.length : 0,
+                );
+                return;
+              }
+              if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                setMentionHighlight((i) =>
+                  flatMentions.length
+                    ? (i - 1 + flatMentions.length) % flatMentions.length
+                    : 0,
+                );
+                return;
+              }
+              if (e.key === 'Enter' || e.key === 'Tab') {
+                if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+                const pick = flatMentions[Math.min(mentionHighlight, flatMentions.length - 1)];
+                if (pick) {
+                  e.preventDefault();
+                  applyMention(pick);
+                  return;
+                }
+              }
+            }
+            if (e.key !== 'Enter' || e.shiftKey) return;
+            if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+            if (!canSend) return;
+            e.preventDefault();
+            setMentionQuery(null);
+            onSend();
+          }}
+        />
+      </div>
       <button
         className={`mic-btn${listening ? ' on' : ''}`}
         type="button"
@@ -337,15 +483,27 @@ export const ChatComposer = memo(function ChatComposer({
         {listening ? <MicStopIcon /> : <MicIcon />}
       </button>
       {showStop ? (
-        <button
-          className="send stop"
-          type="button"
-          onClick={() => onStop()}
-          title={t(lang, 'stopGeneration')}
-          aria-label={t(lang, 'stopGeneration')}
+        // 特效库 BorderBeam pulse-outside：忙碌/可停止时外圈发光；idle 卸掉。
+        <BorderBeam
+          className="composer-send-beam"
+          size="pulse-outside"
+          theme={resolvedOrbTheme()}
+          colorVariant="ocean"
+          strength={0.85}
+          borderRadius={14}
+          duration={2.3}
+          active
         >
-          <MicStopIcon />
-        </button>
+          <button
+            className="send stop"
+            type="button"
+            onClick={() => onStop()}
+            title={t(lang, 'stopGeneration')}
+            aria-label={t(lang, 'stopGeneration')}
+          >
+            <MicStopIcon />
+          </button>
+        </BorderBeam>
       ) : null}
       {showSend ? (
         <button

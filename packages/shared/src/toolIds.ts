@@ -2,7 +2,7 @@
 
 import type { AutoApprovalAction } from './approval.js';
 
-export const TOOL_IDS = ['read_file', 'read_skill', 'write_file', 'edit_file', 'run_shell', 'generate_image', 'search_history', 'manage_schedule', 'manage_task_progress', 'manage_memory', 'send_message', 'web_fetch', 'web_search'] as const;
+export const TOOL_IDS = ['read_file', 'read_skill', 'write_file', 'edit_file', 'run_shell', 'generate_image', 'search_history', 'manage_schedule', 'manage_task_progress', 'manage_note', 'manage_memory', 'send_message', 'web_fetch', 'web_search'] as const;
 export type ToolId = (typeof TOOL_IDS)[number];
 
 export interface ToolPreference {
@@ -35,6 +35,11 @@ export const DEFAULT_TOOL_PREFERENCES: ToolPreferences = {
    */
   manage_task_progress: { enabled: true, approval: 'allow' },
   /**
+   * Create/update HTML notes in the per-assistant resources library (resources.jsonl).
+   * Default allow so the model can write notes without HITL.
+   */
+  manage_note: { enabled: true, approval: 'allow' },
+  /**
    * Pin / forget / promote durable memories for this assistant (and global when scoped).
    * Default allow; forget still forces HITL via needsApproval.
    */
@@ -61,6 +66,7 @@ export function normalizeToolPreferences(raw: unknown): ToolPreferences {
     search_history: { ...DEFAULT_TOOL_PREFERENCES.search_history },
     manage_schedule: { ...DEFAULT_TOOL_PREFERENCES.manage_schedule },
     manage_task_progress: { ...DEFAULT_TOOL_PREFERENCES.manage_task_progress },
+    manage_note: { ...DEFAULT_TOOL_PREFERENCES.manage_note },
     manage_memory: { ...DEFAULT_TOOL_PREFERENCES.manage_memory },
     send_message: { ...DEFAULT_TOOL_PREFERENCES.send_message },
     web_fetch: { ...DEFAULT_TOOL_PREFERENCES.web_fetch },

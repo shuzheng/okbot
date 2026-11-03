@@ -31,9 +31,13 @@ import {
   applyResumeDecision,
   buildRunOpts,
   consumeAgentTextStream,
+  createRunCheckpointBox,
+  noteRunCheckpointState,
   runHitlStreamLoop,
   runModelSegment,
+  wireRunCheckpointFlush,
   type AgentRunStreamResult,
+  type RunCheckpointBox,
 } from './hitl.js';
 import { buildTools, resolveImageCapability, type SkillLookup } from './tools.js';
 import { agentGuardrailsFromSecurity } from './guardrails.js';
@@ -52,7 +56,13 @@ export interface SquadMemberAgentSpec {
   skillsText?: string;
   /** Resolve full skill body for this member's `read_skill` tool. */
   skillLookup?: SkillLookup;
+  /** Static fallback; prefer resolveMemoriesText when the member is asked. */
   memoriesText?: string;
+  /**
+   * Lazy memories when this member enters a model call (ask_* / resume).
+   * Host closes over this turn's user text as query and turn-dedupes global hits.
+   */
+  resolveMemoriesText?: () => string;
 }
 
 export interface RunSquadChatInput extends HitlLoopHooks {
@@ -68,7 +78,10 @@ export interface RunSquadChatInput extends HitlLoopHooks {
   /** Manage timed wakeups for this squad (`manage_schedule`). */
   scheduleManage?: import('./tools.js').ScheduleManage;
   /** Durable long-task checklist (`manage_task_progress`). */
+  noteManage?: import('./tools.js').NoteManage;
   taskProgressManage?: import('./tools.js').TaskProgressManage;
+  /** Pin/forget/promote memories (`manage_memory`). Squads: host binds global-only. */
+  memoryManage?: import('./tools.js').MemoryManage;
   /** Formatted durable task checklist for captain system prompt. */
   taskProgressText?: string;
   /** Built-in web_fetch / web_search (`settings.web`). */
@@ -86,6 +99,16 @@ export interface RunSquadChatInput extends HitlLoopHooks {
   ownerId: string;
   /** Absolute `~/.okbot/<ownerId>/resources` directory. */
   resourcesDir: string;
+  onGeneratedImageSaved?: (info: {
+    filePath: string;
+    assetRel: string;
+    title?: string;
+  }) => void;
+  /**
+   * Host same-topic gate for write_file under resources/.
+   * Return a tool error string to reject create; null/undefined to allow.
+   */
+  assertLibraryWriteAllowed?: (input: { filePath: string }) => string | null | undefined;
   /** Shell/fs backend for this run. Ignored when computerRoute is set. */
   executionBackend?: ExecutionBackend;
   /** Per-call computer selection for captain and member shell/fs tools. */
@@ -226,7 +249,7 @@ export function buildCaptainSquadInstructions(input: {
       enabled.includes('manage_task_progress') ? TASK_PROGRESS_INSTRUCTION : '',
       input.taskProgressText?.trim() &&
       enabled.includes('manage_task_progress') &&
-      (input.taskProgressText.includes('[待做]') || input.taskProgressText.includes('[进行中]'))
+      (input.taskProgressText.includes('[待做]') || input.taskProgressText.includes('[进行中]') || input.taskProgressText.includes('[阻塞]'))
         ? TASK_PROGRESS_UNFINISHED_SYNC
         : '',
       MID_RUN_USER_INPUT_INSTRUCTION,
@@ -274,6 +297,8 @@ type MemberUsageState = { acc: TokenUsage; byBot: Record<string, TokenUsage> };
  * agent graph (tool names, instructions, budgets).
  */
 function createSquadRuntime(input: RunSquadChatInput & { resumeNote?: string }) {
+  const checkpointBox = createRunCheckpointBox();
+  wireRunCheckpointFlush(input, checkpointBox);
   const toolPrefs = input.tools ?? DEFAULT_TOOL_PREFERENCES;
   const security = input.security ?? DEFAULT_SECURITY;
   const squadSettings = input.squadSettings ?? DEFAULT_SQUAD_SETTINGS;
@@ -300,11 +325,15 @@ function createSquadRuntime(input: RunSquadChatInput & { resumeNote?: string }) 
           userText: [input.computerRoute.userText, taskText].filter(Boolean).join('\n'),
         }
       : undefined;
+    // Record hits only when this seat actually runs (not at roster build).
+    const memoriesText = member.resolveMemoriesText?.() ?? member.memoriesText;
+    const memberForPrompt =
+      memoriesText === member.memoriesText ? member : { ...member, memoriesText };
     const agent = new Agent({
       name: member.name || member.botId,
       instructions: buildMemberSquadInstructions(
         input.squadName,
-        member,
+        memberForPrompt,
         toolPrefs,
         shellFsRoutingSection(memberRoute, toolPrefs, { imageCapable }),
         imageCapable,
@@ -318,8 +347,15 @@ function createSquadRuntime(input: RunSquadChatInput & { resumeNote?: string }) 
         historySearch: input.historySearch,
         scheduleManage: input.scheduleManage,
         taskProgressManage: input.taskProgressManage,
+          noteManage: input.noteManage,
+        memoryManage: input.memoryManage,
         imageApi,
-        imageAssets: { ownerId: input.ownerId, resourcesDir: input.resourcesDir },
+        imageAssets: {
+          ownerId: input.ownerId,
+          resourcesDir: input.resourcesDir,
+          onSaved: input.onGeneratedImageSaved,
+        },
+        assertLibraryWriteAllowed: input.assertLibraryWriteAllowed,
         backend: memberRoute ? undefined : input.executionBackend,
         computerRoute: memberRoute,
         web: input.web,
@@ -360,22 +396,33 @@ function createSquadRuntime(input: RunSquadChatInput & { resumeNote?: string }) 
       typeof streamedIn === 'string'
         ? streamedIn
         : await consumeAgentTextStream(result, undefined, input.signal);
-    const out = await runHitlStreamLoop(built.agent, built.runner, built.runOpts, result, streamed, {
-      signal: input.signal,
-      onDelta: undefined,
-      toolRunBudget: input.toolRunBudget,
-      onModelTurnStart: input.onModelTurnStart,
-      onModelTurnEnd: input.onModelTurnEnd,
-      onApprovalWaitStart: input.onApprovalWaitStart,
-      onApprovalWaitEnd: input.onApprovalWaitEnd,
-      onRunCheckpoint: input.onRunCheckpoint,
-      onToolApprovalRequest: (req) =>
-        input.onToolApprovalRequest({
-          ...req,
-          squadMember: { botId: member.botId, toolName, task: taskText },
-        }),
-      onToolResult: input.onToolResult,
-    });
+    noteRunCheckpointState(checkpointBox, result.state);
+    const out = await runHitlStreamLoop(
+      built.agent,
+      built.runner,
+      built.runOpts,
+      result,
+      streamed,
+      {
+        signal: input.signal,
+        onDelta: undefined,
+        toolRunBudget: input.toolRunBudget,
+        onModelTurnStart: input.onModelTurnStart,
+        onModelTurnEnd: input.onModelTurnEnd,
+        onApprovalWaitStart: input.onApprovalWaitStart,
+        onApprovalWaitEnd: input.onApprovalWaitEnd,
+        onRunCheckpoint: input.onRunCheckpoint,
+        // Shared box already wired on input — do not re-register (would replace captain flush).
+        onToolApprovalRequest: (req) =>
+          input.onToolApprovalRequest({
+            ...req,
+            squadMember: { botId: member.botId, toolName, task: taskText },
+          }),
+        onToolResult: input.onToolResult,
+      },
+      null,
+      checkpointBox,
+    );
     const reply = out.content?.trim() || '（成员未返回内容）';
     const usage = out.usage ?? emptyTokenUsage();
     recordMemberTokenUsage(memberUsageState, member.botId, usage);
@@ -417,6 +464,7 @@ function createSquadRuntime(input: RunSquadChatInput & { resumeNote?: string }) 
               taskText,
               built.runOpts,
             )) as AgentRunStreamResult;
+            noteRunCheckpointState(checkpointBox, result.state);
             const streamed = await consumeAgentTextStream(result, undefined, input.signal);
             return { result, streamed };
           });
@@ -481,8 +529,15 @@ function createSquadRuntime(input: RunSquadChatInput & { resumeNote?: string }) 
         historySearch: input.historySearch,
         scheduleManage: input.scheduleManage,
         taskProgressManage: input.taskProgressManage,
+          noteManage: input.noteManage,
+        memoryManage: input.memoryManage,
         imageApi,
-        imageAssets: { ownerId: input.ownerId, resourcesDir: input.resourcesDir },
+        imageAssets: {
+          ownerId: input.ownerId,
+          resourcesDir: input.resourcesDir,
+          onSaved: input.onGeneratedImageSaved,
+        },
+        assertLibraryWriteAllowed: input.assertLibraryWriteAllowed,
         backend: input.computerRoute ? undefined : input.executionBackend,
         computerRoute: input.computerRoute,
         web: input.web,
@@ -499,7 +554,16 @@ function createSquadRuntime(input: RunSquadChatInput & { resumeNote?: string }) 
     toolNotFoundBehavior: 'return_error_to_model',
   });
   const runOpts = buildRunOpts(input);
-  return { captain, runner, runOpts, memberUsageState, askToolNames, buildMember, finishMember };
+  return {
+    captain,
+    runner,
+    runOpts,
+    memberUsageState,
+    askToolNames,
+    buildMember,
+    finishMember,
+    checkpointBox,
+  };
 }
 
 /**
@@ -518,6 +582,7 @@ export async function runSquadChat(input: RunSquadChatInput & { resumeNote?: str
   const rt = createSquadRuntime(input);
   const first = await runModelSegment(input, async () => {
     const result = (await rt.runner.run(rt.captain, input.userText, rt.runOpts)) as AgentRunStreamResult;
+    noteRunCheckpointState(rt.checkpointBox, result.state);
     const streamed = await consumeAgentTextStream(result, input.onDelta, input.signal);
     return { result, streamed };
   });
@@ -528,6 +593,8 @@ export async function runSquadChat(input: RunSquadChatInput & { resumeNote?: str
     first.result,
     first.streamed,
     input,
+    null,
+    rt.checkpointBox,
   );
   return {
     content: captainOut.content,
@@ -573,6 +640,7 @@ export async function resumeSquadChatAfterHitl(
     applyResumeDecision(state, input);
     const first = await runModelSegment(input, async () => {
       const result = (await built.runner.run(built.agent, state, built.runOpts)) as AgentRunStreamResult;
+      noteRunCheckpointState(rt.checkpointBox, result.state);
       const streamed = await consumeAgentTextStream(result, undefined, input.signal);
       return { result, streamed };
     });
@@ -595,10 +663,20 @@ export async function resumeSquadChatAfterHitl(
   applyResumeDecision(state, input);
   const first = await runModelSegment(input, async () => {
     const result = (await rt.runner.run(rt.captain, state, rt.runOpts)) as AgentRunStreamResult;
+    noteRunCheckpointState(rt.checkpointBox, result.state);
     const streamed = await consumeAgentTextStream(result, input.onDelta, input.signal);
     return { result, streamed };
   });
-  const out = await runHitlStreamLoop(rt.captain, rt.runner, rt.runOpts, first.result, first.streamed, input);
+  const out = await runHitlStreamLoop(
+    rt.captain,
+    rt.runner,
+    rt.runOpts,
+    first.result,
+    first.streamed,
+    input,
+    null,
+    rt.checkpointBox,
+  );
   return {
     kind: 'captain',
     content: out.content,
@@ -611,6 +689,46 @@ export async function resumeSquadChatAfterHitl(
  * that never got a result (the process stopped inside them). Providers reject a
  * history with an unanswered tool call.
  */
+
+export type ResumeSquadChatFromCheckpointInput = RunSquadChatInput & {
+  serializedRunState: string;
+};
+
+/**
+ * Cold / Watchdog resume from a mid-run captain checkpoint (no HITL decision).
+ * Restores captain RunState and continues the HITL loop (may hit interruptions).
+ * Member-only checkpoints without a captain state are not supported here.
+ */
+export async function resumeSquadChatFromCheckpoint(
+  input: ResumeSquadChatFromCheckpointInput,
+): Promise<RunChatResult & { memberUsageByBot?: Record<string, TokenUsage> }> {
+  assertModel(input.model);
+  if (input.signal?.aborted) return { content: '' };
+  const rt = createSquadRuntime(input);
+  const state = await RunState.fromString(rt.captain, input.serializedRunState);
+  const first = await runModelSegment(input, async () => {
+    const result = (await rt.runner.run(rt.captain, state, rt.runOpts)) as AgentRunStreamResult;
+    noteRunCheckpointState(rt.checkpointBox, result.state);
+    const streamed = await consumeAgentTextStream(result, input.onDelta, input.signal);
+    return { result, streamed };
+  });
+  const out = await runHitlStreamLoop(
+    rt.captain,
+    rt.runner,
+    rt.runOpts,
+    first.result,
+    first.streamed,
+    input,
+    null,
+    rt.checkpointBox,
+  );
+  return {
+    content: out.content,
+    usage: addTokenUsage(out.usage ?? emptyTokenUsage(), rt.memberUsageState.acc),
+    memberUsageByBot: rt.memberUsageState.byBot,
+  };
+}
+
 export function dropUnansweredToolCalls<T>(history: T[]): T[] {
   const callIdOf = (item: Record<string, unknown>): string => {
     const id = item.callId ?? item.call_id;

@@ -1,0 +1,102 @@
+{
+  "format": "okbot-market-catalog",
+  "version": 3,
+  "id": "okbot-market-cn",
+  "title": "OkBot Market · 国内生活服务 + 办公协作（连接器）",
+  "description": "独立可抽取市场包：本期仅含国内平台连接器（对外接入渠道），不含内置助手。Wave-1 生活服务（xiaomovps）；Wave-2 办公平台（alin_zone）。助手由用户/日后另建。",
+  "note": "v3: connectors-only — market/assistants/ removed; assistants array dropped. Assistants are out of scope for this market wave.",
+  "sourcePosts": {
+    "wave1": "https://x.com/xiaomovps/status/2116690552188260496",
+    "wave2": "https://x.com/alin_zone/status/2116853074123772181"
+  },
+  "sourcePost": "https://x.com/xiaomovps/status/2116690552188260496",
+  "waves": [
+    1,
+    2
+  ],
+  "boundaries": {
+    "connector": "对外接入渠道（MCP / HTTP / Skill；非 Agent）",
+    "assistant": "本期不做内置助手；助手由用户自行创建或日后另建"
+  },
+  "runtimePointers": {
+    "mcpHub": "packages/agent/src/mcp/mcpHub.ts",
+    "mcpSettings": "packages/shared/src/mcp.ts",
+    "assistantGallery": "packages/agent/gallery/",
+    "todo": "Gateway 日后加载本 catalog（connectors → McpServerEntry 模板）；暂不迁移运行时。助手不在本 market 包内。"
+  },
+  "connectors": [
+    {
+      "id": "luckin",
+      "path": "connectors/luckin/manifest.json",
+      "type": "mcp",
+      "displayName": "瑞幸咖啡",
+      "wave": 1
+    },
+    {
+      "id": "meituan-paotui",
+      "path": "connectors/meituan-paotui/manifest.json",
+      "type": "skill",
+      "displayName": "美团跑腿",
+      "wave": 1
+    },
+    {
+      "id": "mcdonalds",
+      "path": "connectors/mcdonalds/manifest.json",
+      "type": "mcp",
+      "displayName": "麦当劳中国",
+      "wave": 1
+    },
+    {
+      "id": "didi",
+      "path": "connectors/didi/manifest.json",
+      "type": "mcp",
+      "displayName": "滴滴出行",
+      "wave": 1
+    },
+    {
+      "id": "amap",
+      "path": "connectors/amap/manifest.json",
+      "type": "mcp",
+      "displayName": "高德地图",
+      "wave": 1
+    },
+    {
+      "id": "feishu",
+      "path": "connectors/feishu/manifest.json",
+      "type": "mcp",
+      "displayName": "飞书",
+      "wave": 2,
+      "aliases": [
+        "lark"
+      ]
+    },
+    {
+      "id": "dingtalk",
+      "path": "connectors/dingtalk/manifest.json",
+      "type": "mcp",
+      "displayName": "钉钉",
+      "wave": 2
+    },
+    {
+      "id": "wecom",
+      "path": "connectors/wecom/manifest.json",
+      "type": "mcp",
+      "displayName": "企业微信",
+      "wave": 2
+    },
+    {
+      "id": "yuque",
+      "path": "connectors/yuque/manifest.json",
+      "type": "mcp",
+      "displayName": "语雀",
+      "wave": 2
+    },
+    {
+      "id": "email",
+      "path": "connectors/email/manifest.json",
+      "type": "mcp",
+      "displayName": "邮箱",
+      "wave": 2
+    }
+  ]
+}

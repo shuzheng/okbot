@@ -26,7 +26,8 @@ export {
   probeChallengeMac,
   isProbeNonce,
 } from './authChallenge';
-export { resumeAllSafeCheckpoints } from './ipc/chat/coldRestoreCheckpoint';
+export { resumeAllSafeCheckpoints, resumeOwnerFromCheckpoint } from './ipc/chat/coldRestoreCheckpoint';
+export { startRunWatchdog, startCheckpointRecovery, isCheckpointSilentResumeSafe } from './ipc/runWatchdog';
 export { abortAllOwnerRuns, listBusyOwnerIds } from './ipc/ownerRuns';
 export { closeMcp, mcpStatus, mcpTest, mcpToolsForRun } from './mcpRuntime';
 export { registerEntityIpc, persistAppSettings } from './ipc/registerEntity';

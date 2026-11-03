@@ -1,0 +1,45 @@
+{
+  "format": "okbot-market-connector",
+  "version": 1,
+  "id": "yuque",
+  "displayName": "语雀",
+  "displayNameEn": "Yuque",
+  "type": "mcp",
+  "transport": "stdio",
+  "endpointTemplate": null,
+  "auth": {
+    "kind": "env",
+    "env": {
+      "YUQUE_TOKEN": "{{YUQUE_TOKEN}}",
+      "YUQUE_HOST": "{{YUQUE_HOST}}"
+    },
+    "notes": "个人或团队 Token（语雀开发者设置）。空间/私有部署需设 YUQUE_HOST，例如 https://your-space.yuque.com。勿写入仓库。"
+  },
+  "installHint": "npx yuque-mcp install --token={{YUQUE_TOKEN}} --client=cursor",
+  "okbotMcpProjection": {
+    "name": "yuque",
+    "transport": "stdio",
+    "command": "npx",
+    "args": ["-y", "yuque-mcp"],
+    "env": {
+      "YUQUE_TOKEN": "{{YUQUE_TOKEN}}"
+    }
+  },
+  "toolsSummary": [
+    "User：yuque_get_user",
+    "Search：yuque_search",
+    "Books：list / get / create / update（知识库）",
+    "Docs：list / get / create / update",
+    "TOC：get / update",
+    "Notes：list / get / create / update（小记）",
+    "Boards：get / create / update resource（思维导图等）"
+  ],
+  "docsUrls": [
+    "https://github.com/yuque/yuque-mcp-server",
+    "https://yuque.github.io/yuque-ecosystem/"
+  ],
+  "status": "stub",
+  "wave": 2,
+  "tags": ["cn", "office", "yuque", "knowledge", "docs"],
+  "notes": "Wave-2 办公。官方包 yuque-mcp，19 个工具；安装示例 npx yuque-mcp install --token=…。"
+}

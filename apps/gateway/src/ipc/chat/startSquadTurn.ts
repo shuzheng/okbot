@@ -1,6 +1,7 @@
 import {
   createId,
   effectiveModelKey,
+  isTransientRunError,
   resolveModelConfig,
   SQUAD_CAPTAIN_SPEAKER_ID,
   type ChatMessage,
@@ -31,15 +32,22 @@ import {
 import {
   acquireParallelGate,
   registerOwnerRun,
+  setOwnerRunCheckpointFlush,
   unregisterOwnerRun,
   withOwnerMaintenanceLock,
 } from '../ownerRuns';
+import {
+  shouldKeepRunCheckpointOnTurnEnd,
+} from '../softSteerGate';
 import { createApprovalWaiter, releaseRunApprovals } from '../approvalWaiter';
 import { mcpToolsForRun } from '../../mcpRuntime';
 import { buildSquadMemberSpecs, computerRouteFor } from '../chatTurnHelpers';
 import { historySearchForOwner } from '../historySearchTool';
 import { scheduleManageForOwner } from '../scheduleTool';
 import { taskProgressManageForOwner } from '../taskProgressTool';
+import { noteManageForOwner } from '../noteTool';
+import { libraryWriteGateForOwner } from '../sameTopicArtifactGate';
+import { memoryManageForSquad } from '../memoryTool';
 import {
   createTurnEmitter,
   persistAssistantContent,
@@ -97,6 +105,7 @@ export async function startSquadTurn(
       let lastSealedCaptainId: string | null = null;
       /** Approvals parked by this run; only these are released at the end. */
       const parkedRequestIds = new Set<string>();
+      let keepForTransientFailure = false;
 
       const controller = new AbortController();
       registerOwnerRun(ctx.abortControllers, squad.id, parallelGate.runId, controller);
@@ -124,6 +133,7 @@ export async function startSquadTurn(
         assistantMsg.content = persistAssistantContent(
           assistantMsg.content,
           modelConfig.showThinking,
+          { ownerId: squad.id, storage: ctx.storage },
         );
         if (!assistantMsg.content.trim()) return;
         try {
@@ -144,7 +154,10 @@ export async function startSquadTurn(
       };
 
       try {
-        const memberSpecs = buildSquadMemberSpecs(ctx.storage, squad);
+        const memberSpecs = buildSquadMemberSpecs(ctx.storage, squad, {
+          query: text,
+          recordedGlobalHitIds: new Set<string>(),
+        });
 
         // Prior turns (exclude empty assistant placeholders / current user msg).
         const allMessages = ctx.storage
@@ -234,6 +247,13 @@ export async function startSquadTurn(
         });
         const hasVisionInput = (attachments ?? []).some((a) => a.kind === 'image');
 
+        let turnNoteCard: import('@okbot/shared').NoteCardMeta | null = null;
+        const resourcesDir = ctx.storage.ownerResourcesDir(squad.id);
+        const assertLibraryWriteAllowed = libraryWriteGateForOwner(
+          ctx.storage,
+          squad.id,
+          resourcesDir,
+        );
         const result = await runSquadChat({
           squadName: squad.name,
           squadDescription: squad.description,
@@ -242,6 +262,7 @@ export async function startSquadTurn(
           sessionSummary: sessionSummary || undefined,
           historySearch: historySearchForOwner(ctx.storage, squad.id),
           scheduleManage: scheduleManageForOwner(ctx.storage, squad.id),
+          memoryManage: memoryManageForSquad(ctx.storage),
           taskProgressManage: async (input) => {
             const result = await taskProgressManageForOwner(ctx.storage, squad.id)(input);
             try {
@@ -255,6 +276,9 @@ export async function startSquadTurn(
             }
             return result;
           },
+          noteManage: noteManageForOwner(ctx.storage, squad.id, (card) => {
+            turnNoteCard = card;
+          }),
           taskProgressText: ctx.storage.formatTaskProgressForPrompt(squad.id) || undefined,
           web: settings.web,
           model: modelConfig,
@@ -267,10 +291,23 @@ export async function startSquadTurn(
           sessionInputCallback,
           hasVisionInput,
           ownerId: squad.id,
-          resourcesDir: ctx.storage.ownerResourcesDir(squad.id),
+          resourcesDir,
+          onGeneratedImageSaved: (info) => {
+            try {
+              ctx.storage.indexOwnerResourceFile(squad.id, {
+                filePath: info.filePath,
+                title: info.title,
+                createdBy: 'assistant',
+              });
+            } catch (err) {
+              console.error('[okbot] indexOwnerResourceFile failed', err);
+            }
+          },
+          assertLibraryWriteAllowed,
           computerRoute: computerRouteFor(settings, text, payload.computerId),
           userText: text,
           signal: controller.signal,
+          transientRetries: settings.watchdog?.transientRetries,
           onClearLiveText: () => {
             // Discard pre-tool buffer; do not emit an empty assistant row.
             if (!assistantMsg.content) return;
@@ -307,6 +344,9 @@ export async function startSquadTurn(
               output,
             });
           },
+          registerCheckpointFlush: (flush) => {
+            setOwnerRunCheckpointFlush(squad.id, turnRunId, flush);
+          },
           onRunCheckpoint: ({ serializedRunState }) => {
             try {
               ctx.storage.saveRunCheckpoint(squad.id, {
@@ -326,7 +366,10 @@ export async function startSquadTurn(
             // Keep pre-tool / between-tool captain narration where it first appeared;
             // later captain deltas create a new bubble after the exchanges.
             await sealCaptainSegment();
-            const body = persistAssistantContent(content, modelConfig.showThinking);
+            const body = persistAssistantContent(content, modelConfig.showThinking, {
+              ownerId: squad.id,
+              storage: ctx.storage,
+            });
             const exchangeMsg: ChatMessage = {
               id: createId('msg'),
               role: 'assistant',
@@ -360,45 +403,74 @@ export async function startSquadTurn(
           assistantMsg.content = persistAssistantContent(
             assistantMsg.content,
             modelConfig.showThinking,
+            { ownerId: squad.id, storage: ctx.storage },
           );
           assistantMsg.createdAt = new Date().toISOString();
           if (result.usage) assistantMsg.usage = result.usage;
           if (assistantMsg.content.trim()) {
+            if (turnNoteCard) assistantMsg.noteCard = turnNoteCard;
             await ctx.storage.upsertAssistantMessage(squad.id, assistantMsg, { runId: parallelGate.runId });
           }
         } else if (sealedCaptainSegments === 0 && (result.content || '').trim()) {
           assistantMsg.content = persistAssistantContent(
             result.content,
             modelConfig.showThinking,
+            { ownerId: squad.id, storage: ctx.storage },
           );
           assistantMsg.createdAt = new Date().toISOString();
           if (result.usage) assistantMsg.usage = result.usage;
           if (assistantMsg.content.trim()) {
+            if (turnNoteCard) assistantMsg.noteCard = turnNoteCard;
             await ctx.storage.upsertAssistantMessage(squad.id, assistantMsg, { runId: parallelGate.runId });
           }
         } else if (
           !assistantMsg.content.trim() &&
           sealedCaptainSegments > 0 &&
-          lastSealedCaptainId &&
-          result.usage &&
-          (result.usage.input || result.usage.output || result.usage.cache)
+          lastSealedCaptainId
         ) {
-          // Final bubble empty after seals — park aggregate usage on last sealed captain.
-          const patched = ctx.storage.patchMessage(squad.id, lastSealedCaptainId, {
-            usage: result.usage,
-          });
-          if (patched) {
-            emitTurn({
-              type: 'assistant_message',
-              botId: squad.id,
-              message: patched,
-            });
+          // Final bubble empty after seals — park aggregate usage and/or noteCard
+          // on last sealed captain. noteCard must not depend on the usage-only path
+          // (align with startBotTurn sealed fallback for manage_note preview cards).
+          const patch: Partial<ChatMessage> = {};
+          if (
+            result.usage &&
+            (result.usage.input || result.usage.output || result.usage.cache)
+          ) {
+            patch.usage = result.usage;
           }
+          if (turnNoteCard && !controller.signal.aborted) {
+            patch.noteCard = turnNoteCard;
+          }
+          if (Object.keys(patch).length > 0) {
+            const patched = ctx.storage.patchMessage(squad.id, lastSealedCaptainId, patch);
+            if (patched) {
+              emitTurn({
+                type: 'assistant_message',
+                botId: squad.id,
+                message: patched,
+              });
+            }
+          }
+        } else if (
+          !assistantMsg.content.trim() &&
+          sealedCaptainSegments === 0 &&
+          turnNoteCard &&
+          !controller.signal.aborted
+        ) {
+          // manage_note succeeded but final text empty and nothing sealed — still
+          // park the preview card on this turn's captain row so UI can show it
+          // (align with startBotTurn empty-text noteCard branch).
+          assistantMsg.noteCard = turnNoteCard;
+          assistantMsg.createdAt = new Date().toISOString();
+          if (result.usage) assistantMsg.usage = result.usage;
+          await ctx.storage.upsertAssistantMessage(squad.id, assistantMsg, {
+            runId: parallelGate.runId,
+          });
         }
         if (result.usage && (result.usage.input || result.usage.output || result.usage.cache)) {
           try {
             // Aggregate under squad only (member slices stay on exchange bubbles).
-            ctx.storage.recordUsage(squad.id, result.usage);
+            ctx.storage.recordUsage(squad.id, result.usage, { modelId: modelConfig.model });
             if (payload.apiTokenId) {
               try {
                 ctx.storage.recordApiTokenUsage(payload.apiTokenId, squad.id, {
@@ -449,6 +521,7 @@ export async function startSquadTurn(
           content: assistantMsg.content,
           usage: result.usage,
           ...(squadTrace ? { trace: squadTrace } : {}),
+          ...(assistantMsg.noteCard ? { noteCard: assistantMsg.noteCard } : {}),
           ...(controller.signal.aborted ? { aborted: true } : {}),
         });
         // Silent roster description refresh (agents cadence) — next turn / UI reload.
@@ -502,9 +575,13 @@ export async function startSquadTurn(
             messageId: assistantId,
             content: assistantMsg.content,
             ...(abortTrace ? { trace: abortTrace } : {}),
+            ...(assistantMsg.noteCard ? { noteCard: assistantMsg.noteCard } : {}),
             aborted: true,
           });
           return { userMessage: userMsg, assistantMessage: assistantMsg, aborted: true };
+        }
+        if (isTransientRunError(err)) {
+          keepForTransientFailure = true;
         }
         const message = handleRunFailure({
           root: ctx.storage.dataRoot,
@@ -534,7 +611,24 @@ export async function startSquadTurn(
         // Only this run's approvals: peer parallel turns keep their own waiters.
         releaseRunApprovals(ctx, squad.id, parkedRequestIds, '已结束');
         try {
-          ctx.storage.clearRunCheckpoint(squad.id);
+          const aborted = controller.signal.aborted;
+          let existingCheckpointRunId: string | null | undefined;
+          try {
+            existingCheckpointRunId = ctx.storage.loadRunCheckpoint(squad.id)?.runId ?? null;
+          } catch {
+            existingCheckpointRunId = undefined;
+          }
+          if (
+            !shouldKeepRunCheckpointOnTurnEnd({
+              ownerId: squad.id,
+              aborted,
+              transientFailure: keepForTransientFailure,
+              currentRunId: parallelGate.runId,
+              existingCheckpointRunId,
+            })
+          ) {
+            ctx.storage.clearRunCheckpoint(squad.id);
+          }
         } catch (err) {
           console.error('[okbot] clear squad run checkpoint failed', err);
         }

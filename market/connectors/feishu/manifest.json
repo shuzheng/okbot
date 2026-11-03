@@ -1,0 +1,52 @@
+{
+  "format": "okbot-market-connector",
+  "version": 1,
+  "id": "feishu",
+  "aliases": ["lark"],
+  "displayName": "飞书",
+  "displayNameEn": "Feishu / Lark",
+  "type": "mcp",
+  "transport": "http",
+  "endpointTemplate": "https://mcp.feishu.cn/mcp",
+  "auth": {
+    "kind": "custom_header",
+    "headerName": "X-Lark-MCP-UAT",
+    "headerValueTemplate": "{{FEISHU_UAT}}",
+    "alternateHeaderName": "X-Lark-MCP-TAT",
+    "alternateHeaderValueTemplate": "{{FEISHU_TAT}}",
+    "notes": "远程 MCP：UAT（用户身份）或 TAT（应用身份）二选一；勿写入仓库。可选头 X-Lark-MCP-Allowed-Tools 限制工具白名单。"
+  },
+  "alternateTransports": [
+    {
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@larksuiteoapi/lark-mcp", "mcp", "-a", "{{FEISHU_APP_ID}}", "-s", "{{FEISHU_APP_SECRET}}", "--oauth"],
+      "notes": "本地 OpenAPI MCP（官方不优先推荐）；需先 lark-mcp login。亦可用 Lark CLI：npx @larksuite/cli@latest install。"
+    }
+  ],
+  "okbotMcpProjection": {
+    "name": "feishu",
+    "transport": "http",
+    "url": "https://mcp.feishu.cn/mcp",
+    "headers": {
+      "X-Lark-MCP-UAT": "{{FEISHU_UAT}}",
+      "X-Lark-MCP-Allowed-Tools": "search-doc,create-doc,fetch-doc,update-doc,list-docs,get-comments,add-comments,search-user,get-user,fetch-file"
+    }
+  },
+  "toolsSummary": [
+    "云文档：搜索 / 创建 / 读取 / 更新 / 列目录",
+    "文档评论：查看 / 添加全文评论",
+    "通讯录：搜人 / 取用户信息",
+    "文档内文件拉取（fetch-file）",
+    "（远程 MCP 当前以 Docs 为主；Base / Calendar 等后续开放）"
+  ],
+  "docsUrls": [
+    "https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/mcp_integration/mcp_introduction",
+    "https://open.feishu.cn/document/mcp_open_tools/developers-call-remote-mcp-server",
+    "https://open.feishu.cn/document/mcp_open_tools/feishu-cli-let-ai-actually-do-your-work-in-feishu"
+  ],
+  "status": "stub",
+  "wave": 2,
+  "tags": ["cn", "office", "docs", "feishu", "lark"],
+  "notes": "Wave-2 办公。推荐远程 MCP https://mcp.feishu.cn/mcp（Docs first）。连接器 id 用 feishu；Lark 国际版同族，aliases 含 lark。"
+}

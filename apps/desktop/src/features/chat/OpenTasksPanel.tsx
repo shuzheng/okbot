@@ -1,23 +1,40 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import type { TaskRecord, TaskStatus } from '@okbot/shared';
+import type { StepStatus, TaskRecord, TaskStatus } from '@okbot/shared';
 import { ChevronDownIcon } from '../../components/ui/icons';
 import { useScrollFade } from '../../hooks/useScrollFade';
 import { t, type UiLang } from '../../i18n';
-import { TASK_STATUS_ICON } from '../owner/taskStatusIcons';
+import { STEP_STATUS_ICON, TASK_STATUS_ICON } from '../owner/taskStatusIcons';
 
 export type OpenTasksPanelProps = {
   lang: UiLang;
   tasks: TaskRecord[];
 };
 
-function statusLabel(lang: UiLang, status: TaskStatus): string {
+function taskStatusLabel(lang: UiLang, status: TaskStatus): string {
   switch (status) {
+    case 'backlog':
+      return t(lang, 'taskStatusBacklog');
     case 'pending':
       return t(lang, 'taskStatusPending');
     case 'in_progress':
       return t(lang, 'taskStatusInProgress');
     case 'done':
       return t(lang, 'taskStatusDone');
+    default:
+      return status;
+  }
+}
+
+function stepStatusLabel(lang: UiLang, status: StepStatus): string {
+  switch (status) {
+    case 'pending':
+      return t(lang, 'taskStatusPending');
+    case 'in_progress':
+      return t(lang, 'taskStatusInProgress');
+    case 'blocked':
+      return t(lang, 'taskStatusBlocked');
+    case 'succeeded':
+      return t(lang, 'taskStatusSucceeded');
     case 'cancelled':
       return t(lang, 'taskStatusCancelled');
     case 'failed':
@@ -28,7 +45,7 @@ function statusLabel(lang: UiLang, status: TaskStatus): string {
 }
 
 /**
- * All unfinished (pending/in_progress) tasks above the composer — not just the current one.
+ * In-progress tasks only (status === 'in_progress') above the composer.
  * Header stays in flow (default collapsed). Expanding opens the list as an absolute overlay
  * upward above the header so chat messages are not pushed — same card chrome as the header
  * bar, joined by the panel top border as a divider (one unified card, not two floaters).
@@ -41,7 +58,9 @@ export const OpenTasksPanel = memo(function OpenTasksPanel({ lang, tasks }: Open
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const panelRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
-  useScrollFade(listRef, [tasks, expanded, listOpen]);
+  // Defensive: host should already filter to in_progress, but keep UI contract local.
+  const visible = tasks.filter((task) => task.status === 'in_progress');
+  useScrollFade(listRef, [visible, expanded, listOpen]);
 
   const toggleList = useCallback(() => {
     setListOpen((v) => !v);
@@ -78,7 +97,7 @@ export const OpenTasksPanel = memo(function OpenTasksPanel({ lang, tasks }: Open
     };
   }, [listOpen]);
 
-  if (!tasks.length) return null;
+  if (!visible.length) return null;
 
   return (
     <div
@@ -97,7 +116,7 @@ export const OpenTasksPanel = memo(function OpenTasksPanel({ lang, tasks }: Open
         onClick={toggleList}
       >
         <span className="open-tasks-title">{t(lang, 'openTasksTitle')}</span>
-        <span className="open-tasks-count">{tasks.length}</span>
+        <span className="open-tasks-count">{visible.length}</span>
         <span className="session-owner-group-chevron" aria-hidden>
           <ChevronDownIcon />
         </span>
@@ -108,9 +127,10 @@ export const OpenTasksPanel = memo(function OpenTasksPanel({ lang, tasks }: Open
       >
         <div className="open-tasks-list-fold-inner">
           <ul ref={listRef} className="open-tasks-list scroll-fade">
-            {tasks.map((task) => {
+            {visible.map((task) => {
               const open = expanded[task.id] !== false;
               const label = task.title?.trim() || t(lang, 'openTaskUntitled');
+              const doneCount = task.steps.filter((s) => s.status === 'succeeded').length;
               return (
                 <li key={task.id} className={`open-task-item status-${task.status}`}>
                   <button
@@ -119,12 +139,12 @@ export const OpenTasksPanel = memo(function OpenTasksPanel({ lang, tasks }: Open
                     aria-expanded={open}
                     onClick={() => toggle(task.id)}
                   >
-                    <span className="open-task-status" title={statusLabel(lang, task.status)} aria-hidden>
+                    <span className="open-task-status" title={taskStatusLabel(lang, task.status)} aria-hidden>
                       {TASK_STATUS_ICON[task.status]}
                     </span>
                     <span className="open-task-label">{label}</span>
                     <span className="open-task-meta">
-                      {task.steps.filter((s) => s.status === 'done').length}/{task.steps.length}
+                      {doneCount}/{task.steps.length}
                     </span>
                     <span className="session-owner-group-chevron" aria-hidden>
                       <ChevronDownIcon />
@@ -141,10 +161,10 @@ export const OpenTasksPanel = memo(function OpenTasksPanel({ lang, tasks }: Open
                             <li key={step.id} className={`open-task-step status-${step.status}`}>
                               <span
                                 className="open-task-status"
-                                title={statusLabel(lang, step.status)}
+                                title={stepStatusLabel(lang, step.status)}
                                 aria-hidden
                               >
-                                {TASK_STATUS_ICON[step.status]}
+                                {STEP_STATUS_ICON[step.status]}
                               </span>
                               <span className="open-task-step-title">{step.title}</span>
                               {step.note ? <span className="open-task-step-note">{step.note}</span> : null}

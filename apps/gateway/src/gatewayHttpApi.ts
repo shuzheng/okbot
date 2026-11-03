@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Socket } from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
+import { setMessageReaction } from './ipc/messageReaction.js';
 import { normalizeChatStartPayload, normalizeUsageStats, normalizeMcpServerEntry, resolveGatewayAuth, checkGatewayApiTokenQuota, redactSecretUrl, type AppSettings, type RuntimeEvent, type GatewayHttpApiSettings, type GatewayAuthRole, type GatewayAuthMatch } from '@okbot/shared';
 import { acceptRuntimeEventForSseTurn, encodeRuntimeEventSse } from '@okbot/agent';
 import type { IpcContext } from './ipc/context';
@@ -1007,6 +1008,169 @@ export function createGatewayHttpApi(deps: GatewayHttpApiDeps): {
         return;
       }
 
+      // DELETE /v1/bots|:squads/:id/resources/:resourceId
+      if (
+        method === 'DELETE' &&
+        parts.length === 5 &&
+        parts[0] === 'v1' &&
+        (parts[1] === 'bots' || parts[1] === 'squads') &&
+        parts[3] === 'resources'
+      ) {
+        const id = parts[2] || '';
+        const resourceId = decodeURIComponent(parts[4] || '');
+        if (!id || !resourceId) {
+          sendJson(res, 400, { ok: false, error: 'missing_ids' });
+          return;
+        }
+        try {
+          deps.ctx.storage.deleteOwnerResource(id, resourceId);
+          sendJson(res, 200, { ok: true });
+        } catch (err) {
+          console.error('[okbot] http deleteOwnerResource failed', err);
+          sendJson(res, 500, {
+            ok: false,
+            error: err instanceof Error ? err.message : 'delete_failed',
+          });
+        }
+        return;
+      }
+
+      // GET /v1/bots|:squads/:id/resources/:resourceId/text
+      if (
+        method === 'GET' &&
+        parts.length === 6 &&
+        parts[0] === 'v1' &&
+        (parts[1] === 'bots' || parts[1] === 'squads') &&
+        parts[3] === 'resources' &&
+        parts[5] === 'text'
+      ) {
+        const id = parts[2] || '';
+        const resourceId = decodeURIComponent(parts[4] || '');
+        if (!id || !resourceId) {
+          sendJson(res, 400, { ok: false, error: 'missing_ids' });
+          return;
+        }
+        try {
+          const textBody = deps.ctx.storage.readOwnerResourceText(id, resourceId);
+          sendJson(res, 200, { ok: true, text: textBody });
+        } catch (err) {
+          console.error('[okbot] http readOwnerResourceText failed', err);
+          sendJson(res, 500, {
+            ok: false,
+            error: err instanceof Error ? err.message : 'read_failed',
+          });
+        }
+        return;
+      }
+
+            // PUT /v1/bots|:squads/:id/resources/:resourceId/text — overwrite note/text body
+      if (
+        method === 'PUT' &&
+        parts.length === 6 &&
+        parts[0] === 'v1' &&
+        (parts[1] === 'bots' || parts[1] === 'squads') &&
+        parts[3] === 'resources' &&
+        parts[5] === 'text'
+      ) {
+        const id = parts[2] || '';
+        const resourceId = decodeURIComponent(parts[4] || '');
+        if (!id || !resourceId) {
+          sendJson(res, 400, { ok: false, error: 'missing_id' });
+          return;
+        }
+        void (async () => {
+          try {
+            const raw = await readBody(req, 2_000_000);
+            const body = (raw.trim() ? JSON.parse(raw) : {}) as Record<string, unknown>;
+            const text = typeof body.text === 'string' ? body.text : '';
+            const record = deps.ctx.storage.writeOwnerResourceText(id, resourceId, text);
+            sendJson(res, 200, { ok: true, record });
+          } catch (err) {
+            console.error('[okbot] http writeOwnerResourceText failed', err);
+            sendJson(res, 500, {
+              ok: false,
+              error: err instanceof Error ? err.message : 'write_failed',
+            });
+          }
+        })();
+        return;
+      }
+
+      // POST /v1/bots|:squads/:id/resources — add note/url/folder/file-link/ingest
+      if (
+        method === 'POST' &&
+        parts.length === 4 &&
+        parts[0] === 'v1' &&
+        (parts[1] === 'bots' || parts[1] === 'squads') &&
+        parts[3] === 'resources'
+      ) {
+        const id = parts[2] || '';
+        if (!id) {
+          sendJson(res, 400, { ok: false, error: 'missing_id' });
+          return;
+        }
+        void (async () => {
+          try {
+            const raw = await readBody(req);
+            const body = (raw.trim() ? JSON.parse(raw) : {}) as Record<string, unknown>;
+            const action = typeof body.action === 'string' ? body.action : '';
+            let record;
+            if (action === 'note') {
+              record = deps.ctx.storage.addOwnerResourceNote(id, {
+                title: typeof body.title === 'string' ? body.title : undefined,
+                body: typeof body.body === 'string' ? body.body : undefined,
+                html: typeof body.html === 'string' ? body.html : undefined,
+                createdBy: 'user',
+              });
+            } else if (action === 'url') {
+              record = deps.ctx.storage.addOwnerResourceLink(id, {
+                kind: 'url',
+                target: typeof body.target === 'string' ? body.target : '',
+                title: typeof body.title === 'string' ? body.title : undefined,
+                createdBy: 'user',
+              });
+            } else if (action === 'folder') {
+              record = deps.ctx.storage.addOwnerResourceLink(id, {
+                kind: 'folder',
+                target: typeof body.target === 'string' ? body.target : '',
+                title: typeof body.title === 'string' ? body.title : undefined,
+                createdBy: 'user',
+              });
+            } else if (action === 'file-link') {
+              record = deps.ctx.storage.addOwnerResourceLink(id, {
+                kind: 'file',
+                target:
+                  (typeof body.target === 'string' && body.target) ||
+                  (typeof body.sourcePath === 'string' && body.sourcePath) ||
+                  '',
+                title: typeof body.title === 'string' ? body.title : undefined,
+                createdBy: 'user',
+              });
+            } else if (action === 'ingest') {
+              record = deps.ctx.storage.ingestOwnerResourceFile(id, {
+                sourcePath:
+                  (typeof body.sourcePath === 'string' && body.sourcePath) ||
+                  (typeof body.target === 'string' && body.target) ||
+                  '',
+                title: typeof body.title === 'string' ? body.title : undefined,
+                createdBy: 'user',
+              });
+            } else {
+              sendJson(res, 400, { ok: false, error: 'unknown_action' });
+              return;
+            }
+            sendJson(res, 200, { ok: true, record });
+          } catch (err) {
+            console.error('[okbot] http addOwnerResource failed', err);
+            sendJson(res, 500, {
+              ok: false,
+              error: err instanceof Error ? err.message : 'add_failed',
+            });
+          }
+        })();
+        return;
+      }
+
       // POST /v1/bots/:id/uploads | POST /v1/squads/:id/uploads
       // Body: { name, dataBase64, mime? } → ~/.okbot/<ownerId>/uploads/ on the gateway host.
       const isBotUpload =
@@ -1647,6 +1811,51 @@ export function createGatewayHttpApi(deps: GatewayHttpApiDeps): {
       if (method === 'GET' && parts.length === 2 && parts[0] === 'v1' && parts[1] === 'approvals') {
         const snap = deps.ctx.snapshotActiveRuns();
         sendJson(res, 200, { ok: true, ...snap });
+        return;
+      }
+
+
+      // PUT /v1/bots|:squads/:id/messages/:messageId/reaction
+      if (
+        method === 'PUT' &&
+        parts.length === 6 &&
+        parts[0] === 'v1' &&
+        (parts[1] === 'bots' || parts[1] === 'squads') &&
+        parts[3] === 'messages' &&
+        parts[5] === 'reaction'
+      ) {
+        const ownerId = parts[2] || '';
+        const messageId = parts[4] || '';
+        if (!ownerId || !messageId) {
+          sendJson(res, 400, { ok: false, error: 'missing_ids' });
+          return;
+        }
+        let parsed: JsonBody = {};
+        try {
+          const raw = await readBody(req);
+          parsed = raw.trim() ? (JSON.parse(raw) as JsonBody) : {};
+        } catch (err) {
+          if (err instanceof Error && err.message === 'payload_too_large') {
+            sendJson(res, 413, { ok: false, error: 'payload_too_large' });
+            return;
+          }
+          sendJson(res, 400, { ok: false, error: 'invalid_json' });
+          return;
+        }
+        const emojiRaw = parsed.emoji;
+        const emoji =
+          emojiRaw === null || emojiRaw === undefined
+            ? null
+            : typeof emojiRaw === 'string'
+              ? emojiRaw
+              : String(emojiRaw);
+        const result = await setMessageReaction(deps.ctx, {
+          ...(parts[1] === 'squads' ? { squadId: ownerId } : { botId: ownerId }),
+          messageId,
+          emoji,
+          from: 'user',
+        });
+        sendJson(res, result.ok ? 200 : 400, result);
         return;
       }
 

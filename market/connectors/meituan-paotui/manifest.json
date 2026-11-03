@@ -1,0 +1,36 @@
+{
+  "format": "okbot-market-connector",
+  "version": 1,
+  "id": "meituan-paotui",
+  "displayName": "美团跑腿",
+  "displayNameEn": "Meituan Paotui",
+  "type": "skill",
+  "transport": null,
+  "endpointTemplate": null,
+  "auth": {
+    "kind": "vendor-skill",
+    "notes": "当前公开形态为 ClawHub Skill，非独立 MCP。若日后厂商暴露 MCP，将 type 升为 mcp 并填写 endpoint。"
+  },
+  "skill": {
+    "package": "@meituan-tech/mt-paotui-for-client",
+    "clawhubUrl": "https://clawhub.ai/meituan-tech/skills/mt-paotui-for-client",
+    "related": [
+      {
+        "name": "美团红包助手",
+        "notes": "推文同波次提到的外卖优惠券 / 红包 Skill；本连接器首版聚焦跑腿渠道。"
+      }
+    ]
+  },
+  "okbotMcpProjection": null,
+  "toolsSummary": [
+    "叫骑手取快递 / 送东西",
+    "帮买商品",
+    "（相关）领取外卖优惠券 / 查红包 — 见 related skills"
+  ],
+  "docsUrls": [
+    "https://clawhub.ai/meituan-tech/skills/mt-paotui-for-client"
+  ],
+  "status": "stub",
+  "wave": 1,
+  "tags": ["cn", "lifestyle", "errand", "skill"]
+}

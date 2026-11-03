@@ -1,0 +1,44 @@
+{
+  "format": "okbot-market-connector",
+  "version": 1,
+  "id": "amap",
+  "displayName": "高德地图",
+  "displayNameEn": "Amap",
+  "type": "mcp",
+  "transport": "http",
+  "endpointTemplate": "https://mcp.amap.com/mcp?key={{AMAP_KEY}}",
+  "auth": {
+    "kind": "api_key_query",
+    "queryParam": "key",
+    "placeholder": "{{AMAP_KEY}}",
+    "notes": "在高德开放平台申请 Web 服务 Key；也可改用 stdio 包 @amap/amap-maps-mcp-server + 环境变量 AMAP_MAPS_API_KEY。"
+  },
+  "alternateTransports": [
+    {
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@amap/amap-maps-mcp-server"],
+      "env": {
+        "AMAP_MAPS_API_KEY": "{{AMAP_KEY}}"
+      }
+    }
+  ],
+  "okbotMcpProjection": {
+    "name": "amap",
+    "transport": "http",
+    "url": "https://mcp.amap.com/mcp?key={{AMAP_KEY}}"
+  },
+  "toolsSummary": [
+    "地点搜索",
+    "路线规划",
+    "周边查询",
+    "旅行攻略 → 高德专属地图"
+  ],
+  "docsUrls": [
+    "https://developer.amap.com/api/mcp-server/gettingstarted"
+  ],
+  "status": "stub",
+  "wave": 1,
+  "tags": ["cn", "lifestyle", "maps", "poi"],
+  "notes": "推文第五项明确为高德；亦作为滴滴叫车 / 附近瑞幸的地图底座。"
+}

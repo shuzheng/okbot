@@ -1,0 +1,25 @@
+{
+  "version": "0.14.0",
+  "releasedAt": "2026-11-04T00:00:00Z",
+  "forceUpdate": false,
+  "notes": {
+    "en": {
+      "title": "What's new in 0.14.0",
+      "highlights": [
+        "In-place bubble emoji reactions and composer @ mentions",
+        "Notes + Resources library; Market connectors catalog",
+        "Soft-steer resume / run-checkpoint keep; Watchdog recovery"
+      ],
+      "bodyMarkdown": "## Added\n\n- **Reactions**: in-place bubble emoji reactions (MRU menu, busy-send glow; reaction-only sends stay as reactions).\n- **Composer @ mentions**: bots, squads, schedules, and skills with EntityMentionChip cards inline at the caret (scoped to the current member).\n- **Notes**: HTML notes via `manage_note` with one-shot chat preview cards (note icon, click-to-preview, TOC scroll).\n- **Resources library (资料库)**: indexed library with list/delete/fullscreen preview; chat media and generated files indexed on persist.\n- **Market**: connectors-only catalog (CN lifestyle + office connector scaffolds); built-in MCP connectors installable from Market.\n- **Deploy**: Docker + Helm convenience install for the self-hosted gateway.\n- **Soft-steer / checkpoint**: mid-run resume context inject; keep run-checkpoint on Stop and soft-steer abort (flush before abort).\n- **Watchdog**: global busy-zombie recovery (~30s) plus in-turn transient model retries with checkpoint preserve.\n- **MCP extensions**: default on (explicit `false` preserved).\n- **Usage analysis**: member / model SlidingPillTabs; byModel updates with new turns.\n- **Tray**: translucency toggle next to theme (default off); first-run onboarding covers the full window.\n- **Work roots**: default owner data dir under `~/.okbot/data/<memberId>` with `temp/` for scratch; hardened shell cwd and durable overwrite denials.\n\n## Changed\n\n- Soft-steer / checkpoint continue behavior (keep on Stop/soft-steer; consume-once on next turn; abandon handoff if replacement fails).\n- Task / step status redesign (backlog, blocked, succeeded).\n- Product README positioning and section structure.\n- Reaction menu defaults (👍👎👌❤️😂) and UI polish (compact square hover; session-list busy avatars keep hopping).\n\n## Fixed\n\n- Chat / reactions: next-turn emoji-only bubble suppression; `message_updated` clears reaction; Stop leftover checkpoint not consumed by reactions.\n- noteCard sealing on empty/resume/squad done; choice+noteCard attach; note preview height, scrollbar, and TOC anchors.\n- Soft-steer same-topic write_file gates (bot + squad/mesh); soft-steer handoff abandon; cold-resume checkpoint + stop heartbeat on Stop.\n- Memory hit-bump skips on cold restore / compress; recall query on restore; squad/mesh manage_memory wiring.\n- Resources indexing for generated md and chat media; member library no longer offers manual add.\n- Composer @ picker closes on session switch; chip single-line box; URLs show official-site icon + underline.\n- Many P1/P2 reliability fixes across gateway, desktop, and agent.\n"
+    },
+    "zh": {
+      "title": "0.14.0 更新内容",
+      "highlights": [
+        "气泡原地表情反应与输入框 @ 提及",
+        "笔记 + 资料库；市场连接器目录",
+        "插话续作 / Stop 保留断点；Watchdog 恢复"
+      ],
+      "bodyMarkdown": "## 新增\n\n- **表情反应**：气泡原地 emoji 反应（MRU 菜单、忙态发送发光；纯表情发送保持为反应）。\n- **输入框 @ 提及**：助手/小队、自动化、技能，以 EntityMentionChip 按光标混排（限定当前成员）。\n- **笔记**：`manage_note` HTML 笔记与一键聊天预览卡片（笔记图标、点击预览、目录锚点滚动）。\n- **资料库**：可列表/删除/全屏预览的索引库；聊天媒体与生成文件落盘时入库。\n- **市场**：仅连接器目录（国内生活服务 + 办公连接器骨架）；可从市场一键加内置 MCP 连接器。\n- **部署**：网关侧 Docker + Helm 便利安装。\n- **插话 / 断点**：中途续作上下文注入；Stop 与 soft-steer abort 保留 run-checkpoint（abort 前 flush）。\n- **Watchdog**：全局忙态僵尸恢复（约 30s）+ 回合内瞬时模型失败重试并保留检查点。\n- **MCP 扩展**：默认开启（显式 `false` 不覆盖）。\n- **用量分析**：成员 / 模型 SlidingPillTabs；byModel 随新回合写入。\n- **托盘**：主题旁「半透明」开关（默认关）；首次安装引导覆盖整窗。\n- **工作根**：默认 `~/.okbot/data/<成员ID>`，临时产出进 `temp/`；加固 shell cwd 与持久文件覆盖拒绝。\n\n## 变更\n\n- Soft-steer / 断点续作行为（Stop/插话保留；下一轮 consume-once；替换失败则放弃 handoff）。\n- 任务 / 步骤状态重设计（backlog、blocked、succeeded）。\n- 产品 README 定位与章节结构。\n- 表情菜单默认项（👍👎👌❤️😂）与 UI 打磨（紧凑方形悬停；会话列表忙态头像持续跳动）。\n\n## 修复\n\n- 聊天 / 表情：下一轮纯表情气泡抑制；`message_updated` 清除反应；反应不消耗 Stop 残留断点。\n- 空终稿/续跑/小队完成时 noteCard 密封；choice+noteCard 附着；笔记预览高度、滚动条与目录锚点。\n- Soft-steer 同题 write_file 门禁（bot + 小队/mesh）；handoff 放弃；Stop 时冷恢复断点与停心跳。\n- 冷恢复/压缩时跳过记忆 hit bump；恢复时传入召回 query；小队/mesh manage_memory 接线。\n- 生成 md 与聊天媒体资料库索引；成员资料库去掉手动添加。\n- 切换会话关闭 @ 选择框；chip 单行盒；URL 官网图标 + 下划线。\n- 网关 / 桌面 / 智能体多项 P1/P2 可靠性修复。\n"
+    }
+  }
+}

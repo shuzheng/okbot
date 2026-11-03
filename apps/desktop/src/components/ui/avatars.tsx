@@ -87,8 +87,8 @@ export function FlatAvatar({
     const resolvedSize = size ?? inferBotAvatarSize(className);
     const shape = normalizeBotAvatarType(botAvatarType) as BotAvatarType;
     const hex = color && /^#[0-9A-Fa-f]{6}$/.test(color) ? color : undefined;
-    // Working always moves; otherwise respect paused / animate budget.
-    const motionPaused = paused === true || (animate === false && !busy);
+    // Working always moves for the whole busy period; otherwise respect paused / animate budget.
+    const motionPaused = busy ? false : paused === true || animate === false;
     // bot-avatars `paused` freezes the *current* frame (mid-flip). For 静止 we
     // must force the face-on rest pose via `pose` (see restPose in the lib).
     const faceOnStill = motionPaused ? ({ yaw: 0 } as const) : undefined;

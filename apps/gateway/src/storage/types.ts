@@ -27,6 +27,10 @@ export type SessionRecordV2 = {
     trace?: import('@okbot/shared').MessageTrace;
     /** Quick-choice card under this assistant reply (model `ask_choice`). */
     choice?: import('@okbot/shared').QuickChoice;
+    /** Note resource card under this assistant reply (`manage_note`). */
+    noteCard?: import('@okbot/shared').NoteCardMeta;
+    /** In-place emoji reaction on this bubble. */
+    reaction?: import('@okbot/shared').MessageReaction;
     /** Parallel chat turn id — hides in-flight sibling rows from other runs. */
     runId?: string;
   };
@@ -55,19 +59,24 @@ export type PendingHitlRecord = {
   createdAt: string;
 };
 
-export type { TaskStatus, TaskStep, TaskRecord } from '@okbot/shared';
+export type { TaskStatus, StepStatus, TaskStep, TaskRecord } from '@okbot/shared';
 
 /** Mid-run SDK RunState checkpoint for crash recovery (not HITL-only). */
 export type RunCheckpointRecord = {
   v: 1;
   ownerId: string;
-  /** bot = 1:1; squad = captain run (auto-resume currently bots only). */
+  /** bot = 1:1; squad = captain run (Watchdog / cold resume). */
   kind: 'bot' | 'squad';
   runId: string;
   messageId: string;
   serializedRunState: string;
   computerId?: string;
   userText?: string;
+  /**
+   * When false, Watchdog / resumeAllSafeCheckpoints must not silent-resume
+   * (manual Stop leftover — composer「继续」still consumes). Missing → eligible.
+   */
+  autoResumeEligible?: boolean;
   createdAt: string;
   updatedAt: string;
 };

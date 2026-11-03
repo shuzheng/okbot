@@ -1,19 +1,22 @@
 --- a/dist/index.es.js
 +++ b/dist/index.es.js
-@@ -3314,10 +3314,11 @@
+@@ -3314,10 +3314,12 @@
        Nt && Nt(), Nt = null;
      };
      let So = null;
+-    return typeof IntersectionObserver == "function" ? (So = new IntersectionObserver((zn) => {
 +    const host = kt.parentElement || kt;
-     return typeof IntersectionObserver == "function" ? (So = new IntersectionObserver((zn) => {
++    return typeof IntersectionObserver == "function" ? (yo(), So = new IntersectionObserver((zn) => {
        var Ro;
-       _t = ((Ro = zn[0]) == null ? void 0 : Ro.isIntersecting) ?? !0, _t ? yo() : fo();
+-      _t = ((Ro = zn[0]) == null ? void 0 : Ro.isIntersecting) ?? !0, _t ? yo() : fo();
 -    }), So.observe(kt)) : yo(), () => {
-+    }, { root: null, rootMargin: "64px", threshold: 0 }), So.observe(host)) : yo(), () => {
++      const on = ((Ro = zn[0]) == null ? void 0 : Ro.isIntersecting) ?? !0;
++      _t = on || !!(U.current && U.current.state === "working"), _t ? yo() : fo();
++    }, { root: null, rootMargin: "128px", threshold: 0 }), So.observe(host)) : yo(), () => {
        fo(), So && So.disconnect();
      };
    }, [sn]);
-@@ -3331,8 +3332,7 @@
+@@ -3331,8 +3333,7 @@
      marginTop: rs(xs + X0),
      marginBottom: rs(xs - X0),
      flex: "none",

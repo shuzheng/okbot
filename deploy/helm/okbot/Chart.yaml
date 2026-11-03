@@ -1,0 +1,13 @@
+apiVersion: v2
+name: okbot
+description: OkBot self-hosted headless gateway (okbot serve). Desktop Electron is installed separately and attaches over HTTP.
+type: application
+version: 0.1.0
+appVersion: "0.14.0"
+keywords:
+  - okbot
+  - gateway
+  - ai-assistant
+home: https://github.com/shuzheng/okbot
+maintainers:
+  - name: shuzheng

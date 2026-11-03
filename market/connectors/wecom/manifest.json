@@ -1,0 +1,49 @@
+{
+  "format": "okbot-market-connector",
+  "version": 1,
+  "id": "wecom",
+  "displayName": "企业微信",
+  "displayNameEn": "WeCom",
+  "type": "mcp",
+  "transport": "stdio",
+  "endpointTemplate": null,
+  "auth": {
+    "kind": "cli_auth",
+    "notes": "优先 wecom-cli auth init（扫码或 --manual 填 Bot ID/Secret）。亦可从企微「智能机器人 → 可用权限 → 授权」复制 MCP URL / JSON 配置。勿写入仓库。"
+  },
+  "skill": {
+    "package": "@wecom/cli",
+    "installHint": "npm install -g @wecom/cli && npx skills add WeComTeam/wecom-cli -y -g",
+    "repoUrl": "https://github.com/WecomTeam/wecom-cli"
+  },
+  "okbotMcpProjection": {
+    "name": "wecom",
+    "transport": "stdio",
+    "command": "wecom-cli",
+    "args": ["mcp"],
+    "notes": "实际 MCP 入口以企微控制台复制的 URL/JSON 或 CLI 文档为准；本投影为 stub 模板。"
+  },
+  "alternateTransports": [
+    {
+      "transport": "http",
+      "endpointTemplate": "{{WECOM_MCP_URL}}",
+      "notes": "从企微智能机器人权限详情页复制 MCP URL（Streamable HTTP）。"
+    }
+  ],
+  "toolsSummary": [
+    "消息：单聊/群聊推送（Markdown/图片/文件等）",
+    "邮件：发送 / 回复 / 转发 / 搜索 / 读正文",
+    "文档 / 在线表格 / 智能表格 / 智能文档",
+    "待办、日程、会议（含纪要）",
+    "微盘（WeDrive）、通讯录"
+  ],
+  "docsUrls": [
+    "https://github.com/WecomTeam/wecom-cli",
+    "https://open.work.weixin.qq.com/help2/pc/21676",
+    "https://work.weixin.qq.com/nl/index/aicli"
+  ],
+  "status": "stub",
+  "wave": 2,
+  "tags": ["cn", "office", "wecom", "messaging", "docs"],
+  "notes": "Wave-2 办公。官方 @wecom/cli + MCP；覆盖消息/邮件/文档/待办/日程/会议/微盘/通讯录。"
+}

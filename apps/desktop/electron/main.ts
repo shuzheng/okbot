@@ -34,7 +34,7 @@ import { createGatewayHttpApi } from '@okbot/gateway';
 import { closeMcp } from '@okbot/gateway';
 import { ensureGatewayToken, resolveGatewayUiRoot, startSkillWatch } from '@okbot/gateway';
 import { startScheduleTicker } from '@okbot/gateway';
-import { resumeAllSafeCheckpoints } from '@okbot/gateway';
+import { startCheckpointRecovery } from '@okbot/gateway';
 import { abortAllOwnerRuns, listBusyOwnerIds } from '@okbot/gateway';
 import {
   acquireServerLock,
@@ -103,6 +103,7 @@ const pendingToolApprovals = new Map<string, PendingToolApproval>();
 let gatewayHttpApiController: ReturnType<typeof createGatewayHttpApi> | null = null;
 /** True only when this Electron process bound the gateway. A client must not stop `okbot serve`. */
 let ownsServer = false;
+let stopRunWatchdog: (() => void) | null = null;
 let stopSkillWatch: (() => void) | null = null;
 let stopScheduleTicker: (() => void) | null = null;
 /** Set when another OkBot already owns the data directory. The window is UI only. */
@@ -191,6 +192,25 @@ function trayCallbacks(): AppTrayCallbacks {
       }
     },
     theme,
+    setTranslucent: (next) => {
+      try {
+        const want = next !== false;
+        const cur = loadClientSettings();
+        if ((cur.translucent === true) === want) {
+          // Tray must not reopen Settings (that path is for in-Settings frost toggle).
+          applyWindowTranslucent(want, { reopenSettings: false });
+          scheduleRefreshAppTray();
+          return;
+        }
+        // Same chrome path as Settings → 半透明, but do not force-open Settings:
+        // reopening left a Settings draft that autosaved and clobbered a later tray theme.
+        applyWindowTranslucent(want, { reopenSettings: false });
+        broadcastSettingsChanged();
+      } catch (err) {
+        console.error('[okbot] tray setTranslucent failed', err);
+      }
+    },
+    translucent: settings.translucent === true,
     labels: {
       show: copy.trayShow,
       recentSessions: copy.trayRecentSessions,
@@ -199,6 +219,9 @@ function trayCallbacks(): AppTrayCallbacks {
       themeSystem: copy.trayThemeSystem,
       themeLight: copy.trayThemeLight,
       themeDark: copy.trayThemeDark,
+      translucent: copy.trayTranslucent,
+      translucentOn: copy.trayTranslucentOn,
+      translucentOff: copy.trayTranslucentOff,
       settings: copy.traySettings,
       quit: copy.trayQuit,
       tooltip: copy.trayTooltip,
@@ -535,12 +558,8 @@ function rejectPendingApprovalsForBot(botId: string, message = '已取消') {
     pending.resolve({ approved: false, message });
   }
   storage.clearPendingHitl(botId);
-  // Intentional Stop / cancel: drop mid-run checkpoints (same tone as pending-hitl).
-  try {
-    storage.clearRunCheckpoint(botId);
-  } catch (err) {
-    console.error('[okbot] clear run checkpoint on reject failed', err);
-  }
+  // Do not clear run-checkpoint here: Stop keeps it for a later「继续」.
+  // Force-quit / allowQuit still clears via listAllRunCheckpoints below.
 }
 
 function opaqueWindowBg(): string {
@@ -580,7 +599,10 @@ function persistClientTranslucent(translucent: boolean): void {
   }
 }
 
-function applyWindowTranslucent(translucent: boolean) {
+function applyWindowTranslucent(
+  translucent: boolean,
+  opts?: { reopenSettings?: boolean },
+) {
   const bg =
     process.platform === 'darwin'
       ? translucent
@@ -609,12 +631,16 @@ function applyWindowTranslucent(translucent: boolean) {
     translucent === true &&
     BrowserWindow.getAllWindows().some((w) => !w.isDestroyed())
   ) {
-    // Queue before recreate so did-finish-load flush reopens Settings mid-toggle.
-    pendingShellNavigate = {
-      action: 'settings',
-      tab: 'general',
-      sectionId: 'translucent',
-    };
+    // Settings → 半透明: reopen Settings after recreate (modal dies with the window).
+    // Tray → 半透明: skip reopen — a fresh Settings draft would autosave stale theme
+    // and clobber a subsequent tray theme change (light flashes then reverts to dark).
+    if (opts?.reopenSettings !== false) {
+      pendingShellNavigate = {
+        action: 'settings',
+        tab: 'general',
+        sectionId: 'translucent',
+      };
+    }
     setImmediate(() => {
       recreateWindowsForCurrentGatewayClient();
     });
@@ -656,7 +682,7 @@ function applyTheme(theme: AppSettings['theme']) {
   else nativeTheme.themeSource = theme;
   // Frost OFF→ON recreates via applyWindowTranslucent. Theme-only flips keep
   // the same window and re-assert vibrancy under themeSource when frost is on.
-  const translucent = loadClientSettings().translucent !== false;
+  const translucent = loadClientSettings().translucent === true;
   lastWindowChrome = null;
   applyWindowTranslucent(translucent);
   if (process.platform === 'darwin' && translucent) {
@@ -888,7 +914,7 @@ function createWindow() {
       sandbox: false,
     },
   };
-  const translucent = loadClientSettings().translucent !== false;
+  const translucent = loadClientSettings().translucent === true;
   if (process.platform === 'darwin' && translucent) {
     // Transparent + sidebar vibrancy so the left rail frosts the desktop.
     // Frost off: skip both (constructor-only transparent is expensive to resize
@@ -1239,9 +1265,8 @@ app.whenReady().then(async () => {
 
     stopSkillWatch = startSkillWatch(storage, sendRuntimeEvent);
     stopScheduleTicker = startScheduleTicker({ storage, ctx: ipcCtx });
-    void resumeAllSafeCheckpoints(ipcCtx).catch((err) => {
-      console.error('[okbot] resume checkpoints on background local start failed', err);
-    });
+    try { stopRunWatchdog?.(); } catch { /* ignore */ }
+    stopRunWatchdog = startCheckpointRecovery(ipcCtx).stop;
     console.info(
       `[okbot] started local gateway in background at ${publicBase(ownedSettings.gatewayHttpApi.port)} while UI attaches to remote`,
     );
@@ -1426,9 +1451,8 @@ app.whenReady().then(async () => {
           stopScheduleTicker = startScheduleTicker({ storage, ctx: ipcCtx });
           initAutoUpdater(() => readUiSettings());
           // Crash recovery: mid-run checkpoints (pending-hitl still wins when both exist).
-          void resumeAllSafeCheckpoints(ipcCtx).catch((err) => {
-            console.error('[okbot] resume checkpoints on start failed', err);
-          });
+          try { stopRunWatchdog?.(); } catch { /* ignore */ }
+          stopRunWatchdog = startCheckpointRecovery(ipcCtx).stop;
         }
       }
     }
@@ -1483,6 +1507,8 @@ app.on('will-quit', () => {
   // Client of `okbot serve`: do not stop that process or delete its lock.
   if (!ownsServer) return;
   try {
+    try { stopRunWatchdog?.(); } catch { /* ignore */ }
+    stopRunWatchdog = null;
     stopSkillWatch?.();
     try {
       stopScheduleTicker?.();

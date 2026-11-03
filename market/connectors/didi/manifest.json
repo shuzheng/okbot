@@ -1,0 +1,41 @@
+{
+  "format": "okbot-market-connector",
+  "version": 1,
+  "id": "didi",
+  "displayName": "滴滴出行",
+  "displayNameEn": "DiDi",
+  "type": "mcp",
+  "transport": "http",
+  "endpointTemplate": "https://mcp.didichuxing.com/mcp-servers?key={{DIDI_KEY}}",
+  "auth": {
+    "kind": "api_key_query",
+    "queryParam": "key",
+    "placeholder": "{{DIDI_KEY}}",
+    "notes": "在滴滴 MCP 控制台申请 key；普通 Beta 跳端叫车，Pro 可创单/取消。勿把 key 写入仓库。"
+  },
+  "skill": {
+    "package": "didi-ride-skill-official",
+    "clawhubUrl": "https://clawhub.ai/didi/didi-ride-skill-official",
+    "installHint": "clawhub install didi-ride-skill-official"
+  },
+  "okbotMcpProjection": {
+    "name": "didi",
+    "transport": "http",
+    "url": "https://mcp.didichuxing.com/mcp-servers?key={{DIDI_KEY}}"
+  },
+  "toolsSummary": [
+    "路线规划 / 费用预估",
+    "司机位置与订单查询",
+    "Beta：跳转滴滴叫车",
+    "Pro：创建 / 取消订单"
+  ],
+  "docsUrls": [
+    "https://mcp.didichuxing.com/claw",
+    "https://mcp.didichuxing.com",
+    "https://clawhub.ai/didi/didi-ride-skill-official"
+  ],
+  "status": "stub",
+  "wave": 1,
+  "tags": ["cn", "lifestyle", "ride", "mobility"],
+  "notes": "文档入口常用 /claw；HTTP MCP URL 模板含 ?key=。以控制台签发的实际 endpoint 为准。"
+}

@@ -60,25 +60,131 @@ export function isAbsoluteOrHomePath(p: string): boolean {
   return path.isAbsolute(t);
 }
 
+/** Subdir under the owner work root for throwaway scripts / artifacts. */
+export const OWNER_TEMP_DIR_NAME = 'temp';
+
+/**
+ * Durable owner-root basenames under `~/.okbot/data/<memberId>/` that tools must
+ * not overwrite via write/edit (or cheap shell redirects). Library artifacts live
+ * under `resources/`; throwaways under `temp/`.
+ */
+export const OWNER_RESERVED_BASENAMES: ReadonlySet<string> = new Set([
+  'session.jsonl',
+  'resources.jsonl',
+  'tasks.jsonl',
+  'run-checkpoint.json',
+  'session-summary.json',
+  'last-run-trace.json',
+  'memory.md',
+  'bot.json',
+  'squad.json',
+  'SOUL.md',
+  'AGENTS.md',
+  'task-progress.json',
+  'task-progress.json.migrated',
+]);
+
+/** Data-root roster/index files just above a member dir (`../bots.json`, etc.). */
+export const OWNER_DATA_ROOT_RESERVED_BASENAMES: ReadonlySet<string> = new Set([
+  'bots.json',
+  'squads.json',
+  'memory.md',
+  'usage.json',
+]);
+
+/**
+ * Owner work root (`~/.okbot/data/<memberId>` or `<dataRoot>/<memberId>`) from the
+ * absolute `…/resources` dir passed through runs. Falls back to the input when it
+ * is not named `resources`.
+ */
+export function ownerWorkDirFromResourcesDir(resourcesDir?: string | null): string {
+  const root = (resourcesDir || '').trim();
+  if (!root) return '';
+  const resolved = path.resolve(root);
+  if (path.basename(resolved) === 'resources') return path.dirname(resolved);
+  return resolved;
+}
+
+/** Ensure `<workDir>/temp` exists; return its absolute path (empty workDir → ''). */
+export function ensureOwnerTempDir(workDir?: string | null): string {
+  const root = (workDir || '').trim();
+  if (!root) return '';
+  const tempDir = path.join(path.resolve(root), OWNER_TEMP_DIR_NAME);
+  try {
+    fs.mkdirSync(tempDir, { recursive: true });
+  } catch {
+    /* best-effort; callers still get the path */
+  }
+  return tempDir;
+}
+
 /**
  * Resolve a tool fs path for the owner work root.
- * Relative paths land under `resourcesDir` (`~/.okbot/<owner>/resources/`) when set;
+ * Relative paths land under `workDir` (`~/.okbot/data/<memberId>/` when set);
  * absolute / `~/…` paths keep their explicit location.
+ * Library files: use `resources/…`; throwaways: use `temp/…`.
+ * Shell default cwd is `<workDir>/temp` (not the durable owner root).
  */
 export function resolveOwnerWorkPath(
   filePath: string,
-  resourcesDir?: string | null,
+  workDir?: string | null,
 ): string {
   const raw = (filePath || '').trim();
   if (!raw) return raw;
   if (isAbsoluteOrHomePath(raw)) return expandHome(raw);
-  const root = (resourcesDir || '').trim();
+  const root = (workDir || '').trim();
   if (root) return path.join(root, raw);
   return raw;
 }
 
-function resolvePathish(p: string, resourcesDir?: string | null): string {
-  return path.resolve(resolveOwnerWorkPath(p, resourcesDir));
+/** True when `child` is the same as or nested under `parent` (after resolve). */
+export function isPathInsideDir(parent: string, child: string): boolean {
+  const root = path.resolve(parent);
+  const target = path.resolve(child);
+  if (target === root) return true;
+  const rel = path.relative(root, target);
+  return !!rel && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
+/**
+ * After a successful local write/edit, decide whether to index into resources.jsonl.
+ * Relative paths (and absolute paths that land under owner `resources/`) qualify;
+ * remote computers and paths outside `resources/` do not. File must exist on disk.
+ */
+export function resolveOwnerLibraryIndexTarget(input: {
+  filePath: string;
+  resourcesDir?: string | null;
+  /** Owner work root; derived from resourcesDir when omitted. */
+  workDir?: string | null;
+  ownerId?: string | null;
+  /** Only local-host fs writes are library assets (not remote computers). */
+  localFs: boolean;
+}): { filePath: string; assetRel: string; title: string } | null {
+  if (!input.localFs) return null;
+  const resourcesDir = (input.resourcesDir || '').trim();
+  const ownerId = (input.ownerId || '').trim();
+  if (!resourcesDir || !ownerId) return null;
+  const workDir =
+    (input.workDir || '').trim() || ownerWorkDirFromResourcesDir(resourcesDir);
+  const abs = path.resolve(resolveOwnerWorkPath(input.filePath, workDir));
+  if (!isPathInsideDir(resourcesDir, abs)) return null;
+  if (path.resolve(abs) === path.resolve(resourcesDir)) return null;
+  try {
+    if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) return null;
+  } catch {
+    return null;
+  }
+  const rel = path.relative(resourcesDir, abs).replace(/\\/g, '/');
+  if (!rel || rel.startsWith('..')) return null;
+  return {
+    filePath: abs,
+    assetRel: `${ownerId}/resources/${rel}`,
+    title: path.basename(abs),
+  };
+}
+
+function resolvePathish(p: string, workDir?: string | null): string {
+  return path.resolve(resolveOwnerWorkPath(p, workDir));
 }
 
 /** Case-fold path compare on APFS/Windows (case-insensitive FS). */
@@ -128,7 +234,7 @@ function prefixMatches(resolvedRaw: string, prefixRaw: string): boolean {
   return pathHasPrefix(resolved, withSep);
 }
 
-/** Tool root for path scope: user home (same default cwd as run_shell). */
+/** Tool root for path scope: user home (fallback when no owner workDir). */
 export function toolRootDir(): string {
   return path.resolve(homedir());
 }
@@ -137,10 +243,147 @@ export type PathCheckResult =
   | { ok: true }
   | { ok: false; reason: string };
 
+function reservedBasenameEquals(a: string, b: string): boolean {
+  if (process.platform === 'darwin' || process.platform === 'win32') {
+    return a.toLowerCase() === b.toLowerCase();
+  }
+  return a === b;
+}
+
+function isReservedOwnerBasename(name: string): boolean {
+  for (const reserved of OWNER_RESERVED_BASENAMES) {
+    if (reservedBasenameEquals(name, reserved)) return true;
+  }
+  return false;
+}
+
+
+/**
+ * True when a resolved path is a durable owner-state file for this work root,
+ * or escapes into the dataRoot sibling area (`../bots.json`, other members).
+ * Reads stay allowed; callers use this for write/edit (+ shell write scans).
+ */
+export function isOwnerDurableWriteTarget(
+  filePath: string,
+  workDir?: string | null,
+): boolean {
+  const root = (workDir || '').trim();
+  if (!root) return false;
+  const raw = (filePath || '').trim();
+  if (!raw) return false;
+  let resolved: string;
+  try {
+    resolved = path.resolve(resolveOwnerWorkPath(raw, root));
+  } catch {
+    return false;
+  }
+  const work = path.resolve(root);
+  const base = path.basename(resolved);
+  // Direct durable files in the member dir (relative or absolute).
+  if (pathEquals(path.dirname(resolved), work) && isReservedOwnerBasename(base)) {
+    return true;
+  }
+  // Escape into dataRoot (parent of member): roster files or sibling members.
+  const dataRoot = path.dirname(work);
+  if (dataRoot && dataRoot !== work && isPathInsideDir(dataRoot, resolved)) {
+    if (!isPathInsideDir(work, resolved)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function checkOwnerDurableWriteAllowed(
+  filePath: string,
+  workDir?: string | null,
+): PathCheckResult {
+  if (!isOwnerDurableWriteTarget(filePath, workDir)) return { ok: true };
+  const raw = (filePath || '').trim();
+  return {
+    ok: false,
+    reason: `路径「${raw}」指向助手/小队持久状态或 data 根目录受保护文件，禁止通过 write/edit/shell 覆盖。请改用 temp/ 写临时文件，或 resources/… 写资料库产物；会话/记忆/任务等请用对应管理工具。`,
+  };
+}
+
+/**
+ * Resolve a shell path token the way the default local shell would: absolute /
+ * `~/…` keep their location; relatives are against `shellCwd` (default
+ * `<workDir>/temp`), not the durable owner root.
+ */
+export function resolveShellPathToken(
+  token: string,
+  workDir?: string | null,
+  shellCwd?: string | null,
+): string {
+  const raw = (token || '').trim();
+  if (!raw) return raw;
+  if (isAbsoluteOrHomePath(raw)) return path.resolve(expandHome(raw));
+  const root = (workDir || '').trim();
+  const cwd =
+    (shellCwd || '').trim() ||
+    (root ? ensureOwnerTempDir(root) : '') ||
+    root;
+  if (cwd) return path.resolve(cwd, raw);
+  return path.resolve(raw);
+}
+
+function isResolvedOwnerDurableWriteTarget(
+  resolvedRaw: string,
+  workDir: string,
+): boolean {
+  const resolved = path.resolve(resolvedRaw);
+  const work = path.resolve(workDir);
+  const base = path.basename(resolved);
+  if (pathEquals(path.dirname(resolved), work) && isReservedOwnerBasename(base)) {
+    return true;
+  }
+  const dataRoot = path.dirname(work);
+  if (dataRoot && dataRoot !== work && isPathInsideDir(dataRoot, resolved)) {
+    if (!isPathInsideDir(work, resolved)) return true;
+  }
+  return false;
+}
+
+/**
+ * Cheap scan: shell redirects / tee / cp|mv targeting reserved owner-root names
+ * or `../bots.json`-style dataRoot escapes. Relative tokens resolve against
+ * `shellCwd` (default temp/), so bare `> session.jsonl` in temp is allowed;
+ * `> ../session.jsonl` / absolute durable paths are denied.
+ */
+export function findReservedOwnerShellWrite(
+  command: string,
+  workDir?: string | null,
+  shellCwd?: string | null,
+): string | null {
+  const root = (workDir || '').trim();
+  if (!root) return null;
+  const cmd = command ?? '';
+  if (!cmd.trim()) return null;
+  const cwd =
+    (shellCwd || '').trim() || ensureOwnerTempDir(root) || root;
+  const redirectRe =
+    /(?:>>?|tee(?:\s+-a)?)\s*['"]?([^\s'";|&><]+)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = redirectRe.exec(cmd)) !== null) {
+    const token = (m[1] || '').trim();
+    if (!token || token.startsWith('-')) continue;
+    const resolved = resolveShellPathToken(token, root, cwd);
+    if (isResolvedOwnerDurableWriteTarget(resolved, root)) return token;
+  }
+  const cpMv = /\b(?:cp|mv|install)\b\s+[^\n;|&]+?\s+['"]?([^\s'";|&><]+)/gi;
+  while ((m = cpMv.exec(cmd)) !== null) {
+    const token = (m[1] || '').trim();
+    if (!token || token.startsWith('-')) continue;
+    const resolved = resolveShellPathToken(token, root, cwd);
+    if (isResolvedOwnerDurableWriteTarget(resolved, root)) return token;
+  }
+  return null;
+}
+
 export function checkPathAllowed(
   filePath: string,
   security: SecuritySettings,
-  resourcesDir?: string | null,
+  workDir?: string | null,
   opts?: { remote?: boolean },
 ): PathCheckResult {
   if (!filePath?.trim()) {
@@ -177,7 +420,7 @@ export function checkPathAllowed(
 
   let resolved: string;
   try {
-    resolved = tryRealpath(resolvePathish(filePath, resourcesDir));
+    resolved = tryRealpath(resolvePathish(filePath, workDir));
   } catch {
     return { ok: false, reason: `无法解析路径「${filePath}」，已拦截。` };
   }
@@ -255,11 +498,21 @@ function blockOutput(security: SecuritySettings, message: string) {
  */
 export function buildToolInputGuardrails(
   securityRaw: SecuritySettings | undefined | null,
-  opts?: { resourcesDir?: string | null; computerRoute?: ComputerRoute | null },
+  opts?: {
+    resourcesDir?: string | null;
+    /** Owner work root (relative fs root). Shell default cwd is `<workDir>/temp`. */
+    workDir?: string | null;
+    computerRoute?: ComputerRoute | null;
+  },
 ): ToolInputGuardrailDefinition[] {
   const security = normalizeSecuritySettings(securityRaw ?? undefined);
   if (!security.enabled) return [];
   const resourcesDir = opts?.resourcesDir;
+  const workDir =
+    (opts?.workDir || '').trim() ||
+    ownerWorkDirFromResourcesDir(resourcesDir) ||
+    undefined;
+  const shellDefaultCwd = workDir ? ensureOwnerTempDir(workDir) : undefined;
   const route = opts?.computerRoute ?? null;
 
   function isRemoteToolCall(args: Record<string, unknown>): boolean {
@@ -278,24 +531,45 @@ export function buildToolInputGuardrails(
       const remote = isRemoteToolCall(args);
       if (name === 'read_file' || name === 'write_file' || name === 'edit_file') {
         const p = typeof args.path === 'string' ? args.path : '';
-        const check = checkPathAllowed(p, security, resourcesDir, { remote });
+        const check = checkPathAllowed(p, security, workDir, { remote });
         if (!check.ok) return blockOutput(security, check.reason);
+        if ((name === 'write_file' || name === 'edit_file') && workDir && !remote) {
+          const durable = checkOwnerDurableWriteAllowed(p, workDir);
+          if (!durable.ok) return blockOutput(security, durable.reason);
+        }
       }
       if (name === 'run_shell') {
-        // Remote default cwd is the sandbox home — do not substitute host toolRootDir.
+        // Remote default cwd is the sandbox home — do not substitute host workDir.
         if (remote && !(typeof args.cwd === 'string' && args.cwd.trim())) {
           return ToolGuardrailFunctionOutputFactory.allow();
         }
         const cwd =
           typeof args.cwd === 'string' && args.cwd.trim()
             ? args.cwd
-            : toolRootDir();
+            : shellDefaultCwd || toolRootDir();
         const check = checkPathAllowed(cwd, security, undefined, { remote });
         if (!check.ok) {
           return blockOutput(
             security,
             `run_shell 工作目录${check.reason.replace(/^路径/, '')}`,
           );
+        }
+        if (workDir && !remote) {
+          const effectiveShellCwd =
+            typeof args.cwd === 'string' && args.cwd.trim()
+              ? expandHome(args.cwd.trim())
+              : shellDefaultCwd;
+          const hit = findReservedOwnerShellWrite(
+            typeof args.command === 'string' ? args.command : '',
+            workDir,
+            effectiveShellCwd,
+          );
+          if (hit) {
+            return blockOutput(
+              security,
+              `Shell 命令疑似写入受保护的助手状态路径「${hit}」，安全防护已拦截。请改用 temp/ 或 resources/…。`,
+            );
+          }
         }
       }
       return ToolGuardrailFunctionOutputFactory.allow();

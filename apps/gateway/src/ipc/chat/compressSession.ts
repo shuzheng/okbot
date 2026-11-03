@@ -49,7 +49,8 @@ export async function compressSessionNow(
     });
     const soulMd = ctx.storage.readSoulMd(bot.id);
     const skillsText = ctx.storage.formatSkillsForPrompt(bot.id);
-    const memoriesText = ctx.storage.formatMemoriesForPrompt(bot.id, { recordHits: true });
+    // Budget-only staticText for token estimate — do not bump hits/lastHitAt.
+    const memoriesText = ctx.storage.formatMemoriesForPrompt(bot.id);
     staticText = [soulMd, skillsText, memoriesText, bot.name, bot.description]
       .filter(Boolean)
       .join('\n');

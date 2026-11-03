@@ -88,7 +88,14 @@ export function loadUsageStats(file: string): UsageStats {
       if (Object.keys(map).length > 0) dailyByOwner[ownerId] = map;
     }
   }
-  return { lifetime, daily, byOwner, dailyByOwner };
+  const byModel: Record<string, TokenUsage> = {};
+  if (raw.byModel && typeof raw.byModel === 'object') {
+    for (const [k, v] of Object.entries(raw.byModel)) {
+      const u = normalizeTokenUsage(v);
+      if (u) byModel[k] = u;
+    }
+  }
+  return { lifetime, daily, byOwner, dailyByOwner, byModel };
 }
 
 /**
@@ -106,6 +113,8 @@ export function recordTokenUsage(
     skipLifetime?: boolean;
     /** Deleted owners: no per-owner entry is written for them. */
     skipOwnerIds?: ReadonlySet<string>;
+    /** Resolved API model id; when set, also bump byModel. */
+    modelId?: string;
   },
 ): UsageStats {
   const next = loadUsageStats(file);
@@ -134,6 +143,11 @@ export function recordTokenUsage(
       const map = next.dailyByOwner[id] ?? (next.dailyByOwner[id] = {});
       map[day] = addTokenUsage(map[day] ?? emptyTokenUsage(), u);
     }
+  }
+
+  const modelId = (opts?.modelId || '').trim();
+  if (modelId && !opts?.skipLifetime) {
+    next.byModel[modelId] = addTokenUsage(next.byModel[modelId] ?? emptyTokenUsage(), u);
   }
 
   pruneUsageDaily(next.daily);

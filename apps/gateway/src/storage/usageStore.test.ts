@@ -41,4 +41,23 @@ import { loadUsageStats, recordTokenUsage } from './usageStore.js';
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
+
+
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'okbot-usage-model-'));
+  const file = path.join(dir, 'usage.json');
+  const botId = 'bot_model';
+  recordTokenUsage(file, botId, { input: 5, output: 2, cache: 0 }, { modelId: 'gpt-test' });
+  recordTokenUsage(file, botId, { input: 1, output: 1, cache: 0 }, { modelId: 'gpt-test' });
+  recordTokenUsage(file, botId, { input: 4, output: 0, cache: 0 }, { modelId: 'claude-test' });
+  recordTokenUsage(file, botId, { input: 9, output: 0, cache: 0 }); // no modelId → byModel unchanged
+  const stats = loadUsageStats(file);
+  assert.equal(stats.byModel['gpt-test']?.input, 6);
+  assert.equal(stats.byModel['gpt-test']?.output, 3);
+  assert.equal(stats.byModel['claude-test']?.input, 4);
+  assert.equal(Object.keys(stats.byModel).sort().join(','), 'claude-test,gpt-test');
+  assert.equal(stats.lifetime.input, 19);
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
 console.log('usageStore.test.ts: ok');

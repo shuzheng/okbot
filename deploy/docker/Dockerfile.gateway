@@ -1,0 +1,116 @@
+# OkBot headless gateway (`okbot serve`) — multi-stage image.
+# Base: debian bookworm + Node from nodejs.org (same approach as apps/sandbox-agent).
+# Does NOT include Electron. Desktop / browser clients attach over HTTP.
+#
+# Build from repository root:
+#   docker build -f deploy/docker/Dockerfile.gateway -t okbot-gateway:0.14.0 .
+
+ARG NODE_VERSION=22.14.0
+ARG PNPM_VERSION=11.15.1
+
+# ---------- build ----------
+FROM debian:bookworm-slim AS build
+
+ARG NODE_VERSION
+ARG PNPM_VERSION
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    bash \
+    ca-certificates \
+    curl \
+    git \
+    python3 \
+    xz-utils \
+  && ARCH="$(dpkg --print-architecture)" \
+  && case "$ARCH" in \
+       amd64) NODE_ARCH=x64 ;; \
+       arm64) NODE_ARCH=arm64 ;; \
+       *) echo "unsupported arch: $ARCH" >&2; exit 1 ;; \
+     esac \
+  && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" \
+     | tar -xJ -C /usr/local --strip-components=1 \
+  && node -v && npm -v \
+  && corepack enable \
+  && corepack prepare "pnpm@${PNPM_VERSION}" --activate \
+  && pnpm -v \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+
+# Workspace manifests first (better layer caching).
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+COPY patches ./patches
+COPY apps/desktop/package.json apps/desktop/package.json
+COPY apps/sandbox-agent/package.json apps/sandbox-agent/package.json
+COPY apps/gateway/package.json apps/gateway/package.json
+COPY packages/shared/package.json packages/shared/package.json
+COPY packages/agent/package.json packages/agent/package.json
+
+# Install gateway and its dependency closure (shared + agent). Electron stays optional peer metadata only.
+RUN pnpm install --frozen-lockfile --filter "@okbot/gateway..."
+
+COPY packages/shared packages/shared
+COPY packages/agent packages/agent
+COPY apps/gateway apps/gateway
+
+RUN pnpm --filter @okbot/shared build \
+  && pnpm --filter @okbot/agent build \
+  && pnpm --filter @okbot/gateway build \
+  && pnpm --filter @okbot/gateway deploy --prod --legacy /out
+
+# ---------- runtime ----------
+FROM debian:bookworm-slim AS runtime
+
+ARG NODE_VERSION
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    bash \
+    ca-certificates \
+    curl \
+    tini \
+    xz-utils \
+  && ARCH="$(dpkg --print-architecture)" \
+  && case "$ARCH" in \
+       amd64) NODE_ARCH=x64 ;; \
+       arm64) NODE_ARCH=arm64 ;; \
+       *) echo "unsupported arch: $ARCH" >&2; exit 1 ;; \
+     esac \
+  && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" \
+     | tar -xJ -C /usr/local --strip-components=1 \
+  && node -v \
+  && rm -rf /var/lib/apt/lists/* \
+  && groupadd --gid 10001 okbot \
+  && useradd --uid 10001 --gid okbot --create-home --home-dir /home/okbot --shell /usr/sbin/nologin okbot \
+  && mkdir -p /home/okbot/.okbot \
+  && chown -R okbot:okbot /home/okbot
+
+WORKDIR /app
+
+COPY --from=build /out/ /app/
+COPY deploy/docker/entrypoint.sh /usr/local/bin/okbot-entrypoint.sh
+RUN chmod +x /usr/local/bin/okbot-entrypoint.sh \
+  && ln -sf /app/bin/okbot.mjs /usr/local/bin/okbot \
+  && chown -R okbot:okbot /app
+
+ENV HOME=/home/okbot \
+    NODE_ENV=production \
+    OKBOT_BIN=/app/bin/okbot.mjs \
+    OKBOT_BIND_LAN=true \
+    OKBOT_SERVE_UI=false \
+    OKBOT_PORT=18765
+
+# Default gateway HTTP port (DEFAULT_GATEWAY_HTTP_API_PORT in @okbot/shared).
+# Runtime listen port follows ENV OKBOT_PORT; keep EXPOSE as the documented default.
+# HEALTHCHECK uses shell form so ${OKBOT_PORT} expands at check time.
+EXPOSE 18765
+
+USER okbot
+VOLUME ["/home/okbot/.okbot"]
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=5 \
+  CMD curl -fsS "http://127.0.0.1:${OKBOT_PORT:-18765}/v1/health" || exit 1
+
+ENTRYPOINT ["tini", "--", "/usr/local/bin/okbot-entrypoint.sh"]
+CMD []

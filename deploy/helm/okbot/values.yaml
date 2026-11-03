@@ -1,0 +1,110 @@
+# OkBot gateway Helm values.
+# Single replica + RWO PVC: gateway data under ~/.okbot is process-local and not multi-writer safe.
+
+replicaCount: 1
+
+image:
+  repository: okbot-gateway
+  tag: "0.14.0"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  fsGroup: 10001
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+
+service:
+  type: ClusterIP
+  port: 18765
+  # Container listen port. Chart injects OKBOT_PORT from this value (do not also set
+  # OKBOT_PORT under env: — the template wins / stays in sync with containerPort + probes).
+  # Change both service.port (Service) and service.targetPort (container) together when
+  # remapping; probes use the named port "http" → this targetPort.
+  targetPort: 18765
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: okbot.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  # - secretName: okbot-tls
+  #   hosts:
+  #     - okbot.local
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "2"
+    memory: 2Gi
+
+# Persist ~/.okbot (server.json, data/, tokens). RWO — keep replicaCount: 1.
+persistence:
+  enabled: true
+  storageClassName: ""
+  accessModes:
+    - ReadWriteOnce
+  size: 10Gi
+  annotations: {}
+
+env:
+  OKBOT_BIND_LAN: "true"
+  OKBOT_SERVE_UI: "false"
+  # OKBOT_PORT is set from service.targetPort in the Deployment template — do not duplicate here.
+  # Optional custom data root inside the container (default HOME/.okbot).
+  # Entrypoint passes --port (OKBOT_PORT) + --data-dir together (CLI both_required contract):
+  # OKBOT_DATA_DIR: "/home/okbot/.okbot"
+
+# Extra env from an existing Secret (do not put live tokens in values.yaml).
+# Tokens are minted on first start and printed to container logs; retrieve with
+#   kubectl logs deploy/<release> | head
+#   kubectl exec deploy/<release> -- okbot token show
+extraEnvFrom: []
+# - secretRef:
+#     name: okbot-gateway-secrets
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+livenessProbe:
+  httpGet:
+    path: /v1/health
+    port: http
+  initialDelaySeconds: 20
+  periodSeconds: 20
+  timeoutSeconds: 5
+  failureThreshold: 5
+
+readinessProbe:
+  httpGet:
+    path: /v1/health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3

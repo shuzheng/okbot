@@ -5,12 +5,13 @@ import {
   emptyTokenUsage,
   normalizeUsageStats,
   type Bot,
+  type ModelSettings,
   type Squad,
   type TokenUsage,
   type UsageStats,
 } from '@okbot/shared';
 import { t, type UiLang } from '../../i18n';
-import { toast } from '../../components/ui';
+import { SlidingPillTabs, toast } from '../../components/ui';
 import { formatSystemError } from '../../utils/formatSystemError';
 
 function formatTokens(n: number): string {
@@ -33,6 +34,33 @@ function tokenOrEmpty(raw: TokenUsage | undefined | null): TokenUsage {
     cache: Number.isFinite(raw.cache) ? raw.cache : 0,
   };
 }
+
+
+function resolveModelDisplayName(modelSettings: ModelSettings | undefined, modelId: string): string {
+  const id = (modelId || '').trim();
+  if (!id) return modelId;
+  for (const provider of modelSettings?.providers || []) {
+    const hit = provider.models.find((m) => m.id === id);
+    if (hit) {
+      const name = (hit.name || '').trim();
+      return name || id;
+    }
+  }
+  return id;
+}
+
+function resolveModelProviderLabel(modelSettings: ModelSettings | undefined, modelId: string): string {
+  const id = (modelId || '').trim();
+  if (!id) return '';
+  for (const provider of modelSettings?.providers || []) {
+    if (provider.models.some((m) => m.id === id)) {
+      return (provider.name || '').trim() || provider.id;
+    }
+  }
+  return '';
+}
+
+type BreakdownTab = 'members' | 'models';
 
 type DayPoint = { day: string; input: number; output: number; cache: number };
 
@@ -269,13 +297,16 @@ export function UsagePanel({
   lang,
   bots,
   squads,
+  modelSettings,
 }: {
   lang: UiLang;
   bots: Bot[];
   squads: Squad[];
+  modelSettings?: ModelSettings;
 }) {
   const [stats, setStats] = useState<UsageStats | null>(null);
   const [selectedOwnerIds, setSelectedOwnerIds] = useState<string[]>([]);
+  const [breakdownTab, setBreakdownTab] = useState<BreakdownTab>('members');
 
   useEffect(() => {
     let cancelled = false;
@@ -307,6 +338,23 @@ export function UsagePanel({
     return rows;
   }, [stats, bots, squads]);
 
+  const models = useMemo(() => {
+    if (!stats) return [];
+    const rows: Array<{ id: string; name: string; provider: string; usage: TokenUsage }> = [];
+    for (const [modelId, raw] of Object.entries(stats.byModel || {})) {
+      const u = tokenOrEmpty(raw);
+      if (sumUsage(u) <= 0) continue;
+      rows.push({
+        id: modelId,
+        name: resolveModelDisplayName(modelSettings, modelId),
+        provider: resolveModelProviderLabel(modelSettings, modelId),
+        usage: u,
+      });
+    }
+    rows.sort((a, b) => sumUsage(b.usage) - sumUsage(a.usage));
+    return rows;
+  }, [stats, modelSettings]);
+
   const filterOptions = members;
   const overall = showsOverallUsage(
     selectedOwnerIds,
@@ -334,6 +382,10 @@ export function UsagePanel({
     }
     return u;
   }, [stats, selectedOwnerIds, overall]);
+
+  const breakdownEmpty =
+    breakdownTab === 'members' ? members.length === 0 : models.length === 0;
+  const breakdownEmptyKey = breakdownTab === 'members' ? 'usageEmpty' : 'usageEmptyModel';
 
   return (
     <div>
@@ -395,13 +447,24 @@ export function UsagePanel({
         <UsageLineChart series={series} lang={lang} />
       </div>
 
-      <div className="settings-section-label" style={{ marginTop: 16 }} data-settings-id="usageByMember">
-        {t(lang, 'usageByMember')}
+      <div style={{ marginTop: 16 }}>
+        <SlidingPillTabs
+          ariaLabel={t(lang, 'usageBreakdownTabs')}
+          value={breakdownTab}
+          onChange={setBreakdownTab}
+          options={[
+            { id: 'members', label: t(lang, 'usageByMember') },
+            { id: 'models', label: t(lang, 'usageByModel') },
+          ]}
+        />
       </div>
-      <div className="settings-card">
-        {members.length === 0 ? (
-          <div className="settings-hint">{t(lang, 'usageEmpty')}</div>
-        ) : (
+      <div
+        className="settings-card"
+        data-settings-id={breakdownTab === 'members' ? 'usageByMember' : 'usageByModel'}
+      >
+        {breakdownEmpty ? (
+          <div className="settings-hint">{t(lang, breakdownEmptyKey)}</div>
+        ) : breakdownTab === 'members' ? (
           <ul className="usage-member-list">
             <li className="usage-member-row usage-member-head" aria-hidden="false">
               <span className="usage-member-name">{t(lang, 'usageMemberName')}</span>
@@ -418,6 +481,30 @@ export function UsagePanel({
                   <span className="usage-member-kind">
                     {m.kind === 'squad' ? t(lang, 'usageKindSquad') : t(lang, 'usageKindBot')}
                   </span>
+                </span>
+                <span className="usage-member-nums">
+                  <span title={t(lang, 'usageInput')}>{formatTokens(m.usage.input)}</span>
+                  <span title={t(lang, 'usageOutput')}>{formatTokens(m.usage.output)}</span>
+                  <span title={t(lang, 'usageCache')}>{formatTokens(m.usage.cache)}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <ul className="usage-member-list">
+            <li className="usage-member-row usage-member-head" aria-hidden="false">
+              <span className="usage-member-name">{t(lang, 'usageMemberName')}</span>
+              <span className="usage-member-nums">
+                <span>{t(lang, 'usageInput')}</span>
+                <span>{t(lang, 'usageOutput')}</span>
+                <span>{t(lang, 'usageCache')}</span>
+              </span>
+            </li>
+            {models.map((m) => (
+              <li key={m.id} className="usage-member-row">
+                <span className="usage-member-name" title={m.id}>
+                  {m.name}
+                  {m.provider ? <span className="usage-member-kind">{m.provider}</span> : null}
                 </span>
                 <span className="usage-member-nums">
                   <span title={t(lang, 'usageInput')}>{formatTokens(m.usage.input)}</span>

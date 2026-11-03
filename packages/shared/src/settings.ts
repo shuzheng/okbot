@@ -2,7 +2,7 @@
  * Domain slices live in settingsSecurity.ts / settingsComputers.ts / settingsModel.ts /
  * settingsGatewayHttpApi.ts and are re-exported here. */
 
-import type { McpSettings } from './mcp.js';
+import { DEFAULT_MCP_SETTINGS, type McpSettings } from './mcp.js';
 import type { WebSettings } from './web.js';
 import type { AutoApprovalRule } from './approval.js';
 import { createId } from './text.js';
@@ -531,6 +531,61 @@ export function normalizeMaintenanceSettings(raw: unknown): MaintenanceSettings 
  * User-chosen default assistant (`settings.json` → `defaultAssistantId`).
  * Empty / unknown id → none. Validated against current bot ids when provided.
  */
+
+/**
+ * Global run Watchdog (`settings.json` → `watchdog`): poll busy sessions and
+ * silently resume safe mid-run checkpoints after transient death / zombie runs.
+ * Interval default 30s. In-turn transient LLM retries also read `transientRetries`.
+ */
+export interface WatchdogSettings {
+  /** Master switch. Default true. */
+  enabled: boolean;
+  /** Poll / heartbeat interval in ms. Default 30000. Clamp 5000–300000. */
+  intervalMs: number;
+  /**
+   * Max attempts per model segment for transient LLM/HTTP/network errors
+   * (includes the first try). Default 3. Clamp 1–5.
+   */
+  transientRetries: number;
+}
+
+export const DEFAULT_WATCHDOG_SETTINGS: WatchdogSettings = {
+  enabled: true,
+  intervalMs: 30_000,
+  transientRetries: 3,
+};
+
+function clampWatchdogIntervalMs(raw: unknown, fallback: number): number {
+  if (raw == null || raw === '') return fallback;
+  if (typeof raw === 'string' && !raw.trim()) return fallback;
+  const n = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(300_000, Math.max(5_000, Math.floor(n)));
+}
+
+function clampTransientRetries(raw: unknown, fallback: number): number {
+  if (raw == null || raw === '') return fallback;
+  if (typeof raw === 'string' && !raw.trim()) return fallback;
+  const n = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(5, Math.max(1, Math.floor(n)));
+}
+
+export function normalizeWatchdogSettings(raw: unknown): WatchdogSettings {
+  const src =
+    raw && typeof raw === 'object'
+      ? (raw as Partial<Record<keyof WatchdogSettings, unknown>>)
+      : {};
+  return {
+    enabled: src.enabled !== false,
+    intervalMs: clampWatchdogIntervalMs(src.intervalMs, DEFAULT_WATCHDOG_SETTINGS.intervalMs),
+    transientRetries: clampTransientRetries(
+      src.transientRetries,
+      DEFAULT_WATCHDOG_SETTINGS.transientRetries,
+    ),
+  };
+}
+
 export function normalizeDefaultAssistantId(
   raw: unknown,
   bots?: ReadonlyArray<{ id: string }> | ReadonlyArray<string>,
@@ -884,7 +939,8 @@ export interface ClientSettings {
   theme: ThemeMode;
   /**
    * Frost / glass translucency (sidebar vibrancy, drawers, pills, transparent
-   * BrowserWindow on darwin). Default true; missing on disk = on.
+   * BrowserWindow on darwin). Default false; missing on disk = off.
+   * Explicit true/false on disk is preserved.
    */
   translucent: boolean;
   /** UI language. */
@@ -934,7 +990,7 @@ export interface ClientSettings {
 
 export const DEFAULT_CLIENT_SETTINGS: ClientSettings = {
   theme: 'system',
-  translucent: true,
+  translucent: false,
   language: 'system',
   microphoneId: '',
   hardwareAcceleration: true,
@@ -969,7 +1025,7 @@ export function normalizeClientSettings(raw: unknown): ClientSettings {
     hardwareAcceleration: src.hardwareAcceleration !== false,
     autoUpdate: src.autoUpdate !== false,
     sidebarDockMagnify: src.sidebarDockMagnify === true,
-    translucent: src.translucent !== false,
+    translucent: src.translucent === true,
     developerMode: src.developerMode === true,
     notifications: src.notifications !== false,
     closeAction: normalizeCloseAction(src.closeAction),
@@ -1091,7 +1147,8 @@ export interface AppSettings {
   sidebarDockMagnify: boolean;
   /**
    * Frost / glass translucency (sidebar vibrancy, drawers, pills, transparent
-   * BrowserWindow on darwin). Default true; missing on disk = on.
+   * BrowserWindow on darwin). Default false; missing on disk = off.
+   * Explicit true/false on disk is preserved.
    */
   translucent: boolean;
   /**
@@ -1121,6 +1178,8 @@ export interface AppSettings {
   memory: MemorySettings;
   /** Post-turn AGENTS / skills / memory refresh throttle. */
   maintenance: MaintenanceSettings;
+  /** Global run Watchdog (silent checkpoint resume + in-turn transient retries). */
+  watchdog: WatchdogSettings;
   /** Built-in squad captain defaults (persona / playbook). */
   squad: SquadSettings;
   /** 1:1 peer mesh bag (no caps; reserved). Squads ignore this. */
@@ -1557,7 +1616,7 @@ export const DEFAULT_SOUL_MD = `# 个性与边界
 export const DEFAULT_SETTINGS: AppSettings = {
   notifications: true,
   closeAction: 'ask',
-  mcp: { enabled: false, servers: [] },
+  mcp: { ...DEFAULT_MCP_SETTINGS },
   web: {
     search: { provider: 'tavily', apiKey: '', baseURL: '', compat: 'tavily' },
     fetch: { allowPrivateNetwork: false },
@@ -1570,7 +1629,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   hardwareAcceleration: true,
   autoUpdate: true,
   sidebarDockMagnify: false,
-  translucent: true,
+  translucent: false,
   developerMode: false,
   settingsNavTab: 'general',
   settingsClientGroupExpanded: true,
@@ -1587,6 +1646,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     search_history: { ...DEFAULT_TOOL_PREFERENCES.search_history },
     manage_schedule: { ...DEFAULT_TOOL_PREFERENCES.manage_schedule },
     manage_task_progress: { ...DEFAULT_TOOL_PREFERENCES.manage_task_progress },
+    manage_note: { ...DEFAULT_TOOL_PREFERENCES.manage_note },
     manage_memory: { ...DEFAULT_TOOL_PREFERENCES.manage_memory },
     send_message: { ...DEFAULT_TOOL_PREFERENCES.send_message },
     web_fetch: { ...DEFAULT_TOOL_PREFERENCES.web_fetch },
@@ -1602,6 +1662,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   instructions: { ...DEFAULT_INSTRUCTIONS_SETTINGS },
   memory: { ...DEFAULT_MEMORY_SETTINGS },
   maintenance: { ...DEFAULT_MAINTENANCE_SETTINGS },
+  watchdog: { ...DEFAULT_WATCHDOG_SETTINGS },
   squad: { ...DEFAULT_SQUAD_SETTINGS },
   mesh: { ...DEFAULT_MESH_SETTINGS },
   gatewayHttpApi: { ...DEFAULT_GATEWAY_HTTP_API, token: '' },

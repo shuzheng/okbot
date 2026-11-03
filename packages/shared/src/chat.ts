@@ -118,6 +118,27 @@ export interface QuickChoice {
   options: string[];
 }
 
+/**
+ * Chat bubble card for a `type=note` resource (HTML under resources/).
+ * Top = one-shot live preview screenshot; bottom = title without `.html`.
+ */
+export type NoteCardMeta = {
+  resourceId: string;
+  /** Display title (no file extension). */
+  title: string;
+};
+
+/** Sanitize note-card meta from disk / IPC (null when unusable). */
+export function normalizeNoteCard(raw: unknown): NoteCardMeta | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const o = raw as Record<string, unknown>;
+  const resourceId = typeof o.resourceId === 'string' ? o.resourceId.trim() : '';
+  if (!resourceId) return null;
+  const titleRaw = typeof o.title === 'string' ? o.title.trim() : '';
+  const title = titleRaw.replace(/\.html?$/i, '').replace(/\.md$/i, '') || resourceId;
+  return { resourceId, title };
+}
+
 /** Sanitize a quick-choice payload (null when unusable). */
 export function normalizeQuickChoice(raw: unknown): QuickChoice | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -136,6 +157,35 @@ export function normalizeQuickChoice(raw: unknown): QuickChoice | null {
   }
   if (options.length < 2) return null;
   return { question, options };
+}
+
+/** Who placed the emoji reaction on a bubble. */
+export type MessageReactionFrom = 'user' | 'assistant';
+
+/** In-place emoji reaction on a chat message (not a timeline row). */
+export interface MessageReaction {
+  emoji: string;
+  from: MessageReactionFrom;
+  /** ISO timestamp of last set/change. */
+  updatedAt: string;
+}
+
+/** Default frequent-reaction grid (MRU seed; 5 slots). */
+export const DEFAULT_REACTION_EMOJIS = ['👍', '👎', '👌', '❤️', '😂'] as const;
+
+/** Sanitize reaction from disk / IPC (undefined when unusable). */
+export function normalizeMessageReaction(raw: unknown): MessageReaction | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const o = raw as Record<string, unknown>;
+  const emoji = typeof o.emoji === 'string' ? o.emoji.trim() : '';
+  if (!emoji || emoji.length > 32) return undefined;
+  const from = o.from === 'user' || o.from === 'assistant' ? o.from : null;
+  if (!from) return undefined;
+  const updatedAt =
+    typeof o.updatedAt === 'string' && o.updatedAt.trim()
+      ? o.updatedAt.trim()
+      : new Date().toISOString();
+  return { emoji, from, updatedAt };
 }
 
 export interface ChatMessage {
@@ -177,6 +227,16 @@ export interface ChatMessage {
   trace?: MessageTrace;
   /** Quick-choice card under this assistant reply (model `ask_choice`). */
   choice?: QuickChoice;
+  /**
+   * Note resource card under this assistant reply (`manage_note`).
+   * Preview screenshot is captured once when the session loads the message (not persisted).
+   */
+  noteCard?: NoteCardMeta;
+  /**
+   * In-place emoji reaction on this bubble (assistant→user or user→assistant).
+   * Not a timeline message; updated via patch / setMessageReaction.
+   */
+  reaction?: MessageReaction;
   /**
    * Renderer-only: optimistic user bubble send state.
    * `pending` while chatStart awaits; `failed` shows retry; cleared/`sent` after IPC succeeds.

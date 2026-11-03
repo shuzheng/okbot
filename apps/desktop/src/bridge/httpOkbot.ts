@@ -7,6 +7,7 @@ import {
   buildChatStartBody,
   gatewayTokenPrefixRole,
   mergeClientGatewaySettings,
+  normalizeMcpSettings,
   normalizeUsageStats,
   pickClientSettings,
   stripClientSettingsKeys,
@@ -448,9 +449,7 @@ export function fillGatewaySettings(settings: unknown) {
     autoApprovalRules: Array.isArray(s.autoApprovalRules) ? s.autoApprovalRules : [],
     notifications: s.notifications !== false,
     developerMode: s.developerMode === true,
-    mcp: s.mcp && typeof s.mcp === 'object'
-      ? { enabled: s.mcp.enabled === true, servers: Array.isArray(s.mcp.servers) ? s.mcp.servers : [] }
-      : { enabled: false, servers: [] },
+    mcp: normalizeMcpSettings(s.mcp),
     microphoneId: typeof s.microphoneId === 'string' ? s.microphoneId : '',
     gatewayHttpApi: {
       enabled: true,
@@ -774,6 +773,118 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
       }
       return [];
     },
+    deleteOwnerResource: async (ownerId: string, resourceId: string) => {
+      const id = (ownerId || '').trim();
+      const rid = (resourceId || '').trim();
+      if (!id || !rid) return { ok: false as const, error: 'missing_ids' };
+      const tryDel = async (kind: 'bots' | 'squads') =>
+        api<any>('DELETE', `/v1/${kind}/${encodeURIComponent(id)}/resources/${encodeURIComponent(rid)}`);
+      try {
+        const res = await tryDel('bots');
+        return res && typeof res === 'object' ? res : { ok: true as const };
+      } catch {
+        try {
+          const res = await tryDel('squads');
+          return res && typeof res === 'object' ? res : { ok: true as const };
+        } catch (err) {
+          return {
+            ok: false as const,
+            error: err instanceof Error ? err.message : String(err),
+          };
+        }
+      }
+    },
+    readOwnerResourceText: async (ownerId: string, resourceId: string) => {
+      const id = (ownerId || '').trim();
+      const rid = (resourceId || '').trim();
+      if (!id || !rid) return { ok: false as const, error: 'missing_ids' };
+      const tryGet = async (kind: 'bots' | 'squads') =>
+        api<any>(
+          'GET',
+          `/v1/${kind}/${encodeURIComponent(id)}/resources/${encodeURIComponent(rid)}/text`,
+        );
+      try {
+        const res = await tryGet('bots');
+        if (res && res.ok && typeof res.text === 'string') return res;
+        if (typeof res?.text === 'string') return { ok: true as const, text: res.text };
+        return res;
+      } catch {
+        try {
+          const res = await tryGet('squads');
+          if (res && res.ok && typeof res.text === 'string') return res;
+          if (typeof res?.text === 'string') return { ok: true as const, text: res.text };
+          return res;
+        } catch (err) {
+          return {
+            ok: false as const,
+            error: err instanceof Error ? err.message : String(err),
+          };
+        }
+      }
+    },
+    addOwnerResource: async (payload: {
+      ownerId: string;
+      action: 'note' | 'url' | 'folder' | 'file-link' | 'ingest';
+      title?: string;
+      body?: string;
+      target?: string;
+      sourcePath?: string;
+    }) => {
+      const id = (payload?.ownerId || '').trim();
+      if (!id) return { ok: false as const, error: 'missing_id' };
+      const body = {
+        action: payload.action,
+        title: payload.title,
+        body: payload.body,
+        target: payload.target,
+        sourcePath: payload.sourcePath,
+      };
+      const tryPost = async (kind: 'bots' | 'squads') =>
+        api<any>('POST', `/v1/${kind}/${encodeURIComponent(id)}/resources`, body);
+      try {
+        return await tryPost('bots');
+      } catch {
+        try {
+          return await tryPost('squads');
+        } catch (err) {
+          return {
+            ok: false as const,
+            error: err instanceof Error ? err.message : String(err),
+          };
+        }
+      }
+    },
+    writeOwnerResourceText: async (ownerId: string, resourceId: string, text: string) => {
+      const id = (ownerId || '').trim();
+      const rid = (resourceId || '').trim();
+      if (!id || !rid) return { ok: false as const, error: 'missing id' };
+      const tryKind = async (kind: 'bots' | 'squads') =>
+        api<any>(
+          'PUT',
+          `/v1/${kind}/${encodeURIComponent(id)}/resources/${encodeURIComponent(rid)}/text`,
+          { text },
+        );
+      try {
+        return await tryKind('bots');
+      } catch {
+        try {
+          return await tryKind('squads');
+        } catch (err) {
+          return {
+            ok: false as const,
+            error: err instanceof Error ? err.message : String(err),
+          };
+        }
+      }
+    },
+    captureNoteHtmlPreview: async (_html: string) => {
+      // Offscreen capture is Electron-only; web clients use iframe fallback in NoteCard.
+      return { ok: false as const, error: 'capture_unavailable' };
+    },
+    openOwnerResource: async (_ownerId: string, _resourceId: string) => {
+      // OS reveal needs Electron shell; HTTP attach clients open via list path metadata in UI fallback.
+      return { ok: false as const, error: 'open_requires_desktop' };
+    },
     getMessages: async (botId: string, opts?: { limit?: number }) => {
       const raw = opts?.limit;
       const limit =
@@ -782,6 +893,36 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
           : 50;
       const page = await okbot.getMessagesPage(botId, { limit });
       return page.messages || [];
+    },
+    setMessageReaction: async (payload: {
+      botId?: string;
+      squadId?: string;
+      messageId: string;
+      emoji: string | null;
+    }) => {
+      const ownerId = (payload.botId || payload.squadId || '').trim();
+      const kind = payload.squadId ? 'squads' : 'bots';
+      if (!ownerId || !payload.messageId) {
+        return { ok: false as const, error: 'missing_ids' };
+      }
+      try {
+        return await api<{
+          ok: boolean;
+          message?: import('@okbot/shared').ChatMessage;
+          woke?: boolean;
+          cleared?: boolean;
+          error?: string;
+        }>(
+          'PUT',
+          `/v1/${kind}/${encodeURIComponent(ownerId)}/messages/${encodeURIComponent(payload.messageId)}/reaction`,
+          { emoji: payload.emoji },
+        );
+      } catch (err) {
+        return {
+          ok: false as const,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
     },
     chatStart: async (botId: string, text: string, opts?: ChatStartOpts) => {
       const token = gatewayToken();

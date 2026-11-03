@@ -420,12 +420,20 @@ export class MemoryStore {
    * Inject pin + relevant/high-weight durable subset only.
    * When `recordHits`, bump citation counts for injected rows and soft-hit
    * keyword-matching unpinned candidates (chat turns; candidates stay off prompt).
+   * `recordedGlobalHitIds` (mutable, turn-scoped) skips re-bumping any id
+   * already bumped this turn — globals shared across squad/mesh seats and
+   * bot-local / soft-hit ids on same-member re-resolve or HITL rebuild —
+   * and records every new bump. Name is historical; the set holds all scopes.
    * Call sites (startBotTurn etc.) run this outside withOwnerMaintenanceLock;
    * that is intentional — the hit RMW is sync-atomic (see recordMemoryHits).
    */
   formatMemoriesForPrompt(
     botId: string,
-    opts?: { query?: string; recordHits?: boolean },
+    opts?: {
+      query?: string;
+      recordHits?: boolean;
+      recordedGlobalHitIds?: Set<string>;
+    },
   ): string {
     const mem = this.deps.getSettings().memory;
     const global = this.listGlobalMemories();
@@ -437,7 +445,12 @@ export class MemoryStore {
     });
     if (opts?.recordHits) {
       const hitIds = [...selected.selectedIds, ...selected.softHitIds];
-      if (hitIds.length) this.recordMemoryHits(botId, hitIds);
+      const recorded = opts.recordedGlobalHitIds;
+      const toBump = recorded ? hitIds.filter((id) => !recorded.has(id)) : hitIds;
+      if (toBump.length) this.recordMemoryHits(botId, toBump);
+      if (recorded) {
+        for (const id of toBump) recorded.add(id);
+      }
     }
     // Formatter still applies a safety cap; selection already ranked/subsetted.
     return formatCappedMemoriesForPrompt(selected.global, selected.local, {

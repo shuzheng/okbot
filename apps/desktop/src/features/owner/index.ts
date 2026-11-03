@@ -6,5 +6,5 @@ export {
 } from './OwnerFormTabs';
 export { OwnerTasksPanel } from './OwnerTasksPanel';
 export { OwnerResourcesPanel } from './OwnerResourcesPanel';
-export { TASK_STATUS_ICON } from './taskStatusIcons';
+export { TASK_STATUS_ICON, STEP_STATUS_ICON, statusIcon } from './taskStatusIcons';
 export { OWNER_LIST_PAGE_SIZE } from './ownerListPage';

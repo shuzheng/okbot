@@ -62,6 +62,16 @@ export type BuildAskAssistantToolInput = HitlLoopHooks & {
   web?: WebSettings;
   ownerId: string;
   resourcesDir: string;
+  onGeneratedImageSaved?: (info: {
+    filePath: string;
+    assetRel: string;
+    title?: string;
+  }) => void;
+  /**
+   * Host same-topic gate for write_file under resources/ (same owner as root run).
+   * Nested peer tools must receive this so mesh children cannot create duplicate topics.
+   */
+  assertLibraryWriteAllowed?: (input: { filePath: string }) => string | null | undefined;
   executionBackend?: ExecutionBackend;
   computerRoute?: ComputerRoute;
   rosterForCallee: (calleeId: string) => MeshPeerRosterEntry[];
@@ -146,8 +156,14 @@ export function buildAskAssistantTool(input: BuildAskAssistantToolInput): Tool |
         const childTools: Tool[] = [
           ...buildTools(toolPrefs, security, input.toolRunBudget, {
             skillLookup: peer.skillLookup,
+            memoryManage: peer.memoryManage,
             imageApi,
-            imageAssets: { ownerId: input.ownerId, resourcesDir: input.resourcesDir },
+            imageAssets: {
+          ownerId: input.ownerId,
+          resourcesDir: input.resourcesDir,
+          onSaved: input.onGeneratedImageSaved,
+        },
+            assertLibraryWriteAllowed: input.assertLibraryWriteAllowed,
             backend: peerRoute ? undefined : input.executionBackend,
             computerRoute: peerRoute,
             web: input.web,
@@ -168,6 +184,9 @@ export function buildAskAssistantTool(input: BuildAskAssistantToolInput): Tool |
           if (nested) childTools.push(nested);
         }
 
+        // Select + record hits at ask time with task as query (not at roster build).
+        const memoriesText =
+          peer.resolveMemoriesText?.(taskText) ?? peer.memoriesText;
         const agent = new Agent({
           name: peer.name || peer.id,
           instructions: buildMeshCalleeInstructions({
@@ -176,7 +195,7 @@ export function buildAskAssistantTool(input: BuildAskAssistantToolInput): Tool |
             callerName: input.callerName,
             soulMd: peer.soulMd,
             skillsText: peer.skillsText,
-            memoriesText: peer.memoriesText,
+            memoriesText,
             prefs: toolPrefs,
             peerRoster: childAskEnabled ? childRoster : undefined,
             askEnabled: childAskEnabled,
@@ -278,6 +297,12 @@ export type ResumeMeshCalleeAfterHitlInput = HitlLoopHooks & {
   web?: WebSettings;
   ownerId: string;
   resourcesDir: string;
+  onGeneratedImageSaved?: (info: {
+    filePath: string;
+    assetRel: string;
+    title?: string;
+  }) => void;
+  assertLibraryWriteAllowed?: (input: { filePath: string }) => string | null | undefined;
   executionBackend?: ExecutionBackend;
   computerRoute?: ComputerRoute;
   rosterForCallee: (calleeId: string) => MeshPeerRosterEntry[];
@@ -338,8 +363,14 @@ export async function resumeMeshCalleeAfterHitl(
   const childTools: Tool[] = [
     ...buildTools(toolPrefs, security, input.toolRunBudget, {
       skillLookup: peer.skillLookup,
+      memoryManage: peer.memoryManage,
       imageApi,
-      imageAssets: { ownerId: input.ownerId, resourcesDir: input.resourcesDir },
+      imageAssets: {
+          ownerId: input.ownerId,
+          resourcesDir: input.resourcesDir,
+          onSaved: input.onGeneratedImageSaved,
+        },
+      assertLibraryWriteAllowed: input.assertLibraryWriteAllowed,
       backend: peerRoute ? undefined : input.executionBackend,
       computerRoute: peerRoute,
       web: input.web,
@@ -359,6 +390,7 @@ export async function resumeMeshCalleeAfterHitl(
     if (nested) childTools.push(nested);
   }
 
+  const memoriesText = peer.resolveMemoriesText?.(taskText) ?? peer.memoriesText;
   const agent = new Agent({
     name: peer.name || peer.id,
     instructions: buildMeshCalleeInstructions({
@@ -367,7 +399,7 @@ export async function resumeMeshCalleeAfterHitl(
       callerName: input.callerName,
       soulMd: peer.soulMd,
       skillsText: peer.skillsText,
-      memoriesText: peer.memoriesText,
+      memoriesText,
       prefs: toolPrefs,
       peerRoster: childAskEnabled ? childRoster : undefined,
       askEnabled: childAskEnabled,

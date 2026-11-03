@@ -487,7 +487,11 @@ export class SessionStore {
   }
 
   /** Patch fields on an existing UI message (matched by envelope id). */
-  patchMessage(botId: string, messageId: string, patch: Partial<ChatMessage>): ChatMessage | null {
+  patchMessage(
+    botId: string,
+    messageId: string,
+    patch: Omit<Partial<ChatMessage>, 'reaction'> & { reaction?: ChatMessage['reaction'] | null },
+  ): ChatMessage | null {
     return this.life.withSessionWriteLockSync(botId, () => {
       const records = this.readSessionRecords(botId);
       const idx = records.findIndex((r) => r.id === messageId);
@@ -495,20 +499,32 @@ export class SessionStore {
       const prev = records[idx]!;
       const prevUi = recordToUiMessage(prev);
       if (!prevUi) return null;
-      const nextMsg: ChatMessage = {
+      const nextMsg = {
         ...prevUi,
         ...patch,
         id: prevUi.id,
         role: prevUi.role,
-      };
+      } as ChatMessage & { reaction?: ChatMessage['reaction'] | null };
+      if ('reaction' in patch && patch.reaction == null) {
+        delete nextMsg.reaction;
+        // Sentinel for mergeUiMessageOntoRecord to drop meta.reaction
+        (nextMsg as { reaction?: null }).reaction = null;
+      }
       // Always merge onto the existing SDK item so Responses array content survives.
-      const nextRec = mergeUiMessageOntoRecord(prev, nextMsg);
+      const nextRec = mergeUiMessageOntoRecord(prev, nextMsg as ChatMessage);
       if (patch.content === undefined && prev.item) {
         nextRec.item = prev.item;
       }
+      if ('reaction' in patch && patch.reaction == null && nextRec.meta) {
+        delete nextRec.meta.reaction;
+      }
       records[idx] = nextRec;
       this.writeSessionRecords(botId, records);
-      return nextMsg;
+      const out = recordToUiMessage(nextRec) || nextMsg;
+      if ('reaction' in patch && patch.reaction == null && out && 'reaction' in out) {
+        delete (out as { reaction?: unknown }).reaction;
+      }
+      return out as ChatMessage;
     });
   }
 

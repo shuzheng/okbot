@@ -69,6 +69,7 @@ export function ToolsSettingsPanel({
                 search_history: 'toolSearchHistory',
                 manage_schedule: 'toolManageSchedule',
                 manage_task_progress: 'toolManageTaskProgress',
+                manage_note: 'toolManageNote',
                 manage_memory: 'toolManageMemory',
                 send_message: 'toolSendMessage',
                 web_fetch: 'toolWebFetch',

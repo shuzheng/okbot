@@ -20,6 +20,7 @@ import {
   acquireRunSlot,
   ownerHasRuns,
   registerOwnerRun,
+  setOwnerRunCheckpointFlush,
   unregisterOwnerRun,
 } from '../ownerRuns';
 import { createApprovalWaiter, releaseRunApprovals } from '../approvalWaiter';
@@ -29,6 +30,10 @@ import { historySearchForOwner } from '../historySearchTool';
 import { scheduleManageForOwner } from '../scheduleTool';
 import { memoryManageForBot } from '../memoryTool';
 import { taskProgressManageForOwner } from '../taskProgressTool';
+import { noteManageForOwner } from '../noteTool';
+import { libraryWriteGateForOwner } from '../sameTopicArtifactGate';
+import { applyAssistantSendMessage, applyEmojiOnlyFinalGuard } from '../messageReaction';
+import { buildInterruptedRunResumeContext } from './softSteerResumeContext';
 import {
   clearLiveAssistantForTools,
   commitLiveAssistantBubble,
@@ -72,6 +77,7 @@ export async function resumeBotAfterRestart(
       /** Approvals parked by this resumed run; only these are released at the end. */
       const parkedRequestIds = new Set<string>();
       registerOwnerRun(ctx.abortControllers, bot.id, resumeRunId, controller);
+      let turnNoteCard: import('@okbot/shared').NoteCardMeta | null = null;
       // Do NOT clear pending HITL until resume succeeds — a failed resume must leave
       // the card on disk so the user can retry (fail-closed retain).
 
@@ -84,7 +90,12 @@ export async function resumeBotAfterRestart(
         const soulMd = ctx.storage.readSoulMd(bot.id);
         const skillsText = ctx.storage.formatSkillsForPrompt(bot.id);
         const skillLookup = skillLookupFor(ctx.storage, bot.id);
-        const memoriesText = ctx.storage.formatMemoriesForPrompt(bot.id, { recordHits: true });
+        const turnGlobalHitIds = new Set<string>();
+        const memoriesText = ctx.storage.formatMemoriesForPrompt(bot.id, {
+          ...(disk.userText ? { query: disk.userText } : {}),
+          recordHits: false,
+          recordedGlobalHitIds: turnGlobalHitIds,
+        });
         const summaryState = ctx.storage.readSessionSummary(bot.id);
         const sessionSummary = summaryState?.summary?.trim() || '';
         const fileSession = createOkbotFileSession(
@@ -94,7 +105,10 @@ export async function resumeBotAfterRestart(
           }),
         );
 
-        const meshPeers = buildMeshPeerSpecs(ctx.storage, bot.id);
+        const meshPeers = buildMeshPeerSpecs(ctx.storage, bot.id, {
+          recordedGlobalHitIds: turnGlobalHitIds,
+          recordHits: false,
+        });
         const meshExchange = createMeshExchangeHandler({
           storage: ctx.storage,
           emit: (event) => ctx.sendRuntimeEvent(event),
@@ -126,6 +140,22 @@ export async function resumeBotAfterRestart(
             web: settings.web,
             ownerId: bot.id,
             resourcesDir: ctx.storage.ownerResourcesDir(bot.id),
+            onGeneratedImageSaved: (info) => {
+              try {
+                ctx.storage.indexOwnerResourceFile(bot.id, {
+                  filePath: info.filePath,
+                  title: info.title,
+                  createdBy: 'assistant',
+                });
+              } catch (err) {
+                console.error('[okbot] indexOwnerResourceFile failed', err);
+              }
+            },
+            assertLibraryWriteAllowed: libraryWriteGateForOwner(
+              ctx.storage,
+              bot.id,
+              ctx.storage.ownerResourcesDir(bot.id),
+            ),
             computerRoute: computerRouteFor(settings, disk.userText, disk.computerId),
             rosterForCallee: (calleeId) => peerRoster.filter((p) => p.id !== calleeId),
             signal: controller.signal,
@@ -183,6 +213,9 @@ export async function resumeBotAfterRestart(
             historySearch: historySearchForOwner(ctx.storage, bot.id),
             scheduleManage: scheduleManageForOwner(ctx.storage, bot.id),
       memoryManage: memoryManageForBot(ctx.storage, bot.id),
+            noteManage: noteManageForOwner(ctx.storage, bot.id, (card) => {
+              turnNoteCard = card;
+            }),
             taskProgressManage: async (input) => {
               const r = await taskProgressManageForOwner(ctx.storage, bot.id)(input);
               try {
@@ -200,6 +233,7 @@ export async function resumeBotAfterRestart(
             memoriesText,
             sessionSummary: sessionSummary || undefined,
             taskProgressText: ctx.storage.formatTaskProgressForPrompt(bot.id) || undefined,
+            resumeContextText: buildInterruptedRunResumeContext(ctx.storage, bot.id, 'cold_restore'),
             assistantRoleTemplate: settings.instructions?.assistantRoleTemplate,
             isDefaultAssistant: settings.defaultAssistantId === bot.id,
             model: modelConfig,
@@ -210,6 +244,22 @@ export async function resumeBotAfterRestart(
             session: fileSession,
             ownerId: bot.id,
             resourcesDir: ctx.storage.ownerResourcesDir(bot.id),
+            onGeneratedImageSaved: (info) => {
+              try {
+                ctx.storage.indexOwnerResourceFile(bot.id, {
+                  filePath: info.filePath,
+                  title: info.title,
+                  createdBy: 'assistant',
+                });
+              } catch (err) {
+                console.error('[okbot] indexOwnerResourceFile failed', err);
+              }
+            },
+            assertLibraryWriteAllowed: libraryWriteGateForOwner(
+              ctx.storage,
+              bot.id,
+              ctx.storage.ownerResourcesDir(bot.id),
+            ),
             computerRoute: computerRouteFor(settings, disk.userText, disk.computerId),
             meshPeers,
             meshSettings: settings.mesh,
@@ -237,15 +287,27 @@ export async function resumeBotAfterRestart(
                 noteCommitted: (t) => meshFollowUp.noteCommitted(t),
               }, { meshInterim: true, logLabel: 'commit mesh interim assistant' });
             },
-            emitAssistantMessage: async (content) => {
-              await emitAssistantMessageBubble(live, content, {
-                ownerId: bot.id,
-                runId: resumeRunId,
-                showThinking: modelConfig.showThinking,
-                storage: ctx.storage,
-                emit: (event) => ctx.sendRuntimeEvent(event),
-                noteCommitted: (t) => meshFollowUp.noteCommitted(t),
-              });
+            emitAssistantMessage: async (input) => {
+              await applyAssistantSendMessage(
+                ctx,
+                bot.id,
+                input,
+                async (content) => {
+                  await emitAssistantMessageBubble(live, content, {
+                    ownerId: bot.id,
+                    runId: resumeRunId,
+                    showThinking: modelConfig.showThinking,
+                    storage: ctx.storage,
+                    emit: (event) => ctx.sendRuntimeEvent(event),
+                    noteCommitted: (t) => meshFollowUp.noteCommitted(t),
+                  });
+                },
+                {
+                  onReacted: (emoji) => {
+                    (live.reactedEmojisThisTurn ??= []).push(emoji);
+                  },
+                },
+              );
             },
             onDelta: (delta) => {
               const piece = meshFollowUp.acceptDelta(delta);
@@ -278,6 +340,9 @@ export async function resumeBotAfterRestart(
                 output,
                 runId: resumeRunId,
               });
+            },
+            registerCheckpointFlush: (flush) => {
+              setOwnerRunCheckpointFlush(bot.id, resumeRunId, flush);
             },
             onRunCheckpoint: ({ serializedRunState }) => {
               try {
@@ -312,21 +377,31 @@ export async function resumeBotAfterRestart(
             live.assistantMsg.content = finalized;
           }
           live.assistantMsg.content = persistAssistantContent(
+          live.assistantMsg.content,
+          modelConfig.showThinking,
+          { ownerId: bot.id, storage: ctx.storage },
+        );
+          live.assistantMsg.content = await applyEmojiOnlyFinalGuard(
+            ctx,
+            bot.id,
             live.assistantMsg.content,
-            modelConfig.showThinking,
+            { reactedEmojisThisTurn: live.reactedEmojisThisTurn },
           );
           if (result.usage) live.assistantMsg.usage = result.usage;
+          if (turnNoteCard && !controller.signal.aborted) {
+            live.assistantMsg.noteCard = turnNoteCard;
+          }
           const botTrace = sealMessageTrace(
             guards,
             resolveRunFinishStatus({ aborted: controller.signal.aborted }),
           );
           if (botTrace) live.assistantMsg.trace = botTrace;
-          if ((live.assistantMsg.content || '').trim()) {
+          if ((live.assistantMsg.content || '').trim() || live.assistantMsg.noteCard) {
             await ctx.storage.upsertAssistantMessage(bot.id, live.assistantMsg, { runId: resumeRunId });
           }
           if (result.usage && (result.usage.input || result.usage.output || result.usage.cache)) {
             try {
-              ctx.storage.recordUsage(bot.id, result.usage);
+              ctx.storage.recordUsage(bot.id, result.usage, { modelId: modelConfig.model });
             } catch (err) {
               console.error('[okbot] record bot usage failed', err);
             }
@@ -338,6 +413,7 @@ export async function resumeBotAfterRestart(
             content: live.assistantMsg.content,
             usage: result.usage,
             ...(botTrace ? { trace: botTrace } : {}),
+            ...(live.assistantMsg.noteCard ? { noteCard: live.assistantMsg.noteCard } : {}),
             ...(controller.signal.aborted ? { aborted: true } : {}),
           });
           try {
@@ -357,6 +433,9 @@ export async function resumeBotAfterRestart(
           historySearch: historySearchForOwner(ctx.storage, bot.id),
           scheduleManage: scheduleManageForOwner(ctx.storage, bot.id),
       memoryManage: memoryManageForBot(ctx.storage, bot.id),
+          noteManage: noteManageForOwner(ctx.storage, bot.id, (card) => {
+              turnNoteCard = card;
+            }),
           taskProgressManage: async (input) => {
             const result = await taskProgressManageForOwner(ctx.storage, bot.id)(input);
             try {
@@ -374,6 +453,7 @@ export async function resumeBotAfterRestart(
           memoriesText,
           sessionSummary: sessionSummary || undefined,
           taskProgressText: ctx.storage.formatTaskProgressForPrompt(bot.id) || undefined,
+          resumeContextText: buildInterruptedRunResumeContext(ctx.storage, bot.id, 'cold_restore'),
           assistantRoleTemplate: settings.instructions?.assistantRoleTemplate,
           isDefaultAssistant: settings.defaultAssistantId === bot.id,
           model: modelConfig,
@@ -384,6 +464,22 @@ export async function resumeBotAfterRestart(
           session: fileSession,
           ownerId: bot.id,
           resourcesDir: ctx.storage.ownerResourcesDir(bot.id),
+          onGeneratedImageSaved: (info) => {
+            try {
+              ctx.storage.indexOwnerResourceFile(bot.id, {
+                filePath: info.filePath,
+                title: info.title,
+                createdBy: 'assistant',
+              });
+            } catch (err) {
+              console.error('[okbot] indexOwnerResourceFile failed', err);
+            }
+          },
+          assertLibraryWriteAllowed: libraryWriteGateForOwner(
+            ctx.storage,
+            bot.id,
+            ctx.storage.ownerResourcesDir(bot.id),
+          ),
           computerRoute: computerRouteFor(settings, disk.userText, disk.computerId),
           meshPeers,
           meshSettings: settings.mesh,
@@ -418,15 +514,27 @@ export async function resumeBotAfterRestart(
               noteCommitted: (t) => meshFollowUp.noteCommitted(t),
             }, { meshInterim: true, logLabel: 'commit mesh interim assistant' });
           },
-          emitAssistantMessage: async (content) => {
-            await emitAssistantMessageBubble(live, content, {
-              ownerId: bot.id,
-              runId: resumeRunId,
-              showThinking: modelConfig.showThinking,
-              storage: ctx.storage,
-              emit: (event) => ctx.sendRuntimeEvent(event),
-              noteCommitted: (t) => meshFollowUp.noteCommitted(t),
-            });
+          emitAssistantMessage: async (input) => {
+            await applyAssistantSendMessage(
+              ctx,
+              bot.id,
+              input,
+              async (content) => {
+                await emitAssistantMessageBubble(live, content, {
+                  ownerId: bot.id,
+                  runId: resumeRunId,
+                  showThinking: modelConfig.showThinking,
+                  storage: ctx.storage,
+                  emit: (event) => ctx.sendRuntimeEvent(event),
+                  noteCommitted: (t) => meshFollowUp.noteCommitted(t),
+                });
+              },
+              {
+                onReacted: (emoji) => {
+                  (live.reactedEmojisThisTurn ??= []).push(emoji);
+                },
+              },
+            );
           },
           onDelta: (delta) => {
             const piece = meshFollowUp.acceptDelta(delta);
@@ -463,6 +571,9 @@ export async function resumeBotAfterRestart(
               output,
               runId: resumeRunId,
             });
+          },
+          registerCheckpointFlush: (flush) => {
+            setOwnerRunCheckpointFlush(bot.id, resumeRunId, flush);
           },
           onRunCheckpoint: ({ serializedRunState }) => {
             try {
@@ -501,8 +612,18 @@ export async function resumeBotAfterRestart(
         live.assistantMsg.content = persistAssistantContent(
           live.assistantMsg.content,
           modelConfig.showThinking,
+          { ownerId: bot.id, storage: ctx.storage },
+        );
+        live.assistantMsg.content = await applyEmojiOnlyFinalGuard(
+          ctx,
+          bot.id,
+          live.assistantMsg.content,
+          { reactedEmojisThisTurn: live.reactedEmojisThisTurn },
         );
         if (result.usage) live.assistantMsg.usage = result.usage;
+        if (turnNoteCard && !controller.signal.aborted) {
+          live.assistantMsg.noteCard = turnNoteCard;
+        }
         const botTrace = sealMessageTrace(
           guards,
           resolveRunFinishStatus({ aborted: controller.signal.aborted }),
@@ -511,12 +632,12 @@ export async function resumeBotAfterRestart(
         // Empty + no session row for this streaming id: skip upsert. Abort during
         // HITL clears streamed text; unconditional upsert used to rebind/wipe the
         // previous assistant turn (see FileStorage.upsertAssistantMessage).
-        if ((live.assistantMsg.content || '').trim()) {
+        if ((live.assistantMsg.content || '').trim() || live.assistantMsg.noteCard) {
           await ctx.storage.upsertAssistantMessage(bot.id, live.assistantMsg, { runId: resumeRunId });
         }
         if (result.usage && (result.usage.input || result.usage.output || result.usage.cache)) {
           try {
-            ctx.storage.recordUsage(bot.id, result.usage);
+            ctx.storage.recordUsage(bot.id, result.usage, { modelId: modelConfig.model });
           } catch (err) {
             console.error('[okbot] record bot usage failed', err);
           }
@@ -528,6 +649,7 @@ export async function resumeBotAfterRestart(
           content: live.assistantMsg.content,
           usage: result.usage,
           ...(botTrace ? { trace: botTrace } : {}),
+          ...(live.assistantMsg.noteCard ? { noteCard: live.assistantMsg.noteCard } : {}),
           ...(controller.signal.aborted ? { aborted: true } : {}),
         });
         try {

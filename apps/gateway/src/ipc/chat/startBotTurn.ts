@@ -1,16 +1,20 @@
 import {
   createId,
   effectiveModelKey,
+  isTransientRunError,
   resolveModelConfig,
   type ChatMessage,
   type QuickChoice,
 } from '@okbot/shared';
 import {
   runAgentChat,
+  resumeAgentChatFromCheckpoint,
   createOkbotFileSession,
   resolveSessionInputCallbackForTurn,
   createMeshFollowUpStripper,
   stripLeadingCommittedInterim,
+  type RunAgentChatInput,
+  type ResumeAgentChatFromCheckpointInput,
 } from '@okbot/agent';
 import { normalizeMessageAttachments } from '../../storage/sessionJsonl';
 import {
@@ -37,6 +41,7 @@ import {
   acquireParallelGate,
   ownerHasRuns,
   registerOwnerRun,
+  setOwnerRunCheckpointFlush,
   releaseOwnerBusyHold,
   unregisterOwnerRun,
   withOwnerMaintenanceLock,
@@ -48,6 +53,18 @@ import { historySearchForOwner } from '../historySearchTool';
 import { scheduleManageForOwner } from '../scheduleTool';
 import { memoryManageForBot } from '../memoryTool';
 import { taskProgressManageForOwner } from '../taskProgressTool';
+import { noteManageForOwner } from '../noteTool';
+import { libraryWriteGateForOwner } from '../sameTopicArtifactGate';
+import {
+  buildInterruptedRunResumeContext,
+  formatRunCheckpointToolDigest,
+  type InterruptedRunReason,
+} from './softSteerResumeContext';
+import {
+  clearSoftSteerCheckpointHandoff,
+  shouldKeepRunCheckpointOnTurnEnd,
+} from '../softSteerGate';
+import { applyAssistantSendMessage, applyEmojiOnlyFinalGuard } from '../messageReaction';
 import {
   clearLiveAssistantForTools,
   commitLiveAssistantBubble,
@@ -56,6 +73,7 @@ import {
   persistAssistantContent,
   resolveQuoteFields,
   isQuietChatOrigin,
+  mayConsumeKeptRunCheckpoint,
   type ChatStartPayload,
   type ChatStartResult,
   type LiveAssistantState,
@@ -131,6 +149,7 @@ export async function startBotTurn(
 
       /** Approvals parked by this run; only these are released at the end. */
       const parkedRequestIds = new Set<string>();
+      let keepForTransientFailure = false;
       const controller = new AbortController();
       registerOwnerRun(ctx.abortControllers, bot.id, parallelGate.runId, controller);
       const turnRunId = parallelGate.runId;
@@ -151,6 +170,7 @@ export async function startBotTurn(
       };
       /** Quick-choice card the model asked for this turn (`ask_choice`). */
       let turnChoice: QuickChoice | null = null;
+      let turnNoteCard: import('@okbot/shared').NoteCardMeta | null = null;
       const onboarding = onboardingRunExtras(ctx.storage, bot, (choice) => {
         turnChoice = choice;
       });
@@ -177,9 +197,11 @@ export async function startBotTurn(
         const soulMd = ctx.storage.readSoulMd(bot.id);
         const skillsText = ctx.storage.formatSkillsForPrompt(bot.id);
         const skillLookup = skillLookupFor(ctx.storage, bot.id);
+        const turnGlobalHitIds = new Set<string>();
         const memoriesText = ctx.storage.formatMemoriesForPrompt(bot.id, {
           query: text,
           recordHits: true,
+          recordedGlobalHitIds: turnGlobalHitIds,
         });
 
         // All prior turns (exclude the empty streaming assistant placeholder).
@@ -273,8 +295,66 @@ export async function startBotTurn(
         });
         const hasVisionInput = (attachments ?? []).some((a) => a.kind === 'image');
 
-        const meshPeers = buildMeshPeerSpecs(ctx.storage, bot.id);
-        const result = await runAgentChat({
+        const meshPeers = buildMeshPeerSpecs(ctx.storage, bot.id, {
+          recordedGlobalHitIds: turnGlobalHitIds,
+        });
+        const resourcesDir = ctx.storage.ownerResourcesDir(bot.id);
+        // Soft-steer handoff OR leftover after manual Stop: read+consume the
+        // kept mid-run checkpoint so this turn can resume RunState / inject digest.
+        // Soft-steered or composer (unset) consume-once; reaction/schedule/api leave
+        // a Stop leftover for a real composer「继续」.
+        let steeredCheckpoint: ReturnType<typeof ctx.storage.loadRunCheckpoint> = null;
+        let resumeReason: InterruptedRunReason | undefined = payload.softSteered
+          ? 'soft_steer'
+          : undefined;
+        const mayConsumeKeptCheckpoint = mayConsumeKeptRunCheckpoint(
+          payload.origin,
+          payload.softSteered,
+        );
+        if (mayConsumeKeptCheckpoint) {
+          try {
+            const loaded = ctx.storage.loadRunCheckpoint(bot.id);
+            if (loaded?.serializedRunState) {
+              // Consume-once before resume so a second start cannot double-apply.
+              ctx.storage.clearRunCheckpoint(bot.id);
+              steeredCheckpoint = loaded;
+              if (!resumeReason) resumeReason = 'manual_stop';
+            }
+          } catch (err) {
+            console.error('[okbot] load kept run checkpoint failed', err);
+            steeredCheckpoint = null;
+          }
+          if (payload.softSteered) {
+            clearSoftSteerCheckpointHandoff(bot.id);
+          }
+        }
+        const steeredToolDigest = steeredCheckpoint
+          ? formatRunCheckpointToolDigest(steeredCheckpoint.serializedRunState)
+          : '';
+        const resumeContextText = resumeReason
+          ? buildInterruptedRunResumeContext(ctx.storage, bot.id, resumeReason, {
+              interruptUserText: text,
+              runCheckpoint: steeredCheckpoint
+                ? {
+                    runId: steeredCheckpoint.runId,
+                    createdAt: steeredCheckpoint.createdAt,
+                    toolDigest: steeredToolDigest,
+                    resumedFromRunState: true,
+                  }
+                : null,
+            })
+          : undefined;
+        const assertLibraryWriteAllowed = libraryWriteGateForOwner(
+          ctx.storage,
+          bot.id,
+          resourcesDir,
+        );
+
+        type SoftSteerSharedAgentInput = Omit<
+          RunAgentChatInput,
+          'history' | 'sessionInputCallback' | 'hasVisionInput' | 'userText'
+        >;
+        const agentTurnInput: SoftSteerSharedAgentInput = {
 
           botName: bot.name,
           botDescription: bot.description,
@@ -297,31 +377,47 @@ export async function startBotTurn(
             }
             return result;
           },
+          noteManage: noteManageForOwner(ctx.storage, bot.id, (card) => {
+            turnNoteCard = card;
+          }),
           web: settings.web,
           memoriesText,
           sessionSummary: sessionSummary || undefined,
           taskProgressText: ctx.storage.formatTaskProgressForPrompt(bot.id) || undefined,
+          ...(resumeContextText ? { resumeContextText } : {}),
           assistantRoleTemplate: settings.instructions?.assistantRoleTemplate,
           isDefaultAssistant: settings.defaultAssistantId === bot.id,
           model: modelConfig,
           tools: settings.tools,
           security: settings.security,
           toolRunBudget: guards.budget,
-          extraTools: [...(await mcpToolsForRun(settings, guards.budget)), ...onboarding.tools],
+          extraTools: [
+            ...(await mcpToolsForRun(settings, guards.budget)),
+            ...onboarding.tools,
+          ],
           ...(onboarding.onboardingGuide ? { onboardingGuide: onboarding.onboardingGuide } : {}),
-          history: [], // model history via session
           session: fileSession,
-          sessionInputCallback,
-          hasVisionInput,
           ownerId: bot.id,
-          resourcesDir: ctx.storage.ownerResourcesDir(bot.id),
+          resourcesDir,
+          onGeneratedImageSaved: (info) => {
+            try {
+              ctx.storage.indexOwnerResourceFile(bot.id, {
+                filePath: info.filePath,
+                title: info.title,
+                createdBy: 'assistant',
+              });
+            } catch (err) {
+              console.error('[okbot] indexOwnerResourceFile failed', err);
+            }
+          },
+          assertLibraryWriteAllowed,
           computerRoute: computerRouteFor(settings, text, payload.computerId),
           meshPeers,
           meshSettings: settings.mesh,
           meshDepth: 0,
           meshStack: [bot.id],
-          userText: text,
           signal: controller.signal,
+          transientRetries: settings.watchdog?.transientRetries,
           onClearLiveText: async () => {
             await clearLiveAssistantForTools(live, {
               ownerId: bot.id,
@@ -342,15 +438,27 @@ export async function startBotTurn(
               noteCommitted: (t) => meshFollowUp.noteCommitted(t),
             }, { meshInterim: true, logLabel: 'commit mesh interim assistant' });
           },
-          emitAssistantMessage: async (content) => {
-            await emitAssistantMessageBubble(live, content, {
-              ownerId: bot.id,
-              runId: parallelGate.runId,
-              showThinking: modelConfig.showThinking,
-              storage: ctx.storage,
-              emit: emitTurn,
-              noteCommitted: (t) => meshFollowUp.noteCommitted(t),
-            });
+          emitAssistantMessage: async (input) => {
+            await applyAssistantSendMessage(
+              ctx,
+              bot.id,
+              input,
+              async (content) => {
+                await emitAssistantMessageBubble(live, content, {
+                  ownerId: bot.id,
+                  runId: parallelGate.runId,
+                  showThinking: modelConfig.showThinking,
+                  storage: ctx.storage,
+                  emit: emitTurn,
+                  noteCommitted: (t) => meshFollowUp.noteCommitted(t),
+                });
+              },
+              {
+                onReacted: (emoji) => {
+                  (live.reactedEmojisThisTurn ??= []).push(emoji);
+                },
+              },
+            );
           },
           onDelta: (delta) => {
             const piece = meshFollowUp.acceptDelta(delta);
@@ -389,6 +497,9 @@ export async function startBotTurn(
               output,
             });
           },
+          registerCheckpointFlush: (flush) => {
+            setOwnerRunCheckpointFlush(bot.id, turnRunId, flush);
+          },
           onRunCheckpoint: ({ serializedRunState }) => {
             try {
               ctx.storage.saveRunCheckpoint(bot.id, {
@@ -404,7 +515,20 @@ export async function startBotTurn(
               console.error('[okbot] save run checkpoint failed', err);
             }
           },
-        });
+        };
+
+        const result = steeredCheckpoint
+          ? await resumeAgentChatFromCheckpoint({
+              ...agentTurnInput,
+              serializedRunState: steeredCheckpoint.serializedRunState,
+            } satisfies ResumeAgentChatFromCheckpointInput)
+          : await runAgentChat({
+              ...agentTurnInput,
+              history: [], // model history via session
+              sessionInputCallback,
+              hasVisionInput,
+              userText: text,
+            } satisfies RunAgentChatInput);
         // result.content prefers live stream (cleared at tools → formal only). Never shrink
         // an already-visible bubble if the agent returned a shorter finalOutput fallback.
         // Mesh: strip sealed interim A if the model repeated it into follow-up B.
@@ -426,14 +550,36 @@ export async function startBotTurn(
         live.assistantMsg.content = persistAssistantContent(
           live.assistantMsg.content,
           modelConfig.showThinking,
+          { ownerId: bot.id, storage: ctx.storage },
+        );
+        live.assistantMsg.content = await applyEmojiOnlyFinalGuard(
+          ctx,
+          bot.id,
+          live.assistantMsg.content,
+          {
+            reactedEmojisThisTurn: live.reactedEmojisThisTurn,
+            targetUserMessageId: userMsg.id,
+          },
         );
         if (result.usage) live.assistantMsg.usage = result.usage;
-        // Quick-choice card: attach to the final reply, else to the last bubble sealed this turn.
+        // Quick-choice + note preview cards: attach to the final reply when it has
+        // content; otherwise merge both onto the last bubble sealed this turn.
+        // (Independent attach — previously choice sealed-fallback was nested under
+        // the noteCard else-chain and got dropped when both needed fallback.)
         const choice = turnChoice as QuickChoice | null;
-        if (choice && (live.assistantMsg.content || '').trim()) {
-          live.assistantMsg.choice = choice;
-        } else if (choice && lastSealedAssistant && !controller.signal.aborted) {
-          const target: ChatMessage = { ...(lastSealedAssistant as ChatMessage), choice };
+        const noteCard = turnNoteCard;
+        const liveHasContent = !!(live.assistantMsg.content || '').trim();
+        if (liveHasContent) {
+          if (choice) live.assistantMsg.choice = choice;
+          if (noteCard) live.assistantMsg.noteCard = noteCard;
+        } else if (
+          (choice || noteCard) &&
+          lastSealedAssistant &&
+          !controller.signal.aborted
+        ) {
+          const target: ChatMessage = { ...(lastSealedAssistant as ChatMessage) };
+          if (choice) target.choice = choice;
+          if (noteCard) target.noteCard = noteCard;
           try {
             await ctx.storage.upsertAssistantMessage(bot.id, target, {
               allowRebind: false,
@@ -441,8 +587,13 @@ export async function startBotTurn(
             });
             emitTurn({ type: 'assistant_message', botId: bot.id, message: target });
           } catch (err) {
-            console.error('[okbot] attach quick choice failed', err);
+            console.error('[okbot] attach choice/note card failed', err);
           }
+        } else if ((noteCard || choice) && !controller.signal.aborted) {
+          // manage_note / ask_choice succeeded but final text empty and nothing sealed —
+          // still park the card(s) on this turn's assistant row so UI can show them.
+          if (noteCard) live.assistantMsg.noteCard = noteCard;
+          if (choice) live.assistantMsg.choice = choice;
         }
         const botTrace = sealMessageTrace(
           guards,
@@ -452,12 +603,17 @@ export async function startBotTurn(
         // Empty + no session row for this streaming id: skip upsert. Abort during
         // HITL clears streamed text; unconditional upsert used to rebind/wipe the
         // previous assistant turn (see FileStorage.upsertAssistantMessage).
-        if ((live.assistantMsg.content || '').trim()) {
+        // Keep card-only rows (noteCard and/or choice) so desktop does not drop them.
+        if (
+          (live.assistantMsg.content || '').trim() ||
+          live.assistantMsg.noteCard ||
+          live.assistantMsg.choice
+        ) {
           await ctx.storage.upsertAssistantMessage(bot.id, live.assistantMsg, { runId: parallelGate.runId });
         }
         if (result.usage && (result.usage.input || result.usage.output || result.usage.cache)) {
           try {
-            ctx.storage.recordUsage(bot.id, result.usage);
+            ctx.storage.recordUsage(bot.id, result.usage, { modelId: modelConfig.model });
             if (payload.apiTokenId) {
               try {
                 ctx.storage.recordApiTokenUsage(payload.apiTokenId, bot.id, {
@@ -480,6 +636,7 @@ export async function startBotTurn(
           usage: result.usage,
           ...(botTrace ? { trace: botTrace } : {}),
           ...(live.assistantMsg.choice ? { choice: live.assistantMsg.choice } : {}),
+          ...(live.assistantMsg.noteCard ? { noteCard: live.assistantMsg.noteCard } : {}),
           ...(controller.signal.aborted ? { aborted: true } : {}),
         });
         // New-assistant onboarding: every answered step evolves SOUL.md + description
@@ -541,6 +698,9 @@ export async function startBotTurn(
           });
           return { userMessage: userMsg, assistantMessage: live.assistantMsg, aborted: true };
         }
+        if (isTransientRunError(err)) {
+          keepForTransientFailure = true;
+        }
         const message = handleRunFailure({
           root: ctx.storage.dataRoot,
           ownerId: bot.id,
@@ -567,10 +727,38 @@ export async function startBotTurn(
         guards.dispose();
         unregisterOwnerRun(ctx.abortControllers, bot.id, parallelGate.runId, controller);
         releaseRunApprovals(ctx, bot.id, parkedRequestIds, '已结束');
-        // Clear mid-run checkpoint on success, Stop, or soft-steer abort.
-        // Crash leaves the file for cold resume on next start.
+        // Clear mid-run checkpoint on successful finish / softSteered fail-before-consume.
+        // Soft-steer abort, manual Stop, and exhausted transient failures keep it.
+        // A softSteered replacement that fails before consume must abandon handoff
+        // so later successful finishes do not keep a sticky ckpt.
+        // Quiet reaction (etc.) successful finish must not wipe an unconsumed Stop leftover
+        // (foreign runId still on disk) — composer「继续」still needs it.
+        // Crash (no finally) also leaves it for cold resume / Watchdog.
         try {
-          ctx.storage.clearRunCheckpoint(bot.id);
+          const aborted = controller.signal.aborted;
+          let existingCheckpointRunId: string | null | undefined;
+          try {
+            existingCheckpointRunId = ctx.storage.loadRunCheckpoint(bot.id)?.runId ?? null;
+          } catch {
+            existingCheckpointRunId = undefined;
+          }
+          if (
+            shouldKeepRunCheckpointOnTurnEnd({
+              ownerId: bot.id,
+              softSteered: payload.softSteered,
+              aborted,
+              transientFailure: keepForTransientFailure,
+              currentRunId: turnRunId,
+              existingCheckpointRunId,
+            })
+          ) {
+            // keep run-checkpoint.json for soft-steer handoff or post-Stop continue
+          } else {
+            if (payload.softSteered) {
+              clearSoftSteerCheckpointHandoff(bot.id);
+            }
+            ctx.storage.clearRunCheckpoint(bot.id);
+          }
         } catch (err) {
           console.error('[okbot] clear run checkpoint failed', err);
         }

@@ -17,7 +17,38 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'okbot-client-settings-'));
   const defaults = loadClientSettings(tmp);
   assert.equal(defaults.theme, 'system');
   assert.equal(defaults.closeAction, 'ask');
+  assert.equal(defaults.translucent, false);
   assert.ok(fs.existsSync(path.join(tmp, 'client.json')));
+}
+
+{
+  // Missing translucent key → default off; explicit true/false preserved.
+  const miss = fs.mkdtempSync(path.join(os.tmpdir(), 'okbot-translucent-miss-'));
+  fs.writeFileSync(
+    path.join(miss, 'client.json'),
+    `${JSON.stringify({ theme: 'dark', language: 'zh' }, null, 2)}\n`,
+    'utf8',
+  );
+  assert.equal(loadClientSettings(miss).translucent, false);
+  fs.rmSync(miss, { recursive: true, force: true });
+
+  const on = fs.mkdtempSync(path.join(os.tmpdir(), 'okbot-translucent-on-'));
+  fs.writeFileSync(
+    path.join(on, 'client.json'),
+    `${JSON.stringify({ theme: 'dark', translucent: true }, null, 2)}\n`,
+    'utf8',
+  );
+  assert.equal(loadClientSettings(on).translucent, true);
+  fs.rmSync(on, { recursive: true, force: true });
+
+  const off = fs.mkdtempSync(path.join(os.tmpdir(), 'okbot-translucent-off-'));
+  fs.writeFileSync(
+    path.join(off, 'client.json'),
+    `${JSON.stringify({ theme: 'dark', translucent: false }, null, 2)}\n`,
+    'utf8',
+  );
+  assert.equal(loadClientSettings(off).translucent, false);
+  fs.rmSync(off, { recursive: true, force: true });
 }
 
 {

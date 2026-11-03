@@ -1,4 +1,5 @@
-import type { TaskRecord, TaskStatus } from '@okbot/shared';
+import type { StepStatus, TaskRecord, TaskStatus } from '@okbot/shared';
+import { isTerminalTaskStatus } from '@okbot/shared';
 import type { FileStorage } from '../storage';
 import { formatTasksForPrompt } from '../storage/TaskProgressStore';
 
@@ -14,16 +15,16 @@ export type TaskProgressManageInput = {
   steps?: Array<{
     id?: string | null;
     title: string;
-    status?: TaskStatus | null;
+    status?: StepStatus | null;
     note?: string | null;
   }> | null;
   /** update: patch one step by id (or unique step_title). */
   step_id?: string | null;
   step_title?: string | null;
-  step_status?: TaskStatus | null;
+  step_status?: StepStatus | null;
   step_note?: string | null;
   step_new_title?: string | null;
-  /** list: when true, include done/cancelled/failed history. Default false = open only. */
+  /** list: when true, include done history. Default false = non-done only. */
   include_done?: boolean | null;
 };
 
@@ -38,7 +39,9 @@ export function taskProgressManageForOwner(storage: FileStorage, ownerId: string
       switch (input.action) {
         case 'list': {
           const all = storage.loadTasks(ownerId);
-          const tasks = input.include_done ? all : all.filter((t) => t.status === 'pending' || t.status === 'in_progress');
+          const tasks = input.include_done
+            ? all
+            : all.filter((t) => !isTerminalTaskStatus(t.status));
           if (!tasks.length) {
             return input.include_done ? '当前没有任务记录。' : '当前没有未完成任务。';
           }

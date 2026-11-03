@@ -413,6 +413,104 @@ export function isAbortLikeError(err: unknown): boolean {
   return false;
 }
 
+/**
+ * True for retryable mid-turn LLM / HTTP / network / timeout failures.
+ * Abort / Stop / soft-steer and permanent client errors (auth, bad request) are false.
+ */
+export function isTransientRunError(err: unknown): boolean {
+  if (err == null) return false;
+  if (isAbortLikeError(err)) return false;
+
+  const codes = new Set<string>();
+  const names = new Set<string>();
+  const messages: string[] = [];
+  let status: number | undefined;
+
+  const walk = (value: unknown, depth: number) => {
+    if (value == null || depth > 4) return;
+    if (typeof value === 'string') {
+      messages.push(value);
+      return;
+    }
+    if (typeof value !== 'object') return;
+    const o = value as {
+      name?: unknown;
+      message?: unknown;
+      code?: unknown;
+      status?: unknown;
+      statusCode?: unknown;
+      cause?: unknown;
+      error?: unknown;
+    };
+    if (typeof o.name === 'string' && o.name) names.add(o.name);
+    if (typeof o.code === 'string' && o.code) codes.add(o.code);
+    if (typeof o.message === 'string' && o.message) messages.push(o.message);
+    const st =
+      typeof o.status === 'number'
+        ? o.status
+        : typeof o.statusCode === 'number'
+          ? o.statusCode
+          : undefined;
+    if (typeof st === 'number' && Number.isFinite(st)) status = st;
+    if (o.cause != null && o.cause !== value) walk(o.cause, depth + 1);
+    if (o.error != null && o.error !== value) walk(o.error, depth + 1);
+  };
+  walk(err, 0);
+
+  for (const name of names) {
+    if (
+      /APIConnectionError|APIConnectionTimeoutError|TimeoutError|FetchError|NetworkError|RateLimitError/i.test(
+        name,
+      )
+    ) {
+      return true;
+    }
+    if (/AuthenticationError|PermissionDeniedError|BadRequestError|NotFoundError/i.test(name)) {
+      return false;
+    }
+  }
+
+  for (const code of codes) {
+    if (
+      /^(ECONNRESET|ECONNREFUSED|ECONNABORTED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EPIPE|EHOSTUNREACH|ENETUNREACH|UND_ERR_CONNECT_TIMEOUT|UND_ERR_HEADERS_TIMEOUT|UND_ERR_BODY_TIMEOUT|UND_ERR_SOCKET)$/i.test(
+        code,
+      )
+    ) {
+      return true;
+    }
+  }
+
+  if (status != null) {
+    if (status === 408 || status === 409 || status === 425 || status === 429) return true;
+    if (status >= 500 && status <= 599) return true;
+    if (status === 401 || status === 403 || status === 400 || status === 404 || status === 422) {
+      return false;
+    }
+  }
+
+  const msg = messages.join(' \n ');
+  if (
+    /rate.?limit|too many requests|temporar(?:y|ily)|try again|overloaded|server error|bad gateway|service unavailable|gateway timeout/i.test(
+      msg,
+    )
+  ) {
+    return true;
+  }
+  if (
+    /timeout|timed out|network|socket hang up|fetch failed|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|connect(?:ion)? (?:reset|refused)|TLS|SSL|premature close|other side closed/i.test(
+      msg,
+    )
+  ) {
+    return true;
+  }
+  if (/请先在设置里|API Key|baseURL|模型返回为空|invalid.?api.?key|incorrect.?api.?key/i.test(msg)) {
+    return false;
+  }
+  return false;
+}
+
+
+
 export function formatUserTextWithQuote(body: string, quotedContent: string): string {
   const q = quotedContent.replace(/\r\n/g, '\n').trim();
   const b = body.replace(/\r\n/g, '\n').trim();

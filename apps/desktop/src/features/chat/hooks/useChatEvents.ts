@@ -347,6 +347,30 @@ export function useChatEvents(deps: ChatEventsDeps): void {
       return;
     }
 
+    if (event.type === 'message_updated') {
+      if (isActive) {
+        setMessages((prev) => {
+          const byId = prev.findIndex((m) => m.id === event.message.id);
+          if (byId < 0) return prev;
+          const next = [...prev];
+          // Shallow merge keeps UI-only fields (e.g. sendStatus). Gateway clears
+          // reaction by omitting it from recordToUiMessage — delete explicitly.
+          const merged: ChatMessage = {
+            ...prev[byId]!,
+            ...event.message,
+            id: event.message.id,
+            role: event.message.role,
+          };
+          if (event.message.reaction == null) {
+            delete merged.reaction;
+          }
+          next[byId] = merged;
+          return next;
+        });
+      }
+      return;
+    }
+
     if (event.type === 'user_message') {
       const pendingIdx = pendingOptimisticRef.current.findIndex((p) => p.ownerId === event.botId);
       if (pendingIdx >= 0) {
@@ -426,16 +450,38 @@ export function useChatEvents(deps: ChatEventsDeps): void {
       if (isActive) {
         setMessages((prev) => {
           const byId = prev.findIndex((m) => m.id === event.message.id);
-          if (!visible) {
-            // Empty / think-only: remove any prior row for this id; do not append.
+          const keepCardOnly = !!(event.message.noteCard || event.message.choice);
+          if (!visible && !keepCardOnly) {
+            // Empty / think-only with no card: remove any prior row for this id; do not append.
             if (byId < 0) return prev;
             const next = [...prev];
             next.splice(byId, 1);
             return next;
           }
+          if (!visible && keepCardOnly) {
+            // manage_note / ask_choice sealed onto an otherwise empty bubble — keep the row.
+            if (byId >= 0) {
+              const next = [...prev];
+              const prevMsg = prev[byId]!;
+              const merged = { ...event.message };
+              if (prevMsg.reaction && event.message.reaction == null) {
+                merged.reaction = prevMsg.reaction;
+              }
+              next[byId] = merged;
+              return next;
+            }
+            return [...prev, event.message];
+          }
           if (byId >= 0) {
             const next = [...prev];
-            next[byId] = event.message;
+            // Full replace of content/id, but keep an in-place reaction the user
+            // already set — gateway emit payloads omit meta.reaction.
+            const prevMsg = prev[byId]!;
+            const merged = { ...event.message };
+            if (prevMsg.reaction && event.message.reaction == null) {
+              merged.reaction = prevMsg.reaction;
+            }
+            next[byId] = merged;
             return next;
           }
           return [...prev, event.message];
@@ -629,8 +675,9 @@ export function useChatEvents(deps: ChatEventsDeps): void {
             ];
           }
           const content = event.content || '';
-          // Skip blank and think-only (incomplete <think> abort → empty gray bubble).
-          if (!hasVisibleAssistantText(content)) return prev;
+          // Skip blank and think-only (incomplete <think> abort → empty gray bubble),
+          // unless a note/choice card must still render under the row.
+          if (!hasVisibleAssistantText(content) && !event.noteCard && !event.choice) return prev;
           return [
             ...prev,
             {
@@ -641,6 +688,7 @@ export function useChatEvents(deps: ChatEventsDeps): void {
               ...(event.usage ? { usage: event.usage } : {}),
               ...(event.trace ? { trace: event.trace } : {}),
               ...(event.choice ? { choice: event.choice } : {}),
+              ...(event.noteCard ? { noteCard: event.noteCard } : {}),
             },
           ];
         }
@@ -653,6 +701,9 @@ export function useChatEvents(deps: ChatEventsDeps): void {
           // Keep prior visible content if we already showed a fuller bubble.
           if (hasVisibleAssistantText(prevContent)) {
             nextContent = prevContent;
+          } else if (event.noteCard || event.choice || next[idx]?.noteCard || next[idx]?.choice) {
+            // Card-only turn: keep the row so NoteCard / QuickChoice can render.
+            nextContent = prevContent || '';
           } else {
             next.splice(idx, 1);
             return next;
@@ -674,6 +725,7 @@ export function useChatEvents(deps: ChatEventsDeps): void {
           ...(event.type === 'done' && event.usage ? { usage: event.usage } : {}),
           ...(event.type === 'done' && event.trace ? { trace: event.trace } : {}),
           ...(event.type === 'done' && event.choice ? { choice: event.choice } : {}),
+          ...(event.type === 'done' && event.noteCard ? { noteCard: event.noteCard } : {}),
         };
         return next;
       }

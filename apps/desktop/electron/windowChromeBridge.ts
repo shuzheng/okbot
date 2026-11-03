@@ -4,11 +4,11 @@ import type { ThemeMode } from '@okbot/shared';
  * Main-process window chrome (nativeTheme / vibrancy) is defined in main.ts.
  * Attach + owner both need IPC access; bind once from main before registering handlers.
  */
-let applyWindowTranslucentImpl: ((translucent: boolean) => void) | null = null;
+let applyWindowTranslucentImpl: ((translucent: boolean, opts?: { reopenSettings?: boolean }) => void) | null = null;
 let applyThemeImpl: ((theme: ThemeMode) => void) | null = null;
 
 export function bindWindowChromeFns(fns: {
-  applyWindowTranslucent: (translucent: boolean) => void;
+  applyWindowTranslucent: (translucent: boolean, opts?: { reopenSettings?: boolean }) => void;
   applyTheme: (theme: ThemeMode) => void;
 }): void {
   applyWindowTranslucentImpl = fns.applyWindowTranslucent;

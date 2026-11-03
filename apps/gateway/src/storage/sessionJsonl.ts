@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { createId, normalizeMeshExchange, normalizeMessageTrace, normalizeQuickChoice, normalizeTokenUsage, stripLeadingCommittedInterim, type ChatMessage, type MessagesPage } from '@okbot/shared';
+import { createId, normalizeMeshExchange, normalizeMessageTrace, normalizeQuickChoice, normalizeNoteCard, normalizeMessageReaction, normalizeTokenUsage, stripLeadingCommittedInterim, type ChatMessage, type MessagesPage } from '@okbot/shared';
 import { ensureDir } from './fs';
 import type { SessionRecordV2 } from './types';
 
@@ -240,6 +240,8 @@ export function legacyMessageToRecord(msg: ChatMessage): SessionRecordV2 {
   const usage = normalizeTokenUsage(msg.usage);
   const trace = normalizeMessageTrace(msg.trace);
   const choice = msg.role === 'assistant' ? normalizeQuickChoice(msg.choice) : null;
+  const noteCard = msg.role === 'assistant' ? normalizeNoteCard(msg.noteCard) : null;
+  const reaction = normalizeMessageReaction(msg.reaction);
   return {
     v: 2,
     id: msg.id,
@@ -261,6 +263,8 @@ export function legacyMessageToRecord(msg: ChatMessage): SessionRecordV2 {
       ...(usage ? { usage } : {}),
       ...(trace ? { trace } : {}),
       ...(choice ? { choice } : {}),
+      ...(noteCard ? { noteCard } : {}),
+      ...(reaction ? { reaction } : {}),
     },
   };
 }
@@ -305,15 +309,20 @@ export function applyUiTextToItem(
 /** Rebind / finalize: keep SDK item shape; only refresh id, text, and UI meta. */
 export function mergeUiMessageOntoRecord(prev: SessionRecordV2, msg: ChatMessage): SessionRecordV2 {
   const fresh = legacyMessageToRecord(msg);
+  const meta: NonNullable<SessionRecordV2['meta']> = {
+    ...prev.meta,
+    ...fresh.meta,
+  };
+  // Explicit clear: callers pass reaction: null (via patchMessage) to drop the meta key.
+  if ((msg as ChatMessage & { reaction?: unknown }).reaction === null) {
+    delete meta.reaction;
+  }
   return {
     v: 2,
     id: msg.id,
     createdAt: msg.createdAt || prev.createdAt,
     item: applyUiTextToItem({ ...prev.item }, msg.content ?? ''),
-    meta: {
-      ...prev.meta,
-      ...fresh.meta,
-    },
+    meta,
   };
 }
 
@@ -364,6 +373,8 @@ export function recordToUiMessage(rec: SessionRecordV2): ChatMessage | null {
   const usage = normalizeTokenUsage(rec.meta?.usage);
   const trace = normalizeMessageTrace(rec.meta?.trace);
   const choice = roleRaw === 'assistant' ? normalizeQuickChoice(rec.meta?.choice) : null;
+  const noteCard = roleRaw === 'assistant' ? normalizeNoteCard(rec.meta?.noteCard) : null;
+  const reaction = normalizeMessageReaction(rec.meta?.reaction);
   return {
     id: rec.id,
     role: roleRaw,
@@ -379,6 +390,8 @@ export function recordToUiMessage(rec: SessionRecordV2): ChatMessage | null {
     ...(usage ? { usage } : {}),
     ...(trace ? { trace } : {}),
     ...(choice ? { choice } : {}),
+    ...(noteCard ? { noteCard } : {}),
+    ...(reaction ? { reaction } : {}),
   };
 }
 

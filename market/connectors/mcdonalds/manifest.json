@@ -1,0 +1,38 @@
+{
+  "format": "okbot-market-connector",
+  "version": 1,
+  "id": "mcdonalds",
+  "displayName": "麦当劳中国",
+  "displayNameEn": "McDonald's China",
+  "type": "mcp",
+  "transport": "http",
+  "endpointTemplate": "https://mcp.mcd.cn",
+  "auth": {
+    "kind": "bearer",
+    "headerName": "Authorization",
+    "headerValueTemplate": "Bearer {{BEARER_TOKEN}}",
+    "notes": "在麦当劳 MCP 开放平台申请 Token；开放平台入口见 docsUrls。"
+  },
+  "okbotMcpProjection": {
+    "name": "mcdonalds",
+    "transport": "http",
+    "url": "https://mcp.mcd.cn",
+    "headers": {
+      "Authorization": "Bearer {{BEARER_TOKEN}}"
+    }
+  },
+  "toolsSummary": [
+    "菜单查询",
+    "优惠券领取",
+    "麦乐送 / 到店自取",
+    "订单查询",
+    "积分兑换券"
+  ],
+  "docsUrls": [
+    "https://open.mcd.cn/mcp"
+  ],
+  "status": "stub",
+  "wave": 1,
+  "tags": ["cn", "lifestyle", "food", "order"],
+  "notes": "公开宣传页为 open.mcd.cn/mcp；运行时 HTTP MCP 主机常用 mcp.mcd.cn。以申请 Token 后开放平台给出的实际 URL 为准。"
+}

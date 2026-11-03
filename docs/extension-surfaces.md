@@ -9,7 +9,7 @@ For "which file first", also see AGENTS「改哪里」 and [`DESIGN.md`](../DESI
 | Surface | What it is | Where it lives | How users enable it |
 | --- | --- | --- | --- |
 | Built-in tools | Agent tools (`run_shell`, `read_file`, ...) | `packages/shared` ids + `packages/agent` `buildTools` | Settings → tools prefs / approval |
-| MCP servers | Optional external tools via MCP | `settings.mcp` + `packages/agent/src/mcp` + gateway `mcpRuntime` | Settings → MCP (off by default; every call HITL) |
+| MCP servers | Optional external tools via MCP | `settings.mcp` + `packages/agent/src/mcp` + gateway `mcpRuntime` | Settings → MCP (on by default; every call HITL) |
 | Skills | Progressive-disclosure `SKILL.md` packs | Per-owner `~/.okbot/<owner>/skills/` + `packages/agent/src/skills` | Edit / import on an assistant; catalog in prompt, body via `read_skill` |
 | Model providers | BYO OpenAI-compatible endpoints | `settings.model` in `packages/shared` + `packages/agent` model wiring | Settings → model providers |
 | Computers | Local + remote shell/fs backends | `settings.computers` + `computerSelection` / `executionBackend` + `apps/sandbox-agent` | Settings → computers; remote runs sandbox-agent |

@@ -15,23 +15,31 @@ export type RunCheckpointStoreDeps = {
 export function isRunCheckpointRecord(raw: unknown): raw is RunCheckpointRecord {
   if (!raw || typeof raw !== 'object') return false;
   const o = raw as Record<string, unknown>;
-  return (
-    o.v === 1 &&
-    typeof o.ownerId === 'string' &&
-    (o.kind === 'bot' || o.kind === 'squad') &&
-    typeof o.runId === 'string' &&
-    typeof o.messageId === 'string' &&
-    typeof o.serializedRunState === 'string' &&
-    o.serializedRunState.length > 0 &&
-    typeof o.createdAt === 'string' &&
-    typeof o.updatedAt === 'string'
-  );
+  if (
+    o.v !== 1 ||
+    typeof o.ownerId !== 'string' ||
+    (o.kind !== 'bot' && o.kind !== 'squad') ||
+    typeof o.runId !== 'string' ||
+    typeof o.messageId !== 'string' ||
+    typeof o.serializedRunState !== 'string' ||
+    o.serializedRunState.length === 0 ||
+    typeof o.createdAt !== 'string' ||
+    typeof o.updatedAt !== 'string'
+  ) {
+    return false;
+  }
+  if ('autoResumeEligible' in o && typeof o.autoResumeEligible !== 'boolean') return false;
+  return true;
 }
 
 /**
  * One latest mid-run RunState per owner at `~/.okbot/<owner>/run-checkpoint.json`.
- * Cleared on successful turn completion, Stop, soft-steer abort, and intentional force-quit.
- * Left on disk only for crash recovery.
+ * Cleared on successful turn completion, intentional force-quit, after a
+ * soft-steer / post-Stop continue turn consumes it, and when a steered replacement
+ * fails before consume (abandon sticky handoff). Soft-steer abort, manual Stop,
+ * and exhausted transient failures keep the file. Stop sets autoResumeEligible=false
+ * (Watchdog skips; composer「继续」still consumes). Crash / transient leave it
+ * eligible for silent Watchdog / cold resume.
  */
 export class RunCheckpointStore {
   constructor(
@@ -73,6 +81,7 @@ export class RunCheckpointStore {
       ...(typeof data.userText === 'string' && data.userText
         ? { userText: data.userText }
         : {}),
+      ...(data.autoResumeEligible === false ? { autoResumeEligible: false } : {}),
     };
     if (!record.serializedRunState) return;
     ensureDir(path.dirname(this.file(ownerId)));

@@ -21,6 +21,8 @@ apps/gateway/          网关 HTTP、`okbot serve` CLI、server.json 存储
 packages/agent/        跑对话、工具、小队、压缩、执行后端
 packages/shared/       设置 / 审批 / 文本 / IPC / trace 等模块；`src/index.ts` 只做 barrel 再导出
 apps/sandbox-agent/    远程电脑 HTTP（shell / fs），不是桌面网关
+deploy/docker/         自托管网关镜像 + compose（见 docs/install-docker-k8s.md）
+deploy/helm/okbot/     网关 Helm chart（单副本 + PVC）
 ```
 
 ## 改哪里
@@ -51,7 +53,7 @@ Node `>=22.13`，包管理器 `pnpm@11.15.1`（见根 `package.json` 的 `packag
 | `pnpm dev` | 先构建 `@okbot/shared` 和 `@okbot/agent`，再 `electron-vite dev` |
 | `pnpm build` | shared + agent + `electron-vite build` |
 | `pnpm typecheck` | 构建 shared，agent `tsc`，再 `pnpm -r typecheck` |
-| `pnpm test` | `@okbot/shared`、`@okbot/agent`、`@okbot/desktop` 的 `test`。不含 sandbox |
+| `pnpm test` | `@okbot/shared`、`@okbot/agent`、`@okbot/gateway`、`@okbot/desktop` 的 `test`。不含 sandbox |
 | `pnpm test:agent` | `pnpm --filter @okbot/agent test:smoke` |
 | `pnpm test:sandbox` 或 `pnpm test:sandbox-agent` | `@okbot/sandbox-agent test`（CI 也会跑） |
 | `pnpm lint` | 根目录 ESLint（typescript-eslint 推荐子集；未使用变量等为 warn） |

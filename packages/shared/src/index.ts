@@ -14,4 +14,5 @@ export * from './trace.js';
 export * from './settings.js';
 export * from './chat.js';
 export * from './tasks.js';
+export * from './resources.js';
 export * from './ipc.js';

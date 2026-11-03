@@ -158,10 +158,15 @@ export function SettingsModal({
   const [sidebarDockMagnify, setSidebarDockMagnify] = useState(
     settings.sidebarDockMagnify === true,
   );
-  const [translucent, setTranslucent] = useState(settings.translucent !== false);
+  const [translucent, setTranslucent] = useState(settings.translucent === true);
   useEffect(() => {
-    setTranslucent(settings.translucent !== false);
+    setTranslucent(settings.translucent === true);
   }, [settings.translucent]);
+  // Tray theme submenu may persist while this modal is open — keep draft in sync
+  // so autosave does not write the pre-tray theme back to client.json.
+  useEffect(() => {
+    setTheme(settings.theme);
+  }, [settings.theme]);
   const [developerMode, setDeveloperMode] = useState(settings.developerMode === true);
   const [notifications, setNotifications] = useState(settings.notifications !== false);
   const [closeAction, setCloseAction] = useState<CloseAction>(() => normalizeCloseAction(settings.closeAction));
@@ -472,13 +477,13 @@ export function SettingsModal({
         setTheme(latest.theme);
         applyTheme(latest.theme);
         document.documentElement.dataset.translucent =
-          latest.translucent !== false ? 'true' : 'false';
+          latest.translucent === true ? 'true' : 'false';
         setLanguage(latest.language);
         setMicrophoneId(latest.microphoneId);
         setHardwareAcceleration(latest.hardwareAcceleration !== false);
         setAutoUpdate(latest.autoUpdate !== false);
         setSidebarDockMagnify(latest.sidebarDockMagnify === true);
-        setTranslucent(latest.translucent !== false);
+        setTranslucent(latest.translucent === true);
         setDeveloperMode(latest.developerMode === true);
         setNotifications(latest.notifications !== false);
         setCloseAction(normalizeCloseAction(latest.closeAction));
@@ -1488,7 +1493,7 @@ export function SettingsModal({
                 setGlobalMemAddRequest={setGlobalMemAddRequest}
               />
             ) : tab === 'usage' ? (
-              <UsagePanel lang={lang} bots={bots} squads={squads} />
+              <UsagePanel lang={lang} bots={bots} squads={squads} modelSettings={modelSettings} />
             ) : tab === 'updates' && !pureWebUi ? (
               <UpdatesSettingsPanel
                 lang={lang}

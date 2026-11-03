@@ -1,0 +1,68 @@
+# OkBot self-hosted gateway (headless).
+# From repository root:
+#   docker compose -f deploy/docker/docker-compose.yml up -d --build
+# Optional remote-computer sidecar:
+#   docker compose -f deploy/docker/docker-compose.yml --profile sandbox up -d --build
+#
+# Default HTTP port: 18765  |  Health: GET /v1/health
+# Override listen + publish together:
+#   OKBOT_PORT=19001 OKBOT_PUBLISH_PORT=19001 docker compose -f deploy/docker/docker-compose.yml up -d
+# First-start tokens are printed in gateway logs:
+#   docker compose -f deploy/docker/docker-compose.yml logs gateway | head
+# Later: docker compose -f deploy/docker/docker-compose.yml exec gateway okbot token show
+
+services:
+  gateway:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.gateway
+      # Docker BuildKit: honor deploy/docker/.dockerignore when supported
+    image: okbot-gateway:0.14.0
+    container_name: okbot-gateway
+    restart: unless-stopped
+    ports:
+      # host:container — container side must match OKBOT_PORT (process listen + HEALTHCHECK)
+      - "${OKBOT_PUBLISH_PORT:-18765}:${OKBOT_PORT:-18765}"
+    environment:
+      HOME: /home/okbot
+      OKBOT_BIND_LAN: "true"
+      OKBOT_SERVE_UI: "false"
+      # Listen port inside the container (same value as right-hand side of ports: above).
+      OKBOT_PORT: "${OKBOT_PORT:-18765}"
+      # Optional custom data root (entrypoint passes --port + --data-dir as a CLI pair):
+      # OKBOT_DATA_DIR: "/home/okbot/.okbot"
+    volumes:
+      - okbot-data:/home/okbot/.okbot
+    healthcheck:
+      # Compose interpolates ${OKBOT_PORT} at parse time — same default as ports/env above.
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:${OKBOT_PORT:-18765}/v1/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # Optional demo remote computer (shell / fs). Not the gateway.
+  # Register in OkBot Settings → Computers with http://host.docker.internal:18790
+  # (or the published host port) and Bearer token = SANDBOX_TOKEN.
+  sandbox-agent:
+    profiles: ["sandbox"]
+    build:
+      context: ../../apps/sandbox-agent
+      dockerfile: Dockerfile
+    image: okbot-sandbox-agent:local
+    container_name: okbot-sandbox-agent
+    restart: unless-stopped
+    ports:
+      - "${SANDBOX_PUBLISH_PORT:-18790}:18790"
+    environment:
+      SANDBOX_HOST: "0.0.0.0"
+      SANDBOX_PORT: "18790"
+      SANDBOX_WORKDIR: /workspace
+      # Required: export SANDBOX_TOKEN before up, e.g. $(openssl rand -hex 24)
+      SANDBOX_TOKEN: "${SANDBOX_TOKEN:?set SANDBOX_TOKEN for sandbox profile}"
+    volumes:
+      - sandbox-workspace:/workspace
+
+volumes:
+  okbot-data:
+  sandbox-workspace:

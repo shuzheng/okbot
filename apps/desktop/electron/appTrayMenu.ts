@@ -20,6 +20,10 @@ export type AppTrayLabels = {
   themeSystem: string;
   themeLight: string;
   themeDark: string;
+  /** Translucent submenu title (e.g. 半透明). */
+  translucent: string;
+  translucentOn: string;
+  translucentOff: string;
   settings: string;
   quit: string;
   tooltip: string;
@@ -34,6 +38,10 @@ export type AppTrayCallbacks = {
   setTheme: (theme: AppTrayThemeMode) => void;
   /** Current settings.theme for radio checkmarks. */
   theme: AppTrayThemeMode;
+  /** Persist + apply settings.translucent (same path as Settings → 半透明). */
+  setTranslucent: (translucent: boolean) => void;
+  /** Current settings.translucent for radio checkmarks (default off). */
+  translucent: boolean;
   labels: AppTrayLabels;
   pinned: TraySessionEntry[];
   recent: TraySessionEntry[];
@@ -47,10 +55,10 @@ export type TrayMenuRadioItem = {
 };
 
 export type TrayMenuTemplateItem =
-  | { label: string; click: () => void; type?: undefined; enabled?: true; submenu?: undefined }
-  | { label: string; enabled: false; type?: undefined; click?: undefined; submenu?: undefined }
-  | { type: 'separator'; label?: undefined; click?: undefined; enabled?: undefined; submenu?: undefined }
-  | { label: string; submenu: TrayMenuRadioItem[]; type?: undefined; click?: undefined; enabled?: undefined };
+  | { label: string; click: () => void; type?: undefined; enabled?: true; submenu?: undefined; checked?: undefined }
+  | { label: string; enabled: false; type?: undefined; click?: undefined; submenu?: undefined; checked?: undefined }
+  | { type: 'separator'; label?: undefined; click?: undefined; enabled?: undefined; submenu?: undefined; checked?: undefined }
+  | { label: string; submenu: TrayMenuRadioItem[]; type?: undefined; click?: undefined; enabled?: undefined; checked?: undefined };
 
 const SQUAD_TRAY_EMOJI = '👥';
 const BOT_TRAY_EMOJI_FALLBACK = '🤖';
@@ -148,6 +156,7 @@ export function collectTraySessions(input: {
 
 export function buildTrayMenuTemplate(cb: AppTrayCallbacks): TrayMenuTemplateItem[] {
   const theme = cb.theme === 'light' || cb.theme === 'dark' ? cb.theme : 'system';
+  const translucent = cb.translucent === true;
   const items: TrayMenuTemplateItem[] = [
     { label: cb.labels.show, click: () => cb.showWindow() },
     { type: 'separator' },
@@ -171,6 +180,23 @@ export function buildTrayMenuTemplate(cb: AppTrayCallbacks): TrayMenuTemplateIte
           type: 'radio',
           checked: theme === 'dark',
           click: () => cb.setTheme('dark'),
+        },
+      ],
+    },
+    {
+      label: cb.labels.translucent,
+      submenu: [
+        {
+          label: cb.labels.translucentOn,
+          type: 'radio',
+          checked: translucent,
+          click: () => cb.setTranslucent(true),
+        },
+        {
+          label: cb.labels.translucentOff,
+          type: 'radio',
+          checked: !translucent,
+          click: () => cb.setTranslucent(false),
         },
       ],
     },

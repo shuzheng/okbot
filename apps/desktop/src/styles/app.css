@@ -388,7 +388,8 @@ html.is-window-resizing .modal.form-drawer .settings-row select,
 html.is-window-resizing .open-tasks-glass,
 html.is-window-resizing .open-tasks-list-fold.is-open,
 html.is-window-resizing .bubble-more-menu,
-html.is-window-resizing .chat-gateway-menu {
+html.is-window-resizing .chat-gateway-menu,
+html.is-window-resizing .token-usage-popover {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
@@ -405,6 +406,7 @@ html.is-window-resizing .open-tasks-glass,
 html.is-window-resizing .open-tasks-list-fold.is-open,
 html.is-window-resizing .bubble-more-menu,
 html.is-window-resizing .chat-gateway-menu,
+html.is-window-resizing .token-usage-popover,
 html.is-window-resizing .modal.form-drawer {
   background: var(--panel) !important;
 }
@@ -763,7 +765,7 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   border-radius: var(--rail-row-radius);
 }
 .session-pin-item:has(> .session-beam) {
-  z-index: 2;
+  z-index: 4;
 }
 /* Pin unread ring must match 15px shell (+3px inset), not rail's 12px. */
 .session-pin-avatar-shell.unread::after {
@@ -1580,6 +1582,12 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   /* Hop paints above neighboring rows (their bg looked like a hard clip). */
   z-index: 1;
 }
+/* Busy hop peak must clear session title/meta and BorderBeam ::after/bloom (z 2–3). */
+.session-avatar-shell.is-busy,
+.session-item-wrap:has(> .session-beam) .session-avatar-shell,
+.session-pin-item:has(> .session-beam) .session-pin-avatar-shell {
+  z-index: 5;
+}
 .session-avatar-shell > .session-avatar {
   /* Keep .flat-avatar display:grid so bot canvases stay centered. */
   display: grid;
@@ -2039,9 +2047,12 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
 }
 .session-item-wrap:hover,
 .session-item-wrap:has(.session-item.active),
-.session-item-wrap.active,
-.session-item-wrap:has(.session-beam) {
+.session-item-wrap.active {
   z-index: 2;
+}
+.session-item-wrap:has(.session-beam) {
+  /* Above idle/hover neighbors so busy hop overscan is not covered by next/prev rows. */
+  z-index: 4;
 }
 /* BorderBeam size=sm injects overflow:hidden on [data-beam] — that clips the
    library's 1.5× overscan busy hop/flip. Composer uses the same override. */
@@ -3986,6 +3997,110 @@ a.footer-pill-seg {
 .bubble-action-btn.copied {
   color: #22c55e;
 }
+
+/* Message reaction badge (in-place on bubble corner) */
+.bubble.has-reaction {
+  position: relative;
+}
+.bubble-reaction {
+  position: absolute;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 5px;
+  border-radius: 999px;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.35));
+  background: var(--panel, #2a2a2c);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+  line-height: 1;
+  font-size: 13px;
+  transform-origin: center;
+  animation: bubble-reaction-pop 0.38s cubic-bezier(0.22, 1.4, 0.36, 1) both;
+}
+.bubble-reaction-br {
+  right: -4px;
+  bottom: -8px;
+}
+.bubble-reaction-bl {
+  left: -4px;
+  bottom: -8px;
+}
+.bubble-reaction.is-clickable {
+  cursor: pointer;
+  appearance: none;
+  color: inherit;
+}
+.bubble-reaction.is-clickable:hover,
+.bubble-reaction.is-clickable:focus-visible {
+  filter: brightness(1.08);
+}
+.bubble-reaction-emoji {
+  display: block;
+  line-height: 1;
+}
+@keyframes bubble-reaction-pop {
+  0% { transform: scale(0.4); opacity: 0.4; }
+  55% { transform: scale(1.28); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+:root[data-theme='light'] .bubble-reaction {
+  background: #fff;
+  border-color: rgba(0, 0, 0, 0.12);
+}
+
+/* 「更多」 reaction grid: 2 rows × 3 — compact square cells (hover is square, not pill). */
+.bubble-reaction-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2px;
+  padding: 4px 6px 2px;
+  justify-items: center;
+}
+.bubble-reaction-grid-btn {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 32px !important;
+  height: 32px !important;
+  min-width: 32px !important;
+  min-height: 32px !important;
+  max-width: 32px !important;
+  max-height: 32px !important;
+  aspect-ratio: 1 / 1;
+  padding: 0 !important;
+  margin: 0 !important;
+  border-radius: 8px !important;
+  font-size: 20px;
+  line-height: 1;
+  background: transparent !important;
+}
+.bubble-reaction-grid-btn:hover,
+.bubble-reaction-grid-btn:focus-visible {
+  background: rgba(255, 255, 255, 0.08) !important;
+}
+:root[data-theme='light'] .bubble-reaction-grid-btn:hover,
+:root[data-theme='light'] .bubble-reaction-grid-btn:focus-visible {
+  background: rgba(0, 0, 0, 0.05) !important;
+}
+.bubble-reaction-grid-btn.is-active {
+  background: rgba(99, 102, 241, 0.18) !important;
+}
+.bubble-reaction-grid-more {
+  font-size: 16px !important;
+  font-weight: 600;
+  opacity: 0.75;
+}
+.emoji-mart-popover {
+  position: fixed;
+  z-index: 120;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
+}
 .bubble-row .bubble {
   /* Do not flex-grow: short CJK bubbles must stay width:fit-content. */
   flex: 0 1 auto;
@@ -4246,6 +4361,60 @@ a.footer-pill-seg {
 :root[data-theme='light'] .bubble .md a { color: #0369a1; }
 @media (prefers-color-scheme: light) {
   :root:not([data-theme='dark']) .bubble .md a { color: #0369a1; }
+}
+
+/* External chat URLs: WebsiteIcon (Settings→官网) + underline on label only. */
+.bubble .chat-ext-link,
+.bubble .md a.chat-ext-link {
+  display: inline;
+  color: #7dd3fc;
+  text-decoration: none;
+  word-break: break-all;
+}
+.bubble .chat-ext-link .chat-ext-link-label,
+.bubble .md a.chat-ext-link .chat-ext-link-label {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.bubble .chat-ext-link .chat-ext-link-ico,
+.bubble .md a.chat-ext-link .chat-ext-link-ico {
+  display: inline-block;
+  width: 0.95em;
+  height: 0.95em;
+  margin-right: 0.18em;
+  vertical-align: -0.12em;
+  line-height: 0;
+  text-decoration: none;
+  /* Keep icon from inheriting the label underline. */
+  text-decoration-line: none;
+}
+.bubble .chat-ext-link .chat-ext-link-ico svg,
+.bubble .md a.chat-ext-link .chat-ext-link-ico svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+:root[data-theme='light'] .bubble .chat-ext-link,
+:root[data-theme='light'] .bubble .md a.chat-ext-link {
+  color: #0369a1;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .bubble .chat-ext-link,
+  :root:not([data-theme='dark']) .bubble .md a.chat-ext-link {
+    color: #0369a1;
+  }
+}
+/* User bubbles: keep link readable against bubble tint / light-on-dark text. */
+.bubble.user .chat-ext-link {
+  color: color-mix(in srgb, #7dd3fc 70%, var(--bubble-user-text));
+}
+:root[data-theme='light'] .bubble.user .chat-ext-link {
+  color: color-mix(in srgb, #0369a1 75%, var(--bubble-user-text));
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .bubble.user .chat-ext-link {
+    color: color-mix(in srgb, #0369a1 75%, var(--bubble-user-text));
+  }
 }
 .bubble .md code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
@@ -4794,6 +4963,16 @@ button.message-attach-image {
 .open-task-item.status-pending > .open-task-row .open-task-status,
 .open-task-step.status-pending .open-task-status {
   color: var(--muted);
+}
+.open-task-step.status-blocked .open-task-status {
+  color: var(--warning, #c90);
+}
+.open-task-step.status-succeeded .open-task-status {
+  color: var(--accent);
+  opacity: 0.75;
+}
+.open-task-step.status-failed .open-task-status {
+  color: var(--danger, #c44);
 }
 .open-task-label {
   flex: 1 1 auto;
@@ -5379,7 +5558,8 @@ button.message-attach-image {
     border-color: #6a6a70;
   }
 }
-.composer-inner textarea {
+.composer-inner textarea,
+.composer-inner .composer-editable {
   flex: 1;
   resize: none;
   box-sizing: border-box;
@@ -5404,7 +5584,8 @@ button.message-attach-image {
   scrollbar-color: rgba(128, 128, 128, 0.22) transparent;
 }
 @media (prefers-reduced-motion: reduce) {
-  .composer-inner textarea {
+  .composer-inner textarea,
+  .composer-inner .composer-editable {
     transition: none;
   }
 }
@@ -5415,7 +5596,8 @@ button.message-attach-image {
  * ChatComposer auto-grow reads computed line-height (must stay in sync here).
  */
 @media (max-width: 768px), ((hover: none) and (pointer: coarse)) {
-  .composer-inner textarea {
+  .composer-inner textarea,
+  .composer-inner .composer-editable {
     font-size: 16px;
     line-height: 22px;
     /* 5 lines × 22px + 5+5 vertical padding (matches ChatComposer padPx) */
@@ -5444,7 +5626,8 @@ button.message-attach-image {
   column-gap: 8px;
   padding-top: 8px;
 }
-.composer-inner.is-multiline textarea {
+.composer-inner.is-multiline textarea,
+.composer-inner.is-multiline .composer-editable {
   flex: 1 0 100%;
   order: -1;
   width: 100%;
@@ -5457,17 +5640,24 @@ button.message-attach-image {
   margin-left: auto;
 }
 .composer-inner textarea::-webkit-scrollbar,
-.composer-inner textarea::-webkit-scrollbar:hover {
+.composer-inner textarea::-webkit-scrollbar:hover,
+.composer-inner .composer-editable::-webkit-scrollbar,
+.composer-inner .composer-editable::-webkit-scrollbar:hover {
   width: 5px !important;
   height: 5px !important;
 }
 .composer-inner textarea::-webkit-scrollbar-track,
-.composer-inner textarea::-webkit-scrollbar-track:hover {
+.composer-inner textarea::-webkit-scrollbar-track:hover,
+.composer-inner .composer-editable::-webkit-scrollbar-track,
+.composer-inner .composer-editable::-webkit-scrollbar-track:hover {
   background: transparent;
 }
 .composer-inner textarea::-webkit-scrollbar-thumb,
 .composer-inner textarea::-webkit-scrollbar-thumb:hover,
-.composer-inner textarea::-webkit-scrollbar-thumb:active {
+.composer-inner textarea::-webkit-scrollbar-thumb:active,
+.composer-inner .composer-editable::-webkit-scrollbar-thumb,
+.composer-inner .composer-editable::-webkit-scrollbar-thumb:hover,
+.composer-inner .composer-editable::-webkit-scrollbar-thumb:active {
   width: 5px;
   background: rgba(128, 128, 128, 0.22);
   background-clip: padding-box;
@@ -5475,24 +5665,33 @@ button.message-attach-image {
   border-radius: 999px;
   box-shadow: none;
 }
-.composer-inner textarea::-webkit-scrollbar-corner {
+.composer-inner textarea::-webkit-scrollbar-corner,
+.composer-inner .composer-editable::-webkit-scrollbar-corner {
   background: transparent;
 }
-:root[data-theme='light'] .composer-inner textarea {
+:root[data-theme='light'] .composer-inner textarea,
+:root[data-theme='light'] .composer-inner .composer-editable {
   scrollbar-color: rgba(24, 24, 27, 0.18) transparent;
 }
 :root[data-theme='light'] .composer-inner textarea::-webkit-scrollbar-thumb,
 :root[data-theme='light'] .composer-inner textarea::-webkit-scrollbar-thumb:hover,
-:root[data-theme='light'] .composer-inner textarea::-webkit-scrollbar-thumb:active {
+:root[data-theme='light'] .composer-inner textarea::-webkit-scrollbar-thumb:active,
+:root[data-theme='light'] .composer-inner .composer-editable::-webkit-scrollbar-thumb,
+:root[data-theme='light'] .composer-inner .composer-editable::-webkit-scrollbar-thumb:hover,
+:root[data-theme='light'] .composer-inner .composer-editable::-webkit-scrollbar-thumb:active {
   background: rgba(24, 24, 27, 0.18);
 }
 @media (prefers-color-scheme: light) {
-  :root:not([data-theme='dark']) .composer-inner textarea {
+  :root:not([data-theme='dark']) .composer-inner textarea,
+  :root:not([data-theme='dark']) .composer-inner .composer-editable {
     scrollbar-color: rgba(24, 24, 27, 0.18) transparent;
   }
   :root:not([data-theme='dark']) .composer-inner textarea::-webkit-scrollbar-thumb,
   :root:not([data-theme='dark']) .composer-inner textarea::-webkit-scrollbar-thumb:hover,
-  :root:not([data-theme='dark']) .composer-inner textarea::-webkit-scrollbar-thumb:active {
+  :root:not([data-theme='dark']) .composer-inner textarea::-webkit-scrollbar-thumb:active,
+  :root:not([data-theme='dark']) .composer-inner .composer-editable::-webkit-scrollbar-thumb,
+  :root:not([data-theme='dark']) .composer-inner .composer-editable::-webkit-scrollbar-thumb:hover,
+  :root:not([data-theme='dark']) .composer-inner .composer-editable::-webkit-scrollbar-thumb:active {
     background: rgba(24, 24, 27, 0.18);
   }
 }
@@ -5520,6 +5719,31 @@ button.message-attach-image {
 .composer-inner .send.stop svg {
   width: 12px;
   height: 12px;
+}
+/* Busy stop: 特效库 BorderBeam pulse-outside around the circular send/stop control. */
+.composer-inner .composer-send-beam {
+  flex-shrink: 0;
+  align-self: flex-end;
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  overflow: visible !important;
+  box-sizing: border-box;
+  position: relative;
+  z-index: 1;
+  /* Fixed 28px circle → library ResizeObserver would flash 1→0.35; pin floor. */
+  --pulse-glow-sx: 0.35 !important;
+  --pulse-glow-sy: 0.35 !important;
+}
+.composer-inner .composer-send-beam > .send {
+  /* pulse-outside rides the child's edge; keep a faint hairline. */
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--chat-bg) 22%, transparent);
+}
+.composer-inner .composer-send-beam::before,
+.composer-inner .composer-send-beam::after,
+.composer-inner .composer-send-beam [data-beam-bloom] {
+  border-radius: 50% !important;
 }
 .placeholder {
   margin: auto;
@@ -6439,7 +6663,8 @@ button.message-attach-image {
   z-index: auto;
   border-color: #8a8a8a;
 }
-.composer-inner.listening textarea {
+.composer-inner.listening textarea,
+.composer-inner.listening .composer-editable {
   cursor: default;
   caret-color: transparent;
 }
@@ -8614,6 +8839,7 @@ button.message-attach-image {
   flex-direction: column;
   gap: 6px;
   margin: 2px 0 4px;
+  flex-shrink: 0;
 }
 .quick-choice-card {
   background: var(--input);
@@ -9419,12 +9645,175 @@ button.message-attach-image {
   --mention-chip-fg: var(--bubble-user-text);
   --mention-chip-border: color-mix(in srgb, var(--bubble-user-text) 22%, transparent);
 }
+
 .bubble.assistant .bot-mention-chip {
   --mention-chip-bg: color-mix(in srgb, var(--text) 8%, var(--bubble-bot));
   --mention-chip-fg: var(--text);
   --mention-chip-border: color-mix(in srgb, var(--text) 16%, transparent);
 }
 
+/* Composer @ mention popover + selected chips */
+.composer-input-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-flow: row nowrap;
+  align-items: center;
+}
+.composer-inner.is-multiline .composer-input-wrap {
+  flex: 1 0 100%;
+  order: -1;
+  width: 100%;
+  align-items: flex-start;
+}
+.composer-input-wrap textarea,
+.composer-input-wrap .composer-editable {
+  flex: 1 1 8rem;
+  min-width: 8rem;
+  width: auto;
+}
+.composer-inner.is-multiline .composer-input-wrap textarea,
+.composer-inner.is-multiline .composer-input-wrap .composer-editable {
+  flex: 1 1 100%;
+  min-width: 100%;
+  width: 100%;
+}
+/* Composer chips: same pill chrome as bubble MentionsText / EntityMentionChip. */
+.composer-inner .bot-mention-chip {
+  --mention-chip-bg: color-mix(in srgb, var(--text) 8%, var(--input));
+  --mention-chip-fg: var(--text);
+  --mention-chip-border: color-mix(in srgb, var(--text) 16%, transparent);
+  vertical-align: middle;
+}
+.composer-mention-popover {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 40;
+  max-height: min(280px, 42vh);
+  overflow: auto;
+  padding: 6px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--text) 14%, transparent);
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 10px 28px color-mix(in srgb, #000 22%, transparent);
+}
+.composer-mention-empty {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.composer-mention-group + .composer-mention-group {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid color-mix(in srgb, var(--text) 8%, transparent);
+}
+.composer-mention-group-label {
+  padding: 4px 8px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+}
+.composer-mention-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.composer-mention-option.is-active,
+.composer-mention-option:hover {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+.composer-mention-option-avatar {
+  flex-shrink: 0;
+}
+.composer-mention-option-text {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.composer-mention-option-label {
+  font-size: 13px;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.composer-mention-option-sub {
+  font-size: 11px;
+  line-height: 1.2;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.composer-mention-option-kind {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--muted);
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
+}
+/* Inline mention atom inside contenteditable (not a prepended chip strip).
+   Keep the atom inside one composer line box: ChatComposer auto-grow treats
+   scrollHeight > linePx+pad (18+10=28) as multiline. vertical-align:middle on
+   an 18px chip measured scrollHeight=29 and jumped to 2-line height as soon as
+   a chip (or chip+one char) was present. bottom + height:1lh tracks desktop
+   18px / mobile 22px line-height without inflating the strut. */
+.composer-mention-atom {
+  display: inline-flex;
+  vertical-align: bottom;
+  height: 1lh;
+  align-items: center;
+  margin: 0 2px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.composer-mention-atom .bot-mention-chip {
+  margin: 0; /* atom owns horizontal gap */
+  max-height: 100%;
+  pointer-events: auto;
+  cursor: pointer;
+}
+.composer-editable {
+  white-space: pre-wrap;
+  word-break: break-word;
+  /* Match textarea flex growth inside wrap */
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+}
+.composer-editable.is-empty:before {
+  content: attr(data-placeholder);
+  color: var(--muted);
+  pointer-events: none;
+  float: left;
+  height: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.composer-editable.is-readonly {
+  cursor: default;
+  caret-color: transparent;
+}
 /* Searchable bot picker (create-squad) */
 .bot-picker {
   position: relative;
@@ -10268,7 +10657,7 @@ button.message-attach-image {
   max-width: min(var(--bubble-max), calc(100% - var(--bubble-actions-rail)));
 }
 
-/* Round usage popover (assistant bubble action). */
+/* Round usage / 消耗统计 popover — frosted glass (scoped; do not restyle .menu / more-menu). */
 .token-usage-popover {
   position: fixed;
   z-index: 10060;
@@ -10276,20 +10665,45 @@ button.message-attach-image {
   max-width: min(360px, calc(100vw - 16px));
   padding: 12px 14px;
   border-radius: 12px;
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  box-shadow: none;
+  background: color-mix(in srgb, var(--panel) 10%, transparent);
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+  border: var(--hairline) solid var(--border);
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.10),
+    0 12px 32px rgba(0, 0, 0, 0.18);
   color: var(--text);
   font-size: 12px;
   line-height: 1.45;
 }
 :root[data-theme='light'] .token-usage-popover {
-  /* White surface (same token as inputs); gray --panel looked muddy on chat. */
-  background: var(--input);
+  background: color-mix(in srgb, var(--panel) 10%, transparent);
+  border-color: color-mix(in srgb, #000000 10%, transparent);
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.06),
+    0 10px 28px rgba(0, 0, 0, 0.10);
 }
 @media (prefers-color-scheme: light) {
   :root:not([data-theme='dark']) .token-usage-popover {
-    background: var(--input);
+    background: color-mix(in srgb, var(--panel) 10%, transparent);
+    border-color: color-mix(in srgb, #000000 10%, transparent);
+    box-shadow:
+      0 2px 8px rgba(0, 0, 0, 0.06),
+      0 10px 28px rgba(0, 0, 0, 0.10);
+  }
+}
+:root[data-theme='dark'] .token-usage-popover {
+  border-color: color-mix(in srgb, var(--text) 22%, transparent);
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.28),
+    0 12px 36px rgba(0, 0, 0, 0.40);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .token-usage-popover {
+    border-color: color-mix(in srgb, var(--text) 22%, transparent);
+    box-shadow:
+      0 2px 8px rgba(0, 0, 0, 0.28),
+      0 12px 36px rgba(0, 0, 0, 0.40);
   }
 }
 .token-usage-popover-header {
@@ -11105,12 +11519,38 @@ button.message-attach-image {
 }
 .assistant-gallery-empty { font-size: 12px; color: var(--muted); padding: 8px 0; }
 
-/* First-run quick start on the empty main pane */
+/* First-run quick start: full-window overlay (covers sidebar + chat) */
+.quick-start-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 40; /* above sidebar/chrome; below .modal-backdrop (50) so settings/create still stack */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--main-bg);
+  border-radius: inherit;
+  overflow: hidden;
+  -webkit-app-region: no-drag;
+  box-sizing: border-box;
+}
+.quick-start-overlay-topdrag {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 40px;
+  -webkit-app-region: drag;
+  z-index: 1;
+  pointer-events: none;
+}
+.quick-start-overlay .window-controls-float {
+  z-index: 2;
+}
 .quick-start {
   position: relative;
   z-index: 1;
   width: min(480px, calc(100% - 48px));
-  margin: auto;
+  margin: 0;
   padding: 24px 0;
   max-height: 100%;
   overflow-y: auto;
@@ -11632,8 +12072,73 @@ button.owner-task-row:hover {
   color: var(--accent);
 }
 .owner-task-item.status-pending > .owner-task-row .owner-task-status,
-.owner-task-step.status-pending .owner-task-status {
+.owner-task-step.status-pending .owner-task-status,
+.owner-task-item.status-backlog > .owner-task-row .owner-task-status {
   color: var(--muted);
+}
+.owner-task-item.status-done > .owner-task-row .owner-task-status,
+.owner-task-step.status-succeeded .owner-task-status {
+  color: var(--accent);
+  opacity: 0.75;
+}
+.owner-task-step.status-blocked .owner-task-status {
+  color: var(--warning, #c90);
+}
+.owner-task-step.status-failed .owner-task-status {
+  color: var(--danger, #c44);
+}
+.owner-tasks-phase {
+  margin: 0 0 12px;
+}
+.owner-tasks-phase:last-child {
+  margin-bottom: 0;
+}
+.owner-tasks-phase-title {
+  margin: 0;
+  padding: 10px 12px 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.owner-tasks-phase-count {
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+.owner-task-row-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+.owner-task-row-wrap > .owner-task-row {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.owner-task-delete {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin-right: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.owner-task-delete:hover:not(:disabled) {
+  color: var(--danger, #c44);
+  background: rgba(204, 68, 68, 0.08);
+}
+.owner-task-delete:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 .owner-task-title {
   flex: 1 1 auto;
@@ -12024,6 +12529,141 @@ button.owner-task-row:hover {
   color: var(--text);
 }
 
+.owner-resource-meta {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.owner-resource-sub {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--muted);
+}
+.owner-resource-type {
+  text-transform: lowercase;
+}
+.owner-resource-time {
+  margin-left: auto;
+}
+.owner-resource-delete {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.owner-resource-delete:hover:not(:disabled) {
+  color: var(--danger, #c44);
+  background: color-mix(in srgb, var(--danger, #c44) 12%, transparent);
+}
+.owner-resource-delete:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.owner-resource-row.selected {
+  background: color-mix(in srgb, var(--accent, #6366f1) 10%, transparent);
+}
+.owner-resource-preview {
+  margin: 8px 12px 12px;
+  padding: 10px 12px;
+  border: var(--hairline) solid var(--border);
+  border-radius: 10px;
+  max-height: 360px;
+  overflow: auto;
+}
+.owner-resource-preview-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.owner-resource-preview-md {
+  font-size: 13px;
+}
+.owner-resource-preview-code {
+  margin: 0;
+}
+.owner-resource-preview-img-btn {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
+}
+.owner-resource-preview-img {
+  max-width: 100%;
+  max-height: 280px;
+  object-fit: contain;
+  border-radius: 8px;
+  display: block;
+}
+
+.chat-image-lightbox-stage--resource {
+  align-items: stretch;
+  justify-content: flex-start;
+  /* Iframe / preview body is the scrollport; stage fills the window chrome. */
+  overflow: hidden;
+  padding: 56px 24px 28px;
+}
+.owner-resource-fullscreen-body {
+  width: min(920px, 100%);
+  margin: 0 auto;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.owner-resource-fullscreen-body .owner-resource-preview-title {
+  flex: 0 0 auto;
+  margin-bottom: 12px;
+}
+/* Note / md / code: grow with window under title; keep iframe as hash-scrollport. */
+.owner-resource-fullscreen-body > .owner-resource-note,
+.owner-resource-fullscreen-body > .owner-resource-preview-md,
+.owner-resource-fullscreen-body > .owner-resource-preview-code,
+.owner-resource-fullscreen-body > .md-code {
+  flex: 1 1 0;
+  min-height: 0;
+}
+.owner-resource-fullscreen-body > .owner-resource-note {
+  /* base rule already flex column; drop fixed min so it can shrink with window */
+  min-height: 0;
+}
+.owner-resource-fullscreen-body .owner-resource-note-toolbar {
+  flex: 0 0 auto;
+}
+.owner-resource-fullscreen-body .owner-resource-note-frame,
+.owner-resource-fullscreen-body .owner-resource-note-editor {
+  flex: 1 1 0;
+  width: 100%;
+  height: auto;
+  max-height: none;
+  min-height: 0;
+}
+.owner-resource-fullscreen-body .owner-resource-preview-md,
+.owner-resource-fullscreen-body .owner-resource-preview-code,
+.owner-resource-fullscreen-body .md-code.owner-resource-preview-code {
+  overflow: auto;
+}
+.owner-resource-fullscreen-body .owner-resource-preview-img-btn {
+  cursor: default;
+  pointer-events: none;
+}
+
 /* Tasks / Resources: load-more footer inside list-card (hairline + muted). */
 .owner-list-load-more {
   display: block;
@@ -12148,6 +12788,42 @@ button.owner-task-row:hover {
   :root[data-translucent='false']:not([data-theme='dark']) .bubble-more-menu {
     background: var(--panel) !important;
     box-shadow: none;
+  }
+}
+/* 消耗统计 card: opaque when frost off; keep soft floating shadow. */
+:root[data-translucent='false'] .token-usage-popover,
+:root[data-translucent='false'][data-theme='light'] .token-usage-popover {
+  background: var(--panel) !important;
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.10),
+    0 12px 32px rgba(0, 0, 0, 0.18) !important;
+}
+:root[data-translucent='false'][data-theme='light'] .token-usage-popover {
+  background: var(--input, var(--panel)) !important;
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.06),
+    0 10px 28px rgba(0, 0, 0, 0.10) !important;
+}
+@media (prefers-color-scheme: light) {
+  :root[data-translucent='false']:not([data-theme='dark']) .token-usage-popover {
+    background: var(--input, var(--panel)) !important;
+    box-shadow:
+      0 2px 8px rgba(0, 0, 0, 0.06),
+      0 10px 28px rgba(0, 0, 0, 0.10) !important;
+  }
+}
+:root[data-translucent='false'][data-theme='dark'] .token-usage-popover {
+  background: var(--panel) !important;
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.28),
+    0 12px 36px rgba(0, 0, 0, 0.40) !important;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-translucent='false']:not([data-theme='light']) .token-usage-popover {
+    background: var(--panel) !important;
+    box-shadow:
+      0 2px 8px rgba(0, 0, 0, 0.28),
+      0 12px 36px rgba(0, 0, 0, 0.40) !important;
   }
 }
 :root[data-translucent='false'] .open-tasks-glass,
@@ -12793,4 +13469,138 @@ button.owner-task-row:hover {
   .bubble .md-copy-btn {
     opacity: 1;
   }
+}
+
+/* —— Note cards (chat) + note preview (资料) —— */
+/* flex-shrink:0 — .messages-content is a column flex; overflow:hidden would
+   otherwise zero out min-height and crush this card to ~2px (borders only). */
+.note-card {
+  margin-top: 8px;
+  max-width: min(360px, 100%);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--panel, var(--chat-bg));
+  flex-shrink: 0;
+  min-height: min-content;
+  /* Match 资料库 row preview affordance (.owner-resource-row-btn). */
+  cursor: zoom-in;
+}
+.note-card:focus-visible {
+  outline: 2px solid var(--accent, #4c8bf5);
+  outline-offset: 2px;
+}
+.note-card-preview {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  background: var(--bg-soft, rgba(127, 127, 127, 0.08));
+  overflow: hidden;
+}
+.note-card-shot {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+}
+.note-card-iframe {
+  display: block;
+  width: 200%;
+  height: 200%;
+  border: 0;
+  transform: scale(0.5);
+  transform-origin: top left;
+  pointer-events: none;
+}
+.note-card-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 12px;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+}
+.note-card-placeholder.note-card-error {
+  color: var(--danger, #c44);
+}
+.note-card-footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 560;
+  border-top: 1px solid var(--hairline, var(--border));
+  overflow: hidden;
+}
+.note-card-footer-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--muted);
+}
+.note-card-footer-icon svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+.note-card-footer-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.owner-resource-note {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 240px;
+}
+.owner-resource-note-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.owner-resources-tool-btn {
+  margin: 0;
+  padding: 4px 10px;
+  border: var(--hairline) solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.owner-resources-tool-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.04);
+}
+:root[data-theme='light'] .owner-resources-tool-btn:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.04);
+}
+.owner-resources-tool-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.owner-resource-note-frame {
+  width: 100%;
+  height: min(60vh, 520px);
+  min-height: 280px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-soft, #fff);
+}
+.owner-resource-note-editor {
+  width: 100%;
+  min-height: 320px;
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel, var(--chat-bg));
+  color: var(--fg);
+  resize: vertical;
 }

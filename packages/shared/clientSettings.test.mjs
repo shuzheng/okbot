@@ -53,11 +53,17 @@ assert.ok(CLIENT_SETTINGS_KEYS.includes('settingsGatewayGroupExpanded'));
   assert.equal(n.closeAction, 'ask');
   assert.equal(n.language, 'system');
   assert.equal(n.hardwareAcceleration, true);
-  assert.equal(n.translucent, true);
+  assert.equal(n.translucent, false);
   assert.equal(n.developerMode, false);
   assert.equal(n.settingsNavTab, 'general');
   assert.equal(n.settingsClientGroupExpanded, true);
   assert.equal(n.settingsGatewayGroupExpanded, false);
+}
+
+{
+  // Explicit translucent: true must stay true (align with desktop clientSettings.test.ts).
+  const n = normalizeClientSettings({ translucent: true });
+  assert.equal(n.translucent, true);
 }
 
 {

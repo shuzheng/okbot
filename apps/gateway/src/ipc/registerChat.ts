@@ -15,6 +15,7 @@ import { startSquadTurn } from './chat/startSquadTurn';
 import { respondToToolApproval } from './chat/toolApproval';
 import { compressSessionNow } from './chat/compressSession';
 import type { ChatStartPayload, ChatStartResult } from './chat/turnContext';
+import { setMessageReaction } from './messageReaction';
 
 export type { ChatStartPayload, ChatStartResult } from './chat/turnContext';
 export { respondToToolApproval } from './chat/toolApproval';
@@ -74,6 +75,19 @@ export function registerChatIpc(ctx: IpcContext): void {
 
   ipcMain.handle(IpcChannels.chatAbort, (_e, botId: string) => abortChatOwner(ctx, botId));
 
+  ipcMain.handle(
+    IpcChannels.setMessageReaction,
+    (
+      _e,
+      payload: {
+        botId?: string;
+        squadId?: string;
+        messageId: string;
+        emoji: string | null;
+      },
+    ) => setMessageReaction(ctx, { ...payload, from: 'user' }),
+  );
+
   ipcMain.handle(IpcChannels.compressSessionNow, (_e, payload) =>
     compressSessionNow(ctx, payload),
   );
@@ -105,6 +119,33 @@ export function registerChatIpc(ctx: IpcContext): void {
     }
   });
 
+  ipcMain.handle(IpcChannels.deleteOwnerTask, (_e, payload: { ownerId?: string; taskId?: string }) => {
+    const ownerId = (payload?.ownerId || '').trim();
+    const taskId = (payload?.taskId || '').trim();
+    if (!ownerId || !taskId) {
+      return { ok: false as const, error: 'missing_ids' };
+    }
+    try {
+      ctx.storage.deleteTask(ownerId, taskId);
+      try {
+        ctx.sendRuntimeEvent({
+          type: 'tasks_changed',
+          botId: ownerId,
+          tasks: ctx.storage.loadOpenTasks(ownerId),
+        });
+      } catch (err) {
+        console.error('[okbot] tasks_changed emit failed', err);
+      }
+      return { ok: true as const };
+    } catch (err) {
+      console.error('[okbot] deleteOwnerTask failed', err);
+      return {
+        ok: false as const,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  });
+
   ipcMain.handle(IpcChannels.listOwnerResources, (_e, ownerId: string) => {
     const id = (ownerId || '').trim();
     if (!id) return [];
@@ -115,4 +156,134 @@ export function registerChatIpc(ctx: IpcContext): void {
       return [];
     }
   });
+
+  ipcMain.handle(
+    IpcChannels.deleteOwnerResource,
+    (_e, payload: { ownerId?: string; resourceId?: string }) => {
+      const ownerId = (payload?.ownerId || '').trim();
+      const resourceId = (payload?.resourceId || '').trim();
+      if (!ownerId || !resourceId) {
+        return { ok: false as const, error: 'missing_ids' };
+      }
+      try {
+        ctx.storage.deleteOwnerResource(ownerId, resourceId);
+        return { ok: true as const };
+      } catch (err) {
+        console.error('[okbot] deleteOwnerResource failed', err);
+        return {
+          ok: false as const,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IpcChannels.readOwnerResourceText,
+    (_e, payload: { ownerId?: string; resourceId?: string }) => {
+      const ownerId = (payload?.ownerId || '').trim();
+      const resourceId = (payload?.resourceId || '').trim();
+      if (!ownerId || !resourceId) {
+        return { ok: false as const, error: 'missing_ids' };
+      }
+      try {
+        const text = ctx.storage.readOwnerResourceText(ownerId, resourceId);
+        return { ok: true as const, text };
+      } catch (err) {
+        console.error('[okbot] readOwnerResourceText failed', err);
+        return {
+          ok: false as const,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IpcChannels.writeOwnerResourceText,
+    (_e, payload: { ownerId?: string; resourceId?: string; text?: string }) => {
+      const ownerId = (payload?.ownerId || '').trim();
+      const resourceId = (payload?.resourceId || '').trim();
+      const text = typeof payload?.text === 'string' ? payload.text : '';
+      if (!ownerId || !resourceId) {
+        return { ok: false as const, error: 'ownerId and resourceId required' };
+      }
+      try {
+        const record = ctx.storage.writeOwnerResourceText(ownerId, resourceId, text);
+        return { ok: true as const, record };
+      } catch (err) {
+        console.error('[okbot] writeOwnerResourceText failed', err);
+        return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IpcChannels.addOwnerResource,
+    (
+      _e,
+      payload: {
+        ownerId?: string;
+        action?: 'note' | 'url' | 'folder' | 'file-link' | 'ingest';
+        title?: string;
+        body?: string;
+        html?: string;
+        target?: string;
+        sourcePath?: string;
+      },
+    ) => {
+      const ownerId = (payload?.ownerId || '').trim();
+      const action = payload?.action;
+      if (!ownerId || !action) {
+        return { ok: false as const, error: 'missing_args' };
+      }
+      try {
+        let record;
+        if (action === 'note') {
+          record = ctx.storage.addOwnerResourceNote(ownerId, {
+            title: payload.title,
+            body: payload.body,
+            html: payload.html,
+            createdBy: 'user',
+          });
+        } else if (action === 'url') {
+          record = ctx.storage.addOwnerResourceLink(ownerId, {
+            kind: 'url',
+            target: payload.target || '',
+            title: payload.title,
+            createdBy: 'user',
+          });
+        } else if (action === 'folder') {
+          record = ctx.storage.addOwnerResourceLink(ownerId, {
+            kind: 'folder',
+            target: payload.target || '',
+            title: payload.title,
+            createdBy: 'user',
+          });
+        } else if (action === 'file-link') {
+          record = ctx.storage.addOwnerResourceLink(ownerId, {
+            kind: 'file',
+            target: payload.target || payload.sourcePath || '',
+            title: payload.title,
+            createdBy: 'user',
+          });
+        } else if (action === 'ingest') {
+          record = ctx.storage.ingestOwnerResourceFile(ownerId, {
+            sourcePath: payload.sourcePath || payload.target || '',
+            title: payload.title,
+            createdBy: 'user',
+          });
+        } else {
+          return { ok: false as const, error: 'unknown_action' };
+        }
+        return { ok: true as const, record };
+      } catch (err) {
+        console.error('[okbot] addOwnerResource failed', err);
+        return {
+          ok: false as const,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    },
+  );
 }

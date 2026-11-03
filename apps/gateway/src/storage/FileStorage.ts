@@ -48,8 +48,10 @@ import {
   TaskProgressStore,
   formatTasksForPrompt,
   hasUnfinishedTasks,
+  canAutoContinueTasks,
   fingerprintTasks,
 } from './TaskProgressStore';
+import { ResourceStore } from './ResourceStore';
 import { RunCheckpointStore } from './RunCheckpointStore';
 import { RosterStore } from './RosterStore';
 import { AssistantPackageStore } from './AssistantPackageStore';
@@ -89,6 +91,7 @@ export class FileStorage {
   private readonly scheduleStore: ScheduleStore;
   private readonly pendingHitlStore: PendingHitlStore;
   private readonly taskProgressStore: TaskProgressStore;
+  private readonly resourceStore: ResourceStore;
   private readonly runCheckpointStore: RunCheckpointStore;
   private readonly rosterStore: RosterStore;
   private readonly assistantPackageStore: AssistantPackageStore;
@@ -193,6 +196,15 @@ export class FileStorage {
       ensureBotLayout: (id) => this.rosterStore.ensureBotLayout(id),
     });
 
+    this.resourceStore = new ResourceStore(this.life, {
+      ownerDir: (id) => this.ownerDir(id),
+      ensureOwnerLayout: (id) => {
+        // Ensure owner dir + resources/ exist; roster helpers cover bot/squad.
+        this.ownerResourcesDir(id);
+      },
+      ownerResourcesDir: (id) => this.ownerResourcesDir(id),
+    });
+
     this.runCheckpointStore = new RunCheckpointStore(this.life, {
       botDir: (id) => this.botDir(id),
       ensureBotLayout: (id) => this.rosterStore.ensureBotLayout(id),
@@ -262,6 +274,8 @@ export class FileStorage {
     this.life.assertOwnerAlive(id);
     const dir = path.join(this.ownerDir(id), 'resources');
     ensureDir(dir);
+    // Keep temp/ ready for tool default work root (shell cwd / relative paths).
+    ensureDir(path.join(this.ownerDir(id), 'temp'));
     return dir;
   }
 
@@ -269,6 +283,15 @@ export class FileStorage {
     const id = assertSafeOwnerSegment(ownerId);
     this.life.assertOwnerAlive(id);
     const dir = path.join(this.ownerDir(id), 'uploads');
+    ensureDir(dir);
+    return dir;
+  }
+
+  /** `~/.okbot/data/<ownerId>/temp` — throwaway scripts / artifacts for bot+squad runs. */
+  ownerTempDir(ownerId: string): string {
+    const id = assertSafeOwnerSegment(ownerId);
+    this.life.assertOwnerAlive(id);
+    const dir = path.join(this.ownerDir(id), 'temp');
     ensureDir(dir);
     return dir;
   }
@@ -342,72 +365,120 @@ export class FileStorage {
   }
 
 
-  /** List files in owner `resources/` (newest mtime first). Non-recursive. */
+  /** List resources.jsonl library (newest updatedAt first). No ad-hoc dir scan. */
   listOwnerResources(ownerId: string): import('@okbot/shared').OwnerResourceInfo[] {
-    const id = assertSafeOwnerSegment(ownerId);
+    const id = (ownerId || '').trim();
+    if (!id) return [];
     this.life.assertOwnerAlive(id);
-    const dir = path.join(this.ownerDir(id), 'resources');
-    if (!fs.existsSync(dir)) return [];
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return [];
-    }
-    const out: import('@okbot/shared').OwnerResourceInfo[] = [];
-    for (const ent of entries) {
-      if (!ent.isFile()) continue;
-      const name = ent.name;
-      if (!name || name.startsWith('.')) continue;
-      if (name.includes('/') || name.includes('\\') || name.includes('..')) continue;
-      const filePath = path.join(dir, name);
-      let st: fs.Stats;
-      try {
-        st = fs.statSync(filePath);
-      } catch {
-        continue;
-      }
-      if (!st.isFile()) continue;
-      const ext = path.extname(name).toLowerCase();
-      const mime =
-        ext === '.jpg' || ext === '.jpeg'
-          ? 'image/jpeg'
-          : ext === '.png'
-            ? 'image/png'
-            : ext === '.webp'
-              ? 'image/webp'
-              : ext === '.gif'
-                ? 'image/gif'
-                : ext === '.svg'
-                  ? 'image/svg+xml'
-                  : ext === '.bmp'
-                    ? 'image/bmp'
-                    : ext === '.avif'
-                      ? 'image/avif'
-                      : ext === '.heic'
-                        ? 'image/heic'
-                        : ext === '.heif'
-                          ? 'image/heif'
-                          : ext === '.md'
-                            ? 'text/markdown'
-                            : ext === '.txt' || ext === '.log'
-                              ? 'text/plain'
-                              : ext === '.json'
-                                ? 'application/json'
-                                : ext === '.csv'
-                                  ? 'text/csv'
-                                  : 'application/octet-stream';
-      out.push({
-        name,
-        path: filePath,
-        size: st.size,
-        createdAt: new Date(st.mtimeMs).toISOString(),
-        mime,
-        assetRel: `${id}/resources/${name}`,
-      });
-    }
-    out.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '') || b.name.localeCompare(a.name));
-    return out;
+    return this.resourceStore.list(id);
+  }
+
+  addOwnerResource(
+    ownerId: string,
+    input: {
+      id?: string;
+      type?: string;
+      title?: string;
+      path: string;
+      sourceMessageId?: string;
+      createdBy?: 'user' | 'assistant';
+      tags?: string[];
+    },
+  ): import('@okbot/shared').OwnerResourceRecord {
+    return this.resourceStore.add(ownerId, input);
+  }
+
+  deleteOwnerResource(ownerId: string, resourceId: string): void {
+    this.resourceStore.delete(ownerId, resourceId);
+  }
+
+  updateOwnerResource(
+    ownerId: string,
+    resourceId: string,
+    patch: { title?: string; tags?: string[] | null },
+  ): import('@okbot/shared').OwnerResourceRecord {
+    return this.resourceStore.update(ownerId, resourceId, patch);
+  }
+
+  ingestOwnerResourceFile(
+    ownerId: string,
+    input: {
+      sourcePath: string;
+      title?: string;
+      createdBy?: 'user' | 'assistant';
+      sourceMessageId?: string;
+    },
+  ): import('@okbot/shared').OwnerResourceRecord {
+    return this.resourceStore.ingestFile(ownerId, input);
+  }
+
+  addOwnerResourceNote(
+    ownerId: string,
+    input: {
+      title?: string;
+      body?: string;
+      html?: string;
+      createdBy?: 'user' | 'assistant';
+      sourceMessageId?: string;
+      id?: string;
+    },
+  ): import('@okbot/shared').OwnerResourceRecord {
+    return this.resourceStore.addNote(ownerId, input);
+  }
+
+  upsertOwnerResourceNote(
+    ownerId: string,
+    input: {
+      id?: string;
+      path?: string;
+      title?: string;
+      html: string;
+      createdBy?: 'user' | 'assistant';
+      sourceMessageId?: string;
+    },
+  ): import('@okbot/shared').OwnerResourceRecord {
+    return this.resourceStore.upsertNote(ownerId, input);
+  }
+
+  writeOwnerResourceText(
+    ownerId: string,
+    resourceId: string,
+    text: string,
+  ): import('@okbot/shared').OwnerResourceRecord {
+    return this.resourceStore.writeText(ownerId, resourceId, text);
+  }
+
+  addOwnerResourceLink(
+    ownerId: string,
+    input: {
+      kind: 'url' | 'folder' | 'file';
+      target: string;
+      title?: string;
+      createdBy?: 'user' | 'assistant';
+    },
+  ): import('@okbot/shared').OwnerResourceRecord {
+    return this.resourceStore.addLink(ownerId, input);
+  }
+
+  indexOwnerResourceFile(
+    ownerId: string,
+    input: {
+      filePath: string;
+      title?: string;
+      createdBy?: 'user' | 'assistant';
+      sourceMessageId?: string;
+      type?: string;
+    },
+  ): import('@okbot/shared').OwnerResourceRecord {
+    return this.resourceStore.indexIngestedFile(ownerId, input);
+  }
+
+  readOwnerResourceText(ownerId: string, resourceId: string): string {
+    return this.resourceStore.readText(ownerId, resourceId);
+  }
+
+  getOwnerResource(ownerId: string, resourceId: string): import('@okbot/shared').OwnerResourceRecord | null {
+    return this.resourceStore.get(ownerId, resourceId);
   }
 
   private noteSessionsChanged(ownerId: string, reason: SessionsChangedReason): void {
@@ -480,7 +551,7 @@ export class FileStorage {
   recordUsage(
     ownerId: string,
     usage: TokenUsage,
-    opts?: { alsoOwnerIds?: string[]; skipLifetime?: boolean },
+    opts?: { alsoOwnerIds?: string[]; skipLifetime?: boolean; modelId?: string },
   ): UsageStats {
     return recordTokenUsage(this.usagePath, ownerId, usage, {
       ...opts,
@@ -548,7 +619,11 @@ export class FileStorage {
 
   formatMemoriesForPrompt(
     botId: string,
-    opts?: { query?: string; recordHits?: boolean },
+    opts?: {
+      query?: string;
+      recordHits?: boolean;
+      recordedGlobalHitIds?: Set<string>;
+    },
   ): string {
     return this.memoryStore.formatMemoriesForPrompt(botId, opts);
   }
@@ -856,7 +931,11 @@ export class FileStorage {
     return this.sessionStore.getSessionItemsThroughMessage(botId, messageId, opts);
   }
 
-  patchMessage(botId: string, messageId: string, patch: Partial<ChatMessage>): ChatMessage | null {
+  patchMessage(
+    botId: string,
+    messageId: string,
+    patch: Omit<Partial<ChatMessage>, 'reaction'> & { reaction?: ChatMessage['reaction'] | null },
+  ): ChatMessage | null {
     return this.sessionStore.patchMessage(botId, messageId, patch);
   }
 
@@ -945,7 +1024,7 @@ export class FileStorage {
       steps?: Array<{
         id?: string;
         title: string;
-        status?: import('@okbot/shared').TaskStatus;
+        status?: import('@okbot/shared').StepStatus;
         note?: string;
       }>;
     },
@@ -963,12 +1042,12 @@ export class FileStorage {
       steps?: Array<{
         id?: string;
         title: string;
-        status?: import('@okbot/shared').TaskStatus;
+        status?: import('@okbot/shared').StepStatus;
         note?: string;
       }>;
       step_id?: string;
       step_title?: string;
-      step_status?: import('@okbot/shared').TaskStatus;
+      step_status?: import('@okbot/shared').StepStatus;
       step_note?: string;
       step_new_title?: string;
     },
@@ -978,6 +1057,14 @@ export class FileStorage {
 
   clearTaskProgress(ownerId: string): void {
     this.taskProgressStore.clear(ownerId);
+  }
+
+  deleteTask(ownerId: string, taskId: string): void {
+    this.taskProgressStore.deleteTask(ownerId, taskId);
+  }
+
+  canAutoContinueTasks(ownerId: string): boolean {
+    return canAutoContinueTasks(this.taskProgressStore.loadAll(ownerId));
   }
 
   // ── run checkpoint ──────────────────────────────────────────

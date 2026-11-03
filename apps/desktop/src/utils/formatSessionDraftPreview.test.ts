@@ -18,4 +18,11 @@ describe('formatSessionDraftPreview', () => {
   it('keeps meaningful punctuation and CJK', () => {
     assert.equal(formatSessionDraftPreview('草稿内容，继续'), '草稿内容，继续');
   });
+
+  it('humanizes structured mention tokens as @label', () => {
+    assert.equal(
+      formatSessionDraftPreview('@[schedule:job-1|晨报] 你好'),
+      '@晨报 你好',
+    );
+  });
 });

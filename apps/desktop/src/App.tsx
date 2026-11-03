@@ -137,13 +137,20 @@ import {
   type SecurityBlockMode,
   type LanguageCode,
   type Bot,
+  type BotSkill,
   type ChatMessage,
   type MessageTrace,
+  type ScheduledJobInfo,
   type Squad,
   type SquadMember,
   type UpdaterStatus,
   type LocalizedChangelogNotes,
 } from '@okbot/shared';
+import {
+  filterSchedulesForOwner,
+  mergeOwnerScopedSkills,
+  type MentionEntityRef,
+} from './utils/entityMentions';
 
 
 export function App() {
@@ -171,6 +178,8 @@ export function App() {
   } = useParallelTasks();
 
   const [openTasksByOwner, setOpenTasksByOwner] = useState<Record<string, TaskRecord[]>>({});
+  const [mentionSchedules, setMentionSchedules] = useState<ScheduledJobInfo[]>([]);
+  const [mentionSkills, setMentionSkills] = useState<BotSkill[]>([]);
 
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [dataDir, setDataDir] = useState('');
@@ -341,7 +350,9 @@ export function App() {
   const AT_BOTTOM_SLACK_PX = 16;
   /** Show jump button when scrolled up past this (tight hysteresis vs slack). */
   const JUMP_BUTTON_PX = 24;
-  const composerRef = useRef<HTMLTextAreaElement>(null);
+  const composerRef = useRef<HTMLElement>(null);
+  /** Bumped on session switch so ComposerEditable places caret at end. */
+  const [composerSeekEndToken, setComposerSeekEndToken] = useState(0);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaChunksRef = useRef<Blob[]>([]);
@@ -496,6 +507,96 @@ export function App() {
     () => (selection?.kind === 'squad' ? squads.find((g) => g.id === selection.id) ?? null : null),
     [squads, selection],
   );
+
+  // Composer `@` catalog: bots + squads + schedules + skills.
+  // Schedules/skills are current-session-owner only (never cross-member).
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const jobs = await window.okbot.listScheduledJobs();
+        if (!cancelled) setMentionSchedules(Array.isArray(jobs) ? jobs : []);
+      } catch {
+        if (!cancelled) setMentionSchedules([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selection?.id, selection?.kind]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        // Current member / squad only — never other members' skills, never globals.
+        const memberIds: string[] =
+          selection?.kind === 'bot'
+            ? [selection.id]
+            : selection?.kind === 'squad'
+              ? (squads.find((s) => s.id === selection.id)?.members.map((m) => m.botId) ?? [])
+              : [];
+        if (!memberIds.length) {
+          if (!cancelled) setMentionSkills([]);
+          return;
+        }
+        const locals = await Promise.all(memberIds.map((id) => window.okbot.listBotSkills(id)));
+        if (!cancelled) setMentionSkills(mergeOwnerScopedSkills(locals));
+      } catch {
+        if (!cancelled) setMentionSkills([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selection?.id, selection?.kind, squads]);
+
+  const mentionCatalog = useMemo<MentionEntityRef[]>(() => {
+    const items: MentionEntityRef[] = [];
+    for (const b of bots) {
+      items.push({
+        kind: 'bot',
+        id: b.id,
+        label: b.name,
+        emoji: b.emoji,
+        color: b.color,
+        avatarKind: b.avatarKind,
+        botAvatarType: b.botAvatarType,
+        subtitle: b.description || undefined,
+      });
+    }
+    for (const s of squads) {
+      items.push({
+        kind: 'squad',
+        id: s.id,
+        label: s.name,
+        emoji: '👥',
+        subtitle: s.description || undefined,
+      });
+    }
+    // Automations: only the open session owner (bot or squad), never cross-member.
+    const ownerId = selection?.kind === 'bot' || selection?.kind === 'squad' ? selection.id : null;
+    for (const j of filterSchedulesForOwner(mentionSchedules, ownerId)) {
+      items.push({
+        kind: 'schedule',
+        id: j.id,
+        label: (j.title || '').trim() || j.scheduleLabel || j.id,
+        emoji: '⏰',
+        subtitle: j.scheduleLabel || undefined,
+      });
+    }
+    for (const sk of mentionSkills) {
+      items.push({
+        kind: 'skill',
+        id: sk.slug,
+        label: (sk.name || '').trim() || sk.slug,
+        emoji: '🧩',
+        subtitle: sk.description || undefined,
+      });
+    }
+    return items;
+  }, [bots, squads, mentionSchedules, mentionSkills, selection?.id, selection?.kind]);
+
 
   const selectionRef = useRef(selection);
   selectionRef.current = selection;
@@ -1080,7 +1181,7 @@ export function App() {
 
   useEffect(() => {
     document.documentElement.dataset.translucent =
-      settings?.translucent !== false ? 'true' : 'false';
+      settings?.translucent === true ? 'true' : 'false';
   }, [settings?.translucent]);
 
   // `system` theme: keep concrete data-theme in sync with OS (matchMedia + main nativeTheme).
@@ -1102,9 +1203,23 @@ export function App() {
       // Keep client chrome (theme/translucent) in sync even while Settings is open.
       applyTheme(next.theme);
       document.documentElement.dataset.translucent =
-        next.translucent !== false ? 'true' : 'false';
-      // Skip replacing App settings while the modal holds unsaved drafts.
-      if (settingsOpenRef.current) return;
+        next.translucent === true ? 'true' : 'false';
+      // Skip replacing full App settings while the modal holds unsaved drafts,
+      // but still patch tray-writable client chrome so Settings drafts cannot
+      // autosave a stale theme over a menu-bar theme change.
+      if (settingsOpenRef.current) {
+        setSettings((prev) =>
+          prev
+            ? {
+                ...prev,
+                theme: next.theme,
+                translucent: next.translucent,
+                closeAction: next.closeAction,
+              }
+            : next,
+        );
+        return;
+      }
       setSettings(next);
     });
     return unsub;
@@ -1463,11 +1578,10 @@ export function App() {
     setDraftPreviewsByOwner({ ...draftsByOwnerRef.current });
     if (!chatOwnerId) return;
     let cancelled = false;
+    setComposerSeekEndToken((n) => n + 1);
     const id = window.requestAnimationFrame(() => {
       const el = composerRef.current;
       if (!el || cancelled) return;
-      const len = next.length;
-      el.setSelectionRange(len, len);
       el.scrollTop = el.scrollHeight;
       // Second frame: ChatComposer useLayoutEffect may still flip is-multiline / height.
       window.requestAnimationFrame(() => {
@@ -3266,6 +3380,36 @@ async function handleSend(retry?: {
     }
   }
 
+
+  const onReactMessage = useCallback(
+    (message: ChatMessage, emoji: string) => {
+      const ownerId = (selectedSquad?.id || selectedBot?.id || '').trim();
+      if (!ownerId || !message.id) return;
+      const api = window.okbot?.setMessageReaction;
+      if (typeof api !== 'function') return;
+      void api({
+        ...(selectedSquad?.id ? { squadId: selectedSquad.id } : { botId: selectedBot!.id }),
+        messageId: message.id,
+        emoji,
+      }).then((res) => {
+        if (res && res.ok === false && res.error) {
+          console.error('[okbot] setMessageReaction', res.error);
+        }
+        // Optimistic: message_updated will reconcile; if attach/local already patched via result:
+        if (res?.ok && res.message) {
+          setMessages((prev) => {
+            const byId = prev.findIndex((m) => m.id === res.message!.id);
+            if (byId < 0) return prev;
+            const next = [...prev];
+            next[byId] = res.message!;
+            return next;
+          });
+        }
+      });
+    },
+    [selectedBot, selectedSquad],
+  );
+
   // Stable identities for memo(SessionSidebar) / memo(ChatTranscript).
   const onOpenSearch = useCallback(() => setSearchOpen(true), []);
   const onToggleImmersiveChat = useCallback(() => setImmersiveChat((v) => !v), []);
@@ -3389,6 +3533,8 @@ async function handleSend(retry?: {
         voiceStatusLabel={voiceStatusLabel}
         placeholder={composerPlaceholder}
         composerRef={composerRef}
+        seekEndToken={composerSeekEndToken}
+        ownerId={chatOwnerId}
         onDraftChange={updateDraft}
         onClearQuote={onClearQuote}
         onRemoveAttachment={onRemoveAttachment}
@@ -3397,6 +3543,7 @@ async function handleSend(retry?: {
         onSend={onSend}
         onStop={handleStop}
         onToggleVoice={onToggleVoice}
+        mentionCatalog={mentionCatalog}
       />
     ),
     [
@@ -3409,6 +3556,8 @@ async function handleSend(retry?: {
       micStream,
       voiceStatusLabel,
       composerPlaceholder,
+      composerSeekEndToken,
+      chatOwnerId,
       updateDraft,
       onClearQuote,
       onRemoveAttachment,
@@ -3417,6 +3566,7 @@ async function handleSend(retry?: {
       onSend,
       handleStop,
       onToggleVoice,
+      mentionCatalog,
     ],
   );
 
@@ -3467,6 +3617,9 @@ async function handleSend(retry?: {
       },
     };
   }, [updaterStatus, settings?.autoUpdate, lang]);
+
+  const showQuickStart =
+    !galleryOpen && !selection && !!settings && bots.length === 0 && squads.length === 0;
 
   return (
     <div
@@ -3616,17 +3769,6 @@ async function handleSend(retry?: {
               void openSettingsFresh({ tab: 'extensions', sectionId: '' });
             }}
           />
-        ) : !selection && settings && bots.length === 0 && squads.length === 0 ? (
-          <QuickStartPanel
-            lang={lang}
-            modelReady={(settings.model?.providers ?? []).some((p) => p.models.length > 0)}
-            existingNames={bots.map((b) => b.name)}
-            onOpenModelSettings={() => {
-              void openSettingsFresh({ tab: 'model', sectionId: '' });
-            }}
-            onCreateOwn={onStartCreateBot}
-            onInstalled={(bot) => void onGalleryAssistantInstalled(bot)}
-          />
         ) : !selection ? (
           <ChatWatermark />
         ) : null}
@@ -3753,6 +3895,7 @@ async function handleSend(retry?: {
               messages={messages}
               toolCards={toolCards}
               bots={bots}
+              mentionCatalog={mentionCatalog}
               selectedBot={selectedBot}
               selectedSquad={selectedSquad}
               busy={busy}
@@ -3766,6 +3909,7 @@ async function handleSend(retry?: {
               messagesBoxRef={messagesBoxRef}
               bottomRef={bottomRef}
               onOpenPromptContext={onOpenPromptContext}
+              onReactMessage={onReactMessage}
               onQuoteMessage={onQuoteMessage}
               onCopyMessage={onCopyMessage}
               usageModelRef={usageModelRef}
@@ -4506,6 +4650,27 @@ async function handleSend(retry?: {
           onApply={(v) => void handleSquadApply(v)}
           syncMembers={syncSquadMembers}
         />
+      ) : null}
+
+      {showQuickStart && settings ? (
+        <div className="quick-start-overlay" role="presentation">
+          <div className="quick-start-overlay-topdrag" aria-hidden />
+          {platform === 'win32' ? (
+            <div className="window-controls-float">
+              <WindowControls lang={lang} />
+            </div>
+          ) : null}
+          <QuickStartPanel
+            lang={lang}
+            modelReady={(settings.model?.providers ?? []).some((p) => p.models.length > 0)}
+            existingNames={bots.map((b) => b.name)}
+            onOpenModelSettings={() => {
+              void openSettingsFresh({ tab: 'model', sectionId: '' });
+            }}
+            onCreateOwn={onStartCreateBot}
+            onInstalled={(bot) => void onGalleryAssistantInstalled(bot)}
+          />
+        </div>
       ) : null}
 
       {settingsOpen && settings && (

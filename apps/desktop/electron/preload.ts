@@ -163,10 +163,56 @@ const api = {
     ipcRenderer.invoke(IpcChannels.listOwnerTasks, ownerId) as Promise<
       import('@okbot/shared').TaskRecord[]
     >,
+  deleteOwnerTask: (ownerId: string, taskId: string) =>
+    ipcRenderer.invoke(IpcChannels.deleteOwnerTask, { ownerId, taskId }) as Promise<{
+      ok: boolean;
+      error?: string;
+    }>,
   listOwnerResources: (ownerId: string) =>
     ipcRenderer.invoke(IpcChannels.listOwnerResources, ownerId) as Promise<
       import('@okbot/shared').OwnerResourceInfo[]
     >,
+  deleteOwnerResource: (ownerId: string, resourceId: string) =>
+    ipcRenderer.invoke(IpcChannels.deleteOwnerResource, { ownerId, resourceId }) as Promise<{
+      ok: boolean;
+      error?: string;
+    }>,
+  readOwnerResourceText: (ownerId: string, resourceId: string) =>
+    ipcRenderer.invoke(IpcChannels.readOwnerResourceText, { ownerId, resourceId }) as Promise<{
+      ok: boolean;
+      text?: string;
+      error?: string;
+    }>,
+  addOwnerResource: (payload: {
+    ownerId: string;
+    action: 'note' | 'url' | 'folder' | 'file-link' | 'ingest';
+    title?: string;
+    body?: string;
+    target?: string;
+    sourcePath?: string;
+  }) =>
+    ipcRenderer.invoke(IpcChannels.addOwnerResource, payload) as Promise<{
+      ok: boolean;
+      record?: import('@okbot/shared').OwnerResourceRecord;
+      error?: string;
+    }>,
+  openOwnerResource: (ownerId: string, resourceId: string) =>
+    ipcRenderer.invoke(IpcChannels.openOwnerResource, { ownerId, resourceId }) as Promise<{
+      ok: boolean;
+      error?: string;
+    }>,
+  writeOwnerResourceText: (ownerId: string, resourceId: string, text: string) =>
+    ipcRenderer.invoke(IpcChannels.writeOwnerResourceText, { ownerId, resourceId, text }) as Promise<{
+      ok: boolean;
+      record?: import('@okbot/shared').OwnerResourceRecord;
+      error?: string;
+    }>,
+  captureNoteHtmlPreview: (html: string, opts?: { width?: number; height?: number }) =>
+    ipcRenderer.invoke(IpcChannels.captureNoteHtmlPreview, {
+      html,
+      width: opts?.width,
+      height: opts?.height,
+    }) as Promise<{ ok: boolean; dataUrl?: string; error?: string }>,
   getMessagesPage: (botId: string, opts?: { limit?: number; beforeMessageId?: string | null }) =>
     ipcRenderer.invoke(IpcChannels.getMessagesPage, {
       botId,
@@ -181,6 +227,19 @@ const api = {
     ipcRenderer.invoke(IpcChannels.chatStart, buildChatStartPayload({ botId }, text, opts)),
   chatStartSquad: (squadId: string, text: string, opts?: ChatStartOpts) =>
     ipcRenderer.invoke(IpcChannels.chatStart, buildChatStartPayload({ squadId }, text, opts)),
+  setMessageReaction: (payload: {
+    botId?: string;
+    squadId?: string;
+    messageId: string;
+    emoji: string | null;
+  }) =>
+    ipcRenderer.invoke(IpcChannels.setMessageReaction, payload) as Promise<{
+      ok: boolean;
+      message?: import('@okbot/shared').ChatMessage;
+      woke?: boolean;
+      cleared?: boolean;
+      error?: string;
+    }>,
   chatAbort: (botId: string) => ipcRenderer.invoke(IpcChannels.chatAbort, botId),
   compressSessionNow: (payload: {
     botId?: string;

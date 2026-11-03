@@ -28,6 +28,7 @@ import {
   acquireRunSlot,
   ownerHasRuns,
   registerOwnerRun,
+  setOwnerRunCheckpointFlush,
   unregisterOwnerRun,
 } from './ownerRuns';
 import { createApprovalWaiter, releaseRunApprovals } from './approvalWaiter';
@@ -36,6 +37,9 @@ import { buildSquadMemberSpecs, computerRouteFor } from './chatTurnHelpers';
 import { historySearchForOwner } from './historySearchTool';
 import { scheduleManageForOwner } from './scheduleTool';
 import { taskProgressManageForOwner } from './taskProgressTool';
+import { noteManageForOwner } from './noteTool';
+import { libraryWriteGateForOwner } from './sameTopicArtifactGate';
+import { memoryManageForSquad } from './memoryTool';
 
 type ResumeResult = { ok: boolean; error?: string; resumed?: boolean; aborted?: boolean };
 
@@ -130,7 +134,12 @@ export async function resumeSquadAfterRestart(
   };
 
   try {
-    const members = buildSquadMemberSpecs(ctx.storage, squad);
+    const userText = disk.userText || '';
+    const members = buildSquadMemberSpecs(ctx.storage, squad, {
+      query: userText,
+      recordedGlobalHitIds: new Set<string>(),
+      recordHits: false,
+    });
     const summaryState = ctx.storage.readSessionSummary(squad.id);
     const sessionSummary = summaryState?.summary?.trim() || '';
     const session = createOkbotFileSession(
@@ -138,7 +147,13 @@ export async function resumeSquadAfterRestart(
         afterMessageId: summaryState?.coveredThroughId ?? null,
       }),
     );
-    const userText = disk.userText || '';
+    let turnNoteCard: import('@okbot/shared').NoteCardMeta | null = null;
+    const resourcesDir = ctx.storage.ownerResourcesDir(squad.id);
+    const assertLibraryWriteAllowed = libraryWriteGateForOwner(
+      ctx.storage,
+      squad.id,
+      resourcesDir,
+    );
     const common: RunSquadChatInput = {
       squadName: squad.name,
       squadDescription: squad.description,
@@ -147,6 +162,10 @@ export async function resumeSquadAfterRestart(
       sessionSummary: sessionSummary || undefined,
       historySearch: historySearchForOwner(ctx.storage, squad.id),
       scheduleManage: scheduleManageForOwner(ctx.storage, squad.id),
+      memoryManage: memoryManageForSquad(ctx.storage),
+      noteManage: noteManageForOwner(ctx.storage, squad.id, (card) => {
+        turnNoteCard = card;
+      }),
       taskProgressManage: async (input) => {
         const result = await taskProgressManageForOwner(ctx.storage, squad.id)(input);
         try {
@@ -170,10 +189,23 @@ export async function resumeSquadAfterRestart(
       history: [],
       session,
       ownerId: squad.id,
-      resourcesDir: ctx.storage.ownerResourcesDir(squad.id),
+      resourcesDir,
+      onGeneratedImageSaved: (info) => {
+        try {
+          ctx.storage.indexOwnerResourceFile(squad.id, {
+            filePath: info.filePath,
+            title: info.title,
+            createdBy: 'assistant',
+          });
+        } catch (err) {
+          console.error('[okbot] indexOwnerResourceFile failed', err);
+        }
+      },
+      assertLibraryWriteAllowed,
       computerRoute: computerRouteFor(settings, userText, disk.computerId),
       userText,
       signal: controller.signal,
+      transientRetries: settings.watchdog?.transientRetries,
       onClearLiveText: () => {
         if (!assistantMsg.content) return;
         assistantMsg.content = '';
@@ -206,6 +238,9 @@ export async function resumeSquadAfterRestart(
           output,
           runId,
         });
+      },
+      registerCheckpointFlush: (flush) => {
+        setOwnerRunCheckpointFlush(squad.id, runId, flush);
       },
       onRunCheckpoint: ({ serializedRunState }) => {
         try {
@@ -290,7 +325,7 @@ export async function resumeSquadAfterRestart(
       if (!plan.continueCaptain) {
         // Other cards of this turn still wait. Keep the reply for the continuation.
         ctx.storage.writeSquadResumeReplies(squad.id, turnId, replies);
-        if (hasUsage(usage)) ctx.storage.recordUsage(squad.id, usage);
+        if (hasUsage(usage)) ctx.storage.recordUsage(squad.id, usage, { modelId: modelConfig.model });
         guards.finish(resolveRunFinishStatus({ aborted: false }));
         ctx.sendRuntimeEvent({ type: 'done', botId: squad.id, messageId: assistantId, content: '' });
         try {
@@ -312,13 +347,16 @@ export async function resumeSquadAfterRestart(
     }
     if (!assistantMsg.content.trim() && content.trim()) assistantMsg.content = content;
     if (usage) assistantMsg.usage = usage;
-    if (assistantMsg.content.trim()) {
+    if (turnNoteCard && !controller.signal.aborted) {
+      assistantMsg.noteCard = turnNoteCard;
+    }
+    if (assistantMsg.content.trim() || assistantMsg.noteCard) {
       assistantMsg.createdAt = new Date().toISOString();
       await ctx.storage.upsertAssistantMessage(squad.id, assistantMsg);
     }
     if (hasUsage(usage)) {
       try {
-        ctx.storage.recordUsage(squad.id, usage);
+        ctx.storage.recordUsage(squad.id, usage, { modelId: modelConfig.model });
       } catch (err) {
         console.error('[okbot] record squad usage failed', err);
       }
@@ -329,6 +367,7 @@ export async function resumeSquadAfterRestart(
       messageId: assistantId,
       content: assistantMsg.content,
       usage,
+      ...(assistantMsg.noteCard ? { noteCard: assistantMsg.noteCard } : {}),
       ...(controller.signal.aborted ? { aborted: true } : {}),
     });
     guards.finish(
@@ -353,6 +392,7 @@ export async function resumeSquadAfterRestart(
         botId: squad.id,
         messageId: assistantId,
         content: assistantMsg.content,
+        ...(assistantMsg.noteCard ? { noteCard: assistantMsg.noteCard } : {}),
         aborted: true,
       });
         try {

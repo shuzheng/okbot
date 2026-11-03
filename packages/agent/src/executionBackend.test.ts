@@ -129,21 +129,47 @@ console.log('executionBackend.test.ts: ok');
   const fs = await import('node:fs/promises');
   const os = await import('node:os');
   const path = await import('node:path');
+  const { existsSync } = await import('node:fs');
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'okbot-res-'));
   const resourcesDir = path.join(root, 'resources');
   await fs.mkdir(resourcesDir, { recursive: true });
   const backend = createLocalExecutionBackend({ resourcesDir });
-  const out = await backend.writeFile('hello.txt', 'hi-from-resources');
+  // Relative paths resolve to owner work root (parent of resources/), not resources/.
+  const out = await backend.writeFile('hello.txt', 'hi-from-work');
   assert.match(out, /hello\.txt/);
-  const abs = path.join(resourcesDir, 'hello.txt');
+  const abs = path.join(root, 'hello.txt');
   const body = await fs.readFile(abs, 'utf8');
-  assert.equal(body, 'hi-from-resources');
+  assert.equal(body, 'hi-from-work');
   const read = await backend.readFile('hello.txt');
-  assert.match(read, /hi-from-resources/);
+  assert.match(read, /hi-from-work/);
+  // Library path via resources/…
+  await backend.writeFile('resources/lib.txt', 'in-lib');
+  assert.equal(await fs.readFile(path.join(resourcesDir, 'lib.txt'), 'utf8'), 'in-lib');
+  // temp/ ensured at backend create
+  assert.ok(existsSync(path.join(root, 'temp')));
+  await backend.writeFile('temp/script.sh', 'echo hi');
+  assert.equal(await fs.readFile(path.join(root, 'temp', 'script.sh'), 'utf8'), 'echo hi');
+  // Default shell cwd is owner temp/
+  const shellOut = await backend.runShell('test -f script.sh && echo cwd-temp-ok');
+  assert.match(shellOut, /cwd-temp-ok/);
+  const shellPwd = await backend.runShell('pwd');
+  assert.match(shellPwd, /\/temp\b/);
+  // Reserved durable writes denied
+  await assert.rejects(
+    () => backend.writeFile('session.jsonl', 'destroyed'),
+    /持久状态|受保护/,
+  );
+  await assert.rejects(
+    () => backend.writeFile('../bots.json', '{}'),
+    /持久状态|受保护/,
+  );
+  // Library + non-reserved relative still ok
+  await backend.writeFile('resources/lib2.txt', 'lib2');
+  assert.equal(await fs.readFile(path.join(resourcesDir, 'lib2.txt'), 'utf8'), 'lib2');
   // Absolute path still respected
   const other = path.join(root, 'outside.txt');
   await backend.writeFile(other, 'outside');
   assert.equal(await fs.readFile(other, 'utf8'), 'outside');
   await fs.rm(root, { recursive: true, force: true });
-  console.log('executionBackend resourcesDir relative: ok');
+  console.log('executionBackend workDir relative + temp cwd + durable deny: ok');
 }

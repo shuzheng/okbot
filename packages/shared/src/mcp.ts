@@ -1,6 +1,7 @@
 /**
  * MCP (Model Context Protocol) servers — optional "advanced extensions".
- * Off by default. Every MCP tool call asks for approval (same HITL card as shell).
+ * On by default (global toggle). Every MCP tool call asks for approval (same HITL card as shell).
+ * Existing saved settings with enabled:false are left as-is; only missing/factory defaults become on.
  */
 
 export type McpTransport = 'stdio' | 'http';
@@ -24,12 +25,12 @@ export interface McpServerEntry {
 }
 
 export interface McpSettings {
-  /** Master switch. Default false. */
+  /** Master switch. Default true when unset / factory default. */
   enabled: boolean;
   servers: McpServerEntry[];
 }
 
-export const DEFAULT_MCP_SETTINGS: McpSettings = { enabled: false, servers: [] };
+export const DEFAULT_MCP_SETTINGS: McpSettings = { enabled: true, servers: [] };
 
 const MAX_MCP_SERVERS = 20;
 
@@ -71,7 +72,7 @@ export function normalizeMcpServerEntry(raw: unknown): McpServerEntry | null {
 }
 
 export function normalizeMcpSettings(raw: unknown): McpSettings {
-  if (!raw || typeof raw !== 'object') return { enabled: false, servers: [] };
+  if (!raw || typeof raw !== 'object') return { ...DEFAULT_MCP_SETTINGS };
   const r = raw as Record<string, unknown>;
   const servers: McpServerEntry[] = [];
   const seen = new Set<string>();
@@ -84,7 +85,8 @@ export function normalizeMcpSettings(raw: unknown): McpSettings {
       if (servers.length >= MAX_MCP_SERVERS) break;
     }
   }
-  return { enabled: r.enabled === true, servers };
+  // Explicit false stays false (do not force-flip existing users). Absent field → default on.
+  return { enabled: typeof r.enabled === 'boolean' ? r.enabled : true, servers };
 }
 
 /** True when the entry has what its transport needs to connect. */

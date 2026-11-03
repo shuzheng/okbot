@@ -29,6 +29,7 @@ export interface RunChatInput {
   memoryManage?: MemoryManage;
   /** Durable long-task checklist (`manage_task_progress`). */
   taskProgressManage?: TaskProgressManage;
+  noteManage?: import('./tools.js').NoteManage;
   /** Emit a standalone assistant bubble mid-run (`send_message`). */
   emitAssistantMessage?: EmitAssistantMessage;
   /**
@@ -44,6 +45,11 @@ export interface RunChatInput {
   sessionSummary?: string;
   /** Formatted durable task checklist for the system prompt. */
   taskProgressText?: string;
+  /**
+   * Host soft-steer / cold-restore resume block (system-side; not a user bubble).
+   * Prefer structured host injection over more static prompt prose alone.
+   */
+  resumeContextText?: string;
   /** settings.instructions.assistantRoleTemplate (`{name}` → botName). */
   assistantRoleTemplate?: string;
   /** User-chosen default assistant (identity hint in system prompt). */
@@ -110,6 +116,17 @@ export interface RunAgentChatInput extends RunChatInput {
   ownerId: string;
   /** Absolute `~/.okbot/<ownerId>/resources` directory. */
   resourcesDir: string;
+  /** Host indexes library files under resources/ (generate_image / write_file / edit_file) when set. */
+  onGeneratedImageSaved?: (info: {
+    filePath: string;
+    assetRel: string;
+    title?: string;
+  }) => void;
+  /**
+   * Host same-topic gate for write_file under resources/.
+   * Return a tool error string to reject create; null/undefined to allow.
+   */
+  assertLibraryWriteAllowed?: (input: { filePath: string }) => string | null | undefined;
   /** Shell/fs backend for this run (local or cloud computer). Ignored when computerRoute is set. */
   executionBackend?: ExecutionBackend;
   /** Per-call computer selection for shell/fs tools. */
@@ -159,6 +176,10 @@ export interface RunAgentChatInput extends RunChatInput {
   onApprovalWaitStart?: (toolName: string) => void | string;
   onApprovalWaitEnd?: (info: { toolName: string; approved: boolean; spanId?: string }) => void;
   onRunCheckpoint?: (info: { serializedRunState: string }) => void;
+  /** See HitlLoopHooks.registerCheckpointFlush — Stop / soft-steer flush-before-abort. */
+  registerCheckpointFlush?: (flush: () => void) => void;
+  /** Max attempts per model segment for transient LLM/HTTP errors (default 3). */
+  transientRetries?: number;
 }
 
 export interface ResumeAgentChatAfterHitlInput {
@@ -172,6 +193,7 @@ export interface ResumeAgentChatAfterHitlInput {
   /** Pin/forget/promote memories (`manage_memory`). */
   memoryManage?: MemoryManage;
   taskProgressManage?: TaskProgressManage;
+  noteManage?: import('./tools.js').NoteManage;
   /** Emit a standalone assistant bubble mid-run (`send_message`). */
   emitAssistantMessage?: EmitAssistantMessage;
   /**
@@ -184,6 +206,8 @@ export interface ResumeAgentChatAfterHitlInput {
   memoriesText?: string;
   sessionSummary?: string;
   taskProgressText?: string;
+  /** Host soft-steer / cold-restore resume block (system-side). */
+  resumeContextText?: string;
   assistantRoleTemplate?: string;
   /** User-chosen default assistant (identity hint in system prompt). */
   isDefaultAssistant?: boolean;
@@ -203,6 +227,17 @@ export interface ResumeAgentChatAfterHitlInput {
   ownerId: string;
   /** Absolute `~/.okbot/<ownerId>/resources` directory. */
   resourcesDir: string;
+  /** Host indexes library files under resources/ (generate_image / write_file / edit_file) when set. */
+  onGeneratedImageSaved?: (info: {
+    filePath: string;
+    assetRel: string;
+    title?: string;
+  }) => void;
+  /**
+   * Host same-topic gate for write_file under resources/.
+   * Return a tool error string to reject create; null/undefined to allow.
+   */
+  assertLibraryWriteAllowed?: (input: { filePath: string }) => string | null | undefined;
   /** Shell/fs backend for this run (local or cloud computer). Ignored when computerRoute is set. */
   executionBackend?: ExecutionBackend;
   /** Per-call computer selection for shell/fs tools. */
@@ -239,6 +274,10 @@ export interface ResumeAgentChatAfterHitlInput {
   onApprovalWaitStart?: (toolName: string) => void | string;
   onApprovalWaitEnd?: (info: { toolName: string; approved: boolean; spanId?: string }) => void;
   onRunCheckpoint?: (info: { serializedRunState: string }) => void;
+  /** See HitlLoopHooks.registerCheckpointFlush — Stop / soft-steer flush-before-abort. */
+  registerCheckpointFlush?: (flush: () => void) => void;
+  /** Max attempts per model segment for transient LLM/HTTP errors (default 3). */
+  transientRetries?: number;
   /** Persisted `RunState.toString()` from the interrupted run. */
   serializedRunState: string;
   /** requestId of the pending approval being decided now. */
@@ -254,6 +293,11 @@ export interface ResumeAgentChatAfterHitlInput {
 
 export type HitlLoopHooks = {
   signal?: AbortSignal;
+  /**
+   * Max attempts per model segment for transient LLM/HTTP errors (default 3).
+   * Includes the first try. Gateway maps settings.watchdog.transientRetries here.
+   */
+  transientRetries?: number;
   onDelta?: (delta: string) => void;
   /**
    * Fired at tool boundaries: HITL interruptions and each auto-allow / post-HITL
@@ -290,9 +334,16 @@ export type HitlLoopHooks = {
   }) => void;
   /**
    * Safe tool-boundary checkpoint: serialized RunState after a model+tools segment
-   * (and at HITL interruptions). Host persists for crash recovery; clear on complete/Stop.
+   * (and at HITL interruptions). Host persists for crash recovery; keep on Stop /
+   * soft-steer abort for later continue / handoff.
    */
   onRunCheckpoint?: (info: { serializedRunState: string }) => void;
+  /**
+   * Host registers a sync flush invoked before AbortController.abort (Stop /
+   * soft-steer / user-stop). Agent supplies a callback that emits the latest
+   * safe in-memory RunState via onRunCheckpoint.
+   */
+  registerCheckpointFlush?: (flush: () => void) => void;
   /** Squad only: surface captain↔member exchanges in the UI transcript. */
   onSquadExchange?: (info: {
     kind: 'ask' | 'reply';

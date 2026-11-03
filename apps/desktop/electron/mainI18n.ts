@@ -25,6 +25,9 @@ type CloseDialogCopy = {
   trayThemeSystem: string;
   trayThemeLight: string;
   trayThemeDark: string;
+  trayTranslucent: string;
+  trayTranslucentOn: string;
+  trayTranslucentOff: string;
   traySettings: string;
   trayQuit: string;
   trayTooltip: string;
@@ -46,6 +49,9 @@ const CLOSE_DIALOG: Record<MainUiLang, CloseDialogCopy> = {
     trayThemeSystem: '跟随系统',
     trayThemeLight: '浅色',
     trayThemeDark: '深色',
+    trayTranslucent: '半透明',
+    trayTranslucentOn: '开启',
+    trayTranslucentOff: '关闭',
     traySettings: '设置',
     trayQuit: '退出',
     trayTooltip: 'OkBot',
@@ -65,6 +71,9 @@ const CLOSE_DIALOG: Record<MainUiLang, CloseDialogCopy> = {
     trayThemeSystem: 'System',
     trayThemeLight: 'Light',
     trayThemeDark: 'Dark',
+    trayTranslucent: 'Translucent',
+    trayTranslucentOn: 'On',
+    trayTranslucentOff: 'Off',
     traySettings: 'Settings',
     trayQuit: 'Quit',
     trayTooltip: 'OkBot',

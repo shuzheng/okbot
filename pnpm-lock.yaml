@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  bot-avatars@0.2.2: 15dfe39e0c6235abd92a6d9bd6560aa1de8c64cdc547d71e11388a6cce75ec34
+  bot-avatars@0.2.2: 10a62fcfa3d7790e023bc212f9d86034d3618c30285d65c902066d5afbcf4877
 
 importers:
 
@@ -46,7 +46,7 @@ importers:
         version: 1.3.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       bot-avatars:
         specifier: 0.2.2
-        version: 0.2.2(patch_hash=15dfe39e0c6235abd92a6d9bd6560aa1de8c64cdc547d71e11388a6cce75ec34)(react@19.3.0)
+        version: 0.2.2(patch_hash=10a62fcfa3d7790e023bc212f9d86034d3618c30285d65c902066d5afbcf4877)(react@19.3.0)
       electron-updater:
         specifier: ^6.6.2
         version: 6.8.9(supports-color@7.1.0)
@@ -4203,7 +4203,7 @@ snapshots:
       react: 19.3.0
       react-dom: 19.3.0(react@19.3.0)
 
-  bot-avatars@0.2.2(patch_hash=15dfe39e0c6235abd92a6d9bd6560aa1de8c64cdc547d71e11388a6cce75ec34)(react@19.3.0):
+  bot-avatars@0.2.2(patch_hash=10a62fcfa3d7790e023bc212f9d86034d3618c30285d65c902066d5afbcf4877)(react@19.3.0):
     dependencies:
       react: 19.3.0
 

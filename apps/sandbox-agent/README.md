@@ -1,4 +1,4 @@
-# @okbot/sandbox-agent-agent — OkBot cloud computer
+# @okbot/sandbox-agent — OkBot cloud computer
 
 Remote execution API for OkBot chat tools (`run_shell`, `read_file`, `write_file`, `edit_file`).
 

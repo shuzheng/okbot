@@ -107,6 +107,9 @@ if (fs.existsSync(path.join(repoRes, 'trayTemplate.png'))) {
     themeSystem: '跟随系统',
     themeLight: '浅色',
     themeDark: '深色',
+    translucent: '半透明',
+    translucentOn: '开启',
+    translucentOff: '关闭',
     settings: '设置',
     quit: '退出',
     tooltip: 'OkBot',
@@ -121,6 +124,8 @@ if (fs.existsSync(path.join(repoRes, 'trayTemplate.png'))) {
     quitApp: () => calls.push('quit'),
     setTheme: (t) => calls.push(`theme:${t}`),
     theme: 'system',
+    setTranslucent: (v) => calls.push(`translucent:${v}`),
+    translucent: true,
     labels,
     pinned,
     recent,
@@ -137,27 +142,42 @@ if (fs.existsSync(path.join(repoRes, 'trayTemplate.png'))) {
   assert.equal(themeSub[1]?.label, '浅色');
   assert.equal(themeSub[1]?.checked, false);
   assert.equal(themeSub[2]?.label, '深色');
-  assert.equal(tmpl[3]?.type, 'separator');
-  assert.equal(tmpl[4]?.label, '置顶');
-  assert.equal(tmpl[4]?.enabled, false);
-  assert.equal(tmpl[5]?.label, '📌 钉住');
-  assert.equal(tmpl[6]?.type, 'separator');
-  assert.equal(tmpl[7]?.label, '最近会话');
-  assert.equal(tmpl[7]?.enabled, false);
-  assert.equal(tmpl[8]?.label, '🕒 最近');
-  assert.equal(tmpl[9]?.type, 'separator');
-  assert.equal(tmpl[10]?.label, '设置');
-  assert.equal(tmpl[11]?.type, 'separator');
-  assert.equal(tmpl[12]?.label, '退出');
+  assert.equal(tmpl[3]?.label, '半透明');
+  assert.ok(tmpl[3] && 'submenu' in tmpl[3] && tmpl[3].submenu);
+  const translucentSub = tmpl[3].submenu!;
+  assert.equal(translucentSub.length, 2);
+  assert.equal(translucentSub[0]?.label, '开启');
+  assert.equal(translucentSub[0]?.checked, true);
+  assert.equal(translucentSub[1]?.label, '关闭');
+  assert.equal(translucentSub[1]?.checked, false);
+  assert.equal(tmpl[4]?.type, 'separator');
+  assert.equal(tmpl[5]?.label, '置顶');
+  assert.equal(tmpl[5]?.enabled, false);
+  assert.equal(tmpl[6]?.label, '📌 钉住');
+  assert.equal(tmpl[7]?.type, 'separator');
+  assert.equal(tmpl[8]?.label, '最近会话');
+  assert.equal(tmpl[8]?.enabled, false);
+  assert.equal(tmpl[9]?.label, '🕒 最近');
+  assert.equal(tmpl[10]?.type, 'separator');
+  assert.equal(tmpl[11]?.label, '设置');
+  assert.equal(tmpl[12]?.type, 'separator');
+  assert.equal(tmpl[13]?.label, '退出');
   themeSub[1]?.click?.();
-  tmpl[5]?.click?.();
-  tmpl[8]?.click?.();
-  tmpl[10]?.click?.();
-  assert.deepEqual(calls, ['theme:light', 'open:bot_p', 'open:bot_r', 'settings']);
+  translucentSub[1]?.click?.();
+  tmpl[6]?.click?.();
+  tmpl[9]?.click?.();
+  tmpl[11]?.click?.();
+  assert.deepEqual(calls, [
+    'theme:light',
+    'translucent:false',
+    'open:bot_p',
+    'open:bot_r',
+    'settings',
+  ]);
 }
 
 {
-  // Empty roster: Open / Theme / Settings / Quit (separators between).
+  // Empty roster: Open / Theme / Translucent / Settings / Quit (separators between).
   const cb: AppTrayCallbacks = {
     showWindow: () => {},
     openSession: () => {},
@@ -165,6 +185,8 @@ if (fs.existsSync(path.join(repoRes, 'trayTemplate.png'))) {
     quitApp: () => {},
     setTheme: () => {},
     theme: 'dark',
+    setTranslucent: () => {},
+    translucent: false,
     labels: {
       show: 'Open Window',
       recentSessions: 'Recent',
@@ -173,6 +195,9 @@ if (fs.existsSync(path.join(repoRes, 'trayTemplate.png'))) {
       themeSystem: 'System',
       themeLight: 'Light',
       themeDark: 'Dark',
+      translucent: 'Translucent',
+      translucentOn: 'On',
+      translucentOff: 'Off',
       settings: 'Settings',
       quit: 'Quit',
       tooltip: 'OkBot',
@@ -186,11 +211,17 @@ if (fs.existsSync(path.join(repoRes, 'trayTemplate.png'))) {
   assert.equal(tmpl[2]?.label, 'Theme');
   assert.ok(tmpl[2] && 'submenu' in tmpl[2]);
   assert.equal(tmpl[2].submenu?.[2]?.checked, true); // dark
-  assert.equal(tmpl[3]?.type, 'separator');
-  assert.equal(tmpl[4]?.label, 'Settings');
-  assert.equal(tmpl[5]?.type, 'separator');
-  assert.equal(tmpl[6]?.label, 'Quit');
-  assert.equal(tmpl.length, 7);
+  assert.equal(tmpl[3]?.label, 'Translucent');
+  assert.ok(tmpl[3] && 'submenu' in tmpl[3] && tmpl[3].submenu);
+  assert.equal(tmpl[3].submenu?.[0]?.label, 'On');
+  assert.equal(tmpl[3].submenu?.[0]?.checked, false);
+  assert.equal(tmpl[3].submenu?.[1]?.label, 'Off');
+  assert.equal(tmpl[3].submenu?.[1]?.checked, true);
+  assert.equal(tmpl[4]?.type, 'separator');
+  assert.equal(tmpl[5]?.label, 'Settings');
+  assert.equal(tmpl[6]?.type, 'separator');
+  assert.equal(tmpl[7]?.label, 'Quit');
+  assert.equal(tmpl.length, 8);
 }
 
 console.log('appTray.test.ts: ok');

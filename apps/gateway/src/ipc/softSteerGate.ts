@@ -23,17 +23,86 @@ const softSteerEpoch = new Map<string, number>();
 /** Serialize soft-steers per owner (rapid composer appends while busy). */
 const softSteerChains = new Map<string, Promise<void>>();
 
+/**
+ * Soft-steer abort → replacement turn handoff: keep mid-run RunState checkpoint
+ * on disk for the steered start to consume. Stop / superseded clears this *flag*
+ * (so no soft-steer replacement races), but the checkpoint *file* is kept for a
+ * later composer「继续」/resume (same spirit as soft-steer keep).
+ */
+const softSteerCheckpointHandoff = new Set<string>();
+
+/** Mark owner so the aborted turn's finally keeps run-checkpoint.json. */
+export function markSoftSteerCheckpointHandoff(ownerId: string): void {
+  const id = (ownerId || '').trim();
+  if (id) softSteerCheckpointHandoff.add(id);
+}
+
+/** True while a soft-steer replacement is expected to consume the checkpoint. */
+export function hasSoftSteerCheckpointHandoff(ownerId: string): boolean {
+  const id = (ownerId || '').trim();
+  return Boolean(id && softSteerCheckpointHandoff.has(id));
+}
+
+/** Drop handoff flag (Stop, superseded, or replacement turn consumed). */
+export function clearSoftSteerCheckpointHandoff(ownerId: string): void {
+  const id = (ownerId || '').trim();
+  if (id) softSteerCheckpointHandoff.delete(id);
+}
+
+/**
+ * Whether startBotTurn's finally should retain run-checkpoint.json.
+ * - Aborted turn (soft-steer victim or manual Stop): keep for handoff / later continue.
+ * - Soft-steer handoff marked on a non-steered turn: keep (belt-and-suspenders with abort).
+ * - SoftSteered replacement that ends without abort (success or fail-before-consume): clear.
+ * - Successful non-steered finish: clear *this turn's* mid-run ckpt.
+ * - Unconsumed kept ckpt from a *prior* run (Stop leftover) while a quiet reaction /
+ *   schedule / api turn finishes successfully: keep (must not wipe composer「继续」).
+ */
+export function shouldKeepRunCheckpointOnTurnEnd(opts: {
+  ownerId: string;
+  softSteered?: boolean;
+  aborted: boolean;
+  /**
+   * Mid-turn transient LLM/HTTP/network failure after in-turn retries exhausted.
+   * Keep checkpoint for Watchdog / later continue (not a hard permanent error wipe).
+   */
+  transientFailure?: boolean;
+  /** This turn's run id (parallelGate / turnRunId). */
+  currentRunId?: string;
+  /** runId of on-disk run-checkpoint.json at finally, if any. */
+  existingCheckpointRunId?: string | null;
+}): boolean {
+  if (opts.aborted) return true;
+  if (opts.transientFailure) return true;
+  if (hasSoftSteerCheckpointHandoff(opts.ownerId) && !opts.softSteered) return true;
+  // Preserve unconsumed kept checkpoint from another run (e.g. Stop leftover that
+  // reaction never consumed and never overwrote). Soft-steered fail-before-consume
+  // must still clear/abandon — gated by !softSteered.
+  if (
+    !opts.softSteered &&
+    opts.existingCheckpointRunId &&
+    opts.currentRunId &&
+    opts.existingCheckpointRunId !== opts.currentRunId
+  ) {
+    return true;
+  }
+  return false;
+}
+
 export function cancelSoftSteers(ownerId: string): void {
   const id = (ownerId || '').trim();
   if (!id) return;
   softSteerEpoch.set(id, (softSteerEpoch.get(id) ?? 0) + 1);
   // Stop during soft-steer: drop abort→restart hold so busy does not stick.
   clearOwnerBusyHolds(id);
+  // Stop wins vs soft-steer replacement: drop handoff flag (file still kept).
+  clearSoftSteerCheckpointHandoff(id);
 }
 
 export function resetSoftSteerStateForTests(): void {
   softSteerEpoch.clear();
   softSteerChains.clear();
+  softSteerCheckpointHandoff.clear();
 }
 
 async function withSoftSteerLock<T>(ownerId: string, fn: () => Promise<T>): Promise<T> {
@@ -135,6 +204,11 @@ export async function softSteerNewestRun(
     // Hold busy across abort → unregister → replacement register.
     holdOwnerBusy(id);
     try {
+      // Keep the latest mid-run checkpoint for the replacement turn (do not
+      // clear in the aborted run's finally). Stop clears the handoff *flag*
+      // but keeps the file for a later continue. abortOwnerRun flushes the
+      // live HITL RunState via setOwnerRunCheckpointFlush before abort().
+      markSoftSteerCheckpointHandoff(id);
       // Abort all owner runs so an in-flight auto_continue cannot race a
       // parallel composer turn (two 「收到」 bubbles). Newest-first for
       // deterministic teardown order.
@@ -146,6 +220,7 @@ export async function softSteerNewestRun(
       }
       if (currentSoftSteerEpoch(id) !== epoch) {
         releaseOwnerBusyHold(id);
+        clearSoftSteerCheckpointHandoff(id);
         return { steered: true, superseded: true };
       }
       // Keep hold until registerOwnerRun on the replacement turn.

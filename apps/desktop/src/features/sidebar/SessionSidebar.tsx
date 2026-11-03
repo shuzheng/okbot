@@ -686,7 +686,7 @@ export const SessionSidebar = memo(function SessionSidebar({
                 : lastPreview;
               const row = (
                 <div className={`session-item ${active ? 'active' : ''}`} title={narrow ? undefined : bot.name}>
-                  <span className={`session-avatar-shell${unread ? ' unread' : ''}`} title={unread ? t(lang, 'unreadReply') : undefined}>
+                  <span className={`session-avatar-shell${unread ? ' unread' : ''}${botIsWorking(bot.id) ? ' is-busy' : ''}`} title={unread ? t(lang, 'unreadReply') : undefined}>
                     <FlatAvatar
                       className="session-avatar"
                       emoji={bot.emoji}

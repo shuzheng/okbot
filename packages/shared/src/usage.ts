@@ -44,10 +44,12 @@ export interface UsageStats {
   byOwner: Record<string, TokenUsage>;
   /** ownerId → YYYY-MM-DD → counts (same retention window as `daily`). */
   dailyByOwner: Record<string, Record<string, TokenUsage>>;
+  /** Resolved API model id → lifetime totals (forward-looking; older usage may omit). */
+  byModel: Record<string, TokenUsage>;
 }
 
 export function emptyUsageStats(): UsageStats {
-  return { lifetime: emptyTokenUsage(), daily: {}, byOwner: {}, dailyByOwner: {} };
+  return { lifetime: emptyTokenUsage(), daily: {}, byOwner: {}, dailyByOwner: {}, byModel: {} };
 }
 
 function usageTokenMap(raw: unknown): Record<string, TokenUsage> {
@@ -81,6 +83,7 @@ export function normalizeUsageStats(raw: unknown): UsageStats {
     daily: usageTokenMap(src.daily),
     byOwner: usageTokenMap(src.byOwner),
     dailyByOwner,
+    byModel: usageTokenMap(src.byModel),
   };
 
 }

@@ -6,6 +6,7 @@ import {
   ownerHasBusyHold,
   registerOwnerRun,
   resetOwnerRunQueuesForTests,
+  setOwnerRunCheckpointFlush,
   unregisterOwnerRun,
   waitOwnerRunUnregistered,
   type AbortControllerMap,
@@ -171,6 +172,35 @@ resetAutoContinueStateForTests();
   unregisterOwnerRun(map, 'bot_ac', 'run_ac', c1);
   await pending;
   resetAutoContinueStateForTests();
+}
+
+{
+  // Soft-steer aborts must flush latest checkpoint BEFORE abort (resume reads fresher ckpt).
+  resetOwnerRunQueuesForTests();
+  resetSoftSteerStateForTests();
+  resetAutoContinueStateForTests();
+  const map: AbortControllerMap = new Map();
+  const ctrl = new AbortController();
+  const order: string[] = [];
+  let saved = '';
+  registerOwnerRun(map, 'bot_steer_flush', 'run_sf', ctrl);
+  setOwnerRunCheckpointFlush('bot_steer_flush', 'run_sf', () => {
+    order.push('flush');
+    saved = 'latest-in-memory-ckpt';
+    assert.equal(ctrl.signal.aborted, false, 'soft-steer flush precedes abort');
+  });
+  ctrl.signal.addEventListener('abort', () => {
+    order.push('abort');
+  });
+  const pending = softSteerNewestRun({ abortControllers: map }, 'bot_steer_flush');
+  await new Promise((r) => setTimeout(r, 5));
+  assert.deepEqual(order, ['flush', 'abort']);
+  assert.equal(saved, 'latest-in-memory-ckpt');
+  assert.equal(ctrl.signal.aborted, true);
+  unregisterOwnerRun(map, 'bot_steer_flush', 'run_sf', ctrl);
+  const result = await pending;
+  assert.equal(result.steered, true);
+  assert.equal(result.superseded, false);
 }
 
 console.log('softSteerGate.test.ts OK');

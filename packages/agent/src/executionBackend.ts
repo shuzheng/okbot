@@ -3,7 +3,13 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { execFile, type ChildProcess } from 'node:child_process';
-import { expandHome, resolveOwnerWorkPath } from './guardrails.js';
+import {
+  expandHome,
+  ensureOwnerTempDir,
+  ownerWorkDirFromResourcesDir,
+  resolveOwnerWorkPath,
+  checkOwnerDurableWriteAllowed,
+} from './guardrails.js';
 import {
   foldExecStreamToFormatted,
   parseExecStreamSseBlocks,
@@ -108,8 +114,10 @@ async function runLocalShellCommand(
   command: string,
   cwd?: string,
   signal?: AbortSignal,
+  defaultWorkDir?: string,
 ): Promise<string> {
-  const workdir = cwd?.trim() ? expandHome(cwd.trim()) : homedir();
+  const fallback = (defaultWorkDir || '').trim() || homedir();
+  const workdir = cwd?.trim() ? expandHome(cwd.trim()) : fallback;
   const { file: shellFile, args: shellArgs } = resolveShellExec(command);
   if (signal?.aborted) {
     return truncate(`cwd: ${workdir}\n\nshell: ${shellFile}\n\n错误: 已中止`);
@@ -182,8 +190,8 @@ async function runLocalShellCommand(
   }
 }
 
-async function readLocalFile(filePath: string, resourcesDir?: string): Promise<string> {
-  const resolved = path.resolve(resolveOwnerWorkPath(filePath, resourcesDir));
+async function readLocalFile(filePath: string, workDir?: string): Promise<string> {
+  const resolved = path.resolve(resolveOwnerWorkPath(filePath, workDir));
   const stat = await fs.stat(resolved);
   if (!stat.isFile()) throw new Error(`不是普通文件: ${resolved}`);
   if (stat.size > MAX_FILE_BYTES) {
@@ -194,8 +202,10 @@ async function readLocalFile(filePath: string, resourcesDir?: string): Promise<s
   return truncate(`path: ${resolved}\n\n${buf.toString('utf8')}`);
 }
 
-async function writeLocalFile(filePath: string, content: string, resourcesDir?: string): Promise<string> {
-  const resolved = path.resolve(resolveOwnerWorkPath(filePath, resourcesDir));
+async function writeLocalFile(filePath: string, content: string, workDir?: string): Promise<string> {
+  const durable = checkOwnerDurableWriteAllowed(filePath, workDir);
+  if (!durable.ok) throw new Error(durable.reason);
+  const resolved = path.resolve(resolveOwnerWorkPath(filePath, workDir));
   const ext = path.extname(resolved).toLowerCase();
   const binaryExts = new Set([
     '.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.bmp', '.pdf',
@@ -218,9 +228,11 @@ async function editLocalFile(
   filePath: string,
   oldText: string,
   newText: string,
-  resourcesDir?: string,
+  workDir?: string,
 ): Promise<string> {
-  const resolved = path.resolve(resolveOwnerWorkPath(filePath, resourcesDir));
+  const durable = checkOwnerDurableWriteAllowed(filePath, workDir);
+  if (!durable.ok) throw new Error(durable.reason);
+  const resolved = path.resolve(resolveOwnerWorkPath(filePath, workDir));
   let stat;
   try {
     stat = await fs.stat(resolved);
@@ -261,17 +273,29 @@ async function editLocalFile(
 
 /** Local desktop host backend (default). */
 export function createLocalExecutionBackend(opts?: {
-  /** `~/.okbot/<owner>/resources` — relative write/read/edit paths resolve here. */
+  /** `~/.okbot/data/<owner>/resources` — used to derive workDir when workDir omitted. */
   resourcesDir?: string | null;
+  /**
+   * Owner work root (`~/.okbot/data/<owner>` / `<dataRoot>/<owner>`).
+   * Relative fs root; shell default cwd is `<workDir>/temp`. Derived from resourcesDir when omitted.
+   */
+  workDir?: string | null;
 }): ExecutionBackend {
   const resourcesDir = (opts?.resourcesDir || '').trim() || undefined;
+  const workDir =
+    (opts?.workDir || '').trim() ||
+    (resourcesDir ? ownerWorkDirFromResourcesDir(resourcesDir) : '') ||
+    undefined;
+  // Shell throwaways default to temp/; relative fs still rooted at workDir.
+  const shellDefaultCwd = workDir ? ensureOwnerTempDir(workDir) : undefined;
   return {
     label: '本机',
-    runShell: runLocalShellCommand,
-    readFile: (filePath) => readLocalFile(filePath, resourcesDir),
-    writeFile: (filePath, content) => writeLocalFile(filePath, content, resourcesDir),
+    runShell: (command, cwd, signal) =>
+      runLocalShellCommand(command, cwd, signal, shellDefaultCwd),
+    readFile: (filePath) => readLocalFile(filePath, workDir),
+    writeFile: (filePath, content) => writeLocalFile(filePath, content, workDir),
     editFile: (filePath, oldText, newText) =>
-      editLocalFile(filePath, oldText, newText, resourcesDir),
+      editLocalFile(filePath, oldText, newText, workDir),
   };
 }
 
@@ -515,11 +539,16 @@ export async function probeRemoteComputer(
 export function resolveExecutionBackend(input: {
   computerId?: string | null;
   computers?: Array<{ id: string; name: string; host: string; port: number; token: string }>;
-  /** Owner resources dir for local relative fs paths. */
+  /** Owner resources dir — derives local workDir when workDir omitted. */
   resourcesDir?: string | null;
+  /** Owner work root for local relative fs; shell default cwd is temp/. */
+  workDir?: string | null;
 }): ExecutionBackend {
   const id = (input.computerId || 'local').trim() || 'local';
-  if (id === 'local') return createLocalExecutionBackend({ resourcesDir: input.resourcesDir });
+  if (id === 'local') return createLocalExecutionBackend({
+      resourcesDir: input.resourcesDir,
+      workDir: input.workDir,
+    });
   const list = Array.isArray(input.computers) ? input.computers : [];
   const entry = list.find((c) => c.id === id);
   if (!entry) {

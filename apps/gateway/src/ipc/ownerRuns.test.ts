@@ -5,10 +5,12 @@ import {
   acquireParallelGate,
   cancelQueuedOwnerRuns,
   DEFAULT_MAX_PARALLEL_RUNS,
+  getOwnerRunLastHeartbeatMs,
   listOwnerRunIds,
   ownerHasRuns,
   registerOwnerRun,
   resetOwnerRunQueuesForTests,
+  setOwnerRunCheckpointFlush,
   unregisterOwnerRun,
   waitOwnerRunUnregistered,
   type AbortControllerMap,
@@ -97,4 +99,83 @@ resetOwnerRunQueuesForTests();
 }
 
 assert.ok(DEFAULT_MAX_PARALLEL_RUNS >= 2);
+
+{
+  // Flush registered checkpoint callback BEFORE AbortController.abort (Stop / soft-steer).
+  resetOwnerRunQueuesForTests();
+  const map: AbortControllerMap = new Map();
+  const ctrl = new AbortController();
+  const order: string[] = [];
+  registerOwnerRun(map, 'bot_flush', 'run_f', ctrl);
+  setOwnerRunCheckpointFlush('bot_flush', 'run_f', () => {
+    order.push('flush');
+    assert.equal(ctrl.signal.aborted, false, 'flush must run before abort completes');
+  });
+  ctrl.signal.addEventListener('abort', () => {
+    order.push('abort');
+  });
+  assert.equal(abortOwnerRun(map, 'bot_flush', 'run_f'), true);
+  assert.deepEqual(order, ['flush', 'abort']);
+  unregisterOwnerRun(map, 'bot_flush', 'run_f', ctrl);
+}
+
+{
+  // abortAllOwnerRuns (Stop) flushes every in-flight run before abort.
+  resetOwnerRunQueuesForTests();
+  const map: AbortControllerMap = new Map();
+  const c1 = new AbortController();
+  const c2 = new AbortController();
+  const flushed: string[] = [];
+  registerOwnerRun(map, 'bot_stop_flush', 'run_1', c1);
+  registerOwnerRun(map, 'bot_stop_flush', 'run_2', c2);
+  setOwnerRunCheckpointFlush('bot_stop_flush', 'run_1', () => {
+    flushed.push('run_1');
+    assert.equal(c1.signal.aborted, false);
+  });
+  setOwnerRunCheckpointFlush('bot_stop_flush', 'run_2', () => {
+    flushed.push('run_2');
+    assert.equal(c2.signal.aborted, false);
+  });
+  assert.equal(abortAllOwnerRuns(map, 'bot_stop_flush'), true);
+  assert.deepEqual(flushed.sort(), ['run_1', 'run_2']);
+  assert.equal(c1.signal.aborted, true);
+  assert.equal(c2.signal.aborted, true);
+}
+
+{
+  // Flush errors must not block abort.
+  resetOwnerRunQueuesForTests();
+  const map: AbortControllerMap = new Map();
+  const ctrl = new AbortController();
+  registerOwnerRun(map, 'bot_flush_err', 'run_e', ctrl);
+  setOwnerRunCheckpointFlush('bot_flush_err', 'run_e', () => {
+    throw new Error('flush boom');
+  });
+  assert.equal(abortOwnerRun(map, 'bot_flush_err', 'run_e'), true);
+  assert.equal(ctrl.signal.aborted, true);
+  unregisterOwnerRun(map, 'bot_flush_err', 'run_e', ctrl);
+}
+
+
+{
+  // abortAllOwnerRuns must stop heartbeat timers before map.delete (Stop leak).
+  // Otherwise finally unregisterOwnerRun early-returns and 10s intervals stack.
+  resetOwnerRunQueuesForTests();
+  const map: AbortControllerMap = new Map();
+  const ctrl = new AbortController();
+  registerOwnerRun(map, 'bot_hb_stop', 'run_hb', ctrl);
+  assert.ok(getOwnerRunLastHeartbeatMs('bot_hb_stop', 'run_hb') != null);
+  assert.equal(abortAllOwnerRuns(map, 'bot_hb_stop'), true);
+  assert.equal(ctrl.signal.aborted, true);
+  assert.equal(ownerHasRuns(map, 'bot_hb_stop'), false);
+  assert.equal(
+    getOwnerRunLastHeartbeatMs('bot_hb_stop', 'run_hb'),
+    null,
+    'Stop must clear runHeartbeats so intervals do not leak',
+  );
+  // Mimic turn finally after abortAll cleared the map — must not throw / re-leak.
+  unregisterOwnerRun(map, 'bot_hb_stop', 'run_hb', ctrl);
+  assert.equal(getOwnerRunLastHeartbeatMs('bot_hb_stop', 'run_hb'), null);
+}
+
 console.log('ownerRuns.test.ts OK');

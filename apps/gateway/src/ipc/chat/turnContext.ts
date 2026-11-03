@@ -9,7 +9,10 @@ import {
   stripThinkContent,
   type ChatMessage,
 } from '@okbot/shared';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
+  listOwnerResourceMediaRefsFromMarkdown,
   normalizeReplyMediaMarkdown,
   quoteSessionInputCallback,
   stripImageLinesFromAttachedBlock,
@@ -25,7 +28,9 @@ export type ChatStartOrigin =
   | 'api'
   | 'auto_continue'
   /** Quiet first turn that lets the model open new-assistant onboarding (hidden user row). */
-  | 'onboarding';
+  | 'onboarding'
+  /** User emoji reaction on an assistant bubble (hidden user row; quote + emoji). */
+  | 'reaction';
 
 /** Synthetic user text for host auto-continue (hidden from UI transcript). */
 export const AUTO_CONTINUE_USER_TEXT =
@@ -57,6 +62,11 @@ export type ChatStartPayload = {
    */
   origin?: ChatStartOrigin;
   /**
+   * Set by orchestrateBotTurn when soft-steer aborted in-flight owner runs.
+   * Triggers host resume-context injection (tasks + resources inventory).
+   */
+  softSteered?: boolean;
+  /**
    * Gateway API token id that authenticated this HTTP/attach turn.
    * Used for per-token quotas and usage attribution. Desktop IPC omits this.
    */
@@ -65,7 +75,30 @@ export type ChatStartPayload = {
 
 /** True when the user row must stay in the model session but out of the UI transcript. */
 export function isQuietChatOrigin(origin: ChatStartPayload['origin']): boolean {
-  return origin === 'auto_continue' || origin === 'onboarding';
+  return origin === 'auto_continue' || origin === 'onboarding' || origin === 'reaction';
+}
+
+/**
+ * Soft-steer eligible: composer, reaction, or unset (= composer).
+ * Schedule / API / auto_continue never soft-steer via this helper.
+ * Does NOT gate leftover Stop-checkpoint consume — see mayConsumeKeptRunCheckpoint.
+ */
+export function isComposerChatOrigin(origin: ChatStartPayload['origin']): boolean {
+  return origin == null || origin === 'composer' || origin === 'reaction';
+}
+
+/**
+ * Whether this turn may load+clear a kept mid-run checkpoint (Stop leftover or
+ * soft-steer handoff). Soft-steered replacements always may. Otherwise only a
+ * real composer turn (or unset). Quiet `reaction` must not steal a Stop leftover
+ * meant for a later composer「继续」.
+ */
+export function mayConsumeKeptRunCheckpoint(
+  origin: ChatStartPayload['origin'],
+  softSteered?: boolean,
+): boolean {
+  if (softSteered) return true;
+  return origin == null || origin === 'composer';
 }
 
 export type ChatStartResult = {
@@ -101,14 +134,79 @@ export function resolveQuoteFields(
   };
 }
 
+/** Storage surface needed to index reply media into resources.jsonl. */
+export type LibraryMediaIndexStorage = {
+  ownerResourcesDir(ownerId: string): string;
+  indexOwnerResourceFile(
+    ownerId: string,
+    input: {
+      filePath: string;
+      title?: string;
+      createdBy?: 'user' | 'assistant';
+      sourceMessageId?: string;
+      type?: string;
+    },
+  ): unknown;
+};
+
+/**
+ * Index owner `resources/` files referenced by assistant markdown img srcs.
+ * Idempotent (same path updates title/updatedAt). Skips missing files / wrong owner.
+ */
+export function indexOwnerLibraryMediaFromMarkdown(
+  storage: LibraryMediaIndexStorage,
+  ownerId: string,
+  content: string,
+): void {
+  const id = (ownerId || '').trim();
+  if (!id || !content) return;
+  let resourcesDir: string;
+  try {
+    resourcesDir = storage.ownerResourcesDir(id);
+  } catch {
+    return;
+  }
+  for (const ref of listOwnerResourceMediaRefsFromMarkdown(content)) {
+    if (ref.ownerId !== id) continue;
+    const filePath = path.join(resourcesDir, ref.fileName);
+    try {
+      if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) continue;
+      storage.indexOwnerResourceFile(id, {
+        filePath,
+        title: ref.title,
+        createdBy: 'assistant',
+      });
+    } catch (err) {
+      console.error('[okbot] index library media from markdown failed', err);
+    }
+  }
+}
+
 /**
  * Persist assistant text. showThinking only affects renderer projection;
  * stripping on write used to irreversibly truncate when parseThink misfired.
  * Also rewrite legacy okbot-asset: / file://…/.okbot/…/resources/ img srcs to
  * absolute gateway `/v1/media/…` (never leave data:/file:// as the canonical form).
+ * When `libraryIndex` is set, also ensure referenced resources/ media appear in 资料库.
  */
-export function persistAssistantContent(content: string, _showThinking: boolean): string {
-  return normalizeReplyMediaMarkdown(content);
+export function persistAssistantContent(
+  content: string,
+  _showThinking: boolean,
+  libraryIndex?: { ownerId: string; storage: LibraryMediaIndexStorage },
+): string {
+  const sealed = normalizeReplyMediaMarkdown(content);
+  if (libraryIndex?.ownerId && libraryIndex.storage) {
+    try {
+      indexOwnerLibraryMediaFromMarkdown(
+        libraryIndex.storage,
+        libraryIndex.ownerId,
+        sealed,
+      );
+    } catch (err) {
+      console.error('[okbot] persistAssistantContent library index failed', err);
+    }
+  }
+  return sealed;
 }
 
 /** Stamp runId onto runtime events for a parallel turn (except roster/skill broadcasts). */
@@ -137,6 +235,8 @@ export type LiveAssistantState = {
   assistantMsg: ChatMessage;
   /** Last user-visible assistant text emitted this turn (for consecutive-ack dedupe). */
   lastEmittedVisible?: string;
+  /** Emojis placed via send_message reaction this turn (suppress emoji-only final bubble). */
+  reactedEmojisThisTurn?: string[];
 };
 
 export type LiveAssistantHost = {
@@ -258,7 +358,10 @@ export async function commitLiveAssistantBubble(
       return false;
     }
   }
-  const sealed = persistAssistantContent(raw, host.showThinking);
+  const sealed = persistAssistantContent(raw, host.showThinking, {
+    ownerId: host.ownerId,
+    storage: host.storage,
+  });
   state.assistantMsg = {
     ...state.assistantMsg,
     content: sealed,
@@ -323,7 +426,10 @@ export async function emitAssistantMessageBubble(
     return;
   }
 
-  const sealed = persistAssistantContent(text, host.showThinking);
+  const sealed = persistAssistantContent(text, host.showThinking, {
+    ownerId: host.ownerId,
+    storage: host.storage,
+  });
   state.assistantMsg = {
     ...state.assistantMsg,
     content: sealed,

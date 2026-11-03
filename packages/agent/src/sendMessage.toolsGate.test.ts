@@ -31,6 +31,9 @@ assert.equal(instrOn.includes('开场确认只能走 send_message 一次'), true
 assert.equal(instrOn.includes('流式正文或最终 output_text'), true, 'no second opening in final/stream');
 assert.equal(instrOn.includes('先发确认气泡'), true, 'must forbid meta narration of ack bubble');
 assert.equal(instrOn.includes('用户说「继续」或催促后'), true, '继续 must send_message before tools');
+assert.equal(instrOn.includes('表情回应'), true, 'must teach emoji-only reactions via send_message');
+assert.equal(instrOn.includes('reactToMessageId'), true, 'must name reactToMessageId in prompt');
+assert.equal(instrOn.includes('react_message'), false, 'must not invent a separate react_message tool');
 
 const instrOff = buildAgentInstructions('t', '', [], prefsOff);
 assert.equal(instrOff.includes('多条独立回复消息'), false);

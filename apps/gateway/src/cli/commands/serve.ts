@@ -14,7 +14,7 @@ import {
 import { ensureGatewayToken, resolveGatewayUiRoot, startSkillWatch } from '../../gatewayRuntime';
 import { startScheduleTicker } from '../../scheduleTicker';
 import { closeMcp } from '../../mcpRuntime';
-import { resumeAllSafeCheckpoints } from '../../ipc/chat/coldRestoreCheckpoint';
+import { startCheckpointRecovery } from '../../ipc/runWatchdog';
 import { listBusyOwnerIds } from '../../ipc/ownerRuns';
 import { readDesktopAppVersion } from '../../appVersion';
 import type { CliMessages } from '../i18n';
@@ -38,11 +38,7 @@ function rejectPendingApprovalsForBot(storage: FileStorage, botId: string, messa
     pending.resolve({ approved: false, message });
   }
   storage.clearPendingHitl(botId);
-  try {
-    storage.clearRunCheckpoint(botId);
-  } catch (err) {
-    console.error('[okbot] clear run checkpoint on reject failed', err);
-  }
+  // Do not clear run-checkpoint here: Stop keeps it for a later「继续」.
 }
 
 /** Start the gateway in the foreground. Returns exit code (0 keeps process alive). */
@@ -153,6 +149,7 @@ export async function serve(t: CliMessages, args: string[] = []): Promise<number
     sendRuntimeEvent({ type: 'settings_changed', at: new Date().toISOString() });
   });
   let stopSkills = () => {};
+  let stopWatchdog: (() => void) | null = null;
   let stopScheduleTicker = () => {};
   let shutdown: () => void = () => {
     releaseServerLock(storage.root);
@@ -176,6 +173,7 @@ export async function serve(t: CliMessages, args: string[] = []): Promise<number
       console.error('[okbot] skill watch stop failed', err);
     }
     try {
+      stopWatchdog?.();
       stopScheduleTicker();
     } catch (err) {
       console.error('[okbot] schedule ticker stop failed', err);
@@ -216,9 +214,7 @@ export async function serve(t: CliMessages, args: string[] = []): Promise<number
 
   stopSkills = startSkillWatch(storage, sendRuntimeEvent);
   stopScheduleTicker = startScheduleTicker({ storage, ctx });
-  void resumeAllSafeCheckpoints(ctx).catch((err) => {
-    console.error('[okbot] resume checkpoints on start failed', err);
-  });
+  stopWatchdog = startCheckpointRecovery(ctx).stop;
 
   const base = publicBase(api.port);
   const bind = api.bindLan ? '0.0.0.0' : '127.0.0.1';

@@ -31,7 +31,7 @@ import { createId, type ChatMessage } from '@okbot/shared';
 import { normalizeMessageAttachments } from '../../storage/sessionJsonl';
 import {
   fingerprintTasks,
-  hasUnfinishedTasks,
+  canAutoContinueTasks,
 } from '../../storage/TaskProgressStore';
 import type { IpcContext } from '../context';
 import {
@@ -39,15 +39,23 @@ import {
   isAutoContinueCancelled,
 } from '../autoContinueGate';
 import { ownerHasRuns, releaseOwnerBusyHold } from '../ownerRuns';
-import { softSteerNewestRun } from '../softSteerGate';
+import {
+  clearSoftSteerCheckpointHandoff,
+  hasSoftSteerCheckpointHandoff,
+  softSteerNewestRun,
+} from '../softSteerGate';
 import { startBotTurn } from './startBotTurn';
 import {
   AUTO_CONTINUE_STALL_ESCALATION_TEXT,
   AUTO_CONTINUE_USER_TEXT,
+  isComposerChatOrigin,
   resolveQuoteFields,
   type ChatStartPayload,
   type ChatStartResult,
 } from './turnContext';
+
+/** Re-export for callers/tests that imported from this module. */
+export { isComposerChatOrigin } from './turnContext';
 
 function persistUserOnly(
   ctx: IpcContext,
@@ -71,11 +79,6 @@ function persistUserOnly(
   ctx.storage.touchBot(botId);
   ctx.sendRuntimeEvent({ type: 'user_message', botId, message: userMsg });
   return userMsg;
-}
-
-/** Soft-steer only for composer (or unset = composer for backward compat). */
-export function isComposerChatOrigin(origin: ChatStartPayload['origin']): boolean {
-  return origin == null || origin === 'composer';
 }
 
 export type OrchestrateBotTurnDeps = {
@@ -121,7 +124,7 @@ async function maybeAutoContinueTaskProgress(
       console.error('[okbot] load tasks for auto-continue failed', err);
       break;
     }
-    if (!hasUnfinishedTasks(tasks)) break;
+    if (!canAutoContinueTasks(tasks)) break;
 
     const fpBefore = fingerprintTasks(tasks);
     const continueText =
@@ -151,7 +154,7 @@ async function maybeAutoContinueTaskProgress(
       console.error('[okbot] reload tasks after auto-continue failed', err);
       break;
     }
-    if (!hasUnfinishedTasks(tasksAfter)) break;
+    if (!canAutoContinueTasks(tasksAfter)) break;
     // Stall: escalate continue prompt while fingerprint unchanged; do not stop
     // solely for no-spin while unfinished tasks remain.
     if (fingerprintTasks(tasksAfter) === fpBefore) {
@@ -226,19 +229,41 @@ export async function orchestrateBotTurn(
   // auto_continue is cancelled+aborted before we start. Empty runs → no-op.
   // Soft-steer itself calls cancelAutoContinues; do not clear cancel until after
   // soft-steer so a racing AC kick sees the flag.
-  const { superseded } = await softSteer(ctx, botId);
+  const { steered, superseded } = await softSteer(ctx, botId);
   if (superseded) {
     // Stop (or a newer steer) won the epoch — keep the user bubble, no run.
+    // Drop soft-steer handoff so no replacement consumes it, but keep
+    // run-checkpoint.json: manual Stop also preserves ckpt for a later「继续」.
+    clearSoftSteerCheckpointHandoff(botId);
     const userMessage = persistUserOnly(ctx, botId, payload, text);
     return { userMessage, superseded: true };
   }
   // This turn may host auto-continue after a clean done.
   clearAutoContinueCancel(botId);
+  // When soft-steer aborted in-flight work, mark the replacement turn so
+  // startBotTurn injects host resume context (tasks + resources).
+  const steeredPayload: ChatStartPayload = steered
+    ? { ...payload, softSteered: true }
+    : payload;
   try {
-    result = await startTurn(ctx, payload, text);
+    result = await startTurn(ctx, steeredPayload, text);
   } catch (err) {
     // startTurn failed before registerOwnerRun — drop soft-steer busy hold.
     releaseOwnerBusyHold(botId);
+    // Steered replacement failed before consume-once: abandon handoff + ckpt
+    // so a later successful finish is not stuck keeping run-checkpoint.json.
+    // (startBotTurn finally also abandons when softSteered; this covers throws
+    // before that finally runs.)
+    if (steered && hasSoftSteerCheckpointHandoff(botId)) {
+      clearSoftSteerCheckpointHandoff(botId);
+      try {
+        if (typeof ctx.storage.clearRunCheckpoint === 'function') {
+          ctx.storage.clearRunCheckpoint(botId);
+        }
+      } catch (clearErr) {
+        console.error('[okbot] clear run checkpoint after failed soft-steer start failed', clearErr);
+      }
+    }
     throw err;
   }
   return finishWithAutoContinue(ctx, botId, payload, result, startTurn, awaitAutoContinue);

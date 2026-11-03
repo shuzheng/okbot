@@ -15,13 +15,18 @@ import {
   parseOwnerResourceSrc,
   resolveMediaAssetUrl,
 } from '../../utils/mediaAsset';
-import { BotMentionChip } from '../../components/ui/BotMentionChip';
+import { EntityMentionChip } from '../../components/ui/EntityMentionChip';
 import {
-  botIdFromMentionHref,
+  botRefToEntity,
   isBotMentionHref,
-  linkifyBotMentions,
+  linkifyEntityMentions,
+  parseMentionHref,
   type MentionBotRef,
-} from '../../utils/botMentions';
+  type MentionEntityRef,
+} from '../../utils/entityMentions';
+import { isHttpUrl } from '../../utils/splitUrls';
+import { handleInDocumentHashClick } from '../../utils/noteAnchors';
+import { ChatExternalLink } from './ChatExternalLink';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import hljs from 'highlight.js/lib/core';
@@ -307,9 +312,7 @@ function markdownUrlTransform(url: string): string {
  * render, which remounts every image (network reload) whenever the parent
  * re-renders (e.g. avatar auto-save → bots[] identity change).
  */
-const MentionRosterContext = createContext<ReadonlyMap<string, MentionBotRef>>(
-  new Map(),
-);
+const MentionCatalogContext = createContext<readonly MentionEntityRef[]>([]);
 const MarkdownUiLangContext = createContext<UiLang>('zh');
 
 const MdLink = memo(function MdLink({
@@ -319,14 +322,41 @@ const MdLink = memo(function MdLink({
   href?: string;
   children?: ReactNode;
 }) {
-  const botsById = useContext(MentionRosterContext);
+  const catalog = useContext(MentionCatalogContext);
   if (isBotMentionHref(href)) {
-    const id = botIdFromMentionHref(href || '');
-    const bot = botsById.get(id);
-    if (bot) return <BotMentionChip bot={bot} />;
-    // Roster may have changed; still show avatar+name chip from link text.
+    const parsed = parseMentionHref(href || '');
+    const kind = parsed?.kind ?? 'bot';
+    const id = parsed?.id ?? '';
+    const hit = catalog.find((e) => e.kind === kind && e.id === id);
+    if (hit) return <EntityMentionChip entity={hit} />;
+    // Catalog may have changed; still show chip from link text.
     const name = String(linkChildren ?? '').replace(/^@/, '').trim() || id;
-    return <BotMentionChip bot={{ id, name, emoji: '🤖', color: '' }} />;
+    return (
+      <EntityMentionChip
+        entity={{
+          kind,
+          id,
+          label: name,
+          emoji: kind === 'squad' ? '👥' : kind === 'schedule' ? '⏰' : kind === 'skill' ? '🧩' : '🤖',
+        }}
+      />
+    );
+  }
+  if (isHttpUrl(href)) {
+    return <ChatExternalLink href={href!}>{linkChildren}</ChatExternalLink>;
+  }
+  // In-document TOC / heading anchors: scroll in place (never target=_blank).
+  if (href && href.trim().startsWith('#')) {
+    return (
+      <a
+        href={href}
+        onClick={(e) => {
+          handleInDocumentHashClick(e, href, e.currentTarget.ownerDocument);
+        }}
+      >
+        {linkChildren}
+      </a>
+    );
   }
   return (
     <a href={href} target="_blank" rel="noreferrer noopener">
@@ -396,27 +426,34 @@ export const MarkdownContent = memo(function MarkdownContent({
   children,
   lang,
   bots = [],
+  catalog,
   preferBotId,
 }: {
   children: string;
   lang?: UiLang;
   /** Roster for resolving `@助手名` / `@id` mention chips. */
   bots?: readonly MentionBotRef[];
+  /** Multi-kind catalog; when omitted, derived from bots. */
+  catalog?: readonly MentionEntityRef[];
   /** Open-session owner id — duplicate names resolve to this bot's profile. */
   preferBotId?: string;
 }) {
   const uiLang = lang ?? resolveUiLang(undefined);
+  const resolvedCatalog = useMemo(() => {
+    if (catalog && catalog.length) return catalog;
+    return bots.map(botRefToEntity);
+  }, [catalog, bots]);
   const source = useMemo(
-    () => linkifyBotMentions(children, bots, preferBotId ? { preferBotId } : undefined),
-    [children, bots, preferBotId],
+    () =>
+      linkifyEntityMentions(
+        children,
+        resolvedCatalog,
+        preferBotId ? { preferBotId } : undefined,
+      ),
+    [children, resolvedCatalog, preferBotId],
   );
-  const botsById = useMemo(() => {
-    const map = new Map<string, MentionBotRef>();
-    for (const b of bots) map.set(b.id, b);
-    return map;
-  }, [bots]);
   return (
-    <MentionRosterContext.Provider value={botsById}>
+    <MentionCatalogContext.Provider value={resolvedCatalog}>
       <MarkdownUiLangContext.Provider value={uiLang}>
         <div className="md">
           <ReactMarkdown
@@ -428,6 +465,6 @@ export const MarkdownContent = memo(function MarkdownContent({
           </ReactMarkdown>
         </div>
       </MarkdownUiLangContext.Provider>
-    </MentionRosterContext.Provider>
+    </MentionCatalogContext.Provider>
   );
 });

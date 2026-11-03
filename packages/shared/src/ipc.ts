@@ -36,16 +36,35 @@ export const IpcChannels = {
   testModelConnection: 'okbot:test-model-connection',
   probeComputer: 'okbot:probe-computer',
   getMessages: 'okbot:get-messages',
-  /** Open (pending/in_progress) tasks for the chat UI above the composer. */
+  /** In-progress tasks for the chat UI above the composer. */
   getTasks: 'okbot:get-tasks',
   /** All tasks (incl. history) for edit-assistant/squad 任务 tab. */
   listOwnerTasks: 'okbot:list-owner-tasks',
-  /** Artifacts under ~/.okbot/<owner>/resources/ for 资源 tab. */
+  /** Delete a backlog-only task from edit 任务 tab. */
+  deleteOwnerTask: 'okbot:delete-owner-task',
+  /** resources.jsonl library for 资料 / 资源 tab. */
   listOwnerResources: 'okbot:list-owner-resources',
+  /** Delete one resource (metadata + ingested file when under resources/). */
+  deleteOwnerResource: 'okbot:delete-owner-resource',
+  /** Read text body for md/code preview. */
+  readOwnerResourceText: 'okbot:read-owner-resource-text',
+  /** Add note / URL / folder|file link / ingest copy into resources library. */
+  addOwnerResource: 'okbot:add-owner-resource',
+  /** Reveal or open a resource path / URL via OS. */
+  openOwnerResource: 'okbot:open-owner-resource',
+  /** Write/replace text body of an ingested resource (notes HTML). */
+  writeOwnerResourceText: 'okbot:write-owner-resource-text',
+  /**
+   * Electron main: one-shot offscreen capture of HTML → PNG data URL.
+   * Does NOT write a thumbnail to disk.
+   */
+  captureNoteHtmlPreview: 'okbot:capture-note-html-preview',
   getMessagesPage: 'okbot:get-messages-page',
   searchMessages: 'okbot:search-messages',
   getPromptContext: 'okbot:get-prompt-context',
   chatStart: 'okbot:chat-start',
+  /** Set or clear an in-place emoji reaction on a message. */
+  setMessageReaction: 'okbot:set-message-reaction',
   chatAbort: 'okbot:chat-abort',
   /** Manual Summary+Buffer pass (bypass ratio). Payload: { botId?|squadId?, mode:'compress'|'newTopic' }. */
   compressSessionNow: 'okbot:compress-session-now',
@@ -187,12 +206,20 @@ export type RuntimeEvent =
       trace?: MessageTrace;
       /** Quick-choice card attached to this reply (model `ask_choice`). */
       choice?: QuickChoice;
+      /** Note card attached to this reply (`manage_note`). */
+      noteCard?: import('./chat.js').NoteCardMeta;
       aborted?: boolean;
       runId?: string;
     }
   | { type: 'error'; botId: string; messageId: string; error: string; runId?: string }
   | { type: 'user_message'; botId: string; message: ChatMessage; runId?: string }
   | { type: 'assistant_message'; botId: string; message: ChatMessage; runId?: string }
+  | {
+      /** In-place message field update (e.g. reaction); not a new timeline row. */
+      type: 'message_updated';
+      botId: string;
+      message: ChatMessage;
+    }
   | {
       type: 'tool_request';
       botId: string;
