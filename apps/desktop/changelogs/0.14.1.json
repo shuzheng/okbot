@@ -1,0 +1,25 @@
+{
+  "version": "0.14.1",
+  "releasedAt": "2026-11-04T00:00:00Z",
+  "forceUpdate": false,
+  "notes": {
+    "en": {
+      "title": "What's new in 0.14.1",
+      "highlights": [
+        "Settings no longer jump-scroll while editing",
+        "Lighter new-assistant overlay in light theme",
+        "Clearer tool names: Notes, Search chat history"
+      ],
+      "bodyMarkdown": "## Fixed\n\n- Settings: SlidingPillTabs no longer call scrollIntoView (stops outer settings pane snap-back while typing/autosaving); settings body/nav use the same thin scroll-fade scrollbar treatment as chat.\n- Settings: Watchdog fields are included in the SettingsModal save payload (interval / transient retries persist).\n- Light theme: new-assistant modal backdrop opacity reduced to 5%.\n\n## Changed\n\n- Tool display names: manage_note → Notes / 笔记管理; search_history → Search chat history / 搜索聊天记录.\n"
+    },
+    "zh": {
+      "title": "0.14.1 更新内容",
+      "highlights": [
+        "设置滚动不再弹回",
+        "浅色主题新建助手遮罩更轻",
+        "工具显示名更口语：笔记管理、搜索聊天记录"
+      ],
+      "bodyMarkdown": "## 修复\n\n- 设置：SlidingPillTabs 不再调用 scrollIntoView（编辑/自动保存时外层设置面板不再回弹滚动）；设置正文/导航滚动条与聊天区统一为细滚动条样式。\n- 设置：Watchdog 字段纳入 SettingsModal 保存载荷（间隔 / 瞬时重试可持久化）。\n- 浅色主题：新建助手弹框遮罩透明度降至 5%。\n\n## 变更\n\n- 工具显示名：manage_note → 笔记管理 / Notes；search_history → 搜索聊天记录 / Search chat history。\n"
+    }
+  }
+}

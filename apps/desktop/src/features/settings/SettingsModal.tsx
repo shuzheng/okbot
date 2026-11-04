@@ -944,8 +944,15 @@ export function SettingsModal({
           onClick={() => setNavMenuOpen(false)}
         />
         <nav
-          className="settings-nav"
+          className="settings-nav scroll-fade"
           aria-label={t(lang, 'settings')}
+          onScroll={(e) => updateScrollFade(e.currentTarget)}
+          ref={(el) => {
+            if (el) {
+              updateScrollFade(el);
+              requestAnimationFrame(() => updateScrollFade(el));
+            }
+          }}
         >
           {navTip(
             t(lang, 'settingsNavClientGroup'),

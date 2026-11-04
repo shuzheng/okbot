@@ -4,7 +4,7 @@
   "bin": {
     "okbot": "./apps/gateway/bin/okbot.mjs"
   },
-  "version": "0.14.0",
+  "version": "0.14.1",
   "description": "OkBot — personal desktop AI assistant",
   "packageManager": "pnpm@11.15.1",
   "scripts": {

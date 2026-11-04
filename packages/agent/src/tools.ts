@@ -664,7 +664,7 @@ export function buildTools(
       tool({
         name: 'manage_note',
         description:
-          '管理当前助手/小队的 HTML 笔记（持久 resources.jsonl + resources/*.html）。action=create|update|list|get。' +
+          '管理当前助手/小队的笔记（持久 resources.jsonl + resources/*.html）。action=create|update|list|get。' +
           '用户只要「记一下 / 维护笔记 / 写设计稿/需求/报告」且无明确排期、也不是要你当场逐步执行的任务清单时，用本工具；不要建成 manage_task_progress 任务。' +
           'create：传 title 与完整自包含 html（inline CSS，可读浅色/深色优先，无重依赖；非报告类默认文首 TOC/大纲，href="#id" 对齐标题 id）。' +
           'update（维护同一篇）：传 id（或 path）与新的完整 html，可选 title。' +
@@ -1090,10 +1090,10 @@ export const TOOL_BLURBS: Record<string, string> = {
   write_file: '新建/整文件覆盖写入',
   edit_file: '精确单处替换',
   generate_image: '文生图（OpenAI 兼容 /images/generations）',
-  search_history: '检索本会话历史',
+  search_history: '搜索聊天记录',
   manage_schedule: '管理定时任务',
   manage_task_progress: '管理多任务（tasks.jsonl）',
-  manage_note: '管理 HTML 笔记（resources.jsonl）',
+  manage_note: '管理笔记（resources.jsonl）',
   manage_memory: '置顶/遗忘/提升记忆',
   send_message: '回复消息或表情回应',
   web_fetch: '拉取网页正文',

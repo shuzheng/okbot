@@ -39,10 +39,25 @@ export function SlidingPillTabs<T extends string>({
     });
   }, [value]);
 
+  // Keep the active pill in view on the *track* only. Never call scrollIntoView:
+  // that walks vertical ancestors (.settings-body / form drawers) and snaps the
+  // outer pane back up whenever options identity changes (inline arrays on each
+  // parent render — common while typing / autosaving in Settings).
+  const optionIds = options.map((o) => o.id).join('\0');
   useLayoutEffect(() => {
-    btnRefs.current[value]?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+    const track = trackRef.current;
+    const btn = btnRefs.current[value];
+    if (track && btn) {
+      const trackRect = track.getBoundingClientRect();
+      const btnRect = btn.getBoundingClientRect();
+      if (btnRect.left < trackRect.left) {
+        track.scrollLeft -= trackRect.left - btnRect.left;
+      } else if (btnRect.right > trackRect.right) {
+        track.scrollLeft += btnRect.right - trackRect.right;
+      }
+    }
     syncPill();
-  }, [syncPill, value, options]);
+  }, [syncPill, value, optionIds]);
 
   useEffect(() => {
     const onResize = () => syncPill();

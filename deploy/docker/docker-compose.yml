@@ -17,7 +17,7 @@ services:
       context: ../..
       dockerfile: deploy/docker/Dockerfile.gateway
       # Docker BuildKit: honor deploy/docker/.dockerignore when supported
-    image: okbot-gateway:0.14.0
+    image: okbot-gateway:0.14.1
     container_name: okbot-gateway
     restart: unless-stopped
     ports:

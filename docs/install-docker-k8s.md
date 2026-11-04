@@ -19,7 +19,7 @@ Unauthenticated health: **`GET /v1/health`** → `{ "ok": true, "service": "okbo
 From the repository root (Docker / OrbStack):
 
 ```bash
-docker build -f deploy/docker/Dockerfile.gateway -t okbot-gateway:0.14.0 .
+docker build -f deploy/docker/Dockerfile.gateway -t okbot-gateway:0.14.1 .
 ```
 
 The image is a multi-stage Debian bookworm build: pnpm workspace builds `@okbot/shared` → `@okbot/agent` → `@okbot/gateway`, then `pnpm deploy --prod --legacy` for a portable runtime. No Electron binary is required at runtime.
@@ -69,7 +69,7 @@ Use the **user** token in the desktop “add gateway” / attach flow; admin is 
 helm lint deploy/helm/okbot
 helm upgrade --install okbot ./deploy/helm/okbot \
   --set image.repository=okbot-gateway \
-  --set image.tag=0.14.0
+  --set image.tag=0.14.1
 ```
 
 Chart notes:
@@ -111,7 +111,7 @@ kubectl exec deploy/okbot -- okbot token show
 在仓库根目录：
 
 ```bash
-docker build -f deploy/docker/Dockerfile.gateway -t okbot-gateway:0.14.0 .
+docker build -f deploy/docker/Dockerfile.gateway -t okbot-gateway:0.14.1 .
 ```
 
 多阶段 Debian bookworm：用 pnpm 构建 `@okbot/shared` → `@okbot/agent` → `@okbot/gateway`，再 `pnpm deploy --prod --legacy` 产出运行树。镜像**不含** Electron。
@@ -151,7 +151,7 @@ docker compose -f deploy/docker/docker-compose.yml exec gateway okbot token show
 helm lint deploy/helm/okbot
 helm upgrade --install okbot ./deploy/helm/okbot \
   --set image.repository=okbot-gateway \
-  --set image.tag=0.14.0
+  --set image.tag=0.14.1
 ```
 
 单副本 + RWO PVC；探针走 `/v1/health`（named port → `service.targetPort`）。Chart 会用 `service.targetPort` 注入 `OKBOT_PORT`，与容器监听端口对齐。令牌同样从 `kubectl logs` / `okbot token show` 获取。

@@ -192,7 +192,7 @@ export function listHardcodedSystemPrompts(): HardcodedSystemPromptEntry[] {
     {
       id: 'noteInstruction',
       category: 'agent',
-      titleZh: 'HTML 笔记 manage_note',
+      titleZh: '笔记管理 manage_note',
       titleEn: 'manage_note',
       hintZh: '启用笔记工具时注入。',
       hintEn: 'Injected when manage_note is enabled.',

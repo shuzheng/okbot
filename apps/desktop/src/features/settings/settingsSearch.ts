@@ -200,7 +200,7 @@ export const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
   { id: 'toolWriteFile', tab: 'tools', labelKey: 'toolWriteFile', keywords: ['write'] , developerOnly: true },
   { id: 'toolEditFile', tab: 'tools', labelKey: 'toolEditFile', keywords: ['edit'] , developerOnly: true },
   { id: 'toolGenerateImage', tab: 'tools', labelKey: 'toolGenerateImage', keywords: ['image', 'generate', 'openai', 'dall-e', 'gpt-image', '画图', '生图', '文生图'] , developerOnly: true },
-  { id: 'toolSearchHistory', tab: 'tools', labelKey: 'toolSearchHistory', keywords: ['history', 'search_history', '会话', '历史'] , developerOnly: true },
+  { id: 'toolSearchHistory', tab: 'tools', labelKey: 'toolSearchHistory', keywords: ['history', 'search_history', '会话', '历史', '聊天', '记录', '搜索聊天记录'] , developerOnly: true },
   { id: 'toolManageSchedule', tab: 'tools', labelKey: 'toolManageSchedule', keywords: ['schedule', 'cron', '定时'] , developerOnly: true },
   { id: 'toolManageTaskProgress', tab: 'tools', labelKey: 'toolManageTaskProgress', keywords: ['task', 'progress', 'checklist', 'queue', '进度', '清单', '队列', '任务进度', 'manage_task_progress'] , developerOnly: true },
   { id: 'toolManageNote', tab: 'tools', labelKey: 'toolManageNote', keywords: ['note', 'html', '笔记', '资料', '资料库', 'library', 'manage_note'] , developerOnly: true },

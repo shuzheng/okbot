@@ -3,7 +3,7 @@
 # Does NOT include Electron. Desktop / browser clients attach over HTTP.
 #
 # Build from repository root:
-#   docker build -f deploy/docker/Dockerfile.gateway -t okbot-gateway:0.14.0 .
+#   docker build -f deploy/docker/Dockerfile.gateway -t okbot-gateway:0.14.1 .
 
 ARG NODE_VERSION=22.14.0
 ARG PNPM_VERSION=11.15.1

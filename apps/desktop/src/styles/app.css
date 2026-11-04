@@ -7184,6 +7184,33 @@ button.message-attach-image {
   flex-direction: column;
   gap: 12px;
 }
+/* Match chat .messages thin translucent scrollbar via .scroll-fade; fade tint = pane bg. */
+.settings-body.scroll-fade {
+  --scroll-fade: #111;
+}
+:root[data-theme='light'] .settings-body.scroll-fade {
+  --scroll-fade: #fafafa;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .settings-body.scroll-fade {
+    --scroll-fade: #fafafa;
+  }
+}
+.settings-nav.scroll-fade {
+  --scroll-fade: #080808;
+}
+:root[data-theme='light'] .settings-nav.scroll-fade {
+  --scroll-fade: var(--panel);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .settings-nav.scroll-fade {
+    --scroll-fade: var(--panel);
+  }
+}
+/* Flex scrollport: never crush section cards (scrollHeight must stay content-sized). */
+.settings-body > * {
+  flex-shrink: 0;
+}
 .settings-section-label {
   font-size: 11px;
   font-weight: 600;
@@ -8777,6 +8804,14 @@ button.message-attach-image {
 /* New assistant dialog (name + avatar before create) */
 .modal-backdrop.new-bot-backdrop {
   background: rgba(0, 0, 0, 0.32);
+}
+:root[data-theme='light'] .modal-backdrop.new-bot-backdrop {
+  background: rgba(0, 0, 0, 0.05);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .modal-backdrop.new-bot-backdrop {
+    background: rgba(0, 0, 0, 0.05);
+  }
 }
 .modal.new-bot-dialog {
   width: min(400px, calc(100vw - 24px));
