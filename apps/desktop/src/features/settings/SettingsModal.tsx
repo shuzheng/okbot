@@ -8,6 +8,7 @@ import {
   normalizeInstructionsSettings,
   normalizeMemorySettings,
   normalizeMaintenanceSettings,
+  normalizeWatchdogSettings,
   normalizeMeshSettings,
   normalizeGatewayHttpApiSettings,
   normalizeComputers,
@@ -777,6 +778,7 @@ export function SettingsModal({
           promptMaxChars: settings.memory.promptMaxChars,
         }),
         maintenance: normalizeMaintenanceSettings(settings.maintenance),
+        watchdog: normalizeWatchdogSettings(settings.watchdog),
         squad: normalizeSquadSettings({
           captainPersona,
           playbook: squadPlaybook,
