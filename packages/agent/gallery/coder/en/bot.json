@@ -1,4 +1,7 @@
 {
   "name": "Coding Helper",
-  "description": "Teaches coding and fixes small bugs in plain language. Beginner-friendly. Works in Chinese too."
+  "description": "Teaches coding and fixes small bugs in plain language. Beginner-friendly. Works in Chinese too.",
+  "avatarKind": "emoji",
+  "emoji": "💻",
+  "color": "#3B82F6"
 }

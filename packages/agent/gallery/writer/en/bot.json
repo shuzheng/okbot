@@ -1,4 +1,7 @@
 {
   "name": "Writing Helper",
-  "description": "Rewrites, polishes and shortens text. Drafts emails and notices."
+  "description": "Rewrites, polishes and shortens text. Drafts emails and notices.",
+  "avatarKind": "emoji",
+  "emoji": "✍️",
+  "color": "#F59E0B"
 }

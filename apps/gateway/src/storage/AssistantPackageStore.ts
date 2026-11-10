@@ -1,7 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { type Bot, type BotConfig, type BotRosterEntry, type BotSkill } from '@okbot/shared';
+import {
+  allocateUniqueBotDisplayName,
+  type Bot,
+  type BotConfig,
+  type BotRosterEntry,
+  type BotSkill,
+} from '@okbot/shared';
 import {
   buildAssistantPackage,
   stripSecrets,
@@ -103,8 +109,13 @@ export class AssistantPackageStore {
   /** Create a bot from parsed package contents (file import and the built-in gallery). */
   installAssistantPackage(pkg: AssistantPackageContents): Bot {
     const clean = stripSecrets(pkg);
+    // Import always creates a new bot; on name clash append -2, -3, … (silent).
+    const name = allocateUniqueBotDisplayName(
+      this.deps.listRoster().map((e) => e.name),
+      clean.manifest.name,
+    );
     const bot = this.deps.createBot({
-      name: clean.manifest.name,
+      name,
       description: clean.manifest.description,
       emoji: clean.manifest.avatar.emoji,
       color: clean.manifest.avatar.color,

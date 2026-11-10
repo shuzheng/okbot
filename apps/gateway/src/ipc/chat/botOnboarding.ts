@@ -19,6 +19,7 @@ import {
   buildOnboardingProfileTool,
   onboardingSeedText,
   type OnboardingProfileUpdate,
+  type OnboardingToolBoundary,
 } from '@okbot/agent';
 import type { FileStorage } from '../../storage/FileStorage';
 import { runThrottledPostTurnMaintenance } from '../chatMaintenance';
@@ -82,6 +83,7 @@ export function onboardingRunExtras(
   storage: FileStorage,
   bot: Bot,
   onChoice: (choice: QuickChoice) => void,
+  boundary?: OnboardingToolBoundary,
 ): {
   onboardingGuide?: string;
   tools: Array<ReturnType<typeof buildAskChoiceTool> | ReturnType<typeof buildOnboardingProfileTool>>;
@@ -93,8 +95,11 @@ export function onboardingRunExtras(
       buildAskChoiceTool((choice) => {
         onChoice(choice);
         return '选项卡片已显示在你本条回复下方。现在写正文，不要在正文里重复列出选项。';
-      }),
-      buildOnboardingProfileTool((update) => applyOnboardingProfile(storage, bot.id, update)),
+      }, boundary),
+      buildOnboardingProfileTool(
+        (update) => applyOnboardingProfile(storage, bot.id, update),
+        boundary,
+      ),
     ],
   };
 }

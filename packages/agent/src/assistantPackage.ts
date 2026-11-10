@@ -16,7 +16,8 @@ export type AssistantPackageAvatar = {
 };
 
 /**
- * Installable assistant package (folder or .okbot zip contents).
+ * Installable assistant package identity (in-memory).
+ * On disk this lives in `bot.json` (name / description / avatar fields).
  * Secrets (API keys, tokens, session, memories) are never included.
  */
 export type AssistantPackageManifest = {
@@ -26,7 +27,7 @@ export type AssistantPackageManifest = {
   /** Short persona / description. */
   description: string;
   avatar: AssistantPackageAvatar;
-  /** Optional SOUL.md body (personality / boundaries / tone). Legacy packages may use agentsMd. */
+  /** Optional SOUL.md body (personality / boundaries / tone). */
   soulMd?: string;
   /** Skills shipped with the package (slug → body already in skills/). */
   skills?: Array<{ slug: string; name: string; description: string }>;
@@ -70,6 +71,37 @@ export function stripSecrets<T>(value: T): T {
   return out as T;
 }
 
+function normalizeAvatar(raw: Record<string, unknown> | null | undefined): AssistantPackageAvatar {
+  const src = raw && typeof raw === 'object' ? raw : {};
+  const nested =
+    src.avatar && typeof src.avatar === 'object'
+      ? (src.avatar as Record<string, unknown>)
+      : null;
+  const pick = nested ?? src;
+  return {
+    avatarKind: pick.avatarKind === 'emoji' ? 'emoji' : 'bot-avatar',
+    emoji:
+      typeof pick.emoji === 'string' && pick.emoji.trim() ? pick.emoji.trim() : '🤖',
+    color: typeof pick.color === 'string' ? pick.color.trim() : '',
+    ...(typeof pick.botAvatarType === 'string'
+      ? { botAvatarType: pick.botAvatarType as AssistantPackageAvatar['botAvatarType'] }
+      : {}),
+  };
+}
+
+/** Share-package `bot.json` payload (name / description / full avatar; no secrets). */
+export function assistantPackageBotJson(pkg: AssistantPackageContents): Record<string, unknown> {
+  const { name, description, avatar } = pkg.manifest;
+  return {
+    name,
+    description,
+    avatarKind: avatar.avatarKind,
+    emoji: avatar.emoji,
+    color: avatar.color,
+    ...(avatar.botAvatarType ? { botAvatarType: avatar.botAvatarType } : {}),
+  };
+}
+
 export function buildAssistantPackage(input: {
   name: string;
   description: string;
@@ -106,47 +138,26 @@ export function buildAssistantPackage(input: {
   };
 }
 
-/** Validate + normalize a parsed package (folder or unzipped .okbot). */
+/** Validate + normalize a parsed package (folder or unzipped .okbot). Requires bot.json. */
 export function parseAssistantPackage(raw: {
-  manifest: unknown;
+  /** Package identity + avatar from bot.json (required). */
+  botJson: unknown;
   soulMd?: string;
   skillFiles?: Array<{ slug: string; raw: string }>;
-  /** Optional bot.json dual-write (name+description); preferred when present. */
-  botJson?: unknown;
 }): AssistantPackageContents {
-  const m = raw.manifest;
-  if (!m || typeof m !== 'object') throw new Error('无效的助手包：缺少 manifest');
-  const src = m as Record<string, unknown>;
-  if (src.format !== OKBOT_ASSISTANT_PACKAGE_FORMAT) {
-    throw new Error(`无效的助手包格式：${String(src.format ?? '')}`);
+  if (!raw.botJson || typeof raw.botJson !== 'object') {
+    throw new Error('无效的助手包：缺少 bot.json');
   }
-  const botSrc =
-    raw.botJson && typeof raw.botJson === 'object'
-      ? (raw.botJson as Record<string, unknown>)
-      : null;
-  // Prefer bot.json name+description when present (folder export/import consistency).
-  const nameFromBot =
-    botSrc && typeof botSrc.name === 'string' ? botSrc.name.trim() : '';
-  const descFromBot =
-    botSrc && typeof botSrc.description === 'string' ? botSrc.description.trim() : '';
-  const name =
-    nameFromBot || (typeof src.name === 'string' ? src.name.trim() : '');
+  const botSrc = raw.botJson as Record<string, unknown>;
+  if ('format' in botSrc && botSrc.format != null && botSrc.format !== OKBOT_ASSISTANT_PACKAGE_FORMAT) {
+    throw new Error(`无效的助手包格式（bot.json）：${String(botSrc.format)}`);
+  }
+
+  const name = typeof botSrc.name === 'string' ? botSrc.name.trim() : '';
   if (!name) throw new Error('无效的助手包：缺少 name');
   const description =
-    descFromBot ||
-    (typeof src.description === 'string' ? src.description.trim() : '');
-  const avatarRaw =
-    src.avatar && typeof src.avatar === 'object'
-      ? (src.avatar as Record<string, unknown>)
-      : {};
-  const avatar: AssistantPackageAvatar = {
-    avatarKind: avatarRaw.avatarKind === 'emoji' ? 'emoji' : 'bot-avatar',
-    emoji: typeof avatarRaw.emoji === 'string' && avatarRaw.emoji.trim() ? avatarRaw.emoji.trim() : '🤖',
-    color: typeof avatarRaw.color === 'string' ? avatarRaw.color.trim() : '',
-    ...(typeof avatarRaw.botAvatarType === 'string'
-      ? { botAvatarType: avatarRaw.botAvatarType as AssistantPackageAvatar['botAvatarType'] }
-      : {}),
-  };
+    typeof botSrc.description === 'string' ? botSrc.description.trim() : '';
+  const avatar = normalizeAvatar(botSrc);
 
   const skills: BotSkill[] = [];
   for (const f of raw.skillFiles ?? []) {
@@ -160,11 +171,7 @@ export function parseAssistantPackage(raw: {
       ? raw.soulMd
       : typeof (raw as { agentsMd?: unknown }).agentsMd === 'string'
         ? ((raw as { agentsMd?: string }).agentsMd as string)
-      : typeof src.soulMd === 'string'
-        ? src.soulMd
-        : typeof src.agentsMd === 'string'
-          ? src.agentsMd
-          : '';
+        : '';
 
   return buildAssistantPackage({
     name,
@@ -180,16 +187,7 @@ export function assistantPackageToFileMap(
   pkg: AssistantPackageContents,
 ): Record<string, string> {
   const files: Record<string, string> = {
-    'manifest.json': `${JSON.stringify(pkg.manifest, null, 2)}\n`,
-    // Dual-write name+description for parity with runtime `<botId>/bot.json`.
-    'bot.json': `${JSON.stringify(
-      {
-        name: pkg.manifest.name,
-        description: pkg.manifest.description,
-      },
-      null,
-      2,
-    )}\n`,
+    'bot.json': `${JSON.stringify(assistantPackageBotJson(pkg), null, 2)}\n`,
   };
   if (pkg.soulMd.trim()) {
     files['SOUL.md'] = pkg.soulMd.endsWith('\n') ? pkg.soulMd : `${pkg.soulMd}\n`;

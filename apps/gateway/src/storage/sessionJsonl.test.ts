@@ -479,4 +479,162 @@ function ui(id: string, role: 'user' | 'assistant', content: string): SessionRec
 }
 
 
+
+{
+  // Onboarding / missing-seal escalation: A, A+B, A+B+C without mesh chips.
+  const a = '好，那就边测边报，有问题当场说，不压到最后。';
+  const bBody = '最后一件小事，说完就能开工：';
+  const m1 = recordToUiMessage(
+    legacyMessageToRecord({
+      id: 'esc_a',
+      role: 'assistant',
+      content: a,
+      createdAt: '2026-11-05T00:00:00.000Z',
+    }),
+  )!;
+  const m2 = recordToUiMessage(
+    legacyMessageToRecord({
+      id: 'esc_ab',
+      role: 'assistant',
+      content: a + '\n\n' + bBody,
+      createdAt: '2026-11-05T00:00:01.000Z',
+    }),
+  )!;
+  const m3 = recordToUiMessage(
+    legacyMessageToRecord({
+      id: 'esc_final',
+      role: 'assistant',
+      content: a + a + '\n\n' + bBody + a + '\n\n' + bBody,
+      createdAt: '2026-11-05T00:00:02.000Z',
+    }),
+  )!;
+  const out = dedupeMeshInterimMessages([m1, m2, m3]);
+  assert.equal(out[0]!.id, 'esc_a');
+  assert.equal(out[0]!.content, a);
+  // Later bubbles must not keep A as a leading prefix.
+  for (const m of out.slice(1)) {
+    assert.equal(
+      m.content.startsWith(a),
+      false,
+      `expected prefix strip on ${m.id}, got: ${m.content.slice(0, 40)}`,
+    );
+  }
+}
+
+
+{
+  // Cross-turn prefix must NOT peel: short ack then user then longer reply
+  // that happens to start with the same ack text.
+  const ack = '好的。';
+  const reply = '好的。我已经把报告写完了，你看一下。';
+  const m1 = recordToUiMessage(
+    legacyMessageToRecord({
+      id: 'cross_ack',
+      role: 'assistant',
+      content: ack,
+      createdAt: '2026-11-05T01:00:00.000Z',
+    }),
+  )!;
+  const u = recordToUiMessage(
+    legacyMessageToRecord({
+      id: 'cross_user',
+      role: 'user',
+      content: '报告写好了吗？',
+      createdAt: '2026-11-05T01:00:01.000Z',
+    }),
+  )!;
+  const m2 = recordToUiMessage(
+    legacyMessageToRecord({
+      id: 'cross_reply',
+      role: 'assistant',
+      content: reply,
+      createdAt: '2026-11-05T01:00:02.000Z',
+    }),
+  )!;
+  const out = dedupeMeshInterimMessages([m1, u, m2]);
+  assert.deepEqual(
+    out.map((m) => m.id),
+    ['cross_ack', 'cross_user', 'cross_reply'],
+  );
+  assert.equal(out[2]!.content, reply);
+}
+
+{
+  // Cross-turn exact short ack must NOT delete the later bubble.
+  const ack = '收到。';
+  const m1 = recordToUiMessage(
+    legacyMessageToRecord({
+      id: 'ack1',
+      role: 'assistant',
+      content: ack,
+      createdAt: '2026-11-05T02:00:00.000Z',
+    }),
+  )!;
+  const u = recordToUiMessage(
+    legacyMessageToRecord({
+      id: 'ack_user',
+      role: 'user',
+      content: '再确认一下',
+      createdAt: '2026-11-05T02:00:01.000Z',
+    }),
+  )!;
+  const m2 = recordToUiMessage(
+    legacyMessageToRecord({
+      id: 'ack2',
+      role: 'assistant',
+      content: ack,
+      createdAt: '2026-11-05T02:00:02.000Z',
+    }),
+  )!;
+  const out = dedupeMeshInterimMessages([m1, u, m2]);
+  assert.deepEqual(
+    out.map((m) => m.id),
+    ['ack1', 'ack_user', 'ack2'],
+  );
+  assert.equal(out[2]!.content, ack);
+}
+
+{
+  // Mid-turn A / A+B / A+B+C still collapses when no user sits between them.
+  const a = '好的。';
+  const b = '好的。我已经把报告写完了。';
+  const c = '好的。我已经把报告写完了。请查收附件。';
+  const m1 = recordToUiMessage(
+    legacyMessageToRecord({
+      id: 'mid_a',
+      role: 'assistant',
+      content: a,
+      createdAt: '2026-11-05T03:00:00.000Z',
+    }),
+  )!;
+  const m2 = recordToUiMessage(
+    legacyMessageToRecord({
+      id: 'mid_ab',
+      role: 'assistant',
+      content: b,
+      createdAt: '2026-11-05T03:00:01.000Z',
+    }),
+  )!;
+  const m3 = recordToUiMessage(
+    legacyMessageToRecord({
+      id: 'mid_abc',
+      role: 'assistant',
+      content: c,
+      createdAt: '2026-11-05T03:00:02.000Z',
+    }),
+  )!;
+  const out = dedupeMeshInterimMessages([m1, m2, m3]);
+  assert.equal(out[0]!.id, 'mid_a');
+  assert.equal(out[0]!.content, a);
+  for (const m of out.slice(1)) {
+    assert.equal(
+      m.content.startsWith(a),
+      false,
+      `expected mid-turn prefix strip on ${m.id}, got: ${m.content.slice(0, 40)}`,
+    );
+  }
+}
+
 console.log('sessionJsonl.test.ts: ok');
+
+

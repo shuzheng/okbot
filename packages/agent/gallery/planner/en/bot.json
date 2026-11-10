@@ -1,4 +1,7 @@
 {
   "name": "Planner",
-  "description": "Breaks a task into a checklist with order and time."
+  "description": "Breaks a task into a checklist with order and time.",
+  "avatarKind": "emoji",
+  "emoji": "🗓️",
+  "color": "#10B981"
 }

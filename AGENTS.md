@@ -41,6 +41,7 @@ deploy/helm/okbot/     网关 Helm chart（单副本 + PVC）
 | 远程电脑协议 | `apps/sandbox-agent/src/server.ts`。桌面侧探测在 `probeRemoteComputer` |
 | 扩展面（工具 / MCP / skills / 供应商 / 电脑） | [`docs/extension-surfaces.md`](./docs/extension-surfaces.md)；无独立 plugin runtime |
 | 产品行为说明 | `GUIDE.md` 对应章节。不要把开发向边界写进 README |
+| `~/.okbot` 文件/字段格式 | [`docs/design/okbot-data-schema.md`](./docs/design/okbot-data-schema.md)；改存储时同改 |
 
 `out/`、`dist/`、`node_modules/` 是构建结果。不要手改。
 
@@ -86,7 +87,8 @@ Gateway vs Electron 职责表与惰性 `require('electron')` 说明见 [`DESIGN.
 ## 文档约束
 
 - 单一事实来源：`DESIGN.md` = 架构与边界；`GUIDE.md` = 产品行为；`AGENTS.md` = 本仓库改码流程。重叠的 HTTP 路由表 / 数据目录 / 工具默认值只在权威文档保留一份，其它处交叉引用。
-- 只写终态，不写迁移笔记；不写本机绝对路径或内部仓库名。
+- **`~/.okbot` 磁盘 schema**：目录树、每文件格式与字段以 [`docs/design/okbot-data-schema.md`](./docs/design/okbot-data-schema.md) 为权威。任何改动 `~/.okbot` 下路径 / 文件名 / 持久化字段 / ID 约定 / JSON↔JSONL 格式的代码变更，**必须在同一改动里更新该文档**（见该文文首 Keep in sync）。
+- 只写终态，不写迁移笔记；不写本机绝对路径或内部仓库名（产品数据根写作 `~/.okbot` 即可）。
 - `GUIDE.md` 不要写产品号，也不要出现「版本」这两个字。行为以代码为准，写进对应章节。
-- `README.md` / `README_zh.md` 的功能条目是用户写的。不要为了「对齐实现」重写那些条目。根 README 保持短述，开发细节留在 `GUIDE.md`。
-- 不要把密钥、真实令牌、`settings.json` 内容写进仓库文件。
+- `README.md` / `README_en.md` 的功能条目是用户写的。不要为了「对齐实现」重写那些条目。根 README 保持短述，开发细节留在 `GUIDE.md`。
+- 不要把密钥、真实令牌、`server.json` / `client.json` 内容写进仓库文件。

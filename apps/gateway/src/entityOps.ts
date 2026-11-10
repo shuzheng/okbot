@@ -325,7 +325,6 @@ export function createEntityOps(ctx: IpcContext) {
     importAssistantFromUrl: async (a: Obj) => {
       const url = str(a.url).trim();
       if (!url) throw new Error('请输入 GitHub 地址或助手包链接');
-      const overwrite = a.overwrite === true;
       // Replace any prior in-flight import controller.
       if (urlImportAbort) {
         try { urlImportAbort.abort(); } catch { /* ignore */ }
@@ -334,18 +333,7 @@ export function createEntityOps(ctx: IpcContext) {
       urlImportAbort = ac;
       try {
         const pkg = await fetchAssistantPackageFromUrl(url, { signal: ac.signal });
-        const name = (pkg.manifest.name || '').trim();
-        const existing = name
-          ? s.listBots().filter((b) => b.name.trim() === name)
-          : [];
-        if (existing.length > 0 && !overwrite) {
-          throw new Error(`assistant_name_exists:${name}`);
-        }
-        if (existing.length > 0 && overwrite) {
-          for (const bot of existing) {
-            deleteOwner(ctx, bot.id, 'bot');
-          }
-        }
+        // Name clashes are resolved inside installAssistantPackage (`name-2`, `name-3`, …).
         return s.installAssistantPackage(pkg);
       } finally {
         if (urlImportAbort === ac) urlImportAbort = null;

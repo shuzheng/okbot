@@ -597,6 +597,12 @@ export function dedupeMeshInterimMessages(messages: ChatMessage[]): ChatMessage[
   const out: ChatMessage[] = [];
   for (let i = 0; i < messages.length; i++) {
     const m = messages[i]!;
+    if (m.role === 'user') {
+      // Mesh interim texts must not suppress legitimate short acks on later turns.
+      interimTexts.clear();
+      out.push(m);
+      continue;
+    }
     if (m.role === 'assistant' && m.meshInterim === true) {
       const key = (m.content || '').trim();
       if (key) interimTexts.add(key);
@@ -642,6 +648,55 @@ export function dedupeMeshInterimMessages(messages: ChatMessage[]): ChatMessage[
     const stripped = stripLeadingCommittedInterim(next.content || '', interim);
     if (stripped !== next.content) {
       out[i + 1] = { ...next, content: stripped };
+    }
+  }
+
+  // Same-run prefix escalation without mesh chips (onboarding ask_choice /
+  // save_assistant_profile missed seal → A, A+B, A+B+C). Keep earlier sealed
+  // bubbles; strip earlier assistant text from later ones only inside a
+  // contiguous non-user segment (forbid cross-turn exact-delete / prefix peel);
+  // drop empties / exact duplicates. Outer loop: peeling B can re-expose A.
+  for (let i = 1; i < out.length; i++) {
+    const cur = out[i]!;
+    if (cur.role !== 'assistant' || cur.meshExchange) continue;
+    let content = cur.content || '';
+    if (!content.trim()) continue;
+    // Contiguous segment: walk back past assistants/chips until a user turn.
+    let segmentStart = i;
+    while (segmentStart > 0 && out[segmentStart - 1]!.role !== 'user') {
+      segmentStart -= 1;
+    }
+    let changed = false;
+    for (let round = 0; round < 16; round++) {
+      let roundChanged = false;
+      for (let j = segmentStart; j < i; j++) {
+        const earlierMsg = out[j]!;
+        if (earlierMsg.role !== 'assistant' || earlierMsg.meshExchange) continue;
+        const earlier = earlierMsg.content || '';
+        if (!earlier.trim()) continue;
+        for (let guard = 0; guard < 8; guard++) {
+          if (content.trim() === earlier.trim()) {
+            content = '';
+            roundChanged = true;
+            break;
+          }
+          const stripped = stripLeadingCommittedInterim(content, earlier);
+          if (stripped === content) break;
+          content = stripped;
+          roundChanged = true;
+        }
+        if (!content.trim()) break;
+      }
+      if (!roundChanged) break;
+      changed = true;
+      if (!content.trim()) break;
+    }
+    if (!changed) continue;
+    if (!content.trim()) {
+      out.splice(i, 1);
+      i -= 1;
+    } else {
+      out[i] = { ...cur, content };
     }
   }
   return out;

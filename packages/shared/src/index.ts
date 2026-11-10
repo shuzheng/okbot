@@ -12,6 +12,7 @@ export * from './memoryExpiry.js';
 export * from './usage.js';
 export * from './trace.js';
 export * from './settings.js';
+export * from './botDisplayName.js';
 export * from './chat.js';
 export * from './tasks.js';
 export * from './resources.js';

@@ -1,4 +1,7 @@
 {
   "name": "翻译助手",
-  "description": "中英互译，保留语气和格式。"
+  "description": "中英互译，保留语气和格式。",
+  "avatarKind": "emoji",
+  "emoji": "🌐",
+  "color": "#0EA5E9"
 }

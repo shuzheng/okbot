@@ -318,15 +318,63 @@ export function buildRunOpts(input: {
   return runOpts;
 }
 
+function assistantTextsFromHistory(
+  history: AgentRunStreamResult['history'],
+): string[] {
+  if (!Array.isArray(history)) return [];
+  const out: string[] = [];
+  for (const item of history) {
+    if (item?.role !== 'assistant') continue;
+    const raw = item.content;
+    const text =
+      typeof raw === 'string'
+        ? raw
+        : Array.isArray(raw)
+          ? raw
+              .map((part) =>
+                part && typeof part === 'object' && typeof (part as { text?: unknown }).text === 'string'
+                  ? (part as { text: string }).text
+                  : '',
+              )
+              .join('')
+          : '';
+    if (text.trim()) out.push(text);
+  }
+  return out;
+}
+
 export function resolveFinalContent(
   result: AgentRunStreamResult,
   streamed: string,
 ): string {
-  // Prefer the live stream. onClearLiveText resets streamed at tool interrupts so
-  // post-tool text is formal-only; without tools, multi-segment answers stay intact.
-  // Using finalOutput first caused a UI flash: live 1+2+3 → done shrinks to final-only
-  // → getMessagesPage reload restores fuller session rows.
-  if (streamed.trim()) return streamed;
+  // Prefer the live stream. onClearLiveText / onBeforeToolExecute resets streamed at
+  // tool boundaries so post-tool text is formal-only; without tools, multi-segment
+  // answers stay intact. Using finalOutput first caused a UI flash: live 1+2+3 →
+  // done shrinks to final-only → getMessagesPage reload restores fuller session rows.
+  const historyAssistants = assistantTextsFromHistory(result.history);
+  if (streamed.trim()) {
+    // Safety net when extraTools missed the seal hook: streamed became A+B(+A+B…)
+    // while history already has distinct assistant segments. Prefer the last segment
+    // when streamed is clearly a concatenation ending with that segment.
+    if (historyAssistants.length >= 2) {
+      const last = historyAssistants[historyAssistants.length - 1]!;
+      const compact = (s: string) => s.replace(/\s+/g, '');
+      const streamC = compact(streamed);
+      const lastC = compact(last);
+      const firstC = compact(historyAssistants[0]!);
+      if (
+        lastC &&
+        firstC &&
+        streamC !== lastC &&
+        streamC.endsWith(lastC) &&
+        streamC.includes(firstC) &&
+        streamC.length >= firstC.length + lastC.length
+      ) {
+        return last;
+      }
+    }
+    return streamed;
+  }
 
   let content =
     typeof result.finalOutput === 'string'
@@ -335,17 +383,8 @@ export function resolveFinalContent(
         ? String(result.finalOutput)
         : '';
 
-  if (!content.trim()) {
-    const history = result.history;
-    if (Array.isArray(history)) {
-      for (let i = history.length - 1; i >= 0; i--) {
-        const item = history[i];
-        if (item?.role === 'assistant' && typeof item.content === 'string' && item.content.trim()) {
-          content = item.content;
-          break;
-        }
-      }
-    }
+  if (!content.trim() && historyAssistants.length) {
+    content = historyAssistants[historyAssistants.length - 1]!;
   }
 
   return content;

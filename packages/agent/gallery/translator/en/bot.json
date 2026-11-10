@@ -1,4 +1,7 @@
 {
   "name": "Translator",
-  "description": "Translates between Chinese and English. Keeps the tone and format."
+  "description": "Translates between Chinese and English. Keeps the tone and format.",
+  "avatarKind": "emoji",
+  "emoji": "🌐",
+  "color": "#0EA5E9"
 }

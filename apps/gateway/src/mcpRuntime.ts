@@ -25,6 +25,7 @@ export type McpRunTools = ReturnType<McpHub['buildTools']>;
 export async function mcpToolsForRun(
   settings: Pick<AppSettings, 'mcp'>,
   budget?: ToolRunBudget,
+  onBeforeToolExecute?: () => void | Promise<void>,
 ): Promise<McpRunTools> {
   const mcp = normalizeMcpSettings(settings.mcp);
   try {
@@ -33,7 +34,7 @@ export async function mcpToolsForRun(
     console.error('[okbot] mcp sync failed', err);
   }
   if (!mcp.enabled) return [];
-  return hub.buildTools(budget, RESERVED_TOOL_NAMES);
+  return hub.buildTools(budget, RESERVED_TOOL_NAMES, onBeforeToolExecute);
 }
 
 export async function mcpStatus(settings: Pick<AppSettings, 'mcp'>): Promise<McpServerStatus[]> {

@@ -26,6 +26,13 @@ import {
   removeMentionTokenFromDraft,
   type MentionEntityRef,
 } from '../../utils/entityMentions';
+import {
+  COMPOSER_SIDE_CHROME_FALLBACK,
+  decideComposerMultiline,
+  measureComposerSideChrome,
+  resolveCompactProbeWidth,
+  shouldAnimateComposerHeight,
+} from './composerAutosize';
 
 export type ComposerQuoteDraft = {
   messageId: string;
@@ -208,7 +215,7 @@ export const ChatComposer = memo(function ChatComposer({
     const maxLines = 5;
     const maxPx = maxLines * linePx + padPx;
     const singleLinePx = linePx + padPx;
-    const inner = el.closest('.composer-inner');
+    const inner = el.closest('.composer-inner') as HTMLElement | null;
     // Prefer live DOM class over React state so we do not re-run this effect
     // (and kill the 1↔N height animation) just to sync isMultiline.
     const currentlyMultiline = Boolean(inner?.classList.contains('is-multiline'));
@@ -217,10 +224,19 @@ export const ChatComposer = memo(function ChatComposer({
     // scrollHeight vs clientHeight before any probe (overflow may still be auto).
     const hadOverflow = el.scrollHeight > el.clientHeight + 0.5;
 
-    const parentW = el.parentElement?.clientWidth ?? el.clientWidth;
-    // Worst-case side chrome: + | mic | stop | send + gaps + inner horizontal pad.
-    const sideChrome = 30 + 8 + 30 + 8 + 28 + 8 + 28 + 14;
-    const compactW = Math.max(64, parentW - sideChrome);
+    // Probe compact width from .composer-inner, NOT .composer-input-wrap.
+    // The wrap's clientWidth already excludes side buttons; subtracting chrome
+    // again (~154px) flipped is-multiline around ~35 CJK chars.
+    const inputWrap = el.closest('.composer-input-wrap') as HTMLElement | null;
+    const sideChrome = inner
+      ? measureComposerSideChrome(inner, inputWrap)
+      : COMPOSER_SIDE_CHROME_FALLBACK;
+    const compactW = resolveCompactProbeWidth({
+      innerClientWidth: inner?.clientWidth ?? null,
+      wrapClientWidth: inputWrap?.clientWidth ?? el.parentElement?.clientWidth ?? null,
+      editableClientWidth: el.clientWidth,
+      sideChrome,
+    });
 
     const prevWidth = el.style.width;
     const prevFlex = el.style.flex;
@@ -238,7 +254,11 @@ export const ChatComposer = memo(function ChatComposer({
     el.style.minWidth = `${compactW}px`;
     el.style.height = '0px';
     const compactSh = el.scrollHeight;
-    const nextMultiline = compactSh > singleLinePx + 0.5;
+    const nextMultiline = decideComposerMultiline({
+      compactScrollHeight: compactSh,
+      singleLinePx,
+      currentlyMultiline,
+    });
 
     // Apply layout class immediately so display measure + chrome match final mode
     // without waiting for a second React commit (avoids remount/focus risk too).
@@ -288,15 +308,15 @@ export const ChatComposer = memo(function ChatComposer({
       return;
     }
 
-    if (modeChanged && startH > 0 && Math.abs(startH - nextH) > 0.5) {
+    if (shouldAnimateComposerHeight({ modeChanged, startH, nextH })) {
       el.style.height = `${startH}px`;
       // Force reflow so the browser registers the start height before transitioning.
       void el.offsetHeight;
       el.style.transition = '';
       el.style.height = `${nextH}px`;
     } else {
+      // Same-mode grow/shrink, or mode flip with unchanged 1-line height — no transition.
       el.style.height = `${nextH}px`;
-      // Keep transition disabled for same-mode grow/shrink (2→3 lines etc.).
     }
     el.style.overflowY = atCap ? 'auto' : 'hidden';
 

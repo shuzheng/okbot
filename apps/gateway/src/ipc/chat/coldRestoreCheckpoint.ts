@@ -172,7 +172,8 @@ export async function resumeBotFromCheckpoint(
       tools: settings.tools,
       security: settings.security,
       toolRunBudget: guards.budget,
-      extraTools: await mcpToolsForRun(settings, guards.budget),
+      buildExtraTools: async ({ onBeforeToolExecute, toolRunBudget }) =>
+        mcpToolsForRun(settings, toolRunBudget, onBeforeToolExecute),
       session: fileSession,
       ownerId: bot.id,
       resourcesDir,
@@ -530,7 +531,8 @@ export async function resumeSquadFromCheckpoint(
       tools: settings.tools,
       security: settings.security,
       toolRunBudget: guards.budget,
-      extraTools: await mcpToolsForRun(settings, guards.budget),
+      buildExtraTools: async ({ onBeforeToolExecute, toolRunBudget }) =>
+        mcpToolsForRun(settings, toolRunBudget, onBeforeToolExecute),
       history: [],
       session,
       ownerId: squad.id,

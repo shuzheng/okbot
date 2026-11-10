@@ -24,6 +24,24 @@ import {
   type MeshRuntimeContext,
 } from './mesh.js';
 
+/** Merge host `buildExtraTools` (onboarding/MCP) after seal hooks exist. */
+async function withResolvedExtraTools<T extends {
+  extraTools?: readonly import('@openai/agents').Tool[];
+  buildExtraTools?: RunAgentChatInput['buildExtraTools'];
+  toolRunBudget?: RunAgentChatInput['toolRunBudget'];
+  onBeforeToolExecute?: () => void | Promise<void>;
+}>(input: T): Promise<T> {
+  const build = input.buildExtraTools;
+  if (!build || !input.onBeforeToolExecute) return input;
+  const built = await build({
+    onBeforeToolExecute: input.onBeforeToolExecute,
+    toolRunBudget: input.toolRunBudget,
+  });
+  const merged = [...(input.extraTools ?? []), ...(built ?? [])];
+  return { ...input, extraTools: merged, buildExtraTools: undefined };
+}
+
+
 function attachMeshAskTool(
   input: RunAgentChatInput | ResumeAgentChatAfterHitlInput,
 ): (RunAgentChatInput | ResumeAgentChatAfterHitlInput) & {
@@ -111,13 +129,14 @@ export async function runAgentChat(input: RunAgentChatInput): Promise<RunChatRes
   const withMesh = attachMeshAskTool(withCommit) as RunAgentChatInput & {
     meshAskTool?: import('@openai/agents').Tool;
   };
-  const { agent, runner } = createAgentAndRunner(withMesh);
-  const runOpts = buildRunOpts(withMesh);
+  const ready = await withResolvedExtraTools(withMesh);
+  const { agent, runner } = createAgentAndRunner(ready);
+  const runOpts = buildRunOpts(ready);
   const checkpointBox = createRunCheckpointBox();
-  wireRunCheckpointFlush(withMesh, checkpointBox);
+  wireRunCheckpointFlush(ready, checkpointBox);
 
-  const first = await runModelSegment(withMesh, async () => {
-    const result = (await runner.run(agent, withMesh.userText, runOpts)) as AgentRunStreamResult;
+  const first = await runModelSegment(ready, async () => {
+    const result = (await runner.run(agent, ready.userText, runOpts)) as AgentRunStreamResult;
     noteRunCheckpointState(checkpointBox, result.state);
     const streamed = await consumeAgentTextStream(
       result,
@@ -134,7 +153,7 @@ export async function runAgentChat(input: RunAgentChatInput): Promise<RunChatRes
     runOpts,
     first.result,
     first.streamed,
-    withMesh,
+    ready,
     streamReset,
     checkpointBox,
   );
@@ -177,21 +196,22 @@ export async function resumeAgentChatAfterHitl(
   const withMesh = attachMeshAskTool(withCommit) as ResumeAgentChatAfterHitlInput & {
     meshAskTool?: import('@openai/agents').Tool;
   };
-  const { agent, runner } = createAgentAndRunner(withMesh);
-  const runOpts = buildRunOpts(withMesh);
+  const ready = await withResolvedExtraTools(withMesh);
+  const { agent, runner } = createAgentAndRunner(ready);
+  const runOpts = buildRunOpts(ready);
   const checkpointBox = createRunCheckpointBox();
-  wireRunCheckpointFlush(withMesh, checkpointBox);
+  wireRunCheckpointFlush(ready, checkpointBox);
 
-  const state = await RunState.fromString(agent, withMesh.serializedRunState);
-  applyResumeDecision(state, withMesh);
+  const state = await RunState.fromString(agent, ready.serializedRunState);
+  applyResumeDecision(state, ready);
 
-  const first = await runModelSegment(withMesh, async () => {
+  const first = await runModelSegment(ready, async () => {
     const result = (await runner.run(agent, state, runOpts)) as AgentRunStreamResult;
     noteRunCheckpointState(checkpointBox, result.state);
     const streamed = await consumeAgentTextStream(
       result,
-      withMesh.onDelta,
-      withMesh.signal,
+      ready.onDelta,
+      ready.signal,
       streamReset,
     );
     return { result, streamed };
@@ -203,7 +223,7 @@ export async function resumeAgentChatAfterHitl(
     runOpts,
     first.result,
     first.streamed,
-    withMesh,
+    ready,
     streamReset,
     checkpointBox,
   );
@@ -246,20 +266,21 @@ export async function resumeAgentChatFromCheckpoint(
   const withMesh = attachMeshAskTool(withCommit as ResumeAgentChatAfterHitlInput) as ResumeAgentChatFromCheckpointInput & {
     meshAskTool?: import('@openai/agents').Tool;
   };
-  const { agent, runner } = createAgentAndRunner(withMesh);
-  const runOpts = buildRunOpts(withMesh);
+  const ready = await withResolvedExtraTools(withMesh);
+  const { agent, runner } = createAgentAndRunner(ready);
+  const runOpts = buildRunOpts(ready);
   const checkpointBox = createRunCheckpointBox();
-  wireRunCheckpointFlush(withMesh, checkpointBox);
+  wireRunCheckpointFlush(ready, checkpointBox);
 
-  const state = await RunState.fromString(agent, withMesh.serializedRunState);
+  const state = await RunState.fromString(agent, ready.serializedRunState);
 
-  const first = await runModelSegment(withMesh, async () => {
+  const first = await runModelSegment(ready, async () => {
     const result = (await runner.run(agent, state, runOpts)) as AgentRunStreamResult;
     noteRunCheckpointState(checkpointBox, result.state);
     const streamed = await consumeAgentTextStream(
       result,
-      withMesh.onDelta,
-      withMesh.signal,
+      ready.onDelta,
+      ready.signal,
       streamReset,
     );
     return { result, streamed };
@@ -271,7 +292,7 @@ export async function resumeAgentChatFromCheckpoint(
     runOpts,
     first.result,
     first.streamed,
-    withMesh,
+    ready,
     streamReset,
     checkpointBox,
   );

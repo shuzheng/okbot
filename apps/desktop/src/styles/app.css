@@ -48,6 +48,10 @@
   --input: #ffffff;
   --shadow: none;
   --sidebar-w: 250px;
+  /* Idle collapse / immersive hide-show duration. Near-zero when reduced-motion. */
+  --sidebar-w-duration: 0.3s;
+  --sidebar-w-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --splitter-w: 5px;
   --sidebar-icon: 80px;
   /* Sidebar rail: session expand/collapse share one row height. */
   --rail-row-h: 52px;
@@ -276,6 +280,11 @@ input, textarea { user-select: text; }
   inherits: true;
   initial-value: 250px;
 }
+@property --splitter-w {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 5px;
+}
 
 .app {
   display: grid;
@@ -284,7 +293,7 @@ input, textarea { user-select: text; }
      Overlay+padding-left only sampled flat --chat-bg (ineffective frost). */
   /* minmax(0, …) so a persisted wide --sidebar-w or chat min-content cannot
      expand the layout viewport on ~390px phones (Safari shrink-to-fit loop). */
-  grid-template-columns: minmax(0, var(--sidebar-w)) 5px minmax(0, 1fr);
+  grid-template-columns: minmax(0, var(--sidebar-w)) var(--splitter-w) minmax(0, 1fr);
   height: 100%;
   max-height: 100%;
   width: 100%;
@@ -301,7 +310,7 @@ input, textarea { user-select: text; }
   /* Idle collapse/expand (click toggle, threshold snap after is-resizing clears).
      ~0.3s — slightly slower than 0.2s so collapse feels smooth, not floaty.
      Live splitter / window-edge drag disables below. */
-  transition: --sidebar-w 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: --sidebar-w var(--sidebar-w-duration) var(--sidebar-w-ease), --splitter-w var(--sidebar-w-duration) var(--sidebar-w-ease);
 }
 
 /* Darwin transparent+vibrancy: solid 0.5px rim flush to window edges (no alpha
@@ -336,7 +345,7 @@ html.is-window-resizing .app {
 }
 html.is-window-resizing .app.is-sidebar-auto-animating,
 .app.is-sidebar-auto-animating {
-  transition: --sidebar-w 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: --sidebar-w var(--sidebar-w-duration) var(--sidebar-w-ease), --splitter-w var(--sidebar-w-duration) var(--sidebar-w-ease);
 }
 html.is-window-resizing .chat-member-pill,
 html.is-window-resizing .chat-gateway-btn,
@@ -437,12 +446,26 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   -webkit-mask-image: none !important;
   mask-image: none !important;
 }
+/* Immersive: keep the 3-track grid and ease --sidebar-w / --splitter-w to 0
+   (see App inline style). display:none cannot animate, so visibility is delayed
+   until the width ease finishes; pointer-events drop immediately. Phone sheet
+   and half-disk use the more specific rules in the phone-layout MQ. */
 .app.immersive {
-  grid-template-columns: 1fr;
+  --splitter-w: 0px;
 }
 .app.immersive .sidebar,
+.app.immersive .sidebar.menu-open,
+.app.immersive .sidebar.fab-open,
 .app.immersive .sidebar-resize {
-  display: none;
+  pointer-events: none;
+  overflow: hidden;
+  visibility: hidden;
+  transition: visibility 0s linear var(--sidebar-w-duration);
+}
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --sidebar-w-duration: 0.01s;
+  }
 }
 /* Floating member pill is centered; no left inset needed for traffic lights. */
 
@@ -3557,9 +3580,10 @@ a.footer-pill-seg {
   align-items: center;
   justify-content: center;
   padding: 0;
-  border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
+  /* Frosted glass: match .chat-member-pill / .mesh-exchange-close (panel ~10% + blur ~10px). */
+  border: var(--hairline) solid color-mix(in srgb, #ffffff 18%, transparent);
   border-radius: 10px;
-  background: color-mix(in srgb, var(--panel, #1c1c1e) 90%, transparent);
+  background: color-mix(in srgb, var(--panel) 10%, transparent);
   color: var(--muted);
   cursor: pointer;
   box-shadow: none;
@@ -3568,7 +3592,19 @@ a.footer-pill-seg {
   -webkit-app-region: no-drag;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.18s ease, background 0.15s ease, color 0.15s ease;
+  transition: opacity 0.18s ease, background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+:root[data-theme='light'] .immersive-chat-fab {
+  background: color-mix(in srgb, var(--panel) 10%, transparent);
+  border-color: color-mix(in srgb, #000000 10%, transparent);
+  box-shadow: none;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .immersive-chat-fab {
+    background: color-mix(in srgb, var(--panel) 10%, transparent);
+    border-color: color-mix(in srgb, #000000 10%, transparent);
+    box-shadow: none;
+  }
 }
 .immersive-chat-fab svg {
   width: 18px;
@@ -3581,8 +3617,16 @@ a.footer-pill-seg {
   pointer-events: auto;
 }
 .immersive-chat-fab:hover {
-  background: color-mix(in srgb, var(--panel, #1c1c1e) 98%, var(--accent, #6366f1) 8%);
+  background: color-mix(in srgb, var(--panel) 16%, transparent);
   color: var(--text);
+}
+:root[data-theme='light'] .immersive-chat-fab:hover {
+  background: color-mix(in srgb, var(--panel) 16%, transparent);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .immersive-chat-fab:hover {
+    background: color-mix(in srgb, var(--panel) 16%, transparent);
+  }
 }
 .immersive-chat-fab:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--accent, #6366f1) 55%, transparent);
@@ -3814,15 +3858,16 @@ a.footer-pill-seg {
   align-items: center;
   justify-content: center;
   padding: 0;
-  border: 1px solid color-mix(in srgb, var(--text) 14%, transparent);
+  /* Frosted glass: match .chat-member-pill / .mesh-exchange-close (panel ~10% + blur ~10px). */
+  border: var(--hairline) solid color-mix(in srgb, #ffffff 18%, transparent);
   border-radius: 50%;
-  background: color-mix(in srgb, var(--panel, #1c1c1e) 92%, transparent);
+  background: color-mix(in srgb, var(--panel) 10%, transparent);
   color: var(--muted);
   cursor: pointer;
   box-shadow: none;
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
-  transition: opacity 0.15s ease, transform 0.15s ease, background 0.15s ease, color 0.15s ease;
+  transition: opacity 0.15s ease, transform 0.15s ease, background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 .scroll-to-bottom-btn svg {
   width: 18px;
@@ -3830,7 +3875,7 @@ a.footer-pill-seg {
   display: block;
 }
 .scroll-to-bottom-btn:hover {
-  background: color-mix(in srgb, var(--panel, #1c1c1e) 98%, var(--accent, #6366f1) 8%);
+  background: color-mix(in srgb, var(--panel) 16%, transparent);
   color: var(--text);
 }
 .scroll-to-bottom-btn:active {
@@ -3841,8 +3886,24 @@ a.footer-pill-seg {
   outline-offset: 2px;
 }
 :root[data-theme='light'] .scroll-to-bottom-btn {
-  background: color-mix(in srgb, #fff 92%, transparent);
+  background: color-mix(in srgb, var(--panel) 10%, transparent);
+  border-color: color-mix(in srgb, #000000 10%, transparent);
   box-shadow: none;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .scroll-to-bottom-btn {
+    background: color-mix(in srgb, var(--panel) 10%, transparent);
+    border-color: color-mix(in srgb, #000000 10%, transparent);
+    box-shadow: none;
+  }
+}
+:root[data-theme='light'] .scroll-to-bottom-btn:hover {
+  background: color-mix(in srgb, var(--panel) 16%, transparent);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .scroll-to-bottom-btn:hover {
+    background: color-mix(in srgb, var(--panel) 16%, transparent);
+  }
 }
 .scroll-to-bottom-btn.has-unread-label {
   width: auto;
@@ -4363,7 +4424,7 @@ a.footer-pill-seg {
   :root:not([data-theme='dark']) .bubble .md a { color: #0369a1; }
 }
 
-/* External chat URLs: WebsiteIcon (Settings→官网) + underline on label only. */
+/* External chat URLs: site favicon (WebsiteIcon fallback) + underline on label only. */
 .bubble .chat-ext-link,
 .bubble .md a.chat-ext-link {
   display: inline;
@@ -4389,10 +4450,14 @@ a.footer-pill-seg {
   text-decoration-line: none;
 }
 .bubble .chat-ext-link .chat-ext-link-ico svg,
-.bubble .md a.chat-ext-link .chat-ext-link-ico svg {
+.bubble .md a.chat-ext-link .chat-ext-link-ico svg,
+.bubble .chat-ext-link .chat-ext-link-ico img.chat-ext-link-favicon,
+.bubble .md a.chat-ext-link .chat-ext-link-ico img.chat-ext-link-favicon {
   display: block;
   width: 100%;
   height: 100%;
+  object-fit: contain;
+  border-radius: 2px;
 }
 :root[data-theme='light'] .bubble .chat-ext-link,
 :root[data-theme='light'] .bubble .md a.chat-ext-link {
@@ -5186,6 +5251,38 @@ button.message-attach-image {
 .composer-attach.open .composer-attach-btn:not(.composer-attach-toggle) {
   opacity: 1;
   transition: opacity 100ms ease 40ms;
+}
+
+/* Gateway WebUI / coarse pointer: no liquid-gooey. Plain stack with 44px targets
+   so iOS fat-finger taps hit the real button, not the filtered blob. */
+.composer-attach-simple {
+  width: 30px;
+  height: 30px;
+}
+.composer-attach-simple-stage {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  pointer-events: none;
+  overflow: visible;
+  z-index: 12;
+}
+.composer-attach-simple-btn {
+  position: absolute;
+  pointer-events: none;
+  opacity: 0;
+  transition:
+    transform 280ms cubic-bezier(0.34, 1.4, 0.64, 1),
+    opacity 120ms ease;
+}
+.composer-attach-simple.open .composer-attach-simple-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+.composer-attach-simple .composer-attach-toggle {
+  position: relative;
+  z-index: 13;
 }
 
 .composer-attachments {
@@ -12554,6 +12651,21 @@ button.owner-task-row:hover {
   width: 18px;
   height: 18px;
 }
+.owner-resource-thumb-url {
+  color: var(--muted);
+  background: var(--panel-2, var(--panel));
+}
+.owner-resource-thumb-url svg {
+  width: 18px;
+  height: 18px;
+}
+.owner-resource-thumb-url img.owner-resource-favicon {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  padding: 6px;
+  display: block;
+}
 .owner-resource-name {
   flex: 1 1 auto;
   min-width: 0;
@@ -13347,6 +13459,7 @@ button.owner-task-row:hover {
     box-shadow: 0 1px 10px color-mix(in srgb, #000 18%, transparent);
     transition:
       width 0.22s ease,
+      opacity 0.2s ease,
       background 0.15s ease,
       box-shadow 0.22s ease;
   }
@@ -13385,16 +13498,46 @@ button.owner-task-row:hover {
     pointer-events: none;
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    .app.phone-layout > .sidebar,
-    .phone-nav-backdrop {
-      transition: none;
-    }
+  /* Immersive on phone: do not display:none (that snaps and kills the sheet
+     exit). Force the drawer closed along its existing margin ease, and retract
+     the half-disk into the left edge. After the transition, both stay hidden
+     and non-interactive — including at the Electron minimum width. */
+  .app.phone-layout.immersive > .sidebar {
+    margin-inline-start: -100%;
+    visibility: hidden;
+    pointer-events: none;
+    transition:
+      margin-inline-start 0.24s cubic-bezier(0.22, 1, 0.36, 1),
+      visibility 0s linear 0.24s;
+  }
+  .app.phone-layout.immersive .phone-nav-toggle {
+    width: 0;
+    opacity: 0;
+    padding: 0;
+    border-color: transparent;
+    box-shadow: none;
+    overflow: hidden;
+    pointer-events: none;
+    visibility: hidden;
+    transition:
+      width 0.24s ease,
+      opacity 0.2s ease,
+      visibility 0s linear 0.24s;
+  }
+  .app.phone-layout.immersive .phone-nav-backdrop {
+    opacity: 0;
+    pointer-events: none;
+    visibility: hidden;
   }
 
-  /* Immersive FAB is redundant with the phone sheet toggle. */
-  .app.phone-layout .immersive-chat-fab {
-    display: none !important;
+  @media (prefers-reduced-motion: reduce) {
+    .app.phone-layout > .sidebar,
+    .app.phone-layout.immersive > .sidebar,
+    .phone-nav-backdrop,
+    .phone-nav-toggle,
+    .app.phone-layout.immersive .phone-nav-toggle {
+      transition: none;
+    }
   }
 
   /* Safe-area on the whole cluster so gateway + member stay one horizontal row

@@ -50,6 +50,7 @@ import { libraryWriteGateForOwner } from '../sameTopicArtifactGate';
 import { memoryManageForSquad } from '../memoryTool';
 import {
   createTurnEmitter,
+  isQuietChatOrigin,
   persistAssistantContent,
   resolveQuoteFields,
   type ChatStartPayload,
@@ -74,6 +75,7 @@ export async function startSquadTurn(
       const attachments = normalizeMessageAttachments(payload.attachments, squad.id, {
         dataRoot: ctx.storage.dataRoot,
       });
+      const isQuiet = isQuietChatOrigin(payload.origin);
       const userMsg: ChatMessage = {
         id: createId('msg'),
         role: 'user',
@@ -81,15 +83,19 @@ export async function startSquadTurn(
         createdAt: new Date().toISOString(),
         ...quote.userMsgExtra,
         ...(attachments ? { attachments } : {}),
+        ...(isQuiet ? { autoContinue: true } : {}),
       };
       // Persist immediately so parallel turns and the UI see the new task.
+      // Quiet origins (schedule / …) stay in the model session but are hidden from the UI.
       ctx.storage.appendMessage(squad.id, userMsg);
       ctx.storage.touchSquad(squad.id);
 
       const parallelGate = await acquireParallelGate(squad.id);
       try {
         if (!parallelGate.proceed) {
-          ctx.sendRuntimeEvent({ type: 'user_message', botId: squad.id, message: userMsg });
+          if (!isQuiet) {
+            ctx.sendRuntimeEvent({ type: 'user_message', botId: squad.id, message: userMsg });
+          }
           return { userMessage: userMsg, superseded: true };
         }
 
@@ -120,7 +126,9 @@ export async function startSquadTurn(
         assistantMessageId: assistantId,
         ...(clientTurnId ? { clientTurnId } : {}),
       });
-      emitTurn({ type: 'user_message', botId: squad.id, message: userMsg });
+      if (!isQuiet) {
+        emitTurn({ type: 'user_message', botId: squad.id, message: userMsg });
+      }
       const settings = ctx.storage.getSettings();
       const modelConfig = resolveModelConfig(settings.model, { providerId: squad.providerId, modelId: squad.modelId });
       const guards = createRunGuards({
@@ -285,7 +293,8 @@ export async function startSquadTurn(
           tools: settings.tools,
           security: settings.security,
           toolRunBudget: guards.budget,
-          extraTools: await mcpToolsForRun(settings, guards.budget),
+          buildExtraTools: async ({ onBeforeToolExecute, toolRunBudget }) =>
+            mcpToolsForRun(settings, toolRunBudget, onBeforeToolExecute),
           history: [],
           session: fileSession,
           sessionInputCallback,

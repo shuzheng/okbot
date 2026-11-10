@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Liquid } from 'liquid-gooey';
 import { t, type UiLang } from '../../i18n';
 import { QuickTip } from '../../components/ui/QuickTip';
@@ -8,6 +8,7 @@ import {
   ImageAttachIcon,
   PlusIcon,
 } from '../../components/ui/icons';
+import { prefersCoarsePointer } from '../../hooks/usePhoneLayout';
 
 const FAN_TRANSITION = {
   duration: 320,
@@ -16,6 +17,8 @@ const FAN_TRANSITION = {
 
 /** Vertical stack spacing (px) between item centers above the +/X anchor. */
 const STACK_STEP = 36;
+/** Touch / phone stack uses a taller step so 44px hit targets do not overlap. */
+const TOUCH_STACK_STEP = 48;
 
 export type AttachKind = 'image' | 'file' | 'folder';
 
@@ -25,14 +28,32 @@ export type ComposerAttachMenuProps = {
   onPick: (kind: AttachKind) => void;
 };
 
+function isGatewayWebUi(): boolean {
+  return (
+    typeof document !== 'undefined' && document.documentElement.dataset.okbotGateway === '1'
+  );
+}
+
 export function ComposerAttachMenu({ lang, disabled, onPick }: ComposerAttachMenuProps) {
   const [open, setOpen] = useState(false);
   // SVG gooey filter is expensive on the Electron GPU process. Mount it only
   // while the fan is open or finishing its close, not for the whole idle session.
+  // Phone / coarse WebUI skips gooey entirely — SVG filter hit-testing is unreliable
+  // with fat-finger taps on the blurred blob, and the filter is costly on mobile GPUs.
   const [gooey, setGooey] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const gateway = isGatewayWebUi();
+  const coarse = typeof window !== 'undefined' && prefersCoarsePointer();
+  const simpleFan = gateway || coarse;
+  const stackStep = simpleFan ? TOUCH_STACK_STEP : STACK_STEP;
+  // Folder has no gateway-local path on WebUI; hide it so the fan is not a dead tap.
+  const showFolder = !gateway;
 
   useEffect(() => {
+    if (simpleFan) {
+      if (gooey) setGooey(false);
+      return;
+    }
     if (open) {
       setGooey(true);
       return;
@@ -40,7 +61,7 @@ export function ComposerAttachMenu({ lang, disabled, onPick }: ComposerAttachMen
     if (!gooey) return;
     const id = window.setTimeout(() => setGooey(false), 380);
     return () => window.clearTimeout(id);
-  }, [open, gooey]);
+  }, [open, gooey, simpleFan]);
 
   useEffect(() => {
     if (!open) return;
@@ -83,10 +104,79 @@ export function ComposerAttachMenu({ lang, disabled, onPick }: ComposerAttachMen
     setOpen(false);
   };
 
-  // Stage sized for a vertical column (x≈0); tall enough for 3×STACK_STEP above the anchor.
-  const stageW = 48;
-  const stageH = STACK_STEP * 3 + 30; // 138
-  const itemLeft = (stageW - 30) / 2; // center 30px btn in stage
+  const toggleOpen = () => {
+    if (disabled) return;
+    setOpen((v) => !v);
+  };
+
+  // Stage sized for a vertical column (x≈0); tall enough for N×stack above the anchor.
+  const itemCount = showFolder ? 3 : 2;
+  const stageW = simpleFan ? 48 : 48;
+  const stageH = stackStep * itemCount + (simpleFan ? 44 : 30);
+  const btnSize = simpleFan ? 44 : 30;
+  const itemLeft = (stageW - btnSize) / 2;
+
+  const fanButtons: { kind: AttachKind; label: string; icon: ReactNode; step: number }[] = [
+    { kind: 'image', label: t(lang, 'attachImage'), icon: <ImageAttachIcon />, step: itemCount },
+    { kind: 'file', label: t(lang, 'attachFile'), icon: <FileAttachIcon />, step: itemCount - 1 },
+  ];
+  if (showFolder) {
+    fanButtons.push({
+      kind: 'folder',
+      label: t(lang, 'attachFolder'),
+      icon: <FolderAttachIcon />,
+      step: 1,
+    });
+  }
+
+  if (simpleFan) {
+    return (
+      <div
+        ref={rootRef}
+        className={`composer-attach composer-attach-simple${open ? ' open' : ''}${disabled ? ' disabled' : ''}`}
+      >
+        <div
+          className="composer-attach-simple-stage"
+          style={{ width: stageW, height: stageH }}
+          aria-hidden={!open}
+        >
+          {fanButtons.map((item) => (
+            <button
+              key={item.kind}
+              type="button"
+              className="composer-attach-btn composer-attach-simple-btn"
+              tabIndex={open ? 0 : -1}
+              aria-hidden={!open}
+              disabled={disabled || !open}
+              aria-label={item.label}
+              style={{
+                bottom: 0,
+                left: itemLeft,
+                width: btnSize,
+                height: btnSize,
+                minWidth: btnSize,
+                minHeight: btnSize,
+                transform: open ? `translateY(-${stackStep * item.step}px)` : 'translateY(0)',
+              }}
+              onClick={() => pick(item.kind)}
+            >
+              {item.icon}
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          className={`composer-attach-btn composer-attach-toggle${open ? ' open' : ''}`}
+          disabled={disabled}
+          aria-label={open ? t(lang, 'attachMenuClose') : t(lang, 'attachMenuOpen')}
+          aria-expanded={open}
+          onClick={toggleOpen}
+        >
+          <PlusIcon />
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -190,10 +280,7 @@ export function ComposerAttachMenu({ lang, disabled, onPick }: ComposerAttachMen
             disabled={disabled}
             aria-label={open ? t(lang, 'attachMenuClose') : t(lang, 'attachMenuOpen')}
             aria-expanded={open}
-            onClick={() => {
-              if (disabled) return;
-              setOpen((v) => !v);
-            }}
+            onClick={toggleOpen}
           >
             <PlusIcon />
           </button>

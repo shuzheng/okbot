@@ -134,6 +134,15 @@ export interface RunAgentChatInput extends RunChatInput {
   /** Extra tools appended after the built-ins (for example MCP tools). Resume must pass the same set. */
   extraTools?: readonly Tool[];
   /**
+   * Build extra tools AFTER stream/seal hooks exist so ask_choice / MCP / onboarding
+   * can share onBeforeToolExecute (seal live + reset stream accumulator).
+   * Prefer this over a bare extraTools list when the tool must clear mid-turn narration.
+   */
+  buildExtraTools?: (hooks: {
+    onBeforeToolExecute: () => void | Promise<void>;
+    toolRunBudget?: ToolRunBudget;
+  }) => readonly Tool[] | Promise<readonly Tool[]>;
+  /**
    * 1:1 peer mesh peers (other assistants). Omitted / empty → no roster / no ask_assistant.
    * Squad runs must not pass this.
    */
@@ -244,6 +253,15 @@ export interface ResumeAgentChatAfterHitlInput {
   computerRoute?: ComputerRoute;
   /** Extra tools appended after the built-ins (for example MCP tools). Resume must pass the same set. */
   extraTools?: readonly Tool[];
+  /**
+   * Build extra tools AFTER stream/seal hooks exist so ask_choice / MCP / onboarding
+   * can share onBeforeToolExecute (seal live + reset stream accumulator).
+   * Prefer this over a bare extraTools list when the tool must clear mid-turn narration.
+   */
+  buildExtraTools?: (hooks: {
+    onBeforeToolExecute: () => void | Promise<void>;
+    toolRunBudget?: ToolRunBudget;
+  }) => readonly Tool[] | Promise<readonly Tool[]>;
   meshPeers?: import('./mesh.js').MeshPeerSpec[];
   meshSettings?: import('@okbot/shared').MeshSettings;
   meshDepth?: number;

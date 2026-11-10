@@ -1,4 +1,7 @@
 {
   "name": "Study Buddy",
-  "description": "Explains ideas in simple words and gives practice questions."
+  "description": "Explains ideas in simple words and gives practice questions.",
+  "avatarKind": "emoji",
+  "emoji": "🎓",
+  "color": "#6366F1"
 }

@@ -190,6 +190,16 @@ export function isNoteResourceType(type: OwnerResourceType): boolean {
   return normalizeResourceTypeToken(type) === 'note';
 }
 
+/** External http(s) URL library entries (`type === 'url'`; `path` holds the URL). */
+export function isUrlResourceType(type: OwnerResourceType): boolean {
+  return normalizeResourceTypeToken(type) === 'url';
+}
+
+/** External folder link library entries (`type === 'folder'`). */
+export function isFolderResourceType(type: OwnerResourceType): boolean {
+  return normalizeResourceTypeToken(type) === 'folder';
+}
+
 /**
  * List/card display title: for notes, hide `.html` / legacy `.md` suffix.
  * Prefers `title`, else basename of path.
@@ -352,4 +362,118 @@ export function createOwnerResourceRecord(input: {
     if (tags.length) rec.tags = tags;
   }
   return rec;
+}
+
+
+/**
+ * Canonical URL for library dedupe: http(s) only, lowercase host, no hash,
+ * no trailing slash on non-root path. Returns null when not a usable URL.
+ */
+export function normalizeResourceUrl(raw: string): string | null {
+  const s = (raw || '').trim();
+  if (!s) return null;
+  try {
+    const u = new URL(s);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+    if (!u.hostname) return null;
+    u.hash = '';
+    u.hostname = u.hostname.toLowerCase();
+    if (u.pathname.length > 1 && u.pathname.endsWith('/')) {
+      u.pathname = u.pathname.replace(/\/+$/, '') || '/';
+    }
+    return u.toString();
+  } catch {
+    return null;
+  }
+}
+
+export type ListedHttpUrl = {
+  /** Normalized http(s) URL (see `normalizeResourceUrl`). */
+  href: string;
+  /** Optional display title (e.g. markdown link label). */
+  title?: string;
+};
+
+const MD_HTTP_LINK_RE = /\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/gi;
+const BARE_HTTP_URL_RE = /https?:\/\/[^\s<>"'`\]]+/gi;
+
+function stripTrailingUrlPunct(raw: string): string {
+  let href = raw;
+  while (href.length > 0) {
+    const last = href[href.length - 1]!;
+    if (/[.,;:!?，。；：！？]/.test(last)) {
+      href = href.slice(0, -1);
+      continue;
+    }
+    if (last === ')') {
+      const opens = (href.match(/\(/g) || []).length;
+      const closes = (href.match(/\)/g) || []).length;
+      if (closes > opens) {
+        href = href.slice(0, -1);
+        continue;
+      }
+    }
+    if (last === ']' || last === '}') {
+      href = href.slice(0, -1);
+      continue;
+    }
+    break;
+  }
+  return href;
+}
+
+function isLibraryEligibleHttpUrl(href: string): boolean {
+  const norm = normalizeResourceUrl(href);
+  if (!norm) return false;
+  try {
+    const u = new URL(norm);
+    const host = u.hostname.toLowerCase();
+    if (host === 'localhost' || host === '127.0.0.1' || host === '::1') return false;
+    // Gateway media paths are file resources, not URL resources.
+    if (u.pathname.includes('/v1/media/')) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Collect http(s) URLs from markdown / plain text for library indexing.
+ * Markdown `[title](url)` labels become titles when non-empty and not the URL itself.
+ * Dedupes by `normalizeResourceUrl`; skips loopback and `/v1/media/` paths.
+ */
+export function listHttpUrlsFromText(text: string, limit = 20): ListedHttpUrl[] {
+  if (!text || limit <= 0) return [];
+  const out: ListedHttpUrl[] = [];
+  const seen = new Set<string>();
+
+  const push = (rawHref: string, title?: string) => {
+    if (out.length >= limit) return;
+    const cleaned = stripTrailingUrlPunct((rawHref || '').trim());
+    if (!isLibraryEligibleHttpUrl(cleaned)) return;
+    const href = normalizeResourceUrl(cleaned);
+    if (!href || seen.has(href)) return;
+    seen.add(href);
+    const t = (title || '').trim();
+    if (t && t !== cleaned && t !== href) {
+      out.push({ href, title: t.slice(0, 200) });
+    } else {
+      out.push({ href });
+    }
+  };
+
+  MD_HTTP_LINK_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = MD_HTTP_LINK_RE.exec(text)) !== null) {
+    push(m[2] || '', m[1] || '');
+    if (out.length >= limit) return out;
+  }
+
+  BARE_HTTP_URL_RE.lastIndex = 0;
+  while ((m = BARE_HTTP_URL_RE.exec(text)) !== null) {
+    push(m[0] || '');
+    if (out.length >= limit) return out;
+  }
+
+  return out;
 }

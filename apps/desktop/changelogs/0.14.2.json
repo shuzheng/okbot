@@ -1,0 +1,27 @@
+{
+  "version": "0.14.2",
+  "releasedAt": "2026-11-11T00:00:00Z",
+  "forceUpdate": false,
+  "notes": {
+    "en": {
+      "title": "What's new in 0.14.2",
+      "highlights": [
+        "Assistant packages store identity and avatar in bot.json (no manifest.json)",
+        "Assistant display names are unique; imports get a -2, -3 suffix",
+        "URL items in the Resources library, with favicons on chat links",
+        "Smoother immersive chat: frosted buttons, sidebar animation, no leftover sidebar"
+      ],
+      "bodyMarkdown": "## Added\n\n- **Assistant packages**: `.okbot` packages store identity and avatar in `bot.json` (`name`, `description`, `avatarKind`, `emoji`, `color`, and `botAvatarType` when using a 3D avatar). Packages no longer include `manifest.json`. Import requires `bot.json`.\n- **Unique assistant names**: creating or renaming an assistant is refused if another assistant already uses that display name (trimmed exact match). Import from a local package, Market, or Gallery automatically assigns `Name-2`, `Name-3`, and so on.\n- **URL resources**: links in assistant replies are indexed into the Resources library (deduplicated by normalized URL; title prefers the markdown label, otherwise the hostname). The list shows the site favicon, falling back to a globe icon, and opens as an external link.\n- **Chat link favicons**: http(s) links in chat show the site's favicon before an underlined label; the globe icon is used if the favicon cannot be fetched (the icon itself is not underlined).\n- **Immersive chat**: scroll-to-bottom and immersive-chat buttons use frosted glass when translucency is on. Toggling immersive chat animates the sidebar (width on wide layouts; sheet and half-disk on narrow ones). After the animation, immersive mode keeps the sidebar and half-disk hidden; the immersive toggle stays visible and clickable, including at the minimum window size.\n- **Documentation**: README.md is Chinese by default, with English in README_en.md, a desktop hero screenshot above Features, and no separate Connection model section. The on-disk `~/.okbot` data layout is documented in `docs/design/okbot-data-schema.md`.\n\n## Changed\n\n- Scheduled-task trigger messages are hidden from chat history, search, and live bubbles. Assistant replies still appear as usual.\n\n## Fixed\n\n- Mid-turn assistant bubbles no longer concatenate into repeated A / A+B / A+B+C text when tools such as choices, profile save, or MCP run mid-stream; the same seal applies to squad and checkpoint resume.\n- Session dedupe no longer strips later short replies such as \"OK\" against earlier messages in the same chat.\n- The composer no longer jumps between one and two lines after wrapping @ mentions.\n- Mobile web: the chat attachment picker works again in Safari on iPhone.\n- Quiet trigger chats (schedules, reactions, and similar) no longer start onboarding profile rewrites.\n"
+    },
+    "zh": {
+      "title": "0.14.2 更新内容",
+      "highlights": [
+        "助手包身份与头像写入 bot.json，不再包含 manifest.json",
+        "助手显示名全局唯一，导入自动分配 -2、-3",
+        "资料库支持网址，聊天链接显示站点图标",
+        "沉浸式聊天更顺：毛玻璃按钮、侧栏动画、最小窗口也不露出侧栏"
+      ],
+      "bodyMarkdown": "## 新增\n\n- **助手包**：`.okbot` 包的身份与头像写入 `bot.json`（`name`、`description`、`avatarKind`、`emoji`、`color`，立体头像另有 `botAvatarType`），不再包含 `manifest.json`。导入必须有 `bot.json`。\n- **助手显示名唯一**：创建或修改时，若已有助手使用相同显示名（去首尾空格后精确匹配），直接禁止保存。从本地包、市场或画廊导入时，自动分配「原名-2」「原名-3」等空位。\n- **网址资料**：助手回复中的 http(s) 链接会进入资料库（按规范化 URL 去重；标题优先用 markdown 文案，否则用主机名）。列表显示站点 favicon，失败时用网络图标；打开为外链。\n- **聊天链接图标**：聊天里的网址显示站点 favicon 和下划线标签；获取失败时降级为网络图标（图标本身不下划线）。\n- **沉浸式聊天**：开启半透明时，「回到底部」和「开启/关闭沉浸式聊天」按钮使用毛玻璃效果。开关沉浸式时侧栏会流畅收展（宽屏改变宽度，窄屏为抽屉/半圆）。动画结束后，沉浸态仍不出现侧栏和半圆按钮；开关按钮在最小窗口下也保持可见、可点。\n- **文档**：默认 README.md 为中文，英文为 README_en.md；首屏截图放在 Features 之上，并去掉「连接模型」小节。`~/.okbot` 盘上数据布局见 `docs/design/okbot-data-schema.md`。\n\n## 变更\n\n- 定时任务触发时自动发出的用户消息不显示在聊天记录、搜索和实时气泡里；助手回复仍照常显示。\n\n## 修复\n\n- 回合中途的助手气泡不再因选项、保存助手资料或 MCP 等工具把正文拼成 A / A+B / A+B+C；小队与检查点恢复同样处理。\n- 会话去重不再把后面的短回复（例如「好的。」）按更早的消息误删。\n- 输入框在 @ 提及换行后，不再在一行/两行之间跳动。\n- 移动端网页：iPhone Safari 上的聊天附件选择恢复正常。\n- 静默触发的对话（定时任务、表情回复等）不再误启动入职资料改写。\n"
+    }
+  }
+}

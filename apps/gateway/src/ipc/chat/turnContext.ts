@@ -6,6 +6,7 @@ import {
   clipQuotePreview,
   createId,
   formatUserTextWithQuote,
+  listHttpUrlsFromText,
   stripThinkContent,
   type ChatMessage,
 } from '@okbot/shared';
@@ -24,6 +25,7 @@ export type TurnContext = IpcContext;
 
 export type ChatStartOrigin =
   | 'composer'
+  /** Scheduled automation fire (hidden user row; same quiet path as auto_continue). */
   | 'schedule'
   | 'api'
   | 'auto_continue'
@@ -75,7 +77,24 @@ export type ChatStartPayload = {
 
 /** True when the user row must stay in the model session but out of the UI transcript. */
 export function isQuietChatOrigin(origin: ChatStartPayload['origin']): boolean {
-  return origin === 'auto_continue' || origin === 'onboarding' || origin === 'reaction';
+  return (
+    origin === 'auto_continue' ||
+    origin === 'onboarding' ||
+    origin === 'reaction' ||
+    origin === 'schedule'
+  );
+}
+
+/**
+ * Onboarding SOUL/description evolution runs only for real user turns.
+ * Quiet origins (auto_continue / onboarding seed / reaction / schedule) carry
+ * host-authored text — scheduling evolution with forceSoul would rewrite the
+ * assistant profile from that seed.
+ */
+export function shouldScheduleOnboardingEvolution(
+  origin: ChatStartPayload['origin'],
+): boolean {
+  return !isQuietChatOrigin(origin);
 }
 
 /**
@@ -134,7 +153,7 @@ export function resolveQuoteFields(
   };
 }
 
-/** Storage surface needed to index reply media into resources.jsonl. */
+/** Storage surface needed to index reply media/URLs into resources.jsonl. */
 export type LibraryMediaIndexStorage = {
   ownerResourcesDir(ownerId: string): string;
   indexOwnerResourceFile(
@@ -145,6 +164,15 @@ export type LibraryMediaIndexStorage = {
       createdBy?: 'user' | 'assistant';
       sourceMessageId?: string;
       type?: string;
+    },
+  ): unknown;
+  indexOwnerResourceUrl?(
+    ownerId: string,
+    input: {
+      url: string;
+      title?: string;
+      createdBy?: 'user' | 'assistant';
+      sourceMessageId?: string;
     },
   ): unknown;
 };
@@ -183,11 +211,37 @@ export function indexOwnerLibraryMediaFromMarkdown(
 }
 
 /**
+ * Index http(s) URLs from assistant text into resources.jsonl as `type=url`.
+ * Idempotent (normalizeResourceUrl). Skips loopback and `/v1/media/` paths.
+ */
+export function indexOwnerLibraryUrlsFromText(
+  storage: LibraryMediaIndexStorage,
+  ownerId: string,
+  content: string,
+): void {
+  const id = (ownerId || '').trim();
+  if (!id || !content) return;
+  if (typeof storage.indexOwnerResourceUrl !== 'function') return;
+  for (const ref of listHttpUrlsFromText(content, 20)) {
+    try {
+      storage.indexOwnerResourceUrl(id, {
+        url: ref.href,
+        title: ref.title,
+        createdBy: 'assistant',
+      });
+    } catch (err) {
+      console.error('[okbot] index library url from text failed', err);
+    }
+  }
+}
+
+/**
  * Persist assistant text. showThinking only affects renderer projection;
  * stripping on write used to irreversibly truncate when parseThink misfired.
  * Also rewrite legacy okbot-asset: / file://…/.okbot/…/resources/ img srcs to
  * absolute gateway `/v1/media/…` (never leave data:/file:// as the canonical form).
- * When `libraryIndex` is set, also ensure referenced resources/ media appear in 资料库.
+ * When `libraryIndex` is set, also ensure referenced resources/ media and http(s)
+ * URLs appear in 资料库.
  */
 export function persistAssistantContent(
   content: string,
@@ -204,6 +258,15 @@ export function persistAssistantContent(
       );
     } catch (err) {
       console.error('[okbot] persistAssistantContent library index failed', err);
+    }
+    try {
+      indexOwnerLibraryUrlsFromText(
+        libraryIndex.storage,
+        libraryIndex.ownerId,
+        sealed,
+      );
+    } catch (err) {
+      console.error('[okbot] persistAssistantContent url index failed', err);
     }
   }
   return sealed;

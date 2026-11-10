@@ -131,7 +131,7 @@ gatewayHttpApi          网关 HTTP。不是独立服务
 
 ## 磁盘
 
-产品侧目录一览与备份行为见 [`GUIDE.md` §12](./GUIDE.md#12-数据目录一览)。本节只写架构边界与关键路径角色。
+产品侧目录一览与备份行为见 [`GUIDE.md` §12](./GUIDE.md#12-数据目录一览)。**每文件格式、字段与 ID 约定**以 [`docs/design/okbot-data-schema.md`](./docs/design/okbot-data-schema.md) 为权威（改 `~/.okbot` 布局或持久化字段时同改该文档）。本节只写架构边界与关键路径角色。
 
 
 `FileStorage`（`apps/gateway/src/storage/FileStorage.ts`；**不在** `apps/desktop`）是薄门面：共享根路径、组装域 Store（`SettingsStore` / `SessionStore` / `RosterStore` / `SkillsStore` / `MemoryStore` / `ScheduleStore` / `PendingHitlStore` / `AssistantPackageStore`），并保持原有调用面。墓碑与 session 写锁集中在 `ownerLifecycle.ts`（`OwnerLifecycle`）；各 Store 的写路径自行调用，不在门面复制。根目录默认 `~/.okbot`（`path.join(homedir, '.okbot')`）。构造时 `chmod` 目录 `0700`。`server.json`（网关设置）经 `writeJson(..., { mode: 0o600 })` 写出，并在创建/读到已有文件后再 `chmod` `0600`。`chmod` 失败会 `console.error`，不抛。进程锁为同目录下的 `runtime.json`（旧名曾为 `server.json`）。

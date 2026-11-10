@@ -49,6 +49,8 @@ export type SidebarUpdateControl = {
 
 export type SessionSidebarProps = {
   sidebarRef?: RefObject<HTMLElement | null>;
+  /** Immersive chat: keep the node mounted (for width animation) but inert. */
+  inert?: boolean;
   lang: UiLang;
   narrow: boolean;
   /** Pin avatar 56↔36 tracks width band immediately; may lead deferred `narrow`/railLayout. */
@@ -129,6 +131,7 @@ function resolvedOrbTheme(): 'light' | 'dark' {
 
 export const SessionSidebar = memo(function SessionSidebar({
   sidebarRef,
+  inert,
   lang,
   narrow,
   avatarCompact = false,
@@ -913,6 +916,8 @@ export const SessionSidebar = memo(function SessionSidebar({
         if (sidebarRef) sidebarRef.current = node;
       }}
       className={`sidebar ${createMenu ? 'menu-open' : ''}${footerMenuOpen ? ' fab-open' : ''}`}
+      inert={inert || undefined}
+      aria-hidden={inert || undefined}
     >
       <div className="sidebar-topbar">
         {/* Always mounted: `.app.narrow` / @container hides these with --sidebar-w

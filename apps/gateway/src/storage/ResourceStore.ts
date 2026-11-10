@@ -6,6 +6,7 @@ import {
   isUlid,
   mimeForResourceType,
   normalizeOwnerResourceRecord,
+  normalizeResourceUrl,
   resourceDisplayTitle,
   type OwnerResourceCreatedBy,
   type OwnerResourceInfo,
@@ -462,8 +463,51 @@ export class ResourceStore {
     return this.update(ownerId, resourceId, {});
   }
 
+  /**
+   * Index an http(s) URL into the library (metadata only; no file copy).
+   * Idempotent on normalizeResourceUrl(path): updates title/updatedAt when present.
+   */
+  indexUrl(
+    ownerId: string,
+    input: {
+      url: string;
+      title?: string;
+      createdBy?: OwnerResourceCreatedBy;
+      sourceMessageId?: string;
+    },
+  ): OwnerResourceRecord {
+    const normalized = normalizeResourceUrl(input.url || '');
+    if (!normalized) throw new Error('URL 须以 http(s):// 开头');
+    const all = this.loadAll(ownerId);
+    const existing = all.findIndex(
+      (r) => r.type === 'url' && normalizeResourceUrl(r.path) === normalized,
+    );
+    if (existing >= 0) {
+      const prev = all[existing]!;
+      const next: OwnerResourceRecord = {
+        ...prev,
+        path: normalized,
+        updatedAt: nowIso(),
+      };
+      if (input.title?.trim()) next.title = input.title.trim();
+      if (input.sourceMessageId?.trim()) next.sourceMessageId = input.sourceMessageId.trim();
+      const out = all.slice();
+      out[existing] = next;
+      this.persist(ownerId, out);
+      return next;
+    }
+    return this.add(ownerId, {
+      type: 'url',
+      title: input.title,
+      path: normalized,
+      createdBy: input.createdBy ?? 'assistant',
+      sourceMessageId: input.sourceMessageId,
+    });
+  }
+
   /** Metadata-only link to an absolute folder or file, or a URL. */
   addLink(
+
     ownerId: string,
     input: {
       kind: 'url' | 'folder' | 'file';
@@ -475,11 +519,9 @@ export class ResourceStore {
     const target = (input.target || '').trim();
     if (!target) throw new Error('需要链接目标');
     if (input.kind === 'url') {
-      if (!/^https?:\/\//i.test(target)) throw new Error('URL 须以 http(s):// 开头');
-      return this.add(ownerId, {
-        type: 'url',
+      return this.indexUrl(ownerId, {
+        url: target,
         title: input.title,
-        path: target,
         createdBy: input.createdBy ?? 'user',
       });
     }

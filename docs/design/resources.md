@@ -66,16 +66,25 @@ Embeddable kinds open a **fullscreen overlay** (same chrome as the chat image li
 
 ## Ingest paths (landed)
 
-- Detail panel: new note, add URL, add folder link, link file, ingest (copy) file
+- `manage_note` create/update → `type=note`
 - `generate_image` save → `onGeneratedImageSaved` → `resources.jsonl` index
 - Local `write_file` / `edit_file` under owner `resources/` → same `onSaved` → `resources.jsonl` index (`type` from extension, e.g. `md`)
 - Assistant reply persist: markdown `![…](/v1/media/<owner>/resources/<file>)` → `indexOwnerResourceFile` (covers shell/other binary writes that still surface in chat)
+- Assistant reply persist: http(s) links in markdown / bare URLs → `type=url` via `indexOwnerResourceUrl` (dedupe by normalized URL; title from markdown label when present, else hostname; skips loopback and `/v1/media/`)
+- Backend IPC / HTTP `addOwnerResource` action `url` | `folder` | `file-link` | `ingest` | `note` still available (edit-page manual-add toolbar removed)
 - Delete: ingested file under `resources/` → metadata + unlink; external/URL → metadata only
+
+## List icons
+
+- Images: thumbnail
+- `type=url`: site favicon (same probe as chat links; globe / `WebsiteIcon` fallback)
+- `type=folder`: folder icon
+- Other files: generic file icon
 
 ## Deferred
 
 - Bubble action 「收入资料库」
 - Drag/drop/paste onto the detail panel
 - Tags UI / full-text search
-- URL title crawl
+- URL title crawl (page `<title>`)
 - SQLite migration

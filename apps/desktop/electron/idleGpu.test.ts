@@ -6,10 +6,10 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 
 // bot-avatars 0.2.2+: keep IntersectionObserver host+rootMargin for sidebar
-// overscan; idle-frame throttle (Lt.state / lastDraw) was dropped intentionally.
+// overscan (128px after busy-avatar hop fix); idle-frame throttle was dropped.
 const patch = fs.readFileSync(path.join(root, 'patches/bot-avatars.patch'), 'utf8');
 assert.match(patch, /const host = \w+\.parentElement \|\| \w+/);
-assert.match(patch, /rootMargin:\s*"64px"/);
+assert.match(patch, /rootMargin:\s*"128px"/);
 assert.match(patch, /\.observe\(host\)/);
 assert.doesNotMatch(patch, /always run while mounted/);
 assert.doesNotMatch(patch, /lastDraw/);

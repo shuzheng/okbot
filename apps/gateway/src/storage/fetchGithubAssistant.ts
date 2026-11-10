@@ -166,8 +166,20 @@ async function loadPackageDir(
   signal?: AbortSignal,
 ): Promise<AssistantPackageContents> {
   const ref = await resolveRef(owner, repo, refIn, signal);
-  const manifestRel = dirPath ? `${dirPath}/manifest.json` : 'manifest.json';
-  const manifestRaw = await readGithubFile(owner, repo, ref, manifestRel, signal);
+  const botRel = dirPath ? `${dirPath}/bot.json` : 'bot.json';
+
+  let botJson: unknown;
+  try {
+    const botRaw = await readGithubFile(owner, repo, ref, botRel, signal);
+    try {
+      botJson = JSON.parse(botRaw) as unknown;
+    } catch {
+      throw new Error('bot.json 不是有效 JSON');
+    }
+  } catch (err) {
+    if (err instanceof Error && /不是有效 JSON/.test(err.message)) throw err;
+    throw new Error('助手包缺少 bot.json');
+  }
 
   let soulMd = '';
   try {
@@ -190,20 +202,6 @@ async function loadPackageDir(
     } catch {
       /* optional */
     }
-  }
-
-  let botJson: unknown;
-  try {
-    const botRaw = await readGithubFile(
-      owner,
-      repo,
-      ref,
-      dirPath ? `${dirPath}/bot.json` : 'bot.json',
-      signal,
-    );
-    botJson = JSON.parse(botRaw) as unknown;
-  } catch {
-    /* optional — legacy packages may omit bot.json */
   }
 
   const skillFiles: Array<{ slug: string; raw: string }> = [];
@@ -236,13 +234,7 @@ async function loadPackageDir(
     }
   }
 
-  let manifest: unknown;
-  try {
-    manifest = JSON.parse(manifestRaw) as unknown;
-  } catch {
-    throw new Error('manifest.json 不是有效 JSON');
-  }
-  return parseAssistantPackage({ manifest, soulMd, skillFiles, botJson });
+  return parseAssistantPackage({ botJson, soulMd, skillFiles });
 }
 
 async function discoverPackage(
@@ -274,7 +266,7 @@ async function discoverPackage(
     /* ignore */
   }
   throw new Error(
-    `仓库里找不到助手包（需要 manifest.json 或 .okbot）。尝试过：${GITHUB_ASSISTANT_KNOWN_PATHS.map((p) => p || '/').join(', ')}`,
+    `仓库里找不到助手包（需要 bot.json 或 .okbot）。尝试过：${GITHUB_ASSISTANT_KNOWN_PATHS.map((p) => p || '/').join(', ')}`,
   );
 }
 

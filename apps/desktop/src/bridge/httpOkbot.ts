@@ -755,6 +755,27 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
       }
       return [];
     },
+    deleteOwnerTask: async (ownerId: string, taskId: string) => {
+      const id = (ownerId || '').trim();
+      const tid = (taskId || '').trim();
+      if (!id || !tid) return { ok: false as const, error: 'missing_ids' };
+      const tryDel = async (kind: 'bots' | 'squads') =>
+        api<any>('DELETE', `/v1/${kind}/${encodeURIComponent(id)}/tasks/${encodeURIComponent(tid)}`);
+      try {
+        const res = await tryDel('bots');
+        return res && typeof res === 'object' ? res : { ok: true as const };
+      } catch {
+        try {
+          const res = await tryDel('squads');
+          return res && typeof res === 'object' ? res : { ok: true as const };
+        } catch (err) {
+          return {
+            ok: false as const,
+            error: err instanceof Error ? err.message : String(err),
+          };
+        }
+      }
+    },
     listOwnerResources: async (ownerId: string) => {
       const id = (ownerId || '').trim();
       if (!id) return [];
@@ -881,8 +902,31 @@ export function createHttpOkbotBridge(): Record<string, (...args: any[]) => unkn
       // Offscreen capture is Electron-only; web clients use iframe fallback in NoteCard.
       return { ok: false as const, error: 'capture_unavailable' };
     },
-    openOwnerResource: async (_ownerId: string, _resourceId: string) => {
-      // OS reveal needs Electron shell; HTTP attach clients open via list path metadata in UI fallback.
+    openOwnerResource: async (ownerId: string, resourceId: string) => {
+      const id = (ownerId || '').trim();
+      const rid = (resourceId || '').trim();
+      if (!id || !rid) return { ok: false as const, error: 'missing_ids' };
+      try {
+        const list = await okbot.listOwnerResources(id);
+        const item = Array.isArray(list)
+          ? list.find((r: { id?: string }) => r?.id === rid)
+          : null;
+        if (!item) return { ok: false as const, error: 'not_found' };
+        if (item.type === 'url') {
+          const url = typeof item.path === 'string' ? item.path.trim() : '';
+          if (!/^https?:\/\//i.test(url)) {
+            return { ok: false as const, error: 'invalid_url' };
+          }
+          window.open(url, '_blank', 'noopener,noreferrer');
+          return { ok: true as const };
+        }
+      } catch (err) {
+        return {
+          ok: false as const,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+      // Folder/file reveal needs Electron shell.
       return { ok: false as const, error: 'open_requires_desktop' };
     },
     getMessages: async (botId: string, opts?: { limit?: number }) => {

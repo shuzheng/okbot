@@ -72,6 +72,15 @@ try {
     throw new Error('url path convention');
   }
 
+  const dup = store.indexUrl('bot_test', {
+    url: 'https://Example.com/a/',
+    title: 'Example Renamed',
+    createdBy: 'assistant',
+  });
+  if (dup.id !== link.id) throw new Error('url index must dedupe by normalized URL');
+  if (dup.title !== 'Example Renamed') throw new Error('url dedupe should refresh title');
+  if (dup.path !== 'https://example.com/a') throw new Error('url path should be normalized');
+
   const listed = store.list('bot_test');
   if (listed.length !== 2) throw new Error(`expected 2, got ${listed.length}`);
 

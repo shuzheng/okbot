@@ -38,6 +38,7 @@ import {
   wireRunCheckpointFlush,
   type AgentRunStreamResult,
   type RunCheckpointBox,
+  type StreamResetHandle,
 } from './hitl.js';
 import { buildTools, resolveImageCapability, type SkillLookup } from './tools.js';
 import { agentGuardrailsFromSecurity } from './guardrails.js';
@@ -115,6 +116,20 @@ export interface RunSquadChatInput extends HitlLoopHooks {
   computerRoute?: ComputerRoute;
   /** Extra captain tools (for example MCP tools). Members do not get them. */
   extraTools?: readonly Tool[];
+  /**
+   * Build extra captain tools AFTER stream/seal hooks exist so MCP
+   * can share onBeforeToolExecute (seal live + reset stream accumulator).
+   * Prefer this over a bare extraTools list when the tool must clear mid-turn narration.
+   */
+  buildExtraTools?: (hooks: {
+    onBeforeToolExecute: () => void | Promise<void>;
+    toolRunBudget?: ToolRunBudget;
+  }) => readonly Tool[] | Promise<readonly Tool[]>;
+  /**
+   * Seal live narration at auto-allow / post-HITL tool boundaries.
+   * Wired by runSquadChat / resume entrypoints; hosts prefer buildExtraTools.
+   */
+  onBeforeToolExecute?: () => void | Promise<void>;
   history?: ChatMessage[];
   userText: string;
 }
@@ -296,6 +311,58 @@ type MemberUsageState = { acc: TokenUsage; byBot: Record<string, TokenUsage> };
  * The live run and the cold resume share this, so a resumed run sees the same
  * agent graph (tool names, instructions, budgets).
  */
+/** Merge host `buildExtraTools` (MCP) after seal hooks exist. Exported for contract tests. */
+export async function withResolvedExtraTools<T extends {
+  extraTools?: readonly Tool[];
+  buildExtraTools?: RunSquadChatInput['buildExtraTools'];
+  toolRunBudget?: RunSquadChatInput['toolRunBudget'];
+  onBeforeToolExecute?: () => void | Promise<void>;
+}>(input: T): Promise<T> {
+  const build = input.buildExtraTools;
+  if (!build || !input.onBeforeToolExecute) return input;
+  const built = await build({
+    onBeforeToolExecute: input.onBeforeToolExecute,
+    toolRunBudget: input.toolRunBudget,
+  });
+  const merged = [...(input.extraTools ?? []), ...(built ?? [])];
+  return { ...input, extraTools: merged, buildExtraTools: undefined };
+}
+
+/**
+ * Wire streamReset + onBeforeToolExecute (seal live / clear accumulator), then
+ * resolve buildExtraTools so MCP shares the same mid-turn boundary as bot runs.
+ */
+async function prepareSquadRunInput<T extends RunSquadChatInput>(
+  input: T,
+): Promise<{ ready: T; streamReset: StreamResetHandle }> {
+  const streamReset: StreamResetHandle = { reset: () => {} };
+  const withCommit: T = {
+    ...input,
+    onCommitLiveAssistant: async () => {
+      await input.onCommitLiveAssistant?.();
+      streamReset.committedInterim = true;
+      streamReset.reset();
+    },
+    emitAssistantMessage: async (payload) => {
+      await input.emitAssistantMessage?.(payload);
+      streamReset.committedInterim = true;
+      streamReset.reset();
+    },
+    /**
+     * Auto-allow tool boundary: seal host live text and clear the stream
+     * accumulator so done/abort does not re-dump sealed narration.
+     * ask_* handoffs skip this hook (wrap without onBefore); host seals via onSquadExchange.
+     */
+    onBeforeToolExecute: async () => {
+      await input.onClearLiveText?.();
+      streamReset.reset();
+      if (streamReset.committedText) streamReset.committedInterim = true;
+    },
+  };
+  const ready = await withResolvedExtraTools(withCommit);
+  return { ready, streamReset };
+}
+
 function createSquadRuntime(input: RunSquadChatInput & { resumeNote?: string }) {
   const checkpointBox = createRunCheckpointBox();
   wireRunCheckpointFlush(input, checkpointBox);
@@ -349,6 +416,7 @@ function createSquadRuntime(input: RunSquadChatInput & { resumeNote?: string }) 
         taskProgressManage: input.taskProgressManage,
           noteManage: input.noteManage,
         memoryManage: input.memoryManage,
+        onBeforeToolExecute: input.onBeforeToolExecute,
         imageApi,
         imageAssets: {
           ownerId: input.ownerId,
@@ -531,6 +599,7 @@ function createSquadRuntime(input: RunSquadChatInput & { resumeNote?: string }) 
         taskProgressManage: input.taskProgressManage,
           noteManage: input.noteManage,
         memoryManage: input.memoryManage,
+        onBeforeToolExecute: input.onBeforeToolExecute,
         imageApi,
         imageAssets: {
           ownerId: input.ownerId,
@@ -579,11 +648,12 @@ export async function runSquadChat(input: RunSquadChatInput & { resumeNote?: str
 > {
   assertModel(input.model);
   if (input.signal?.aborted) return { content: '' };
-  const rt = createSquadRuntime(input);
-  const first = await runModelSegment(input, async () => {
-    const result = (await rt.runner.run(rt.captain, input.userText, rt.runOpts)) as AgentRunStreamResult;
+  const { ready, streamReset } = await prepareSquadRunInput(input);
+  const rt = createSquadRuntime(ready);
+  const first = await runModelSegment(ready, async () => {
+    const result = (await rt.runner.run(rt.captain, ready.userText, rt.runOpts)) as AgentRunStreamResult;
     noteRunCheckpointState(rt.checkpointBox, result.state);
-    const streamed = await consumeAgentTextStream(result, input.onDelta, input.signal);
+    const streamed = await consumeAgentTextStream(result, ready.onDelta, ready.signal, streamReset);
     return { result, streamed };
   });
   const captainOut = await runHitlStreamLoop(
@@ -592,8 +662,8 @@ export async function runSquadChat(input: RunSquadChatInput & { resumeNote?: str
     rt.runOpts,
     first.result,
     first.streamed,
-    input,
-    null,
+    ready,
+    streamReset,
     rt.checkpointBox,
   );
   return {
@@ -629,19 +699,20 @@ export async function resumeSquadChatAfterHitl(
   input: ResumeSquadChatAfterHitlInput,
 ): Promise<ResumeSquadChatResult> {
   assertModel(input.model);
-  const rt = createSquadRuntime(input);
+  const { ready, streamReset } = await prepareSquadRunInput(input);
+  const rt = createSquadRuntime(ready);
 
-  if (input.squadMember) {
-    const tag = input.squadMember;
-    const member = input.members.find((m) => m.botId === tag.botId);
+  if (ready.squadMember) {
+    const tag = ready.squadMember;
+    const member = ready.members.find((m) => m.botId === tag.botId);
     if (!member) throw new Error(`恢复失败：小队里没有这名队员（${tag.botId}）`);
     const built = rt.buildMember(member, tag.task);
-    const state = await RunState.fromString(built.agent, input.serializedRunState);
-    applyResumeDecision(state, input);
-    const first = await runModelSegment(input, async () => {
+    const state = await RunState.fromString(built.agent, ready.serializedRunState);
+    applyResumeDecision(state, ready);
+    const first = await runModelSegment(ready, async () => {
       const result = (await built.runner.run(built.agent, state, built.runOpts)) as AgentRunStreamResult;
       noteRunCheckpointState(rt.checkpointBox, result.state);
-      const streamed = await consumeAgentTextStream(result, undefined, input.signal);
+      const streamed = await consumeAgentTextStream(result, undefined, ready.signal);
       return { result, streamed };
     });
     const reply = await rt.finishMember(
@@ -659,12 +730,12 @@ export async function resumeSquadChatAfterHitl(
     };
   }
 
-  const state = await RunState.fromString(rt.captain, input.serializedRunState);
-  applyResumeDecision(state, input);
-  const first = await runModelSegment(input, async () => {
+  const state = await RunState.fromString(rt.captain, ready.serializedRunState);
+  applyResumeDecision(state, ready);
+  const first = await runModelSegment(ready, async () => {
     const result = (await rt.runner.run(rt.captain, state, rt.runOpts)) as AgentRunStreamResult;
     noteRunCheckpointState(rt.checkpointBox, result.state);
-    const streamed = await consumeAgentTextStream(result, input.onDelta, input.signal);
+    const streamed = await consumeAgentTextStream(result, ready.onDelta, ready.signal, streamReset);
     return { result, streamed };
   });
   const out = await runHitlStreamLoop(
@@ -673,8 +744,8 @@ export async function resumeSquadChatAfterHitl(
     rt.runOpts,
     first.result,
     first.streamed,
-    input,
-    null,
+    ready,
+    streamReset,
     rt.checkpointBox,
   );
   return {
@@ -704,12 +775,13 @@ export async function resumeSquadChatFromCheckpoint(
 ): Promise<RunChatResult & { memberUsageByBot?: Record<string, TokenUsage> }> {
   assertModel(input.model);
   if (input.signal?.aborted) return { content: '' };
-  const rt = createSquadRuntime(input);
-  const state = await RunState.fromString(rt.captain, input.serializedRunState);
-  const first = await runModelSegment(input, async () => {
+  const { ready, streamReset } = await prepareSquadRunInput(input);
+  const rt = createSquadRuntime(ready);
+  const state = await RunState.fromString(rt.captain, ready.serializedRunState);
+  const first = await runModelSegment(ready, async () => {
     const result = (await rt.runner.run(rt.captain, state, rt.runOpts)) as AgentRunStreamResult;
     noteRunCheckpointState(rt.checkpointBox, result.state);
-    const streamed = await consumeAgentTextStream(result, input.onDelta, input.signal);
+    const streamed = await consumeAgentTextStream(result, ready.onDelta, ready.signal, streamReset);
     return { result, streamed };
   });
   const out = await runHitlStreamLoop(
@@ -718,8 +790,8 @@ export async function resumeSquadChatFromCheckpoint(
     rt.runOpts,
     first.result,
     first.streamed,
-    input,
-    null,
+    ready,
+    streamReset,
     rt.checkpointBox,
   );
   return {

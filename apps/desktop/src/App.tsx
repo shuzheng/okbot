@@ -909,8 +909,8 @@ export function App() {
   }, [immersiveChat]);
 
   useEffect(() => {
-    if (!phoneLayout) setPhoneNavOpen(false);
-  }, [phoneLayout]);
+    if (!phoneLayout || immersiveChat) setPhoneNavOpen(false);
+  }, [phoneLayout, immersiveChat]);
 
   useEffect(() => {
     if (!phoneNavOpen) return;
@@ -982,6 +982,12 @@ export function App() {
   const writeSidebarWidthCss = useCallback((px: number, syncRail = true) => {
     const el = appRef.current;
     if (!el) return;
+    // Immersive drives --sidebar-w to 0 via the inline style; do not let a
+    // live drag / auto-collapse write the persisted width back mid-hide.
+    if (immersiveChatRef.current) {
+      el.style.setProperty('--sidebar-w', '0px');
+      return;
+    }
     el.style.setProperty('--sidebar-w', `${px}px`);
     // Pin avatar footprint tracks the width band immediately (not deferred
     // railLayout). Otherwise 置顶 stays 56px until transitionend then jumps to 36.
@@ -3624,40 +3630,47 @@ async function handleSend(retry?: {
   return (
     <div
       ref={appRef}
-      className={`app ${(!phoneLayout && narrow) ? 'narrow' : ''}${resizing && !snapAnimating ? ' is-resizing' : ''}${immersiveChat ? ' immersive' : ''}${phoneLayout ? ' phone-layout' : ''}${phoneLayout && phoneNavOpen ? ' phone-nav-open' : ''}`}
+      className={`app ${(!phoneLayout && narrow) ? 'narrow' : ''}${resizing && !snapAnimating ? ' is-resizing' : ''}${immersiveChat ? ' immersive' : ''}${phoneLayout ? ' phone-layout' : ''}${phoneLayout && phoneNavOpen && !immersiveChat ? ' phone-nav-open' : ''}`}
       style={{
         // While splitter-dragging, prefer the live ref so incidental re-renders
         // (stream deltas) do not snap --sidebar-w back to a stale React state.
-        ['--sidebar-w' as string]: `${resizing ? sidebarWidthRef.current : sidebarWidth}px`,
+        // Immersive eases this to 0 (and back) via the existing --sidebar-w
+        // transition; persisted sidebarWidth / rail state is left untouched.
+        ['--sidebar-w' as string]: `${immersiveChat ? 0 : (resizing ? sidebarWidthRef.current : sidebarWidth)}px`,
       }}
       onContextMenu={(e) => e.preventDefault()}
     >
       {phoneLayout ? (
         <>
-          {/* Keep mounted so open/close can animate; inert while sheet is open. */}
+          {/* Keep mounted so immersive hide/show and sheet open/close can
+              animate. CSS retracts the half-disk in immersive; inert so it
+              cannot return as a hit target at minimum window width. */}
           <button
             type="button"
             className="phone-nav-toggle"
             aria-label={t(lang, 'sidebarFabOpen')}
-            aria-expanded={phoneNavOpen}
-            aria-hidden={phoneNavOpen}
-            tabIndex={phoneNavOpen ? -1 : 0}
-            onClick={() => setPhoneNavOpen(true)}
+            aria-expanded={phoneNavOpen && !immersiveChat}
+            aria-hidden={phoneNavOpen || immersiveChat}
+            tabIndex={phoneNavOpen || immersiveChat ? -1 : 0}
+            inert={immersiveChat || undefined}
+            onClick={() => { if (!immersiveChat) setPhoneNavOpen(true); }}
           >
             <ChevronRightIcon />
           </button>
           <button
             type="button"
-            className={`phone-nav-backdrop${phoneNavOpen ? ' is-open' : ''}`}
+            className={`phone-nav-backdrop${phoneNavOpen && !immersiveChat ? ' is-open' : ''}`}
             aria-label={t(lang, 'sidebarFabClose')}
-            aria-hidden={!phoneNavOpen}
-            tabIndex={phoneNavOpen ? 0 : -1}
+            aria-hidden={!phoneNavOpen || immersiveChat}
+            tabIndex={phoneNavOpen && !immersiveChat ? 0 : -1}
+            inert={immersiveChat || undefined}
             onClick={() => setPhoneNavOpen(false)}
           />
         </>
       ) : null}
       <SessionSidebar
         sidebarRef={sidebarRef}
+        inert={immersiveChat || undefined}
         lang={lang}
         narrow={phoneLayout ? false : narrow}
         avatarCompact={phoneLayout ? false : sidebarWidth <= SIDEBAR_NARROW_AT}
@@ -3723,7 +3736,10 @@ async function handleSend(retry?: {
 
       <div
         className={`sidebar-resize ${resizing ? 'active' : ''}`}
+        inert={immersiveChat || undefined}
+        aria-hidden={immersiveChat || undefined}
         onMouseDown={(e) => {
+          if (immersiveChat) return;
           e.preventDefault();
           // Sync to rendered width so a mid-transition drag starts from the visual position.
           const renderedW = readSidebarRenderedWidth();

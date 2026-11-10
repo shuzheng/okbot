@@ -55,6 +55,7 @@ export function formatOwnerResourcesForResumePrompt(
     const relOrPath = (() => {
       const p = (r.path || '').trim();
       if (!p) return '(无路径)';
+      if (r.type === 'url') return p;
       if (r.assetRel?.trim()) return r.assetRel.trim();
       // Prefer basename under resources/ when absolute.
       const base = path.basename(p);
@@ -68,10 +69,36 @@ export function formatOwnerResourcesForResumePrompt(
   return ['### 已有资料（path / title / type；新→旧）', ...rows].join('\n');
 }
 
+/** Short preview of send_message (or similar) args so resume does not re-bubble the same text. */
+function toolCallArgsPreview(name: string, rec: Record<string, unknown>, rawRec: Record<string, unknown> | null): string {
+  if (name !== 'send_message' && name !== 'ask_assistant') return '';
+  const argsRaw =
+    (typeof rec.arguments === 'string' && rec.arguments) ||
+    (rawRec && typeof rawRec.arguments === 'string' && rawRec.arguments) ||
+    '';
+  if (!argsRaw.trim()) return '';
+  try {
+    const parsed = JSON.parse(argsRaw) as Record<string, unknown>;
+    const content =
+      typeof parsed.content === 'string'
+        ? parsed.content
+        : typeof parsed.message === 'string'
+          ? parsed.message
+          : typeof parsed.text === 'string'
+            ? parsed.text
+            : '';
+    const clipped = content.trim().replace(/\s+/g, ' ').slice(0, 80);
+    return clipped ? ` content="${clipped}${content.trim().length > 80 ? '…' : ''}"` : '';
+  } catch {
+    return '';
+  }
+}
+
 /**
  * Best-effort digest of function_call names from a serialized RunState JSON.
  * Used so soft-steer replacement turns can avoid naive re-fire when the host
  * injects resume context (full RunState resume also uses the same checkpoint).
+ * Includes a short content preview for send_message / ask_assistant.
  */
 export function formatRunCheckpointToolDigest(
   serializedRunState: string | null | undefined,
@@ -117,7 +144,9 @@ export function formatRunCheckpointToolDigest(
       const key = `${name}\\0${callIdRaw}`;
       if (!seen.has(key)) {
         seen.add(key);
-        rows.push(callIdRaw ? `- ${name} call_id=${callIdRaw}` : `- ${name}`);
+        const preview = toolCallArgsPreview(name, rec, rawRec);
+        const base = callIdRaw ? `- ${name} call_id=${callIdRaw}` : `- ${name}`;
+        rows.push(base + preview);
       }
     }
     for (const value of Object.values(rec)) {
@@ -172,6 +201,7 @@ export function buildInterruptedRunResumeContext(
     '- 已有文件/网页：用 edit_file，或对**同一路径** write_file 覆盖；禁止再写第二份同名/同题文件。',
     '- 已有笔记：用 manage_note update（传已有 id 或 path）；禁止 create 同题第二篇。',
     '- 用户本轮新消息是打断补充，不是要求从零重做。',
+    '- 若下方工具清单已列出 send_message（含 content 摘要），那些气泡已经发给用户；禁止再 send_message 同一段正文，也不要把旧气泡全文拼进新回复。',
   ];
 
   const ckpt = options?.runCheckpoint;

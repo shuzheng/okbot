@@ -10,6 +10,7 @@ import {
   ASK_CHOICE_TOOL_NAME,
   ONBOARDING_PROFILE_TOOL_NAME,
 } from './onboardingPrompt.js';
+import { wrapToolExecute, type ToolRunBudget } from './toolRunBudget.js';
 
 export {
   ASK_CHOICE_TOOL_NAME,
@@ -33,8 +34,14 @@ export type QuickChoiceApply = (choice: QuickChoice) => Promise<string> | string
 
 const optionalText = (desc: string) => z.string().nullable().optional().describe(desc);
 
+export type OnboardingToolBoundary = {
+  toolRunBudget?: ToolRunBudget;
+  /** Seal live narration + reset stream (same hook as built-in auto-allow tools). */
+  onBeforeToolExecute?: () => void | Promise<void>;
+};
+
 /** Build `ask_choice` (host decides when to register it). */
-export function buildAskChoiceTool(apply: QuickChoiceApply) {
+export function buildAskChoiceTool(apply: QuickChoiceApply, boundary?: OnboardingToolBoundary) {
   return tool({
     name: ASK_CHOICE_TOOL_NAME,
     description:
@@ -46,20 +53,28 @@ export function buildAskChoiceTool(apply: QuickChoiceApply) {
         .describe(`选项列表（2–${QUICK_CHOICE_MAX_OPTIONS} 项，每项一句短语）`),
     }),
     needsApproval: false,
-    execute: async (args: { question?: string; options?: string[] }) => {
-      const choice = normalizeQuickChoice(args);
-      if (!choice) return '错误：question 不能为空，options 至少 2 项。';
-      try {
-        return await apply(choice);
-      } catch (err) {
-        return `错误：${err instanceof Error ? err.message : String(err)}`;
-      }
-    },
+    execute: wrapToolExecute(
+      ASK_CHOICE_TOOL_NAME,
+      boundary?.toolRunBudget,
+      async (args: { question?: string; options?: string[] }) => {
+        const choice = normalizeQuickChoice(args);
+        if (!choice) return '错误：question 不能为空，options 至少 2 项。';
+        try {
+          return await apply(choice);
+        } catch (err) {
+          return `错误：${err instanceof Error ? err.message : String(err)}`;
+        }
+      },
+      boundary?.onBeforeToolExecute,
+    ),
   });
 }
 
 /** Build the onboarding profile tool (host decides when to register it). */
-export function buildOnboardingProfileTool(apply: OnboardingProfileApply) {
+export function buildOnboardingProfileTool(
+  apply: OnboardingProfileApply,
+  boundary?: OnboardingToolBoundary,
+) {
   return tool({
     name: ONBOARDING_PROFILE_TOOL_NAME,
     description:
@@ -70,12 +85,17 @@ export function buildOnboardingProfileTool(apply: OnboardingProfileApply) {
       done: z.boolean().nullable().optional().describe('true = 引导完成'),
     }),
     needsApproval: false,
-    execute: async (args: OnboardingProfileUpdate) => {
-      try {
-        return await apply(args ?? {});
-      } catch (err) {
-        return `错误：保存失败 — ${err instanceof Error ? err.message : String(err)}`;
-      }
-    },
+    execute: wrapToolExecute(
+      ONBOARDING_PROFILE_TOOL_NAME,
+      boundary?.toolRunBudget,
+      async (args: OnboardingProfileUpdate) => {
+        try {
+          return await apply(args ?? {});
+        } catch (err) {
+          return `错误：保存失败 — ${err instanceof Error ? err.message : String(err)}`;
+        }
+      },
+      boundary?.onBeforeToolExecute,
+    ),
   });
 }

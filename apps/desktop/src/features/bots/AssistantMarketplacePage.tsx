@@ -8,7 +8,7 @@ import {
 } from '@okbot/shared';
 import { t, type UiLang } from '../../i18n';
 import { CloseIcon } from '../../components/ui/icons';
-import { toast, requestConfirm } from '../../components/ui';
+import { toast } from '../../components/ui';
 import { formatSystemError } from '../../utils/formatSystemError';
 import { AssistantGalleryList } from './AssistantGallery';
 import {
@@ -23,21 +23,6 @@ type MarketTab = 'assistants' | 'connectors';
 function normalizeSources(settings: AppSettings | null | undefined): string[] {
   const list = settings?.assistantMarketplace?.savedSources;
   return Array.isArray(list) ? list.filter((u) => typeof u === 'string' && u.trim()) : [];
-}
-
-function isNameExistsError(msg: string): { name: string } | null {
-  const m = String(msg || '');
-  // IPC may wrap as `Error invoking remote method …: Error: assistant_name_exists:Name`.
-  if (!m.includes('assistant_name_exists')) return null;
-  const marker = 'assistant_name_exists:';
-  const idx = m.indexOf(marker);
-  if (idx >= 0) {
-    const rest = m.slice(idx + marker.length).trim();
-    // Take the name token; strip trailing quote / punctuation from wrappers.
-    const name = rest.split(/[\s'"]/)[0]?.replace(/[.,;:]+$/, '') || '';
-    return { name };
-  }
-  return { name: '' };
 }
 
 function isAbortError(msg: string): boolean {
@@ -151,37 +136,6 @@ export function AssistantMarketplacePage({
     setRemoteError('');
   }
 
-  async function runImport(trimmed: string, overwrite: boolean, gen: number): Promise<Bot | null> {
-    try {
-      const bot = await window.okbot.importAssistantFromUrl(trimmed, { overwrite });
-      if (gen !== importGen.current) return null;
-      return bot;
-    } catch (err) {
-      if (gen !== importGen.current) return null;
-      const msg = formatSystemError(err);
-      if (isAbortError(msg)) return null;
-      const clash = isNameExistsError(msg);
-      if (clash && !overwrite) {
-        const name = clash.name || trimmed;
-        const alreadyKnown =
-          existingNames.some((n) => n.trim() === name) || Boolean(clash.name);
-        if (alreadyKnown) {
-          const ok = await requestConfirm({
-            title: t(lang, 'galleryRemoteOverwriteTitle'),
-            message: t(lang, 'galleryRemoteOverwriteMessage', { name }),
-            confirmLabel: t(lang, 'galleryRemoteOverwriteConfirm'),
-            cancelLabel: t(lang, 'cancel'),
-            danger: false,
-          });
-          if (gen !== importGen.current) return null;
-          if (!ok) return null;
-          return runImport(trimmed, true, gen);
-        }
-      }
-      throw err;
-    }
-  }
-
   async function importFromUrl(raw: string) {
     const trimmed = raw.trim();
     if (!trimmed || busy) return;
@@ -189,12 +143,20 @@ export function AssistantMarketplacePage({
       toast.error(t(lang, 'galleryNeedsModel'));
       return;
     }
-    // Pre-check cannot know package name before fetch; clash handled after fetch.
+    // Name clashes are auto-resolved server-side (`name-2`, `name-3`, …).
     const gen = ++importGen.current;
     setBusy(true);
     setRemoteError('');
     try {
-      const bot = await runImport(trimmed, false, gen);
+      let bot: Bot | null = null;
+      try {
+        bot = await window.okbot.importAssistantFromUrl(trimmed);
+      } catch (err) {
+        if (gen !== importGen.current) return;
+        const msg = formatSystemError(err);
+        if (isAbortError(msg)) return;
+        throw err;
+      }
       if (gen !== importGen.current || !bot) return;
       const nextSources = [trimmed, ...saved.filter((s) => s.toLowerCase() !== trimmed.toLowerCase())].slice(
         0,

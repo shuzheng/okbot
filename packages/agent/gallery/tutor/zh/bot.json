@@ -1,4 +1,7 @@
 {
   "name": "学习伙伴",
-  "description": "用简单的话讲清楚概念，出练习题帮你复习。"
+  "description": "用简单的话讲清楚概念，出练习题帮你复习。",
+  "avatarKind": "emoji",
+  "emoji": "🎓",
+  "color": "#6366F1"
 }

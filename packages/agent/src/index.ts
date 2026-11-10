@@ -56,6 +56,7 @@ export {
   onboardingSeedText,
   type OnboardingProfileApply,
   type OnboardingProfileUpdate,
+  type OnboardingToolBoundary,
   type QuickChoiceApply,
 } from './onboarding.js';
 export { runAgentChat, resumeAgentChatAfterHitl, resumeAgentChatFromCheckpoint } from './runAgentChat.js';
@@ -275,6 +276,7 @@ export {
   buildAssistantPackage,
   parseAssistantPackage,
   assistantPackageToFileMap,
+  assistantPackageBotJson,
   type AssistantPackageAvatar,
   type AssistantPackageManifest,
   type AssistantPackageContents,

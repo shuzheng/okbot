@@ -1,11 +1,27 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { OwnerResourceInfo } from '@okbot/shared';
-import { isImageResourceType } from '@okbot/shared';
-import { FileAttachIcon, TrashIcon } from '../../components/ui/icons';
+import {
+  isFolderResourceType,
+  isImageResourceType,
+  isUrlResourceType,
+} from '@okbot/shared';
+import {
+  FileAttachIcon,
+  FolderAttachIcon,
+  TrashIcon,
+  WebsiteIcon,
+} from '../../components/ui/icons';
 import { requestConfirm } from '../../components/ui';
 import { ImageLightbox, type ImageLightboxTarget } from '../chat/ImageLightbox';
 import { t, type UiLang } from '../../i18n';
 import { resolveMediaAssetUrl } from '../../utils/mediaAsset';
+import {
+  getCachedFavicon,
+  probeSiteFavicon,
+  rememberFaviconFailure,
+  siteOriginKey,
+  type FaviconCacheEntry,
+} from '../../utils/siteFavicon';
 import { OWNER_LIST_PAGE_SIZE } from './ownerListPage';
 import { ResourceFullscreenPreview } from './ResourceFullscreenPreview';
 import { isOwnerResourceEmbedPreviewable } from './ResourcePreview';
@@ -25,6 +41,56 @@ function typeLabel(_lang: UiLang, type: string): string {
   return type;
 }
 
+function ResourceUrlThumb({ href }: { href: string }) {
+  const [favicon, setFavicon] = useState<FaviconCacheEntry | 'pending'>(() => {
+    const origin = siteOriginKey(href);
+    if (!origin) return { status: 'fail' };
+    return getCachedFavicon(origin) ?? 'pending';
+  });
+
+  useEffect(() => {
+    const origin = siteOriginKey(href);
+    if (!origin) {
+      setFavicon({ status: 'fail' });
+      return;
+    }
+    const cached = getCachedFavicon(origin);
+    if (cached) {
+      setFavicon(cached);
+      return;
+    }
+    setFavicon('pending');
+    let cancelled = false;
+    void probeSiteFavicon(href).then((entry) => {
+      if (!cancelled) setFavicon(entry);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [href]);
+
+  return (
+    <span className="owner-resource-thumb owner-resource-thumb-url" aria-hidden>
+      {favicon !== 'pending' && favicon.status === 'ok' ? (
+        <img
+          className="owner-resource-favicon"
+          src={favicon.url}
+          alt=""
+          referrerPolicy="no-referrer"
+          draggable={false}
+          onError={() => {
+            const origin = siteOriginKey(href);
+            if (origin) rememberFaviconFailure(origin);
+            setFavicon({ status: 'fail' });
+          }}
+        />
+      ) : (
+        <WebsiteIcon />
+      )}
+    </span>
+  );
+}
+
 function ResourceThumb({
   item,
   src,
@@ -36,6 +102,16 @@ function ResourceThumb({
     return (
       <span className="owner-resource-thumb">
         <img src={src} alt="" />
+      </span>
+    );
+  }
+  if (isUrlResourceType(item.type)) {
+    return <ResourceUrlThumb href={(item.path || '').trim()} />;
+  }
+  if (isFolderResourceType(item.type)) {
+    return (
+      <span className="owner-resource-thumb owner-resource-thumb-file" aria-hidden>
+        <FolderAttachIcon />
       </span>
     );
   }
@@ -186,7 +262,25 @@ export function OwnerResourcesPanel({
 
   const openOrPreview = useCallback(
     async (item: OwnerResourceInfo) => {
-      // System-open only: url / folder / pdf / av / office / archives / non-note html.
+      // URL resources: desktop shell.openExternal, web window.open fallback.
+      if (isUrlResourceType(item.type)) {
+        const url = (item.path || '').trim();
+        if (!/^https?:\/\//i.test(url)) {
+          setError(t(lang, 'ownerFormResourcesOpenFailed'));
+          return;
+        }
+        if (typeof window.okbot.openOwnerResource === 'function') {
+          const res = await window.okbot.openOwnerResource(id, item.id);
+          if (res?.ok) return;
+        }
+        try {
+          window.open(url, '_blank', 'noopener,noreferrer');
+        } catch {
+          setError(t(lang, 'ownerFormResourcesOpenFailed'));
+        }
+        return;
+      }
+      // System-open only: folder / pdf / av / office / archives / non-note html.
       if (!isOwnerResourceEmbedPreviewable(item.type)) {
         if (typeof window.okbot.openOwnerResource === 'function') {
           const res = await window.okbot.openOwnerResource(id, item.id);
@@ -246,7 +340,11 @@ export function OwnerResourcesPanel({
                             {item.name}
                           </span>
                           <span className="owner-resource-sub">
-                            <span className="owner-resource-type">{typeLabel(lang, item.type)}</span>
+                            <span className="owner-resource-type">
+                              {isUrlResourceType(item.type)
+                                ? item.path || typeLabel(lang, item.type)
+                                : typeLabel(lang, item.type)}
+                            </span>
                             <span className="owner-resource-time">
                               {shortTime(item.updatedAt || item.createdAt)}
                             </span>

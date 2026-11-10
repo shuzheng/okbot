@@ -989,6 +989,42 @@ export function createGatewayHttpApi(deps: GatewayHttpApiDeps): {
         return;
       }
 
+      // DELETE /v1/bots|squads/:id/tasks/:taskId
+      if (
+        method === 'DELETE' &&
+        parts.length === 5 &&
+        parts[0] === 'v1' &&
+        (parts[1] === 'bots' || parts[1] === 'squads') &&
+        parts[3] === 'tasks'
+      ) {
+        const id = parts[2] || '';
+        const taskId = decodeURIComponent(parts[4] || '');
+        if (!id || !taskId) {
+          sendJson(res, 400, { ok: false, error: 'missing_ids' });
+          return;
+        }
+        try {
+          deps.ctx.storage.deleteTask(id, taskId);
+          try {
+            deps.ctx.sendRuntimeEvent({
+              type: 'tasks_changed',
+              botId: id,
+              tasks: deps.ctx.storage.loadOpenTasks(id),
+            });
+          } catch (err) {
+            console.error('[okbot] http tasks_changed emit failed', err);
+          }
+          sendJson(res, 200, { ok: true });
+        } catch (err) {
+          console.error('[okbot] http deleteOwnerTask failed', err);
+          sendJson(res, 500, {
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        return;
+      }
+
       // GET /v1/bots/:id/resources | GET /v1/squads/:id/resources
       if (
         method === 'GET' &&

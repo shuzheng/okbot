@@ -25,7 +25,7 @@ export type GithubAssistantPlan =
       owner: string;
       repo: string;
       ref: string;
-      /** Directory that should contain manifest.json ('' = repo root). */
+      /** Directory that should contain bot.json ('' = repo root). */
       path: string;
       label: string;
     }
@@ -88,8 +88,8 @@ export function parseGithubAssistantSource(raw: string): GithubAssistantPlan {
     if (pathParts.length < 3) throw new Error('raw 链接不完整');
     const [owner, repo, ref, ...rest] = pathParts;
     const rel = rest.join('/');
-    if (!rel || rel === 'manifest.json' || rel.endsWith('/manifest.json')) {
-      const dir = rel === 'manifest.json' || !rel ? '' : rel.replace(/\/manifest\.json$/i, '');
+    if (!rel || rel === 'bot.json' || rel.endsWith('/bot.json')) {
+      const dir = !rel || rel === 'bot.json' ? '' : rel.replace(/\/bot\.json$/i, '');
       return {
         kind: 'dir',
         owner: owner!,
@@ -140,19 +140,20 @@ export function parseGithubAssistantSource(raw: string): GithubAssistantPlan {
 
   // /owner/repo/archive/refs/heads/main.zip or /archive/v1.0.0.zip — not a package by itself
   if (pathParts[2] === 'archive') {
-    throw new Error('请指向助手包目录、manifest.json 或 .okbot 文件，而不是整个仓库压缩包');
+    throw new Error('请指向助手包目录、bot.json 或 .okbot 文件，而不是整个仓库压缩包');
   }
 
   // /owner/repo/tree/ref/path... or /blob/ref/path...
   if ((pathParts[2] === 'tree' || pathParts[2] === 'blob') && pathParts.length >= 4) {
     const ref = pathParts[3]!;
     let rel = pathParts.slice(4).join('/');
-    if (pathParts[2] === 'blob' && /manifest\.json$/i.test(rel)) {
-      rel = rel.replace(/\/?manifest\.json$/i, '');
-    }
     if (pathParts[2] === 'blob' && isAssistantArchivePath(rel)) {
       const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${ref}/${rel.split('/').map(encodeURIComponent).join('/')}`;
       return { kind: 'archive', url: rawUrl, label: pathParts[pathParts.length - 1]! };
+    }
+    // Blob of a regular file → package directory (parent of that file).
+    if (pathParts[2] === 'blob' && rel) {
+      rel = rel.includes('/') ? rel.replace(/\/[^/]+$/, '') : '';
     }
     if (!rel) {
       return { kind: 'discover', owner, repo, ref, label: `${owner}/${repo}@${ref}` };

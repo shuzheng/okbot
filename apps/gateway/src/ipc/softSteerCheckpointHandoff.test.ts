@@ -23,7 +23,9 @@ import {
 } from './ownerRuns';
 import {
   isComposerChatOrigin,
+  isQuietChatOrigin,
   mayConsumeKeptRunCheckpoint,
+  shouldScheduleOnboardingEvolution,
 } from './chat/turnContext';
 
 resetSoftSteerStateForTests();
@@ -293,6 +295,22 @@ assert.ok(storage.loadRunCheckpoint(bot.id));
   assert.equal(isComposerChatOrigin('composer'), true);
   assert.equal(isComposerChatOrigin(undefined), true);
   assert.equal(isComposerChatOrigin('schedule'), false);
+  assert.equal(isQuietChatOrigin('schedule'), true, 'schedule fires are quiet UI rows');
+  assert.equal(isQuietChatOrigin('auto_continue'), true);
+  assert.equal(isQuietChatOrigin('onboarding'), true);
+  assert.equal(isQuietChatOrigin('reaction'), true);
+  assert.equal(isQuietChatOrigin('composer'), false);
+  assert.equal(isQuietChatOrigin('api'), false);
+  assert.equal(isQuietChatOrigin(undefined), false);
+
+  // Evolution gate must skip quiet origins (regression from 3ddeb4dc UI-hide split).
+  assert.equal(shouldScheduleOnboardingEvolution('onboarding'), false, 'onboarding seed skips evolution');
+  assert.equal(shouldScheduleOnboardingEvolution('reaction'), false, 'reaction skips evolution');
+  assert.equal(shouldScheduleOnboardingEvolution('schedule'), false, 'schedule skips evolution');
+  assert.equal(shouldScheduleOnboardingEvolution('auto_continue'), false, 'AC skips evolution');
+  assert.equal(shouldScheduleOnboardingEvolution('composer'), true, 'composer may evolve');
+  assert.equal(shouldScheduleOnboardingEvolution('api'), true, 'api may evolve');
+  assert.equal(shouldScheduleOnboardingEvolution(undefined), true, 'unset origin may evolve');
 
   storage.saveRunCheckpoint(bot.id, {
     kind: 'bot',

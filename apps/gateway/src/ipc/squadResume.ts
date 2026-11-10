@@ -185,7 +185,8 @@ export async function resumeSquadAfterRestart(
       tools: settings.tools,
       security: settings.security,
       toolRunBudget: guards.budget,
-      extraTools: await mcpToolsForRun(settings, guards.budget),
+      buildExtraTools: async ({ onBeforeToolExecute, toolRunBudget }) =>
+        mcpToolsForRun(settings, toolRunBudget, onBeforeToolExecute),
       history: [],
       session,
       ownerId: squad.id,

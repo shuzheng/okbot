@@ -240,7 +240,8 @@ export async function resumeBotAfterRestart(
             tools: settings.tools,
             security: settings.security,
             toolRunBudget: guards.budget,
-            extraTools: await mcpToolsForRun(settings, guards.budget),
+            buildExtraTools: async ({ onBeforeToolExecute, toolRunBudget }) =>
+              mcpToolsForRun(settings, toolRunBudget, onBeforeToolExecute),
             session: fileSession,
             ownerId: bot.id,
             resourcesDir: ctx.storage.ownerResourcesDir(bot.id),
@@ -460,7 +461,8 @@ export async function resumeBotAfterRestart(
           tools: settings.tools,
           security: settings.security,
           toolRunBudget: guards.budget,
-          extraTools: await mcpToolsForRun(settings, guards.budget),
+          buildExtraTools: async ({ onBeforeToolExecute, toolRunBudget }) =>
+              mcpToolsForRun(settings, toolRunBudget, onBeforeToolExecute),
           session: fileSession,
           ownerId: bot.id,
           resourcesDir: ctx.storage.ownerResourcesDir(bot.id),

@@ -4,7 +4,7 @@
 </h1>
 
 <p>
-  <strong>English</strong> · <a href="./README_zh.md">中文</a>
+  <a href="./README_en.md">English</a> · <strong>中文</strong>
 </p>
 
 [![GitHub release](https://img.shields.io/github/v/release/shuzheng/okbot?display_name=tag)](https://github.com/shuzheng/okbot/releases/latest)
@@ -12,164 +12,149 @@
 [![GitHub stars](https://img.shields.io/github/stars/shuzheng/okbot)](https://github.com/shuzheng/okbot/stargazers)
 [![Downloads](https://img.shields.io/github/downloads/shuzheng/okbot/total)](https://github.com/shuzheng/okbot/releases)
 
-**OkBot — a real Personal Agent.**  
-AI as permanent contacts (persona + memory & evolution), real tools with optional human-in-the-loop, durable long-running tasks, schedules, Squad + Mesh collaboration, a self-hosted personal gateway (`okbot serve`), multi-computer execution, and a marketplace with `.okbot` packs. Bring your own models; security and observability built in.
+**OkBot——真正的Personal Agent。**  
+把 AI 当成永久联系人（人设 + 记忆与进化），真正可执行的工具（可选人机审批），长程任务、定时任务，Squad + Mesh 成员协作，自托管个人网关（`okbot serve`），多机执行，以及市场与助手包。自备模型，安全与可观测内置。
 
-## Features
+![OkBot 桌面端界面](docs/okbot-desktop.png)
 
-- **Long-running tasks** — auto-decompose into steps, persist progress, resume after interrupts, auto-correct and keep going, manage multiple open tasks
-- **Self-hosted personal gateway** — `okbot serve` (+ client attach) on your machine or LAN, optional Web UI
-- **Multiple run computers** — local by default; register remote hosts via `sandbox-agent` so one gateway reaches many machines
-- **Member auto-collaboration** — **Squads** (captain orchestration) on tasks you assign; **Mesh** so 1:1 assistants can ask roster peers
-- **Cross-session memory & evolution** — facts persist across chats; silent post-turn refresh of persona / skills / memory so assistants evolve with use
-- **BYO models · security · observability** — providers you already use; optional HITL (most tools auto-allow out of the box), path & command soft guards (not an OS sandbox), token permissions; light token stats and run traces
-- **Marketplace & assistant packs** — in-app marketplace for starter assistants and connectors; export / import `.okbot` packs, or import from public GitHub sources
+## 功能特性
 
-### Assistants, Squad & Mesh
+- **长程任务** — 自动拆解任务、状态持久化、任务恢复、自动修正并继续推进、多任务管理
+- **自托管个人网关** — `okbot serve`（以及客户端附着）跑在本机或局域网，可选 Web UI
+- **多台运行电脑** — 默认本机执行；经 `sandbox-agent` 登记远程主机，一网关连多机
+- **成员自动协作** — **小队（Squad）** 由队长编排完成你分配的任务；**Mesh** 让 1:1 助手向花名册同伴求助
+- **跨会话记忆与进化** — 重要信息跨会话记住；跑后静默刷新人设 / 技能 / 记忆，助手随使用演进
+- **自备模型 · 安全 · 可观测** — 接入你已有的供应商；可选 HITL（多数工具开箱自动允许）、路径与危险命令软护栏（非 OS 沙箱）、令牌权限；轻量 Token 与链路追踪
+- **市场与助手包** — 应用内市场安装入门助手与连接器；导出 / 导入 `.okbot` 助手包，也可从公开 GitHub 源导入
 
-- Create assistants as people: name, avatar, persona, then chat like adding a contact
-- Group assistants into **squads** (captain orchestration) that collaborate on a task you assign
-- **Mesh**: in 1:1 chats, assistants can ask other roster peers for help (status lines + read-only exchange UI)
+### 助手、小队与 Mesh
 
-### Marketplace & assistant packs
+- 把助手当人来建：名称、头像、人设，像加联系人一样开始聊
+- 把多位助手组成 **小队**（队长编排），你分配任务，他们协作完成
+- **Mesh**：在 1:1 会话中，助手可向花名册中其他同伴求助（状态行 + 只读往来面板）
 
-- In-app **marketplace** installs starter assistants and recommended connectors
-- Export / import assistant packs (`.okbot`); import from public GitHub sources (repo, directory, or `.okbot` URL)
+### 市场与助手包
 
-### Chat experience
+- 应用内 **市场** 安装入门助手与推荐连接器
+- 导出 / 导入助手包（`.okbot`）；也可从公开 GitHub 源导入（仓库、目录或 `.okbot` 直链）
 
-- Streaming, IM-like transcript with mid-turn steer, retry, and stay-on-latest reading
-- Drag-and-drop (or paste) files, images, and folders into the composer
-- On-device **Whisper** voice input
+### 聊天体验
 
-### Skills, memory, evolution & schedules
+- 类 IM 流式对话：中途可改向、失败可重试、始终贴着最新消息
+- 拖放（或粘贴）文件、图片、文件夹到输入区
+- 本机 **Whisper** 语音输入
 
-- Skills: catalog in the system prompt; full text on demand; **hot-reload** watches skill dirs so the next turn picks up file edits
-- Important facts persist across chats (global + per-assistant memory)
-- Post-turn **evolution**: throttled silent refresh of persona, skills, and memory so the assistant improves over time
-- **Long-running tasks**: durable checklists — decompose into steps, persist state, resume after interruption, auto-continue / correct until done or blocked, multi-task queue
-- **Schedules**: ask an assistant to wake on a schedule; review, pause, or delete jobs in the product UI
+### 技能、记忆、进化与定时
 
-### Models, security & tools
+- 技能：目录进系统提示，全文按需；**热更新**监视技能目录，下一轮即拾取文件改动
+- 重要信息跨会话记住（全局 + 每助手记忆）
+- 跑后 **进化**：节流静默刷新人设、技能与记忆，助手随使用演进
+- **长程任务**：持久化任务清单——自动拆解步骤、状态落盘、中断后恢复、未完成则自动续跑并修正进度、多任务排队推进
+- **定时任务**：可让助手按日程唤醒；在产品内查看、暂停或删除任务
 
-- Bring-your-own providers (Chat Completions / Responses-style APIs you configure)
-- Built-in tools: shell, filesystem, web fetch / search, image generation (when the provider supports it), and more
-- **Out of the box, most tools auto-allow** (`approval: allow`), including `run_shell`, `write_file`, and `edit_file`. HITL cards appear when you set a tool to `ask`, and for forced-confirm actions (schedule create/delete, memory forget) plus every MCP call when MCP is on
-- Path-prefix checks and the dangerous-command denylist are **soft guards, not isolation**: local tool execution is **not an OS sandbox** (no seatbelt/container by default)
-- Optional auto-approval rules (AAR) apply when a tool is set to ask; gateway API tokens with quotas / permissions; **MCP** optional, master switch on by default (every MCP call still asks for approval)
-- Tighter posture tip: set dangerous tools to `ask`, keep `bindLan=false`, leave MCP off, and tighten allowed paths
+### 模型、安全与工具
 
-### Computers
+- 自备供应商（按你配置的 Chat Completions / Responses 类接口）
+- 内置工具：Shell、文件系统、网页拉取 / 搜索、文生图（供应商支持时）等
+- **开箱多数工具自动允许**（`approval: allow`），包括 `run_shell`、`write_file`、`edit_file`。把工具设为 `ask` 才会弹 HITL 卡；强制确认动作（定时 create/delete、记忆 forget）以及启用 MCP 后的每次 MCP 调用也会审批
+- 路径前缀检查与危险命令 denylist 是**软护栏，不是隔离**：本机工具执行**不是 OS 沙箱**（默认无 seatbelt/容器）
+- 工具设为询问时可用可选自动审批规则（AAR）；网关 API 令牌配额 / 权限；**MCP** 可选，总开关默认开启（每次调用仍须审批）
+- 更高安全姿态提示：把危险工具设为 `ask`，保持 `bindLan=false`，不要开 MCP，收紧允许路径
 
-- Run tools on the **local** machine by default
-- Register **remote** computers via `sandbox-agent` (HTTP shell / fs on another host or container) — one gateway, many run computers
+### 电脑
 
-### Self-hosted personal gateway
+- 默认在 **本机** 执行工具
+- 可通过 `sandbox-agent` 登记 **远程** 电脑（另一台主机或容器上的 HTTP shell / fs）——一网关、多台运行电脑
 
-- `okbot serve` runs the gateway in the foreground without a desktop window — a headless OkBot host on your hardware
-- Optional LAN bind and Web UI so phones or browsers on your network use the same chat
-- The client attaches to an already-running gateway instead of starting a second one
+### 自托管个人网关
 
-### Observability
+- `okbot serve` 以前台方式启动网关，不打开桌面窗口——跑在你自己硬件上的无界面 OkBot 宿主
+- 可选绑定局域网并提供 Web UI，内网手机或浏览器使用同一套聊天
+- 若网关已在运行，客户端会附着上去，而不会再拉起第二个
 
-- Light token usage stats and per-message run traces / logs
+### 可观测性
 
-## Usage scenarios
+- 轻量 Token 用量统计与消息级链路 / 日志
 
-OkBot separates the **UI** (desktop or browser Web UI) from the **OkBot gateway** (owner of `~/.okbot`). The UI attaches to **exactly one** gateway at a time; that gateway can reach **many** computers. Tools can run on the gateway host or on registered remote computers. Common setups:
+## 使用场景
 
-### 1. Local app + local gateway
+OkBot 把 **UI**（桌面或浏览器 Web UI）与 **OkBot 网关**（`~/.okbot` 的所有者）分开。UI 同一时间只附着 **一个** 网关；该网关可连接 **多台** 电脑。工具可在网关本机执行，也可落到登记的远程电脑。常见组合：
 
-Everyday default: client owns or attaches to a gateway on the same machine. Chat and data live under local `~/.okbot`.
+### 1. 本地应用 + 本地网关
 
-- Cold start with no gateway → the client starts one automatically
-- An existing `okbot serve` (or another client-owned gateway) → desktop **attaches** instead of starting a second process
+日常默认：桌面客户端在本机拥有或附着网关。聊天与数据落在本地 `~/.okbot`。
+
+- 冷启动且尚无网关 → 客户端自动拉起网关
+- 已有 `okbot serve`（或其它已占用的网关）→ 桌面 **附着**，不会再起第二个进程
 
 ```text
-[ client ] ──IPC/HTTP──► [ Gateway on this Mac/PC ]
+[ 客户端 ] ──IPC/HTTP──► [ 本机网关 ]
                                          └── ~/.okbot
 ```
 
-### 2. Local app / Web UI + remote gateway
+### 2. 本地应用 / Web UI + 远程网关
 
-UI on your laptop; gateway on another host you can reach (LAN `bindLan` / `okbot serve`, or a reachable URL). Chat and data live on the **gateway host’s** `~/.okbot`. Save remote gateway prefs and token on the client, then **switch** the active gateway (restart applies).
+UI 在你的笔记本上；网关跑在另一台可达主机（局域网 `bindLan` / `okbot serve`，或可访问的 URL）。聊天与数据在 **网关所在机器** 的 `~/.okbot`。在客户端保存远程网关地址与令牌，再 **切换** 当前网关（重启后生效）。
 
 ```text
-[ client attach  or  browser Web UI ]
+[ 客户端附着  或  浏览器 Web UI ]
               │  HTTP + token
               ▼
-[ Gateway on remote host ] ── ~/.okbot (on that host)
+[ 远程主机上的网关 ] ── ~/.okbot（在该主机上）
 ```
 
-### 3. Local app / Web UI + remote gateway + remote computers
+### 3. 本地应用 / Web UI + 远程网关 + 远程电脑
 
-Same as (2), plus tools execute on registered remote machines via **`sandbox-agent`** (HTTP shell / fs). The OkBot host (gateway) stays on the remote gateway machine; computers are additional execution targets.
+与（2）相同，额外通过 **`sandbox-agent`**（HTTP shell / fs）在已登记的远程机器上执行工具。OkBot 宿主（网关）仍在远程网关机器上；电脑是额外的执行目标。
 
 ```text
-[ client / Web UI ] ──HTTP──► [ Remote gateway + ~/.okbot ]
+[ 客户端 / Web UI ] ──HTTP──► [ 远程网关 + ~/.okbot ]
                                       │
-                                      ├── local tools (gateway host)
-                                      └── remote → sandbox-agent (other hosts)
+                                      ├── 本机工具（网关主机）
+                                      └── remote → sandbox-agent（其它主机）
 ```
 
-## Connection model
+## 命令行（CLI）
 
-The OkBot connection topology is **one UI ↔ one active gateway ↔ many computers**:
+`okbot` CLI 用于无界面网关与常用运维：
 
-1. **client / Web UI → Gateway** — the client connects to **exactly one** gateway at a time (local or remote). You can **switch** among saved gateways; a restart applies the change.
-2. **Gateway → Computers** — that gateway connects to **many** computers (built-in local + remote `sandbox-agent` entries). Tools can target one computer or batch/specify as the product already allows.
-
-```text
-client / Web UI  ──(one active)──►  Gateway (local or remote)
-                                            │
-                                            ├── Local computer (always)
-                                            ├── Remote sandbox A
-                                            └── Remote sandbox B …
-```
-
-Client prefs store **which gateway to attach**. Computer lists live on the **gateway host** (`settings.computers` under that host’s `~/.okbot`), not in the client’s gateway list.
-
-## CLI
-
-The `okbot` CLI drives the headless gateway and common ops:
-
-| Command | Purpose |
-| ------- | ------- |
-| `okbot serve` | Start the gateway in the foreground |
-| `okbot status` | Show whether the gateway is running |
-| `okbot stop` / `restart` | Stop, or stop then start |
-| `okbot config` | Show or change gatewayHttpApi settings |
-| `okbot token` | Show or reset the access token |
-| `okbot data` | Print or open the data directory |
-| `okbot help` / `version` | Help and version |
-| `--lang zh\|en` | UI language (also `OKBOT_LANG` / `LANG`) |
+| 命令 | 作用 |
+| ---- | ---- |
+| `okbot serve` | 前台启动网关 |
+| `okbot status` | 查看网关是否在运行 |
+| `okbot stop` / `restart` | 停止，或停止后重启 |
+| `okbot config` | 查看或修改 gatewayHttpApi 配置 |
+| `okbot token` | 查看或重置访问令牌 |
+| `okbot data` | 打印或打开数据目录 |
+| `okbot help` / `version` | 帮助与版本 |
+| `--lang zh\|en` | 界面语言（亦可用 `OKBOT_LANG` / `LANG`） |
 
 ```bash
-okbot serve                 # start gateway (prints URL + token once)
+okbot serve                 # 启动网关（打印地址与令牌各一次）
 okbot status
 okbot config
 okbot stop
 okbot help --lang zh
 ```
 
-**From source:** the root `package.json` `bin` points at `apps/gateway/bin/okbot.mjs`, which loads `apps/gateway/dist/cli.js`. Build the gateway first:
+**从源码使用：** 根目录 `package.json` 的 `bin` 指向 `apps/gateway/bin/okbot.mjs`，它会加载 `apps/gateway/dist/cli.js`。请先构建 gateway：
 
 ```bash
 pnpm --filter @okbot/gateway build
-# then: pnpm exec okbot serve   (or link / path to the bin)
+# 然后: pnpm exec okbot serve   （或链接 / 指向该 bin）
 ```
 
-Desktop app packages may ship the CLI alongside the app; use the release notes for your platform if you install from binaries only.
+桌面安装包也可能随应用附带 CLI；若仅安装二进制，以对应平台的发版说明为准。
 
-## Architecture
+## 架构
 
-The gateway (`client main` or `okbot serve`) is the OkBot host process: one owner of `~/.okbot` at a time. The desktop attaches over HTTP when a gateway is already running; quitting the window only stops a gateway that the client itself started. See **Connection model** above for UI ↔ gateway ↔ computers topology.
+网关（`客户端 main` 或 `okbot serve`）是 OkBot 的宿主进程：同一时间只有一个进程拥有 `~/.okbot`。网关已在运行时，桌面会经 HTTP 附着；关掉窗口**只会**停掉由客户端自己拉起的网关。UI ↔ 网关 ↔ 电脑的拓扑见上方 **使用场景**。
 
 ```text
 Renderer (React)
     │  IPC (owned window)  or  HTTP (attach / browser)
     ▼
-client main  OR  `okbot serve`   ← one owner of ~/.okbot gateway
+客户端 main  OR  `okbot serve`   ← one owner of ~/.okbot gateway
     │
     ├── gatewayHttpApi (gateway HTTP + optional Web UI)
     ├── packages/agent (models, tools, squads, mesh)
@@ -178,59 +163,59 @@ client main  OR  `okbot serve`   ← one owner of ~/.okbot gateway
     └── FileStorage → ~/.okbot
 ```
 
-Deeper module boundaries, HTTP routes, and storage layout: **[DESIGN.md](./DESIGN.md)**.
+更细的模块边界、HTTP 路由与存储布局见 **[DESIGN.md](./DESIGN.md)**。
 
-## Install (3 steps)
+## 安装（三步）
 
-1. **Download** the latest build from **[GitHub Releases](https://github.com/shuzheng/okbot/releases/latest)** for your platform:
+1. **下载** 从 **[GitHub Releases](https://github.com/shuzheng/okbot/releases/latest)** 获取对应平台最新构建：
 
-   | Platform | Artifact |
-   | -------- | -------- |
-   | macOS | `.dmg` / `.zip` (arm64 & x64) |
-   | Windows | NSIS installer (x64) |
-   | Linux | `.AppImage` (x64) |
+   | 平台 | 产物 |
+   | ---- | ---- |
+   | macOS | `.dmg` / `.zip`（arm64 与 x64） |
+   | Windows | NSIS 安装包（x64） |
+   | Linux | `.AppImage`（x64） |
 
-2. **Open** OkBot (single-instance: launching again focuses the existing window). Early builds may be **unsigned** — allow the app in system settings if you trust the download.
+2. **打开** OkBot（单实例：再次启动会聚焦已有窗口）。早期构建可能**未签名**——若你信任该下载，可在系统设置中允许。
 
-3. **Add a model provider** in Settings, **create an assistant** (like adding a contact), and chat. Most tools run without a prompt by default; if you set a tool to ask (or hit a forced-confirm / MCP call), allow once, remember a rule, or deny.
+3. 在设置中 **添加模型供应商**，**创建一个助手**（像加联系人），开始聊天。多数工具默认无需确认即可执行；若你把工具设为询问（或命中强制确认 / MCP 调用），可单次允许、记住规则，或拒绝。
 
-### Self-host the gateway (Docker / Kubernetes)
+### 自托管网关（Docker / Kubernetes）
 
-Desktop stays a native install. To run the headless gateway (`okbot serve`) in Docker or Kubernetes (Helm), see **[docs/install-docker-k8s.md](./docs/install-docker-k8s.md)**. Packaging lives under `deploy/docker/` and `deploy/helm/okbot/`.
+桌面端仍用原生安装包。若要用 Docker 或 Kubernetes（Helm）跑无界面网关（`okbot serve`），见 **[docs/install-docker-k8s.md](./docs/install-docker-k8s.md)**。相关文件在 `deploy/docker/` 与 `deploy/helm/okbot/`。
 
-## Repository layout
+## 仓库结构
 
 ```text
-apps/desktop/          client shell + React UI
-apps/gateway/          Headless gateway + `okbot` CLI (`okbot serve`, status, stop, …)
-apps/sandbox-agent/    Remote computer HTTP (shell / fs)
-packages/agent/        Models, tools, squads, mesh, compression, execution backends
-packages/shared/       Types, settings, IPC constants, RuntimeEvent
+apps/desktop/          客户端壳 + React UI
+apps/gateway/          无界面网关 + `okbot` CLI（`okbot serve`、status、stop 等）
+apps/sandbox-agent/    远程电脑 HTTP（shell / fs）
+packages/agent/        模型、工具、小队、Mesh、压缩、执行后端
+packages/shared/       类型、设置、IPC 常量、RuntimeEvent
 ```
 
-## Data & privacy
+## 数据与隐私
 
-- All product data defaults to `~/.okbot` on the gateway host
-- Directory permissions are tightened on create (`0700`); `server.json` (API keys, gateway token, computer tokens) is written `0600`
-- Secrets stay in local settings; optional product backup can export without secrets
-- Model calls go to **your** configured provider base URLs
+- 产品数据默认落在网关所在机器的 `~/.okbot`
+- 创建目录时收紧权限（`0700`）；`server.json`（模型 API Key、网关令牌、电脑令牌）以 `0600` 写出
+- 密钥留在本地设置；产品内备份可选择不含密钥导出
+- 模型请求打向**你配置的**供应商 base URL
 
-## Develop from source
+## 从源码开发
 
-Requires **Node ≥ 22.13** and **pnpm** (see `packageManager` in root `package.json`).
+需要 **Node ≥ 22.13** 与 **pnpm**（见根目录 `package.json` 的 `packageManager`）。
 
 ```bash
 pnpm install
-pnpm approve-builds --all   # if pnpm 11 prompts about ignored build scripts
+pnpm approve-builds --all   # 若 pnpm 11 提示忽略了构建脚本
 pnpm dev
 ```
 
-Useful scripts: `pnpm test`, `pnpm build`, `pnpm typecheck`. Gateway CLI needs `pnpm --filter @okbot/gateway build` before `okbot` loads `dist/cli.js`.
+常用脚本：`pnpm test`、`pnpm build`、`pnpm typecheck`。使用 gateway CLI 前需 `pnpm --filter @okbot/gateway build`，以便加载 `dist/cli.js`。
 
-## Contributing
+## 参与贡献
 
-Issues and pull requests are welcome. Start with [CONTRIBUTING.md](./CONTRIBUTING.md). Please also read [GUIDE.md](./GUIDE.md), [DESIGN.md](./DESIGN.md), and [AGENTS.md](./AGENTS.md) before large changes, and keep PRs focused. Security reports: [SECURITY.md](./SECURITY.md).
+欢迎 Issue 与 Pull Request。请先阅读 [CONTRIBUTING.md](./CONTRIBUTING.md)。较大改动前另见 [GUIDE.md](./GUIDE.md)、[DESIGN.md](./DESIGN.md) 与 [AGENTS.md](./AGENTS.md)，并保持 PR 聚焦。安全漏洞请按 [SECURITY.md](./SECURITY.md) 私下报告。
 
-## License
+## 许可证
 
 [MIT](./LICENSE) © 2026 张恕征

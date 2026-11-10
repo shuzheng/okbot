@@ -10,7 +10,7 @@ OkBot 是 **本机个人桌面 AI 助手**（Electron）：
 - 左侧：助手 / 小队会话列表  
 - 右侧：对话区（气泡、工具卡、输入框）  
 - 数据纯文件落在网关主机 `~/.okbot`，无云端账号体系  
-- 客户端壳层偏好（主题/语言/关窗/窗口位置等）在 `~/.okbot/client.json`；网关列表在 `gateways.json`；切换网关不带走网关侧设置  
+- 客户端壳层偏好（主题/语言/关窗/窗口位置/网关列表等）在 `~/.okbot/client.json`（`window` / `gateways` 嵌套字段）；切换网关不带走网关侧设置  
 - **单实例**：主进程 `requestSingleInstanceLock()`；再启动会聚焦已有窗口（含后台隐藏时），不会开第二个进程。`okbot serve` 是另一个进程：同一 `~/.okbot` 只允许一个服务听端口，Electron 若发现已经在听，窗口只作界面连上去。  
 
 技术栈：Electron + React + TypeScript + Vite（electron-vite）；pnpm monorepo（`apps/desktop`、`apps/gateway`、`packages/agent`、`packages/shared`）；对话走 `@openai/agents`（Chat Completions / Responses）+ 兼容网关（如 DeepSeek）。
@@ -85,7 +85,7 @@ okbot/
 - **关于**：主题按钮右侧打开 `AboutModal`（应用信息、构建日期、复制信息）。  
 - **窗口控件（仅 Windows）**：关于按钮右侧为最小化 / 最大化(还原) / 关闭；macOS 仍用系统红绿灯，Linux 不加这组控件。关闭行为见上文「关闭窗口（托盘）」。  
 - **下载更新**：有可用/下载中/已下载更新时，侧栏底部「市场」右侧出现蓝色更新圆钮（展开态悬停变宽显示「更新」文案；见 §10）；无更新时隐藏。
-- **沉浸式对话**：控制不在顶栏，而在消息/转录区域（`.messages-shell`）**右下角**悬停浮层按钮（Maximize2 / Minimize2 图标）。鼠标进入消息/转录区域时淡入，离开时淡出（`opacity` 过渡；不可见时 `pointer-events: none` 不挡点击）。点击隐藏侧栏与 splitter（聊天区全宽），并隐藏对话顶栏右侧图标组（`.header-actions` 里的主题、关于）；Windows 最小化 / 最大化 / 关闭仍留在顶栏右侧。再点同一按钮还原侧栏与这些图标（保留进入前的宽度/折叠轨态）。偏好持久化 `localStorage` 键 `okbot.immersiveChat`。文案：`开启沉浸式对话` / `关闭沉浸式对话`（EN: Enable / Exit immersive chat）。
+- **沉浸式对话**：控制不在顶栏，而在消息/转录区域（`.messages-shell`）**右下角**悬停浮层按钮（Maximize2 / Minimize2 图标）。鼠标进入消息/转录区域时淡入，离开时淡出（`opacity` 过渡；不可见时 `pointer-events: none` 不挡点击；触控设备上该按钮保持可见）。点击后侧栏与 splitter 以约 0.3s 宽度过渡收起（与侧栏点击折叠同一条 `--sidebar-w` 缓动），聊天区随之铺满；并隐藏对话顶栏右侧图标组（`.header-actions` 里的主题、关于）；Windows 最小化 / 最大化 / 关闭仍留在顶栏右侧。再点同一按钮按进入前的宽度/折叠轨态展开还原。`prefers-reduced-motion: reduce` 时跳过动画，立即收起或还原。沉浸开启后（动画结束后）侧栏 chrome 全部不出现且不可点，包括窄窗/手机断点（约 ≤520px）下的贴边半圆按钮与会话抽屉；把窗口缩到最小也不会再露出。该断点下若抽屉已打开，进入沉浸会先沿既有 0.24s 侧滑收起，半圆按钮同步缩入左缘；退出沉浸时半圆按钮再展开/淡入。开启/关闭沉浸按钮在最小窗口与该断点下都保持可点（未开沉浸时半圆按钮仍在左侧中部，与右下角浮层不重叠）。偏好持久化 `localStorage` 键 `okbot.immersiveChat`。文案：`开启沉浸式对话` / `关闭沉浸式对话`（EN: Enable / Exit immersive chat）。半透明开时按钮为毛玻璃（与对话顶栏成员 pill / 网关钮相同：`--panel` ~10% + `blur(10px)`，悬停略加密），关闭时回退实色 `--panel`；开/关沉浸仍靠 Maximize2 / Minimize2 图标区分。
 - **macOS 沉浸式顶栏 inset**：沉浸且侧栏隐藏时，对话顶栏在 darwin 上增加左侧安全区（`--traffic-lights-inset: 76px`），避免助手头像/名称与系统红绿灯重叠；Windows / Linux 不加该左 padding。
 
 ### 3.3 消息列表（`ChatTranscript`）
@@ -106,7 +106,7 @@ okbot/
 - 发送时可**自动换题压缩**（见 §8.4；设置可关）。  
 - **助手回复显示**：主进程不再向 UI 推送 token `delta`；助手气泡在 `send_message`（`assistant_message`）、自动允许/HITL 工具边界前的可见旁白落盘、或 `done` 时整条出现，不做逐字流式。长任务应尽早 `send_message` 确认；即使用户只说「继续」、模型未调 `send_message`，工具一开始也会把缓冲旁白封成气泡。同轮开场「收到」只保留一条（短确认之后若最终/旁白再以「收到」开头，去重或去掉开头确认句）。UI 不展示空白或仅 `<think>`（含未闭合）的气泡。侧栏预览仍可在收齐后更新。`MarkdownContent` / `CodeBlock` / `ChatTranscript` / `SessionSidebar` 用 `memo`。  
 - 忙碌时 transcript **末行** ThinkingOrb + 阶段文案（思考中 / 正在回复 / 工具与命令 / **正在进化**——`done` 后、`chatStart` IPC 返回前的 persist 与 SOUL/skills/memory 刷新），排在最新用户/助手气泡下方，不遮挡；可「跳到底部」。
-- **贴底滚动**：用户未主动上滑时，新气泡 / 工具卡片 / 阶段切换 / Markdown 布局增高会通过 `ResizeObserver`（含子节点与 `.messages` 视口）+ `MutationObserver` + 双 `rAF` 继续钉在底部，并在约 220ms 后再钉一次以覆盖 bubble-enter / 晚到布局；程序化滚动用 `pinningScrollRef` 忽略，避免误判「已离开底部」。距底 ≤16px 视为真正触底（贴底 + 隐藏「回到底部」+ 清除未读计数），距底 >24px 才显示「回到底部」（紧滞回，消化亚像素抖动；不以末条消息进入视口为准）。发送（含并行加任务）会强制重新贴底；用户上滑后不抢滚动。
+- **贴底滚动**：用户未主动上滑时，新气泡 / 工具卡片 / 阶段切换 / Markdown 布局增高会通过 `ResizeObserver`（含子节点与 `.messages` 视口）+ `MutationObserver` + 双 `rAF` 继续钉在底部，并在约 220ms 后再钉一次以覆盖 bubble-enter / 晚到布局；程序化滚动用 `pinningScrollRef` 忽略，避免误判「已离开底部」。距底 ≤16px 视为真正触底（贴底 + 隐藏「回到底部」+ 清除未读计数），距底 >24px 才显示「回到底部」（紧滞回，消化亚像素抖动；不以末条消息进入视口为准）。半透明开时该按钮为毛玻璃（与对话顶栏成员 pill / 网关钮相同：`--panel` ~10% + `blur(10px)`，悬停略加密），关闭时回退实色 `--panel`。发送（含并行加任务）会强制重新贴底；用户上滑后不抢滚动。
 - **进行中的任务**（`OpenTasksPanel`）：仅展示 `status === 'in_progress'` 的任务及其步骤（pending/backlog/done 不进该卡）。composer 上方折叠卡，默认收起；展开时任务/步骤列表**向上**以 absolute 浮层叠在消息区上（不挤占消息高度），列表区毛玻璃同右侧抽屉（`--panel` ~10% + `blur(28px)`）；展开 chevron 逆时针旋至朝上（`rotate(-180deg)`），收起顺时针回位。编辑助手 **任务** tab 分三栏：未做（backlog，可手动删除）/ 进行中（pending+in_progress）/ 结束（done）。
 
 ### 3.4 输入区（`ChatComposer`）
@@ -134,8 +134,8 @@ okbot/
 - **引导**（`onboardingComplete === false` 期间）：系统提示附加引导说明，并注册两个工具——`ask_choice`（选项卡片）与 `save_assistant_profile`（简介 + SOUL.md + 是否结束）。首轮由一条对 UI 隐藏的种子消息（`origin: onboarding`，与 auto-continue 同机制）触发：助手以自己的名字打招呼，按名字推荐 4 个场景 + 「先聊一聊」。之后依次聊 **角色职责 → 做事风格 / 灵魂 → 随便聊聊**，每步约 4 个由模型生成的选项；用户可随时自由输入、跳过或结束。所有可见文字都由模型生成，宿主不写模板话术。模型每有新信息就调用 `save_assistant_profile` 写入简介（≤200 字）与完整 `SOUL.md`；结束时带 `done=true`。  
 - **引导期每步进化**：引导未完成时，每次用户回复 / 点选后都异步触发一次跑后维护（同「正在进化」那套 `runThrottledPostTurnMaintenance`，SOUL / 简介不受 `soulEveryTurns` 节流），不阻塞界面与下一轮回复；同一助手同时最多一次，进行中的新步骤合并为一次补跑；不改会话排序。模型标记结束后，等最后一次进化跑完再 `finishBotOnboarding`（兜底：可见用户消息满 12 条也会结束）；之后恢复常规节流。  
 - **选项卡片**（`QuickChoiceCard`）：白色圆角卡片，粗体问题 + 右上 ×，竖排选项带 A/B/C/D 灰色圆角方块角标，卡片下灰字「或直接在下方输入回答」。点选项即发送该文字；× 只收起卡片。载荷存于该条助手消息的 `choice`（会话 jsonl `meta.choice`），刷新后仍在；只在最后一条可见回复下显示，有新消息即消失。任何回合模型调用 `ask_choice` 都可复用。
-- 编辑资料：名称、描述、头像、颜色、可选 **模型覆盖**（`providerId` + `modelId`，皆空则用全局默认；同模型 id 可跨供应商）。  
-- 编辑抽屉分区（`OwnerFormTabs`）：**详情** / **任务** / **自动化** / **记忆** / **技能** / **资料库**（小队无记忆/技能）。**任务**与**资料库**列表新→旧，每次加载 10 条（「加载更多」）。**资料库**为每助手轻量附件柜（`resources.jsonl`；**HTML 笔记**（`type=note`，`manage_note` 创建/维护；聊天气泡一帧预览卡片）/ URL / 文件夹与文件引用 / 收入副本；可预览项（md / 笔记 / 代码文本 / 图片）点开为整屏预览（图片保留缩放；其它仅下载；无缩略图落盘）；预览 md/代码复用聊天气泡栈，笔记为 iframe 可编辑预览（srcdoc + allow-same-origin 注入 base about:srcdoc；大纲/锚点在预览内 scroll，不整页白屏；勿 allow-scripts）；不整库注入模型上下文；升级不迁移旧目录散落文件）。记忆 / 技能为限高列表（仅本助手；全局记忆在设置 → 记忆）；全局技能总开关（默认关）+ 按 slug 选用 `~/.agents/skills`（`bot.json`：`useGlobalSkills` / `enabledGlobalSkills`）。详情 → Advanced 标签为「灵魂」（`SOUL.md` 正文，无下一行提示）。  
+- 编辑资料：名称、描述、头像、颜色、可选 **模型覆盖**（`providerId` + `modelId`，皆空则用全局默认；同模型 id 可跨供应商）。**助手显示名不可与其他助手重名**（创建 / 改名直接拒绝；导入见 §4.3 自动加 `-N`）。  
+- 编辑抽屉分区（`OwnerFormTabs`）：**详情** / **任务** / **自动化** / **记忆** / **技能** / **资料库**（小队无记忆/技能）。**任务**与**资料库**列表新→旧，每次加载 10 条（「加载更多」）。**资料库**为每助手轻量附件柜（`resources.jsonl`；**HTML 笔记**（`type=note`，`manage_note` 创建/维护；聊天气泡一帧预览卡片）/ **URL**（`type=url`，助手回复中的 http(s) 链接落盘时自动收入并按规范化 URL 去重；列表显示站点 favicon，失败则网络图标；点开用系统/浏览器打开）/ 文件夹与文件引用 / 收入副本；可预览项（md / 笔记 / 代码文本 / 图片）点开为整屏预览（图片保留缩放；其它仅下载；无缩略图落盘）；预览 md/代码复用聊天气泡栈，笔记为 iframe 可编辑预览（srcdoc + allow-same-origin 注入 base about:srcdoc；大纲/锚点在预览内 scroll，不整页白屏；勿 allow-scripts）；不整库注入模型上下文；升级不迁移旧目录散落文件）。记忆 / 技能为限高列表（仅本助手；全局记忆在设置 → 记忆）；全局技能总开关（默认关）+ 按 slug 选用 `~/.agents/skills`（`bot.json`：`useGlobalSkills` / `enabledGlobalSkills`）。详情 → Advanced 标签为「灵魂」（`SOUL.md` 正文，无下一行提示）。  
 - 系统提示：`SOUL.md`（引导写入 + 高级可编 + 跑后静默维护）；Skills：**渐进披露**——目录（名称 / slug / 何时使用）进系统提示，完整正文经 `read_skill` 按需加载（本助手 `skills/<slug>/SKILL.md` + 可选全局）；记忆：全局 `memory.md`（设置 → 记忆）+ 每助手 `memory.md`（JSONL）。  
 - **技能热更新**：主进程对每个助手的 `skills/` 以及（若启用）`~/.agents/skills` 做 `fs.watch`（约 120ms 去抖），变更发 `skills_changed`。不改当前转录；**下一轮**开跑和 `read_skill` 都从磁盘重读，改完文件不用重启应用。
 
@@ -156,9 +156,9 @@ okbot/
 
 把一个助手的对外形象带走，不带走密钥和聊天记录。
 
-- **内容**：`manifest.json`（格式 `okbot-assistant`：名称、描述、头像）+ 可选 `SOUL.md` + `skills/<slug>/SKILL.md`。  
-- **导出**：侧栏该助手右键 **导出助手**。默认文件名是助手名称（去掉不能做文件名的字符），扩展名 `.okbot`。`.okbot` 是**未加密** zip（系统 `zip`，无密码）。导出前剥掉密钥类字段（apiKey、token、password 等），**不含**会话、记忆、供应商配置。保存路径若没写 `.okbot` 会自动补上。  
-- **导入**：侧栏 **+** → **导入助手**，可选 `.okbot` 或含 `manifest.json` 的文件夹。始终**新建**一名助手（头像 / 名称 / 人设 / 技能），并标成已完成引导；不改本机模型密钥。成功后刷新会话列表。
+- **内容**：`bot.json`（名称、描述、完整头像字段：`avatarKind` / `emoji` / `color` / 可选 `botAvatarType`）+ 可选 `SOUL.md` + `skills/<slug>/SKILL.md`。  
+- **导出**：修改助手抽屉右上角 **导出助手**。默认文件名是助手名称（去掉不能做文件名的字符），扩展名 `.okbot`。`.okbot` 是**未加密** zip（系统 `zip`，无密码）。导出前剥掉密钥类字段（apiKey、token、password 等），**不含**会话、记忆、供应商配置、定时任务。保存路径若没写 `.okbot` 会自动补上。  
+- **导入**：侧栏 **+** → **导入助手**，可选 `.okbot` 或含 `bot.json` 的文件夹。始终**新建**一名助手（头像 / 名称 / 人设 / 技能），并标成已完成引导；不改本机模型密钥。成功后刷新会话列表。若包内名称与现有助手重名，自动改为 `原名-2`、`原名-3`…（从 2 起找第一个空闲后缀），不询问覆盖。
 
 ### 4.4 市场（助手 + 连接器）
 
@@ -166,9 +166,9 @@ okbot/
 - **顶栏 Tab**：**助手** / **连接器**（`galleryTabAssistants` / `galleryTabConnectors`）。
 - **助手 · 内置画廊**：点卡片即新建一名可直接聊天的助手，随后选中它并聚焦输入框。没有模型时卡片不可点，并提示先去「模型接入」添加模型。已有同名助手的卡片显示「已添加」，不能再点。
 - 内置默认（顺序）：**编程助手**、写作助手、学习伙伴、计划助手、翻译助手、电脑小帮手。每个含人设（`SOUL.md`）和 0–2 个技能（**slug、frontmatter `name`、目录名均以 `okbot-` 开头**；落盘 `skills/<slug>/`：`SKILL.md` 必需，可选 `scripts/` / `references/` / `assets/` / `README.md`；`description` 描述何时使用；正文按「何时使用此技能 / 工作原理 / 示例 / 注意事项」），中英两套文案按界面语言安装。人设与技能用 ASD-STE100 风格的短句。编程助手面向入门、可用中文提问。
-- **远程 GitHub 来源**（助手 Tab）：在市场页粘贴公开仓库 URL、目录（`tree`）、`raw` 文件、release 资源或 `.okbot` 直链。解析后下载并走与本地导入同一套助手包管线（`manifest.json` + 可选 `SOUL.md` + `skills/`）。仓库根会尝试常见路径（`/`、`assistant`、`assistant-package` 等）或根目录 `.okbot`。仅公开源，不读环境变量令牌；失败时有明确错误与加载态。成功导入的 URL 写入 `settings.assistantMarketplace.savedSources`（最多 20，可一键再导入或移除）。
+- **远程 GitHub 来源**（助手 Tab）：在市场页粘贴公开仓库 URL、目录（`tree`）、`raw` 文件、release 资源或 `.okbot` 直链。解析后下载并走与本地导入同一套助手包管线（`bot.json` + 可选 `SOUL.md` + `skills/`；重名同样自动 `原名-2`…）。仓库根会尝试常见路径（`/`、`assistant`、`assistant-package` 等）或根目录 `.okbot`。仅公开源，不读环境变量令牌；失败时有明确错误与加载态。成功导入的 URL 写入 `settings.assistantMarketplace.savedSources`（最多 20，可一键再导入或移除）。
 - **连接器 Tab**：推荐 MCP 服务器预设（Memory / Sequential Thinking / Fetch）；一点即写入 `settings.mcp.servers`（**默认未启用**，需到「设置 → MCP扩展」打开并测试）。可跳转 MCP 设置。预设见 `features/bots/marketplaceConnectors.ts`。
-- 数据：内置包在 `packages/agent/gallery/<id>/{zh,en}/`（`manifest.json` + `SOUL.md` + `skills/`；顺序见 `order.json`）；加载在 `packages/agent/src/assistantGallery.ts`（离线读盘；打包进 desktop `Resources/assistant-gallery`）；URL 解析在 `packages/agent/src/githubAssistantSource.ts`；拉取在 `apps/gateway/src/storage/fetchGithubAssistant.ts`。安装经 `FileStorage.installAssistantPackage`。IPC / 网关 RPC：`listAssistantGallery`、`installGalleryAssistant`、`importAssistantFromUrl`。UI：`features/bots/AssistantMarketplacePage.tsx`。
+- 数据：内置包在 `packages/agent/gallery/<id>/{zh,en}/`（`bot.json` + `SOUL.md` + `skills/`；顺序见 `order.json`）；加载在 `packages/agent/src/assistantGallery.ts`（离线读盘；打包进 desktop `Resources/assistant-gallery`）；URL 解析在 `packages/agent/src/githubAssistantSource.ts`；拉取在 `apps/gateway/src/storage/fetchGithubAssistant.ts`。安装经 `FileStorage.installAssistantPackage`。IPC / 网关 RPC：`listAssistantGallery`、`installGalleryAssistant`、`importAssistantFromUrl`。UI：`features/bots/AssistantMarketplacePage.tsx`。
 
 ### 4.5 首次使用引导
 
@@ -287,7 +287,7 @@ curl -N -X POST "http://127.0.0.1:<port>/v1/bots/<botId>/messages" \
 ```
 
 - 实现：`apps/gateway/src/gatewayHttpApi.ts`；设置变更时重启监听。Electron 自己拉起的服务，在退出时停止；`okbot serve` 拉起的服务，退出 Electron 不会停（附着行为见 §6.1.1）。
-- 开启 **局域网网关**（`bindLan`）时可绑定 `0.0.0.0`，供内网手机访问；开启 `serveUi` 时托管与桌面相同的渲染端静态资源。未登录时浏览器 `GET /`、`GET /gateway-login` 返回令牌输入页（HTML），不再是 JSON `unauthorized`。`/v1/*`（除 `GET /v1/health`）仍要 Bearer / `X-OkBot-Token`。登录后 `?token=` 或 cookie 继续打开同一套桌面 UI。桌面窄窗先自动收成图标轨（既有 MAIN_COLLAPSE_AT）；仅真正窄屏（约 ≤520px，含手机浏览器）下会话列表改为左侧贴边半圆按钮（更大触控靶，向右箭头；悬停仅从左加宽不位移）+ 左侧抽屉；不再用会话汉堡。`.chat-pane` 默认 `min-width:0`（仅 ≥721px 恢复 400px 桌面地板），壳层始终 `overflow-x:hidden` + grid `minmax(0,…)`；手机断点用 `max-width:520` **或** `max-device-width:520`+粗指针（防止 iOS Safari 撑开 layout viewport 后 MQ 失效），网关 `gateway-boot.js` 插在 viewport meta **之后**，避免字很小且半圆按钮永不触发。触控设备上气泡操作按钮始终可见，不依赖悬停。手机 WebUI 将 `.app` 钉在 `visualViewport`（`--app-height` / `--vv-offset-top`），并在 composer focus 时 `scrollTo(0,0)`，避免 iOS 顶起重排留下底部黑缝；切换会话时手机不再自动 focus composer。设置弹层仍用 ≤768 图标轨 / ≤640 汉堡抽屉（见上文设置响应式）。
+- 开启 **局域网网关**（`bindLan`）时可绑定 `0.0.0.0`，供内网手机访问；开启 `serveUi` 时托管与桌面相同的渲染端静态资源。未登录时浏览器 `GET /`、`GET /gateway-login` 返回令牌输入页（HTML），不再是 JSON `unauthorized`。`/v1/*`（除 `GET /v1/health`）仍要 Bearer / `X-OkBot-Token`。登录后 `?token=` 或 cookie 继续打开同一套桌面 UI。桌面窄窗先自动收成图标轨（既有 MAIN_COLLAPSE_AT）；仅真正窄屏（约 ≤520px，含手机浏览器）下会话列表改为左侧贴边半圆按钮（更大触控靶，向右箭头；悬停仅从左加宽不位移）+ 左侧抽屉；不再用会话汉堡。开启/关闭沉浸按钮在最小窗口与该断点下均保持可点。沉浸式对话开启时（动画结束后）不出现该半圆按钮与会话抽屉；退出沉浸时半圆按钮平滑回到左缘，窄屏侧栏行为恢复。`.chat-pane` 默认 `min-width:0`（仅 ≥721px 恢复 400px 桌面地板），壳层始终 `overflow-x:hidden` + grid `minmax(0,…)`；手机断点用 `max-width:520` **或** `max-device-width:520`+粗指针（防止 iOS Safari 撑开 layout viewport 后 MQ 失效），网关 `gateway-boot.js` 插在 viewport meta **之后**，避免字很小且半圆按钮永不触发。触控设备上气泡操作按钮始终可见，不依赖悬停。手机 WebUI 将 `.app` 钉在 `visualViewport`（`--app-height` / `--vv-offset-top`），并在 composer focus 时 `scrollTo(0,0)`，避免 iOS 顶起重排留下底部黑缝；切换会话时手机不再自动 focus composer。设置弹层仍用 ≤768 图标轨 / ≤640 汉堡抽屉（见上文设置响应式）。
 
 ### 6.1.1 服务器命令 `okbot serve`
 
@@ -554,6 +554,8 @@ instructions **拼装顺序**：稳定块在前（角色 / 花名册 / SOUL / �
 
 ## 12. 数据目录一览
 
+> **Schema 权威**：目录树与各文件字段/格式见 [`docs/design/okbot-data-schema.md`](./docs/design/okbot-data-schema.md)。改 `~/.okbot` 持久化布局或字段时，同一改动必须更新该文档；本节保留产品侧速览与备份行为。
+
 > 模块边界与存储职责见 [`DESIGN.md`「磁盘」](./DESIGN.md#磁盘)；本节是产品侧路径一览。
 
 
@@ -645,9 +647,10 @@ Preload 暴露 `window.okbot.*`；渲染进程不直连 Node fs。
 ## 16. 文档维护
 
 1. 合并功能或重要 UI 变更时：**同一 PR/提交或紧随提交** 更新本文件对应章节。  
-2. 根目录用户文档：`README.md`（英文）与 `README_zh.md`（中文）保持短述 + 指向本指南；文首保留 `English | 中文` 相对链接，两边结构同步；勿在用户 README 写技术栈 / 实现细节。**须**用一两句写清：多数工具（含 shell / 写文件）默认 `approval: allow`，以及本机执行不是 OS 沙箱；细则仍留在本指南。  
-3. 本指南不要写死产品号（以 Releases / `package.json` 为准）。  
-4. 以代码与近期 commit 为准，避免凭记忆写「计划中」能力。
+2. 改动 `~/.okbot` 下路径、文件名、持久化字段、ID 约定或 JSON/JSONL 格式时：**同一改动**更新 [`docs/design/okbot-data-schema.md`](./docs/design/okbot-data-schema.md)（磁盘 schema 权威）。  
+3. 根目录用户文档：`README.md`（中文）与 `README_en.md`（英文）保持短述 + 指向本指南；文首保留 `English | 中文` 相对链接，两边结构同步；勿在用户 README 写技术栈 / 实现细节。**须**用一两句写清：多数工具（含 shell / 写文件）默认 `approval: allow`，以及本机执行不是 OS 沙箱；细则仍留在本指南。  
+4. 本指南不要写死产品号（以 Releases / `package.json` 为准）。  
+5. 以代码与近期 commit 为准，避免凭记忆写「计划中」能力。
 
 ## 已知限制
 

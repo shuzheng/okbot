@@ -473,6 +473,18 @@ export class FileStorage {
     return this.resourceStore.indexIngestedFile(ownerId, input);
   }
 
+  indexOwnerResourceUrl(
+    ownerId: string,
+    input: {
+      url: string;
+      title?: string;
+      createdBy?: 'user' | 'assistant';
+      sourceMessageId?: string;
+    },
+  ): import('@okbot/shared').OwnerResourceRecord {
+    return this.resourceStore.indexUrl(ownerId, input);
+  }
+
   readOwnerResourceText(ownerId: string, resourceId: string): string {
     return this.resourceStore.readText(ownerId, resourceId);
   }

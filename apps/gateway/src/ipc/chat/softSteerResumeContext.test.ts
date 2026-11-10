@@ -150,3 +150,40 @@ import type { OwnerResourceInfo } from '@okbot/shared';
 }
 
 console.log('softSteerResumeContext.test.ts: ok');
+
+{
+  const digest = formatRunCheckpointToolDigest(
+    JSON.stringify({
+      generatedItems: [
+        {
+          type: 'function_call',
+          name: 'send_message',
+          call_id: 'call_sm',
+          arguments: JSON.stringify({ content: '第一段进度：已经扫完目录。' }),
+        },
+      ],
+    }),
+  );
+  assert.match(digest, /send_message/);
+  assert.match(digest, /第一段进度/);
+  assert.match(digest, /call_sm/);
+}
+
+{
+  const list: OwnerResourceInfo[] = [
+    {
+      id: 'u1',
+      type: 'url',
+      title: 'Example',
+      path: 'https://example.com/docs/guide',
+      createdBy: 'assistant',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      name: 'Example',
+    },
+  ];
+  const block = formatOwnerResourcesForResumePrompt(list);
+  assert.match(block, /type=url/);
+  assert.match(block, /https:\/\/example\.com\/docs\/guide/);
+  assert.doesNotMatch(block, /path=guide/);
+}

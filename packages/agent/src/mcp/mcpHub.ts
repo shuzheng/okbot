@@ -300,7 +300,11 @@ export class McpHub {
   }
 
   /** Function tools for every connected server. Every call needs approval. */
-  buildTools(budget?: ToolRunBudget, reservedNames: Iterable<string> = []): Tool[] {
+  buildTools(
+    budget?: ToolRunBudget,
+    reservedNames: Iterable<string> = [],
+    onBeforeToolExecute?: () => void | Promise<void>,
+  ): Tool[] {
     const used = new Set<string>(reservedNames);
     const out: Tool[] = [];
     // Stable order (server id), not connection-completion order.
@@ -337,7 +341,7 @@ export class McpHub {
                 }
                 return `MCP 工具调用失败：${msg}`;
               }
-            }),
+            }, onBeforeToolExecute),
           }) as Tool,
         );
       }

@@ -11,7 +11,11 @@ assert.match(src, /input\.multiple = true/);
 assert.match(codeOnly, /opacity:0/);
 assert.match(src, /input\.style\.cssText/);
 assert.doesNotMatch(codeOnly, /display:\s*none/);
+assert.doesNotMatch(codeOnly, /pointer-events:\s*none/);
+assert.doesNotMatch(codeOnly, /visibility:\s*hidden/);
+assert.doesNotMatch(codeOnly, /z-index:\s*-1/);
 assert.match(src, /image\/\*/);
 assert.match(src, /input\.click\(\)/);
+assert.match(src, /showPicker/);
 
 console.log('browserPickFiles.test.ts: ok');

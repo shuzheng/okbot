@@ -23,10 +23,10 @@ host（apps/gateway）
   IPC handlers（registerChat / registerEntity；由 desktop main 注册）
 adapters（apps/desktop/electron）
   窗口 / preload / updater / 桌面侧 IPC 壳；remote SSE→formatted
-  UI：侧栏右键「导出助手」、侧栏 +「导入助手」；高级区（默认折叠）只做技能编辑
+  UI：修改助手抽屉「导出助手」、侧栏 +「导入助手」；高级区（默认折叠）只做技能编辑
 storage
   ~/.okbot/<botId>/{bot.json,SOUL.md,skills/*/SKILL.md}
-  包文件：manifest.json + SOUL.md + skills/
+  包文件：bot.json + SOUL.md + skills/
 ```
 
 ## Skills 渐进披露
@@ -43,10 +43,10 @@ storage
 
 ## 助手包
 
-- 格式 id：`okbot-assistant`（`manifest.json`）
+- 包身份与头像：`bot.json`（`name` / `description` / `avatarKind` / `emoji` / `color` / 可选 `botAvatarType`）
 - 导出：`exportAssistantPackage` → 目录或 `.okbot` zip；`stripSecrets` 去掉 apiKey/token 等
 - 导入：新建助手 + 写入 SOUL.md / skills；`onboardingComplete=true`
-- UI：侧栏助手右键 **导出助手**（文件夹或 `.okbot`，剥离密钥）；侧栏 **+** 菜单在 **新建小队** 之后为 **导入助手**。导入成功后立刻 `listBots` 刷新侧栏会话列表。
+- UI：修改助手抽屉右上角 **导出助手**（`.okbot` zip，剥离密钥）；侧栏 **+** 菜单在 **新建小队** 之后为 **导入助手**。导入成功后立刻 `listBots` 刷新侧栏会话列表。
 
 ## RuntimeEvent
 

@@ -39,12 +39,19 @@ for (const item of zh) {
   assert.equal(fromDisk.skills.length, pkg!.skills.length);
   const botJsonPath = path.join(packPath, 'bot.json');
   assert.ok(fs.existsSync(botJsonPath), `gallery missing bot.json: ${botJsonPath}`);
+  assert.equal(fs.existsSync(path.join(packPath, 'manifest.json')), false);
   const botJson = JSON.parse(fs.readFileSync(botJsonPath, 'utf8')) as {
     name: string;
     description: string;
+    avatarKind: string;
+    emoji: string;
+    color: string;
   };
   assert.equal(botJson.name, pkg!.manifest.name);
   assert.equal(botJson.description, pkg!.manifest.description);
+  assert.equal(botJson.emoji, pkg!.manifest.avatar.emoji);
+  assert.equal(botJson.color, pkg!.manifest.avatar.color);
+  assert.equal(botJson.avatarKind, pkg!.manifest.avatar.avatarKind);
 }
 assert.equal(galleryAssistantPackage('nope'), null);
 console.log('assistantGallery.test.ts: ok');

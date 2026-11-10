@@ -47,6 +47,30 @@ assert.equal(isAssistantArchivePath('manifest.json'), false);
   assert.equal((p as { path: string }).path, 'assistant');
 }
 
+
+{
+  const p = parseGithubAssistantSource(
+    'https://github.com/acme/helpers/blob/main/assistant/bot.json',
+  );
+  assert.equal(p.kind, 'dir');
+  assert.equal((p as { path: string }).path, 'assistant');
+}
+
+{
+  const p = parseGithubAssistantSource(
+    'https://raw.githubusercontent.com/acme/helpers/main/assistant/bot.json',
+  );
+  assert.deepEqual(p, {
+    kind: 'dir',
+    owner: 'acme',
+    repo: 'helpers',
+    ref: 'main',
+    path: 'assistant',
+    label: 'acme/helpers/assistant',
+  });
+}
+
+
 {
   const p = parseGithubAssistantSource(
     'https://github.com/acme/helpers/blob/main/packs/demo.okbot',
@@ -95,8 +119,8 @@ assert.throws(
 );
 
 assert.equal(
-  githubRawFileUrl('acme', 'helpers', 'main', 'assistant/manifest.json'),
-  'https://raw.githubusercontent.com/acme/helpers/main/assistant/manifest.json',
+  githubRawFileUrl('acme', 'helpers', 'main', 'assistant/bot.json'),
+  'https://raw.githubusercontent.com/acme/helpers/main/assistant/bot.json',
 );
 assert.equal(
   githubContentsApiUrl('acme', 'helpers', 'assistant', 'main'),

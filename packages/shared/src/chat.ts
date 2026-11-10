@@ -207,8 +207,8 @@ export interface ChatMessage {
    */
   meshInterim?: boolean;
   /**
-   * Host auto-continue of an unfinished task-progress checklist.
-   * Persisted for the model session; UI transcript hides these user rows.
+   * Quiet host-injected user row (auto-continue, onboarding, reaction, schedule).
+   * Persisted for the model session; UI transcript and search hide these rows.
    */
   autoContinue?: boolean;
   /** When set, this user message quotes another transcript message (UI strip; not `>` in content). */

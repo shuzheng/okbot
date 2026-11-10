@@ -73,6 +73,7 @@ import {
   persistAssistantContent,
   resolveQuoteFields,
   isQuietChatOrigin,
+  shouldScheduleOnboardingEvolution,
   mayConsumeKeptRunCheckpoint,
   type ChatStartPayload,
   type ChatStartResult,
@@ -94,7 +95,10 @@ export async function startBotTurn(
       const attachments = normalizeMessageAttachments(payload.attachments, bot.id, {
         dataRoot: ctx.storage.dataRoot,
       });
-      const isAutoContinue = isQuietChatOrigin(payload.origin);
+      // Quiet origins share the hidden-user-row marker; only true auto_continue
+      // participates in the AC cancel/re-check chain below.
+      const isQuiet = isQuietChatOrigin(payload.origin);
+      const isAutoContinueOrigin = payload.origin === 'auto_continue';
       const userMsg: ChatMessage = {
         id: createId('msg'),
         role: 'user',
@@ -102,10 +106,10 @@ export async function startBotTurn(
         createdAt: new Date().toISOString(),
         ...quote.userMsgExtra,
         ...(attachments ? { attachments } : {}),
-        ...(isAutoContinue ? { autoContinue: true } : {}),
+        ...(isQuiet ? { autoContinue: true } : {}),
       };
       // Persist immediately so parallel turns and the UI see the new task.
-      // Auto-continue rows stay in the model session but are hidden from the UI.
+      // Quiet rows stay in the model session but are hidden from the UI.
       ctx.storage.appendMessage(bot.id, userMsg);
       ctx.storage.touchBot(bot.id);
 
@@ -115,17 +119,18 @@ export async function startBotTurn(
           // Soft-steer may have left a busy hold; no registerOwnerRun will clear it.
           releaseOwnerBusyHold(bot.id);
           // Still notify UI of the persisted user bubble (no run to bind).
-          // Auto-continue stays quiet (no visible user bubble).
-          if (!isAutoContinue) {
+          // Quiet origins stay quiet (no visible user bubble).
+          if (!isQuiet) {
             ctx.sendRuntimeEvent({ type: 'user_message', botId: bot.id, message: userMsg });
           }
           return { userMessage: userMsg, superseded: true };
         }
 
-        // Auto-continue: re-check after the gate wait. Composer soft-steer may have
-        // cancelled the chain or registered a user turn while we awaited a slot.
+        // Auto-continue only: re-check after the gate wait. Composer soft-steer may
+        // have cancelled the chain or registered a user turn while we awaited a slot.
+        // Schedule / onboarding / reaction must not be dropped by AC cancel.
         if (
-          isAutoContinue &&
+          isAutoContinueOrigin &&
           (isAutoContinueCancelled(bot.id) || ownerHasRuns(ctx.abortControllers, bot.id))
         ) {
           releaseOwnerBusyHold(bot.id);
@@ -183,8 +188,8 @@ export async function startBotTurn(
         assistantMessageId: live.assistantId,
         ...(clientTurnId ? { clientTurnId } : {}),
       });
-      // Auto-continue: no visible user bubble (row still in session for the model).
-      if (!isAutoContinue) {
+      // Quiet origins: no visible user bubble (row still in session for the model).
+      if (!isQuiet) {
         emitTurn({ type: 'user_message', botId: bot.id, message: userMsg });
       }
 
@@ -391,10 +396,19 @@ export async function startBotTurn(
           tools: settings.tools,
           security: settings.security,
           toolRunBudget: guards.budget,
-          extraTools: [
-            ...(await mcpToolsForRun(settings, guards.budget)),
-            ...onboarding.tools,
-          ],
+          // Build after runAgentChat wires onBeforeToolExecute so ask_choice /
+          // save_assistant_profile / MCP seal live + reset the stream accumulator
+          // (otherwise mid-turn narration concatenates into one escalating bubble).
+          buildExtraTools: async ({ onBeforeToolExecute, toolRunBudget }) => {
+            const boundary = { onBeforeToolExecute, toolRunBudget };
+            const onboard = onboardingRunExtras(ctx.storage, bot, (choice) => {
+              turnChoice = choice;
+            }, boundary);
+            return [
+              ...(await mcpToolsForRun(settings, toolRunBudget, onBeforeToolExecute)),
+              ...onboard.tools,
+            ];
+          },
           ...(onboarding.onboardingGuide ? { onboardingGuide: onboarding.onboardingGuide } : {}),
           session: fileSession,
           ownerId: bot.id,
@@ -645,7 +659,9 @@ export async function startBotTurn(
         const onboardingOpen =
           ctx.storage.listBots().find((b) => b.id === bot.id)?.onboardingComplete === false;
         if (onboardingOpen) {
-          if (!isAutoContinue && !controller.signal.aborted) {
+          // Quiet origins must not evolve SOUL from host seed text (UI-hide
+          // split in 3ddeb4dc accidentally narrowed this to auto_continue only).
+          if (shouldScheduleOnboardingEvolution(payload.origin) && !controller.signal.aborted) {
             void scheduleOnboardingEvolution(ctx.storage, bot.id, text);
           }
         } else {

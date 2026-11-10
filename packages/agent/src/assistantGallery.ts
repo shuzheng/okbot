@@ -1,6 +1,6 @@
 /**
  * Built-in starter assistants ("assistant marketplace").
- * Packages live under packages/agent/gallery/<id>/{zh,en}/ (manifest + bot.json + SOUL.md + skills/).
+ * Packages live under packages/agent/gallery/<id>/{zh,en}/ (bot.json + SOUL.md + skills/).
  * Same format as `.okbot` import; install goes through the one package install path.
  * Shipped offline: gallery dir is copied next to the agent package and into desktop resources.
  */
@@ -114,14 +114,18 @@ function packDir(root: string, id: string, lang: GalleryLang): string {
   return path.join(root, id, lang === 'en' ? 'en' : 'zh');
 }
 
+function galleryPackMarker(root: string): boolean {
+  return fs.existsSync(path.join(root, 'bot.json'));
+}
+
 /** Load one locale pack from disk (trusted bundled tree). */
 export function loadGalleryPackageDir(dir: string): AssistantPackageContents {
   const root = path.resolve(dir);
-  const manifestPath = path.join(root, 'manifest.json');
-  if (!fs.existsSync(manifestPath)) {
-    throw new Error(`gallery pack missing manifest.json: ${root}`);
+  const botJsonPath = path.join(root, 'bot.json');
+  if (!fs.existsSync(botJsonPath)) {
+    throw new Error(`gallery pack missing bot.json: ${root}`);
   }
-  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as unknown;
+  const botJson = JSON.parse(fs.readFileSync(botJsonPath, 'utf8')) as unknown;
   let soulMd = '';
   const soulPath = path.join(root, 'SOUL.md');
   const legacyAgentsPath = path.join(root, 'AGENTS.md');
@@ -129,11 +133,6 @@ export function loadGalleryPackageDir(dir: string): AssistantPackageContents {
     soulMd = fs.readFileSync(soulPath, 'utf8');
   } else if (fs.existsSync(legacyAgentsPath)) {
     soulMd = fs.readFileSync(legacyAgentsPath, 'utf8');
-  }
-  let botJson: unknown;
-  const botJsonPath = path.join(root, 'bot.json');
-  if (fs.existsSync(botJsonPath)) {
-    botJson = JSON.parse(fs.readFileSync(botJsonPath, 'utf8')) as unknown;
   }
   const skillFiles: Array<{ slug: string; raw: string }> = [];
   const skillsRoot = path.join(root, 'skills');
@@ -144,7 +143,7 @@ export function loadGalleryPackageDir(dir: string): AssistantPackageContents {
       skillFiles.push({ slug: name, raw: fs.readFileSync(skillFile, 'utf8') });
     }
   }
-  return parseAssistantPackage({ manifest, soulMd, skillFiles, botJson });
+  return parseAssistantPackage({ botJson, soulMd, skillFiles });
 }
 
 function avatarFromPkg(pkg: AssistantPackageContents): { emoji: string; color: string } {
@@ -160,7 +159,7 @@ export function listAssistantGallery(lang: GalleryLang = 'zh'): AssistantGallery
   const items: AssistantGalleryItem[] = [];
   for (const id of order) {
     const dir = packDir(root, id, lang);
-    if (!fs.existsSync(path.join(dir, 'manifest.json'))) continue;
+    if (!galleryPackMarker(dir)) continue;
     try {
       const pkg = loadGalleryPackageDir(dir);
       const { emoji, color } = avatarFromPkg(pkg);
@@ -188,7 +187,7 @@ export function galleryAssistantPackage(
   if (!clean) return null;
   const root = resolveGalleryRoot();
   const dir = packDir(root, clean, lang);
-  if (!fs.existsSync(path.join(dir, 'manifest.json'))) return null;
+  if (!galleryPackMarker(dir)) return null;
   try {
     return loadGalleryPackageDir(dir);
   } catch {

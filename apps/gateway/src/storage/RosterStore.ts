@@ -19,6 +19,8 @@ import {
   type BotAvatarShape,
   stripThinkContent,
   clampOwnerDescription,
+  normalizeBotDisplayName,
+  isBotDisplayNameTaken,
 } from '@okbot/shared';
 import { ensureDir, readJson, readJsonResult, handleCorruptJsonRead, writeJson, writeText } from './fs';
 import { removeOwnerUsage } from './usageStore';
@@ -465,7 +467,19 @@ export class RosterStore {
     }
   }
 
+  /** Reject when another bot already uses this display name (trimmed equality). */
+  assertBotNameAvailable(name: string, excludeBotId?: string): void {
+    const want = normalizeBotDisplayName(name);
+    const others = this.listRoster()
+      .filter((e) => e.id !== excludeBotId)
+      .map((e) => e.name);
+    if (isBotDisplayNameTaken(others, want)) {
+      throw new Error(`已存在同名助手「${want}」`);
+    }
+  }
+
   createBot(input: {
+
     name: string;
     description?: string;
     emoji?: string;
@@ -480,9 +494,11 @@ export class RosterStore {
     const avatarKind = normalizeBotAvatarKind(input.avatarKind);
     const colorRaw = typeof input.color === 'string' ? input.color.trim() : '';
     const color = /^#[0-9A-Fa-f]{6}$/.test(colorRaw) ? colorRaw : '';
+    const name = normalizeBotDisplayName(input.name);
+    this.assertBotNameAvailable(name);
     const entry: BotRosterEntry = {
       id,
-      name: input.name.trim() || '未命名助手',
+      name,
       description: clampOwnerDescription(input.description),
     };
     const config: BotConfig = {
@@ -548,7 +564,11 @@ export class RosterStore {
     const config = this.readBotConfig(id);
     const profileChanged =
       patch.name !== undefined || patch.description !== undefined;
-    if (patch.name !== undefined) entry.name = patch.name.trim() || entry.name;
+    if (patch.name !== undefined) {
+      const nextName = patch.name.trim() || entry.name;
+      this.assertBotNameAvailable(nextName, id);
+      entry.name = nextName;
+    }
     if (patch.description !== undefined) entry.description = clampOwnerDescription(patch.description);
     if (patch.emoji !== undefined) config.emoji = patch.emoji.trim() || config.emoji;
     if (patch.avatarKind !== undefined) {

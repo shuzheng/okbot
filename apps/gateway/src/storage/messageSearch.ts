@@ -332,6 +332,7 @@ export async function searchSessionFiles(
         if (!rec) continue;
         const msg: ChatMessage | null = recordToUiMessage(rec);
         if (!msg) continue;
+        if (msg.autoContinue === true) continue;
         if (pick.owner.squad && !(msg.role === 'user' || (msg.role === 'assistant' && msg.speakerBotId))) continue;
         const plain = plainTextFromMarkdown(stripThinkContent(msg.content || ''));
         const idx = plain.toLowerCase().indexOf(q);
