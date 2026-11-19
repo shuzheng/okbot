@@ -34,9 +34,12 @@ import { libraryWriteGateForOwner } from '../sameTopicArtifactGate';
 import { applyAssistantSendMessage, applyEmojiOnlyFinalGuard } from '../messageReaction';
 import { buildInterruptedRunResumeContext } from './softSteerResumeContext';
 import {
+  clearAssistantStatusPlaceholder,
   clearLiveAssistantForTools,
   commitLiveAssistantBubble,
+  dropLeftoverFinalAfterSendMessage,
   emitAssistantMessageBubble,
+  emitAssistantStatusPlaceholder,
   persistAssistantContent,
   type LiveAssistantState,
   type TurnContext,
@@ -99,6 +102,8 @@ export async function resumeBotFromCheckpoint(
   ctx.storage.clearRunCheckpoint(bot.id);
 
   const settings = ctx.storage.getSettings();
+  const sendMessageEnabled = settings.tools?.send_message?.enabled !== false;
+  let sentMessageThisTurn = false;
   const modelConfig = resolveModelConfig(settings.model, { providerId: bot.providerId, modelId: bot.modelId });
   const guards = createRunGuards({
     controller,
@@ -205,7 +210,7 @@ export async function resumeBotFromCheckpoint(
           storage: ctx.storage,
           emit: (event) => ctx.sendRuntimeEvent(event),
           noteCommitted: (t) => meshFollowUp.noteCommitted(t),
-        });
+        }, { persistVisible: !sendMessageEnabled });
       },
       onCommitLiveAssistant: async () => {
         await commitLiveAssistantBubble(live, {
@@ -231,6 +236,7 @@ export async function resumeBotFromCheckpoint(
               emit: (event) => ctx.sendRuntimeEvent(event),
               noteCommitted: (t) => meshFollowUp.noteCommitted(t),
             });
+            sentMessageThisTurn = true;
           },
           {
             onReacted: (emoji) => {
@@ -239,6 +245,12 @@ export async function resumeBotFromCheckpoint(
           },
         );
       },
+      setAssistantStatus: (status) =>
+        emitAssistantStatusPlaceholder(live, status, {
+          ownerId: bot.id,
+          runId: resumeRunId,
+          emit: (event) => ctx.sendRuntimeEvent(event),
+        }),
       onDelta: (delta) => {
         const piece = meshFollowUp.acceptDelta(delta);
         if (piece == null || !piece) return;
@@ -319,6 +331,7 @@ export async function resumeBotFromCheckpoint(
       live.assistantMsg.content,
       { reactedEmojisThisTurn: live.reactedEmojisThisTurn },
     );
+    dropLeftoverFinalAfterSendMessage(live, sentMessageThisTurn);
     if (result.usage) live.assistantMsg.usage = result.usage;
     if (turnNoteCard && !controller.signal.aborted) {
       live.assistantMsg.noteCard = turnNoteCard;
@@ -360,6 +373,7 @@ export async function resumeBotFromCheckpoint(
           aborted: true,
         }),
       );
+      dropLeftoverFinalAfterSendMessage(live, sentMessageThisTurn);
       if (abortTrace && (live.assistantMsg.content || '').trim()) {
         live.assistantMsg.trace = abortTrace;
         try {
@@ -407,6 +421,11 @@ export async function resumeBotFromCheckpoint(
     });
     return { ok: false, error: message };
   } finally {
+    clearAssistantStatusPlaceholder(live, {
+      ownerId: bot.id,
+      runId: resumeRunId,
+      emit: (event) => ctx.sendRuntimeEvent(event),
+    });
     guards.dispose();
     unregisterOwnerRun(ctx.abortControllers, bot.id, resumeRunId, controller);
     releaseRunApprovals(ctx, bot.id, parkedRequestIds, '已结束');

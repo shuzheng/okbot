@@ -221,7 +221,12 @@ export function TurnTraceModal(props: {
                     <button
                       type="button"
                       className="turn-trace-row-main"
-                      onClick={() => setOpenId(open ? null : span.id)}
+                      onClick={() => {
+                        // Don't toggle the row if the user was drag-selecting text to copy.
+                        const sel = window.getSelection();
+                        if (sel && !sel.isCollapsed && (sel.toString() || '').trim()) return;
+                        setOpenId(open ? null : span.id);
+                      }}
                       aria-expanded={open}
                     >
                       <span className="turn-trace-kind">{kindLabel(lang, span.kind)}</span>

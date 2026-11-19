@@ -1,12 +1,17 @@
 import { useEffect, useRef, useState, type FocusEvent } from 'react';
 import {
+  computeMemoryInjectionScore,
   createId,
   memoryExpiresFromNow,
   MEMORY_TTL_MS,
+  normalizeMemoryHits,
+  normalizeMemoryTier,
   type MemoryEntry,
 } from '@okbot/shared';
 import { ChevronDownIcon } from '../../components/ui/icons';
 import { t, type UiLang } from '../../i18n';
+import { formatSessionUpdatedAt } from '../../utils/formatSessionUpdatedAt';
+import { formatMemoryScore, memoryListTimestamp } from '../../utils/memoryListMeta';
 import { resolveWheelPassOuter, updateScrollFade } from '../../utils/scrollFade';
 
 /** Add-flow TTL presets (permanent + common durations). */
@@ -86,6 +91,10 @@ type Props = {
   addLabel?: string;
   emptyLabel: string;
   placeholder: string;
+  /** global vs bot — used for the injection/standing score G term. */
+  scope: 'global' | 'bot';
+  /** Current/last user message for the R term; omit for standing score (R=0). */
+  query?: string;
   /** CSS selector for the outer scroll pane (wheel passthrough at edges). */
   scrollOuterSelector?: string;
   /**
@@ -105,6 +114,8 @@ export function MemoryEntriesList({
   addLabel,
   emptyLabel,
   placeholder,
+  scope,
+  query,
   scrollOuterSelector = '.settings-body',
   newBotId,
   onCommit,
@@ -172,11 +183,13 @@ export function MemoryEntriesList({
         bot_id: newBotId,
         memory,
         expires: expiresFromTtlPreset(draftTtl),
+        createdAt: new Date().toISOString(),
       };
       await onCommit(entry);
     } else if (editingId) {
       const prev = entries.find((m) => m.id === editingId);
       const entry: MemoryEntry = {
+        ...prev,
         id: editingId,
         bot_id: prev?.bot_id || newBotId,
         memory,
@@ -299,7 +312,7 @@ export function MemoryEntriesList({
           ) : (
             <div
               key={m.id}
-              className={`aar-item aar-item-clickable${expandedIds[m.id] ? ' is-expanded' : ''}`}
+              className={`aar-item aar-item-clickable has-memory-meta${expandedIds[m.id] ? ' is-expanded' : ''}`}
               role="button"
               tabIndex={0}
               aria-expanded={expandedIds[m.id] === true}
@@ -315,9 +328,7 @@ export function MemoryEntriesList({
             >
               <div className="aar-item-text">
                 <div className={`aar-item-title${expandedIds[m.id] ? ' is-expanded' : ''}`}>{m.memory}</div>
-                {expandedIds[m.id] ? (
-                  <div className="aar-item-sub">{memoryExpiryLabel(lang, m.expires)}</div>
-                ) : null}
+                <MemoryItemMeta lang={lang} entry={m} scope={scope} query={query} expanded={expandedIds[m.id] === true} />
               </div>
               <div className="aar-item-trailing">
                 <button
@@ -363,6 +374,65 @@ export function MemoryEntriesList({
           ),
         )}
       </div>
+    </div>
+  );
+}
+
+
+function MemoryItemMeta({
+  lang,
+  entry,
+  scope,
+  query,
+  expanded,
+}: {
+  lang: UiLang;
+  entry: MemoryEntry;
+  scope: 'global' | 'bot';
+  query?: string;
+  expanded: boolean;
+}) {
+  const pinned = entry.pinned === true;
+  const tier = normalizeMemoryTier(entry.tier);
+  const hits = normalizeMemoryHits(entry.hits);
+  const hasQuery = Boolean(query && query.trim());
+  const score = computeMemoryInjectionScore({
+    memory: entry.memory,
+    pinned,
+    hits,
+    lastHitAt: entry.lastHitAt,
+    createdAt: entry.createdAt,
+    scope,
+    query: hasQuery ? query : undefined,
+  });
+  const ts = memoryListTimestamp(entry);
+  const relative = ts ? formatSessionUpdatedAt(ts, lang) : '';
+  const absolute = ts ? formatMemoryExpiryDate(ts, lang) : '';
+  return (
+    <div className="memory-item-meta">
+      {pinned ? (
+        <span className="memory-meta-badge is-pinned">{t(lang, 'memoryPinned')}</span>
+      ) : null}
+      <span className={`memory-meta-badge${tier === 'durable' ? ' is-durable' : ' is-candidate'}`}>
+        {t(lang, tier === 'durable' ? 'memoryDurable' : 'memoryCandidate')}
+      </span>
+      <span
+        className="memory-meta-stat"
+        title={t(lang, hasQuery ? 'memoryScoreTooltipQuery' : 'memoryScoreTooltipStanding')}
+      >
+        {t(lang, 'memoryScore')} {formatMemoryScore(score)}
+      </span>
+      <span className="memory-meta-stat" title={t(lang, 'memoryHits')}>
+        {t(lang, 'memoryHits')} {hits}
+      </span>
+      {relative ? (
+        <span className="memory-meta-time" title={absolute || undefined}>
+          {relative}
+        </span>
+      ) : null}
+      {expanded ? (
+        <span className="memory-meta-expiry">{memoryExpiryLabel(lang, entry.expires)}</span>
+      ) : null}
     </div>
   );
 }

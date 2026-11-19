@@ -1,12 +1,18 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { isHttpUrl } from '../../utils/splitUrls';
 import { ensureSrcdocBase, handleInDocumentHashClick } from '../../utils/noteAnchors';
+import {
+  applyNoteDocumentTheme,
+  resolvedClientTheme,
+  stampNoteHtmlTheme,
+  type ClientTheme,
+} from '../../utils/noteTheme';
 
 const NOTE_SCROLLBAR_STYLE_ID = 'okbot-note-scrollbar';
 
 /** Match chat `.scroll-fade` thin translucent scrollbar inside the srcdoc document. */
-function noteScrollbarCss(light: boolean): string {
-  const thumb = light ? 'rgba(24, 24, 27, 0.18)' : 'rgba(128, 128, 128, 0.22)';
+function noteScrollbarCss(theme: ClientTheme): string {
+  const thumb = theme === 'light' ? 'rgba(24, 24, 27, 0.18)' : 'rgba(128, 128, 128, 0.22)';
   return `
 html {
   scrollbar-width: thin;
@@ -37,14 +43,7 @@ html {
 `.trim();
 }
 
-function parentThemeIsLight(): boolean {
-  const theme = document.documentElement.getAttribute('data-theme');
-  if (theme === 'light') return true;
-  if (theme === 'dark') return false;
-  return window.matchMedia('(prefers-color-scheme: light)').matches;
-}
-
-function applyNoteScrollbarStyle(doc: Document): void {
+function applyNoteScrollbarStyle(doc: Document, theme: ClientTheme): void {
   const parent = doc.head || doc.documentElement;
   if (!parent) return;
   let el = doc.getElementById(NOTE_SCROLLBAR_STYLE_ID) as HTMLStyleElement | null;
@@ -53,7 +52,12 @@ function applyNoteScrollbarStyle(doc: Document): void {
     el.id = NOTE_SCROLLBAR_STYLE_ID;
     parent.appendChild(el);
   }
-  el.textContent = noteScrollbarCss(parentThemeIsLight());
+  el.textContent = noteScrollbarCss(theme);
+}
+
+function applyNoteHostTheme(doc: Document, theme: ClientTheme): void {
+  applyNoteDocumentTheme(doc, theme);
+  applyNoteScrollbarStyle(doc, theme);
 }
 
 /**
@@ -75,7 +79,11 @@ export function NoteHtmlFrame({
   className?: string;
 }) {
   const ref = useRef<HTMLIFrameElement>(null);
-  const srcDoc = useMemo(() => ensureSrcdocBase(html), [html]);
+  const [clientTheme, setClientTheme] = useState<ClientTheme>(() => resolvedClientTheme());
+  const srcDoc = useMemo(
+    () => stampNoteHtmlTheme(ensureSrcdocBase(html), resolvedClientTheme()),
+    [html],
+  );
 
   const bindHashLinks = useCallback(() => {
     const iframe = ref.current;
@@ -97,7 +105,9 @@ export function NoteHtmlFrame({
     })();
     if (loc === 'about:blank' || loc === '') return;
 
-    applyNoteScrollbarStyle(doc);
+    const theme = resolvedClientTheme();
+    setClientTheme(theme);
+    applyNoteHostTheme(doc, theme);
 
     const onClick = (e: MouseEvent) => {
       const target = e.target;
@@ -146,33 +156,28 @@ export function NoteHtmlFrame({
     // srcDoc may finish before listeners attach
     attach();
 
-    // Re-apply scrollbar colors when app theme / OS scheme changes.
-    const root = document.documentElement;
-    const mo = new MutationObserver(() => {
+    // Keep the note document's data-theme in sync with the OkBot client theme.
+    const syncTheme = () => {
+      const theme = resolvedClientTheme();
+      setClientTheme(theme);
       try {
         const doc = iframe.contentDocument;
-        if (doc?.documentElement) applyNoteScrollbarStyle(doc);
-      } catch {
-        /* ignore */
-      }
-    });
-    mo.observe(root, { attributes: true, attributeFilter: ['data-theme'] });
-    const mql = window.matchMedia('(prefers-color-scheme: light)');
-    const onScheme = () => {
-      try {
-        const doc = iframe.contentDocument;
-        if (doc?.documentElement) applyNoteScrollbarStyle(doc);
+        if (doc?.documentElement) applyNoteHostTheme(doc, theme);
       } catch {
         /* ignore */
       }
     };
-    mql.addEventListener('change', onScheme);
+    const root = document.documentElement;
+    const mo = new MutationObserver(syncTheme);
+    mo.observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+    const mql = window.matchMedia('(prefers-color-scheme: light)');
+    mql.addEventListener('change', syncTheme);
 
     return () => {
       iframe.removeEventListener('load', attach);
       cleanup?.();
       mo.disconnect();
-      mql.removeEventListener('change', onScheme);
+      mql.removeEventListener('change', syncTheme);
     };
   }, [srcDoc, bindHashLinks]);
 
@@ -183,6 +188,7 @@ export function NoteHtmlFrame({
       title={title}
       sandbox="allow-same-origin"
       srcDoc={srcDoc}
+      style={{ colorScheme: clientTheme }}
     />
   );
 }

@@ -87,6 +87,7 @@ export function SettingsModal({
   squads = [],
   initialTab,
   focusSection,
+  memoryQuery,
   onClose,
   onSave,
 }: {
@@ -97,6 +98,8 @@ export function SettingsModal({
   squads?: Squad[];
   initialTab?: SettingsTab;
   focusSection?: string | null;
+  /** Current/last user message for memory list injection score; omit for standing score. */
+  memoryQuery?: string;
   onClose: () => void;
   onSave: (s: AppSettings) => void | Promise<void>;
 }) {
@@ -157,11 +160,11 @@ export function SettingsModal({
   );
   const [autoUpdate, setAutoUpdate] = useState(settings.autoUpdate !== false);
   const [sidebarDockMagnify, setSidebarDockMagnify] = useState(
-    settings.sidebarDockMagnify === true,
+    settings.sidebarDockMagnify !== false,
   );
-  const [translucent, setTranslucent] = useState(settings.translucent === true);
+  const [translucent, setTranslucent] = useState(settings.translucent !== false);
   useEffect(() => {
-    setTranslucent(settings.translucent === true);
+    setTranslucent(settings.translucent !== false);
   }, [settings.translucent]);
   // Tray theme submenu may persist while this modal is open — keep draft in sync
   // so autosave does not write the pre-tray theme back to client.json.
@@ -478,13 +481,13 @@ export function SettingsModal({
         setTheme(latest.theme);
         applyTheme(latest.theme);
         document.documentElement.dataset.translucent =
-          latest.translucent === true ? 'true' : 'false';
+          latest.translucent !== false ? 'true' : 'false';
         setLanguage(latest.language);
         setMicrophoneId(latest.microphoneId);
         setHardwareAcceleration(latest.hardwareAcceleration !== false);
         setAutoUpdate(latest.autoUpdate !== false);
-        setSidebarDockMagnify(latest.sidebarDockMagnify === true);
-        setTranslucent(latest.translucent === true);
+        setSidebarDockMagnify(latest.sidebarDockMagnify !== false);
+        setTranslucent(latest.translucent !== false);
         setDeveloperMode(latest.developerMode === true);
         setNotifications(latest.notifications !== false);
         setCloseAction(normalizeCloseAction(latest.closeAction));
@@ -737,7 +740,7 @@ export function SettingsModal({
         computers: normalizeComputers(computersDraft),
         defaultComputerId: normalizeDefaultComputerId(defaultComputerId, normalizeComputers(computersDraft)),
         timezone: normalizeTimezone(timezone),
-        // Keep runtime default-assistant (sidebar star / context menu); not edited in General UI.
+        // Keep runtime primary-assistant (sidebar star / context menu); not edited in General UI.
         defaultAssistantId: normalizeDefaultAssistantId(settings.defaultAssistantId, bots),
         pinnedOwnerIds: normalizePinnedOwnerIds(settings.pinnedOwnerIds),
         hiddenOwnerIds: normalizeHiddenOwnerIds(settings.hiddenOwnerIds),
@@ -1500,6 +1503,7 @@ export function SettingsModal({
                 setGlobalMemories={setGlobalMemories}
                 globalMemAddRequest={globalMemAddRequest}
                 setGlobalMemAddRequest={setGlobalMemAddRequest}
+                query={memoryQuery}
               />
             ) : tab === 'usage' ? (
               <UsagePanel lang={lang} bots={bots} squads={squads} modelSettings={modelSettings} />

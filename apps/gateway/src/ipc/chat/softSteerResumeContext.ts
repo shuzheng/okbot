@@ -16,6 +16,23 @@ const REASON_LABEL: Record<InterruptedRunReason, string> = {
   manual_stop: '手动停止后继续（保留的 RunState 检查点）',
 };
 
+/**
+ * Whether a replacement/continue turn should call resumeAgentChatFromCheckpoint.
+ * Soft-steer must start a fresh runAgentChat so the new user message is the
+ * current turn input (short all-questions status first). Resuming mid-run
+ * RunState continues the interrupted plan until the next model boundary, so
+ * the insert appears queued behind the previous question.
+ * Manual Stop「继续」and cold restore still resume RunState.
+ */
+export function shouldResumeSerializedRunState(opts: {
+  softSteered?: boolean;
+  hasSerializedRunState?: boolean;
+}): boolean {
+  if (!opts.hasSerializedRunState) return false;
+  if (opts.softSteered) return false;
+  return true;
+}
+
 /** Cap library dump so resume injection stays small. Newest first (list order). */
 export const RESUME_RESOURCES_LIMIT = 40;
 
@@ -203,6 +220,11 @@ export function buildInterruptedRunResumeContext(
     '- 用户本轮新消息是打断补充，不是要求从零重做。',
     '- 若下方工具清单已列出 send_message（含 content 摘要），那些气泡已经发给用户；禁止再 send_message 同一段正文，也不要把旧气泡全文拼进新回复。',
   ];
+  if (reason === 'soft_steer' && !options?.runCheckpoint?.resumedFromRunState) {
+    parts.push(
+      '- 本轮是带着完整会话新开的替换回合：先用 send_message 短说全部当前问题的现状（正在做的 + 这条新消息要做的），再继续工具；不要先把中断前的计划做到完才去看新消息。',
+    );
+  }
 
   const ckpt = options?.runCheckpoint;
   if (ckpt) {

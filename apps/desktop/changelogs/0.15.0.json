@@ -1,0 +1,27 @@
+{
+  "version": "0.15.0",
+  "releasedAt": "2026-11-20T00:00:00Z",
+  "forceUpdate": false,
+  "notes": {
+    "en": {
+      "title": "What's new in 0.15.0",
+      "highlights": [
+        "Memory entries show Pinned, Durable, and Candidate badges, plus score, hits, and relative time",
+        "VoiceRing while listening, and DistortionWave on the member card after self-evolution",
+        "Translucent and Zoom effect now default to on",
+        "Clearer split replies with a status placeholder, plus mid-turn and session-switch fixes"
+      ],
+      "bodyMarkdown": "## Added\n\n- **Memory list metadata**: memory rows show **Pinned**, **Durable**, and **Candidate** badges, plus injection score, hit count, and relative time, so metadata stays glanceable without crowding the memory text.\n- **VoiceRing listening indicator**: while voice input is listening, the left composer control shows VoiceRing. The microphone keeps its original idle and busy icons.\n- **DistortionWave after self-evolution**: after a successful self-evolution, DistortionWave plays on the top member card, starting from the card center (and following the card's current size if it grows).\n- **Documentation**: unsigned macOS packages may be reported as damaged; if you trust the download, authorize launch with `sudo xattr -cr /Applications/OkBot.app`. The memory-loading algorithm is documented in `docs/design/memory-loading.md`.\n\n## Changed\n\n- **Primary assistant**: the former Default assistant wording is now **Primary assistant** in the English UI (Chinese: 主助手).\n- **Settings defaults**: **Translucent** and **Zoom effect** now default to on when those preferences are missing (new installs, or configs that never wrote the keys). An explicit saved off value is preserved.\n- **Note HTML**: generated HTML notes follow the OkBot client theme.\n- **Pending send**: outgoing user-bubble text fades to a paler color while the send is still pending.\n- **Chat top fade**: the top scroll fade is taller so it covers the member pills.\n- **Busy composer**: while a turn is running, the composer uses a pulse-outside monochrome BorderBeam (no color variant), and the stop button no longer has a glow.\n- **Visual effects**: upgraded border-beam, thinking-orbs, liquid-gooey, and voice-glow, and added voice-ring and distortion-waves.\n- **Agents SDK**: upgraded the Agents SDK to 0.22.0.\n\n## Fixed\n\n- Visible assistant bubbles are created only by `send_message`. Split replies are paced as start, progress, and finish bubbles, with a status placeholder before every bubble (including a single reply). If you send another message during a turn, OkBot starts a fresh turn instead of resuming mid-run state, and keeps the status placeholder. Opening-ack edits are no longer applied as visible bubbles; replies split on distinct beats.\n- Squad replies remain after switching sessions. Persisted chat bubbles are no longer deduped on load, which could drop later short replies.\n- Text in the turn Trace modal can be selected and copied.\n- In the edit-assistant page, the avatar hover overlay and name layout no longer sit in the wrong place after the sidebar avatar size changes.\n- Bubble action buttons stay without a background until hover. The pinned member name color matches, and the pin control is tighter. Task-complete notifications use the last reply text.\n"
+    },
+    "zh": {
+      "title": "0.15.0 更新内容",
+      "highlights": [
+        "记忆列表显示置顶、已固化、候选，以及分数、命中和相对时间",
+        "听写时显示 VoiceRing，自进化成功后成员卡片播放 DistortionWave",
+        "「半透明」和「缩放特效」默认开启",
+        "拆分回复带状态占位，并修复中途改口与切换会话"
+      ],
+      "bodyMarkdown": "## 新增\n\n- **记忆列表元数据**：记忆条目显示「置顶」「已固化」「候选」标记，以及注入分数、命中次数和相对时间，元数据一眼可见，不挤占记忆正文。\n- **VoiceRing 听写指示**：语音输入正在听时，输入框左侧控件显示 VoiceRing；麦克风仍使用原来的空闲/忙碌图标。\n- **自进化 DistortionWave**：自进化成功后，顶部成员卡片播放 DistortionWave，从卡片正中心起波（卡片变高或悬停变宽时，中心随当前尺寸走）。\n- **文档**：未签名的 macOS 安装包可能被系统提示已损坏；若你信任该下载，可用 `sudo xattr -cr /Applications/OkBot.app` 授权启动。记忆加载算法见 `docs/design/memory-loading.md`。\n\n## 变更\n\n- **主助手**：原「默认助手」文案统一为「主助手」（英文：Primary assistant）。\n- **设置默认值**：「半透明」和「缩放特效」在缺少配置项时默认开启（新安装，或从未写入过这两项的配置）。若已显式保存为关闭，则保持关闭。\n- **笔记 HTML**：生成的 HTML 笔记跟随 OkBot 客户端主题。\n- **发送中**：用户气泡在发送尚未完成时，文字变为更淡的颜色。\n- **聊天顶部淡化**：顶部滚动淡化区加高，以覆盖成员胶囊。\n- **忙碌输入框**：回合进行中，输入框使用向外脉冲的单色 BorderBeam（无彩色变体）；停止按钮不再带光晕。\n- **视觉效果**：升级 border-beam、thinking-orbs、liquid-gooey、voice-glow，并加入 voice-ring 与 distortion-waves。\n- **Agents SDK**：升级至 0.22.0。\n\n## 修复\n\n- 只有 `send_message` 会创建可见的助手气泡。拆分回复按开始、进行中、结束分段，并在每条气泡（包括只有一条回复时）前显示状态占位。若在回合进行中再发一条消息，会开启新回合而不是接着未完成的运行状态，并保留状态占位。开场应酬式的改写不再变成可见气泡；回复按不同节拍拆分。\n- 切换会话后小队回复仍会保留。加载时不再对已落盘的聊天气泡做去重，避免后面的短回复被丢掉。\n- 回合 Trace 弹窗中的文字可以选中和复制。\n- 修改助手页面中，头像悬停遮罩和名称布局不再因侧栏头像尺寸变化而错位。\n- 气泡操作按钮默认无背景，悬停时才出现。置顶成员名称颜色一致，置顶控件更紧凑。任务完成通知使用最后一条回复正文。\n"
+    }
+  }
+}

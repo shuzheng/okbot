@@ -6,6 +6,7 @@ import {
   buildInterruptedRunResumeContext,
   formatOwnerResourcesForResumePrompt,
   formatRunCheckpointToolDigest,
+  shouldResumeSerializedRunState,
 } from './softSteerResumeContext';
 import type { OwnerResourceInfo } from '@okbot/shared';
 
@@ -187,3 +188,54 @@ console.log('softSteerResumeContext.test.ts: ok');
   assert.match(block, /https:\/\/example\.com\/docs\/guide/);
   assert.doesNotMatch(block, /path=guide/);
 }
+
+{
+  assert.equal(
+    shouldResumeSerializedRunState({ softSteered: true, hasSerializedRunState: true }),
+    false,
+    'soft-steer must not resume mid-run RunState',
+  );
+  assert.equal(
+    shouldResumeSerializedRunState({ softSteered: false, hasSerializedRunState: true }),
+    true,
+    'Stop continue / cold restore still resume RunState',
+  );
+  assert.equal(
+    shouldResumeSerializedRunState({ softSteered: true, hasSerializedRunState: false }),
+    false,
+  );
+  assert.equal(
+    shouldResumeSerializedRunState({ hasSerializedRunState: false }),
+    false,
+  );
+}
+
+{
+  const storage = {
+    formatTaskProgressForPrompt() {
+      return '';
+    },
+    listOwnerResources() {
+      return [];
+    },
+  };
+  const ctx = buildInterruptedRunResumeContext(storage as never, 'bot_fresh', 'soft_steer', {
+    interruptUserText: '还有 langfuse 的介绍',
+    runCheckpoint: {
+      runId: 'run_aborted',
+      createdAt: '2026-11-16T10:05:28.000Z',
+      toolDigest: formatRunCheckpointToolDigest(
+        JSON.stringify({ items: [{ type: 'function_call', name: 'run_shell', call_id: 'c1' }] }),
+      ),
+      resumedFromRunState: false,
+    },
+  });
+  assert.match(ctx, /检查点摘要/);
+  assert.doesNotMatch(ctx, /已从中断前的 RunState 检查点续跑/);
+  assert.match(ctx, /新开的替换回合/);
+  assert.match(ctx, /全部当前问题的现状/);
+  assert.match(ctx, /langfuse/);
+  assert.match(ctx, /run_shell/);
+}
+
+console.log('softSteerResumeContext.test.ts: extra cases ok');

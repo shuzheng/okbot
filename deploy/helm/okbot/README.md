@@ -15,7 +15,7 @@ The Electron desktop app is **not** run in Kubernetes — install it natively an
 # From repository root, after building/pushing the image:
 helm upgrade --install okbot ./deploy/helm/okbot \
   --set image.repository=okbot-gateway \
-  --set image.tag=0.14.2
+  --set image.tag=0.15.0
 ```
 
 ## Tokens

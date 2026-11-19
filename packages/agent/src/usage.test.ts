@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { tokenUsageFromSdkUsage } from './usage.js';
-import type { Usage } from '@openai/agents';
+import { Usage } from '@openai/agents';
 
 {
   const usage = {
@@ -34,6 +34,36 @@ import type { Usage } from '@openai/agents';
   } as unknown as Usage;
   const t = tokenUsageFromSdkUsage(usage);
   assert.equal(t.cache, 40, 'must not double-count overlapping cache fields');
+}
+
+{
+  // 0.21+ Usage.inputTokensDetails is an array of TokenDetails (JSON values).
+  // Narrow before arithmetic — non-numeric detail values must not leak into cache.
+  const usage = {
+    inputTokens: 50,
+    outputTokens: 8,
+    inputTokensDetails: [
+      { cached_tokens: 'nope' },
+      { cached_tokens: 12 },
+    ],
+  } as unknown as Usage;
+  const t = tokenUsageFromSdkUsage(usage);
+  assert.equal(t.input, 50);
+  assert.equal(t.output, 8);
+  assert.equal(t.cache, 12);
+}
+
+{
+  const usage = new Usage({
+    inputTokens: 100,
+    outputTokens: 20,
+    inputTokensDetails: { cached_tokens: 40 },
+    requestUsageEntries: [{ inputTokens: 100, outputTokens: 20, inputTokensDetails: { cached_tokens: 40 } }],
+  });
+  const t = tokenUsageFromSdkUsage(usage);
+  assert.equal(t.input, 100);
+  assert.equal(t.output, 20);
+  assert.equal(t.cache, 40, 'SDK Usage instance must not double-count cache');
 }
 
 console.log('usage.test.ts: ok');

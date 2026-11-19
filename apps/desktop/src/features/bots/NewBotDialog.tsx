@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { BotAvatarShape } from '@okbot/shared';
 import { t } from '../../i18n';
-import { FlatAvatar } from '../../components/ui/avatars';
+import { AVATAR_PREVIEW_SIZE_PX, FlatAvatar } from '../../components/ui/avatars';
 import { CloseIcon, toast } from '../../components/ui';
 import { AvatarPicker, type AvatarValue } from './AvatarPicker';
 
@@ -94,6 +94,7 @@ export function NewBotDialog({
               color={avatar.color}
               avatarKind={avatar.avatarKind}
               botAvatarType={avatar.botAvatarType}
+              size={AVATAR_PREVIEW_SIZE_PX}
             />
             <div className="field field-name">
               <input

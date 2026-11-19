@@ -205,6 +205,7 @@ export const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
   { id: 'toolManageTaskProgress', tab: 'tools', labelKey: 'toolManageTaskProgress', keywords: ['task', 'progress', 'checklist', 'queue', '进度', '清单', '队列', '任务进度', 'manage_task_progress'] , developerOnly: true },
   { id: 'toolManageNote', tab: 'tools', labelKey: 'toolManageNote', keywords: ['note', 'html', '笔记', '资料', '资料库', 'library', 'manage_note'] , developerOnly: true },
   { id: 'toolSendMessage', tab: 'tools', labelKey: 'toolSendMessage', keywords: ['send', 'message', 'bubble', '气泡', 'reply', '回复消息', '回复', 'send_message', '多气泡'] , developerOnly: true },
+  { id: 'toolSetStatus', tab: 'tools', labelKey: 'toolSetStatus', keywords: ['status', 'placeholder', '占位', '步骤', 'set_status', '气泡'] , developerOnly: true },
   { id: 'toolWebFetch', tab: 'tools', labelKey: 'toolWebFetch', keywords: ['fetch', 'url', 'html', '网页', '拉取'] , developerOnly: true },
   { id: 'toolWebSearch', tab: 'tools', labelKey: 'toolWebSearch', keywords: ['search', 'tavily', 'brave', 'serper', '搜索'] , developerOnly: true },
   { id: 'webTools', tab: 'tools', labelKey: 'webTools', keywords: ['web', 'tavily', 'brave', 'serper', 'api key', '网页搜索'] },

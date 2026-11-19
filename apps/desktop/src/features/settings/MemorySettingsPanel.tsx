@@ -10,12 +10,15 @@ export function MemorySettingsPanel({
   setGlobalMemories,
   globalMemAddRequest,
   setGlobalMemAddRequest,
+  query,
 }: {
   setGlobalMemAddRequest: React.Dispatch<React.SetStateAction<number>>;
   globalMemAddRequest: number;
   lang: UiLang;
   globalMemories: MemoryEntry[];
   setGlobalMemories: React.Dispatch<React.SetStateAction<MemoryEntry[]>>;
+  /** Current/last user message for injection score relevance; omit for standing score. */
+  query?: string;
 }) {
   return (
 
@@ -42,6 +45,8 @@ export function MemorySettingsPanel({
           requestAdd={globalMemAddRequest}
           emptyLabel={t(lang, 'globalMemoriesEmpty')}
           placeholder={t(lang, 'globalMemoryPlaceholder')}
+          scope="global"
+          query={query}
           newBotId="global"
           onCommit={async (entry) => {
             try {

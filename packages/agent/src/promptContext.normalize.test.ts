@@ -118,7 +118,8 @@ assert(
   'buildAgentInstructions: unfinished sync must forbid stop-and-ask after mid-run interrupt',
 );
 assert(
-  instr.includes('一两句自然语言回应打断') &&
+  instr.includes('先短说正在做什么') &&
+    instr.includes('这条新消息要做什么') &&
     instr.includes('同一轮立刻继续未完成计划') &&
     instr.includes('禁止只文字确认') &&
     instr.includes('0 次工具调用') &&
@@ -128,7 +129,7 @@ assert(
   'buildAgentInstructions: mid-run user input must ack then continue same turn without asking',
 );
 assert(
-  unfinished.includes('一两句自然语言回应打断') && unfinished.includes('同一轮立刻继续未完成计划'),
+  unfinished.includes('先短说正在做什么') && unfinished.includes('同一轮立刻继续未完成计划'),
   'buildAgentInstructions: soft-steer unfinished plan still gets mid-run continue rules',
 );
 

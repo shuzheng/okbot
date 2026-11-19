@@ -132,8 +132,8 @@ export async function runThrottledPostTurnMaintenance(input: {
    * (every step of new-assistant onboarding). Memory always runs; skills keep their cadence.
    */
   forceSoul?: boolean;
-}): Promise<void> {
-  if (input.signal?.aborted) return;
+}): Promise<boolean> {
+  if (input.signal?.aborted) return false;
   const settings = input.storage.getSettings();
   const plan = planPostTurnMaintenance({
     settings: settings.maintenance,
@@ -141,7 +141,7 @@ export async function runThrottledPostTurnMaintenance(input: {
     userText: input.userText,
   });
   const runSoul = plan.runSoul || input.forceSoul === true;
-  if (!plan.runMemory && !runSoul && !plan.runSkills) return;
+  if (!plan.runMemory && !runSoul && !plan.runSkills) return false;
 
   const agentsLimit = settings.maintenance.soulEveryTurns;
   const skillsLimit = settings.maintenance.skillsEveryTurns;
@@ -215,6 +215,9 @@ export async function runThrottledPostTurnMaintenance(input: {
     }
     consolidateMemoriesForBot(input.storage, input.botId);
   }
+
+  if (input.signal?.aborted) return false;
+  return true;
 }
 
 /**
@@ -228,8 +231,8 @@ export async function runThrottledPostTurnSquadDescriptionRefresh(input: {
   model: ResolvedModelConfig;
   userText: string;
   signal?: AbortSignal;
-}): Promise<void> {
-  if (input.signal?.aborted) return;
+}): Promise<boolean> {
+  if (input.signal?.aborted) return false;
   const settings = input.storage.getSettings();
   const plan = planPostTurnMaintenance({
     settings: settings.maintenance,
@@ -237,7 +240,7 @@ export async function runThrottledPostTurnSquadDescriptionRefresh(input: {
     userText: input.userText,
   });
   // Reuse SOUL throttle for squad description evolution.
-  if (!plan.runSoul) return;
+  if (!plan.runSoul) return false;
 
   const agentsLimit = settings.maintenance.soulEveryTurns;
   const recent = input.storage.getMessagesPage(input.squadId, {
@@ -255,6 +258,9 @@ export async function runThrottledPostTurnSquadDescriptionRefresh(input: {
   if (descResult.action === 'upsert') {
     input.storage.updateSquad(input.squadId, { description: descResult.description });
   }
+
+  if (input.signal?.aborted) return false;
+  return true;
 }
 
 /**

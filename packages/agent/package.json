@@ -1,6 +1,6 @@
 {
   "name": "@okbot/agent",
-  "version": "0.14.2",
+  "version": "0.15.0",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
@@ -32,8 +32,8 @@
   },
   "dependencies": {
     "@okbot/shared": "workspace:*",
-    "@openai/agents": "^0.18.0",
-    "openai": "^7.20.0",
+    "@openai/agents": "^0.22.0",
+    "openai": "^7.59.0",
     "undici": "^6.28.1",
     "zod": "^4.6.5"
   },

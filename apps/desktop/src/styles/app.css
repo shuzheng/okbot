@@ -27,8 +27,9 @@
   --pin-item-pad: 12px;
   /* Expanded pin hover wash: wider left/right than vertical. */
   --pin-item-pad-x: 16px;
-  /* Pin label: show ≥ ~5 Chinese chars (1em ≈ one CJK glyph at 12px name). */
-  --pin-label-chars: 8em;
+  /* Pin label: fully show 6 Chinese chars (1em ≈ one CJK glyph at 12px name);
+     +2px so overflow ellipsis does not clip an exact 6-character name. */
+  --pin-label-chars: calc(6em + 2px);
   /* Session digit shortcut hint badge (opaque; dark overrides below). */
   --shortcut-hint-bg: #e4e4e7;
   --shortcut-hint-fg: #18181b;
@@ -669,7 +670,7 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   cursor: pointer;
   border-radius: var(--rail-row-radius);
   padding: var(--pin-item-pad) var(--pin-item-pad-x);
-  /* Footprint: avatar pad, or ≥ ~5 Chinese chars under the name (12px). */
+  /* Footprint: avatar pad, or 6 Chinese chars under the name (12px). */
   width: max(
     calc(var(--pin-avatar) + 2 * var(--pin-item-pad-x)),
     calc(var(--pin-label-chars) + 2 * var(--pin-item-pad-x))
@@ -809,7 +810,7 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   font-size: 12px;
   font-weight: 500;
   line-height: 1.25;
-  color: var(--muted);
+  color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1850,9 +1851,22 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   overflow: visible;
   position: relative;
   z-index: 1;
+  /* Fixed preview square. Do not inherit .app --pin-avatar, which shrinks
+     to --rail-avatar (36px) when the sidebar is narrow and would leave the
+     56px bot-avatars canvas overflowing the hover mask. */
+  --avatar-preview-size: 56px;
 }
 .avatar-preview-stack .avatar-preview-hit {
   margin: 0 auto;
+  width: var(--avatar-preview-size);
+  height: var(--avatar-preview-size);
+  border-radius: 15px;
+  /* Clip 1.5× overscan to the same rounded box as the hover mask.
+     isolation + translateZ(0) keep the canvas on a stable layer so the
+     drawer's backdrop-filter cannot mis-composite it on first open. */
+  overflow: hidden;
+  isolation: isolate;
+  transform: translateZ(0);
 }
 .avatar-preview-stack .field-name {
   width: 100%;
@@ -1894,22 +1908,32 @@ html.is-window-resizing .scroll-fade.fade-top.fade-bottom {
   pointer-events: none;
   cursor: default;
 }
-/* Match sidebar pin-strip avatar footprint (--pin-avatar / .session-pin-avatar). */
+/* Match the fixed form-preview square (--avatar-preview-size), not sidebar --pin-avatar. */
 .avatar-preview-stack .session-pin-avatar {
-  width: var(--pin-avatar);
-  height: var(--pin-avatar);
-  min-width: var(--pin-avatar);
-  min-height: var(--pin-avatar);
-  max-width: var(--pin-avatar);
-  max-height: var(--pin-avatar);
+  width: var(--avatar-preview-size);
+  height: var(--avatar-preview-size);
+  min-width: var(--avatar-preview-size);
+  min-height: var(--avatar-preview-size);
+  max-width: var(--avatar-preview-size);
+  max-height: var(--avatar-preview-size);
   border-radius: 15px;
-  font-size: var(--pin-avatar);
-}
-.avatar-preview-stack .avatar-preview-hit {
-  border-radius: 15px;
+  font-size: var(--avatar-preview-size);
+  overflow: hidden;
 }
 .avatar-preview-stack .avatar-preview-mask {
   border-radius: 15px;
+}
+/* Single-bot preview only (not squad collage tiles). bot-avatars canvas is
+   size×1.5 with overscan 1.5 and rise 0.1; pin those offsets so the
+   character stays framed if the library's inline negative margins are ignored. */
+.avatar-preview-stack > .avatar-preview-hit > .session-pin-avatar.flat-avatar-bot > canvas,
+.new-bot-identity > .session-pin-avatar.flat-avatar-bot > canvas {
+  position: absolute;
+  width: calc(var(--avatar-preview-size) * 1.5) !important;
+  height: calc(var(--avatar-preview-size) * 1.5) !important;
+  margin: 0 !important;
+  left: calc(var(--avatar-preview-size) * -0.25);
+  top: calc(var(--avatar-preview-size) * -0.35);
 }
 .bot-form-description-text {
   width: 100%;
@@ -3142,6 +3166,19 @@ a.footer-pill-seg {
   -webkit-app-region: no-drag;
 }
 
+/* Shrink-wrap the DistortionWave grid so the 40px header cluster does not jump. */
+.chat-member-pill-wave {
+  flex: 0 0 auto;
+  width: max-content;
+  max-width: 100%;
+  min-width: 0;
+}
+.chat-member-pill-source {
+  display: inline-flex;
+  flex-shrink: 0;
+  line-height: 0;
+}
+
 /* Floating conversation member pill.
    Column layout: main row (avatar+name) stays top-aligned; busy status opens below;
    hover chevron is absolutely centered on the full pill height. */
@@ -4035,7 +4072,7 @@ a.footer-pill-seg {
   padding: 0;
   border: none;
   border-radius: 7px;
-  background: color-mix(in srgb, var(--text) 12%, transparent);
+  background: transparent;
   color: var(--muted);
   cursor: pointer;
   display: inline-flex;
@@ -4291,6 +4328,24 @@ a.footer-pill-seg {
   opacity: 0.78;
   /* pulse-outside rides the child's edge; keep a faint hairline while sending. */
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bubble-user-text) 16%, transparent);
+  /* Pre-ack text is paler than settled --bubble-user-text; mix toward the
+     bubble fill so light (light-on-dark) and dark stay readable. */
+  --send-pending-fg: color-mix(in srgb, var(--bubble-user-text) 68%, var(--bubble-user));
+  color: var(--send-pending-fg);
+}
+.bubble.user.send-pending .bot-mention-chip {
+  --mention-chip-fg: var(--send-pending-fg);
+}
+.bubble.user.send-pending .chat-ext-link {
+  color: color-mix(in srgb, #7dd3fc 70%, var(--send-pending-fg));
+}
+:root[data-theme='light'] .bubble.user.send-pending .chat-ext-link {
+  color: color-mix(in srgb, #0369a1 75%, var(--send-pending-fg));
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .bubble.user.send-pending .chat-ext-link {
+    color: color-mix(in srgb, #0369a1 75%, var(--send-pending-fg));
+  }
 }
 .bubble.user.send-failed {
   /* Room for the bottom-right retry control inside the bubble. */
@@ -4330,6 +4385,65 @@ a.footer-pill-seg {
   /* Reply: square top-left (tail toward assistant side). */
   border-radius: 0 16px 16px 16px;
   white-space: normal;
+}
+/* set_status: next-reply placeholder — compact loader capsule + shimmer text, no bubble. */
+.bubble-row.is-status-placeholder-row {
+  pointer-events: none;
+  align-items: center;
+}
+.status-placeholder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  max-width: min(var(--bubble-max), 100%);
+  min-width: 0;
+  padding: 2px 0;
+  background: transparent;
+  user-select: none;
+}
+.status-placeholder-loader {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+.status-placeholder-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--muted) 80%, var(--text));
+  animation: okbot-status-placeholder-dot 1s ease-in-out infinite;
+}
+.status-placeholder-dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.status-placeholder-dot:nth-child(3) {
+  animation-delay: 0.3s;
+}
+@keyframes okbot-status-placeholder-dot {
+  0%, 80%, 100% {
+    transform: scale(0.6);
+    opacity: 0.45;
+  }
+  40% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+.status-placeholder .chat-turn-status-text {
+  min-width: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .status-placeholder-dot {
+    animation: none;
+    opacity: 0.7;
+  }
 }
 .bubble .md {
   line-height: 1.6;
@@ -5817,31 +5931,6 @@ button.message-attach-image {
   width: 12px;
   height: 12px;
 }
-/* Busy stop: 特效库 BorderBeam pulse-outside around the circular send/stop control. */
-.composer-inner .composer-send-beam {
-  flex-shrink: 0;
-  align-self: flex-end;
-  display: inline-flex;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  overflow: visible !important;
-  box-sizing: border-box;
-  position: relative;
-  z-index: 1;
-  /* Fixed 28px circle → library ResizeObserver would flash 1→0.35; pin floor. */
-  --pulse-glow-sx: 0.35 !important;
-  --pulse-glow-sy: 0.35 !important;
-}
-.composer-inner .composer-send-beam > .send {
-  /* pulse-outside rides the child's edge; keep a faint hairline. */
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--chat-bg) 22%, transparent);
-}
-.composer-inner .composer-send-beam::before,
-.composer-inner .composer-send-beam::after,
-.composer-inner .composer-send-beam [data-beam-bloom] {
-  border-radius: 50% !important;
-}
 .placeholder {
   margin: auto;
   text-align: center;
@@ -6017,14 +6106,14 @@ button.message-attach-image {
   font-size: 36px;
 }
 .modal-compact .avatar-preview-stack .session-pin-avatar {
-  width: var(--pin-avatar);
-  height: var(--pin-avatar);
-  min-width: var(--pin-avatar);
-  min-height: var(--pin-avatar);
-  max-width: var(--pin-avatar);
-  max-height: var(--pin-avatar);
+  width: var(--avatar-preview-size);
+  height: var(--avatar-preview-size);
+  min-width: var(--avatar-preview-size);
+  min-height: var(--avatar-preview-size);
+  max-width: var(--avatar-preview-size);
+  max-height: var(--avatar-preview-size);
   border-radius: 15px;
-  font-size: var(--pin-avatar);
+  font-size: var(--avatar-preview-size);
 }
 .modal-compact .avatar-preview-stack .field-name input {
   appearance: none;
@@ -6685,6 +6774,32 @@ button.message-attach-image {
   );
 }
 
+/* Chat transcript only: taller top fade so scrolling messages soften under the
+   floating member pill. Cluster is top:10px; pill resting height is 8+24+8=40
+   (see .chat-gateway-switcher); .messages padding-top is already 56px to clear
+   that row with 6px air. Keep the shared 18px bottom fade and all other
+   .scroll-fade lists unchanged. */
+.messages.scroll-fade.fade-top {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 56px, #000 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 56px, #000 100%);
+}
+.messages.scroll-fade.fade-top.fade-bottom {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 56px,
+    #000 calc(100% - 18px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 56px,
+    #000 calc(100% - 18px),
+    transparent 100%
+  );
+}
+
 /* libraries.dev effects chrome */
 .thinking-bubble {
   display: inline-flex;
@@ -6768,6 +6883,9 @@ button.message-attach-image {
 .composer-orb {
   flex-shrink: 0;
   margin: 2px 2px 2px 0;
+  display: block;
+  line-height: 0;
+  background: transparent;
 }
 .mic-btn {
   box-sizing: border-box;
@@ -8629,6 +8747,44 @@ button.message-attach-image {
 .settings-aar-inline .aar-item-sub {
   font-size: 11px;
 }
+.aar-item.has-memory-meta {
+  align-items: flex-start;
+}
+.aar-item.has-memory-meta .aar-item-trailing {
+  padding-top: 2px;
+}
+.memory-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  margin-top: 3px;
+  min-width: 0;
+  font-size: 10px;
+  line-height: 1.3;
+  color: var(--muted);
+}
+.memory-meta-badge {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: color-mix(in srgb, var(--text) 68%, var(--muted));
+  font-size: 10px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+.memory-meta-badge.is-pinned {
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+  color: color-mix(in srgb, var(--text) 82%, var(--muted));
+}
+.memory-meta-stat,
+.memory-meta-time,
+.memory-meta-expiry {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 .memory-expiry-editor-row {
   display: flex;
   align-items: center;
@@ -8943,9 +9099,19 @@ button.message-attach-image {
   gap: 10px;
   min-width: 0;
   margin-bottom: 12px;
+  --avatar-preview-size: 56px;
 }
 .new-bot-identity .session-pin-avatar {
   flex: 0 0 auto;
+  width: var(--avatar-preview-size);
+  height: var(--avatar-preview-size);
+  min-width: var(--avatar-preview-size);
+  min-height: var(--avatar-preview-size);
+  max-width: var(--avatar-preview-size);
+  max-height: var(--avatar-preview-size);
+  font-size: var(--avatar-preview-size);
+  overflow: hidden;
+  border-radius: 15px;
 }
 .new-bot-identity .field-name {
   flex: 1 1 auto;
@@ -11733,6 +11899,14 @@ button.message-attach-image {
   display: flex;
   flex-direction: column;
   text-align: left;
+  /* body { user-select: none }; re-enable copy in this inspect modal only. */
+  user-select: text;
+  -webkit-user-select: text;
+}
+.turn-trace-modal .modal-close,
+.turn-trace-modal .turn-trace-actions .btn {
+  user-select: none;
+  -webkit-user-select: none;
 }
 .turn-trace-summary {
   margin-top: 4px;
@@ -11893,6 +12067,9 @@ button.message-attach-image {
   cursor: pointer;
   border-radius: 0;
   min-height: 28px;
+  /* Override button UA user-select: none so names/status/timings are copyable. */
+  user-select: text;
+  -webkit-user-select: text;
 }
 .turn-trace-row-main:hover,
 .turn-trace-row-main:focus-visible {
@@ -11978,6 +12155,9 @@ button.message-attach-image {
   max-height: 160px;
   overflow: auto;
   text-align: left;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
 }
 /* Type-aware JSON tokens — avoid --accent (equals --text in this theme). */
 .turn-trace-json-key { color: var(--usage-input, #6366f1); }

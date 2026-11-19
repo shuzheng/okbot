@@ -106,10 +106,10 @@ export class ToolRunBudget {
 }
 
 /**
- * Tools that seal/emit their own mid-run bubbles — skip the shared tool-boundary
- * seal so we do not double-emit (live seal + send_message / ask_assistant).
+ * Tools that skip the shared tool-boundary live seal (`onBeforeToolExecute`).
+ * send_message / ask_assistant seal themselves; set_status must not seal or overwrite live text.
  */
-export const TOOLS_SEAL_THEMSELVES = new Set(['send_message', 'ask_assistant']);
+export const TOOLS_SEAL_THEMSELVES = new Set(['send_message', 'ask_assistant', 'set_status']);
 
 /** Wrap a tool execute so budget + optional trace hooks run around the real body. */
 export function wrapToolExecute<TArgs, TResult>(
@@ -118,7 +118,7 @@ export function wrapToolExecute<TArgs, TResult>(
   execute: (args: TArgs) => Promise<TResult> | TResult,
   /**
    * Fired once per auto-allow / post-HITL tool start (host seals live narration).
-   * Skipped for send_message / ask_assistant which seal themselves.
+   * Skipped for send_message / ask_assistant / set_status.
    */
   onBeforeToolExecute?: () => void | Promise<void>,
 ): (args: TArgs) => Promise<TResult> {

@@ -175,7 +175,11 @@ Deeper module boundaries, HTTP routes, and storage layout: **[DESIGN.md](./DESIG
    | Windows | NSIS installer (x64) |
    | Linux | `.AppImage` (x64) |
 
-2. **Open** OkBot (single-instance: launching again focuses the existing window). Early builds may be **unsigned** — allow the app in system settings if you trust the download.
+2. **Open** OkBot (single-instance: launching again focuses the existing window). The package is **unsigned**, so macOS may report that it is damaged when you launch it. If you trust the download, authorize launch with:
+
+   ```bash
+   sudo xattr -cr /Applications/OkBot.app
+   ```
 
 3. **Add a model provider** in Settings, **create an assistant** (like adding a contact), and chat. Most tools run without a prompt by default; if you set a tool to ask (or hit a forced-confirm / MCP call), allow once, remember a rule, or deny.
 

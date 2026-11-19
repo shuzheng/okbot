@@ -8,7 +8,7 @@ import {
 } from '@okbot/shared';
 import { t } from '../../i18n';
 import type { BotFormValues } from '../../types';
-import { FlatAvatar } from '../../components/ui/avatars';
+import { AVATAR_PREVIEW_SIZE_PX, FlatAvatar } from '../../components/ui/avatars';
 import { toast } from '../../components/ui';
 import { ChevronsRightIcon, ChevronsDownIcon, ChevronsUpIcon, ExportAssistantIcon } from '../../components/ui/icons';
 import { formatSystemError } from '../../utils/formatSystemError';
@@ -60,6 +60,7 @@ export function BotFormModal({
   botId = null,
   autoApply = false,
   developerMode = false,
+  memoryQuery,
   onCancel,
   onSave,
   onApply,
@@ -76,6 +77,8 @@ export function BotFormModal({
   autoApply?: boolean;
   /** When false, hide Advanced (SOUL.md / 灵魂). Memory & skills are own tabs; schedules under 自动化. */
   developerMode?: boolean;
+  /** Current/last user message for memory list injection score; omit for standing score. */
+  memoryQuery?: string;
   onCancel: () => void;
   onSave?: (v: BotFormValues) => void;
   onApply?: (v: BotFormValues) => void;
@@ -293,6 +296,7 @@ export function BotFormModal({
               color={color}
               avatarKind={avatarKind}
               botAvatarType={botAvatarType}
+              size={AVATAR_PREVIEW_SIZE_PX}
             />
             <span className="avatar-preview-mask" aria-hidden>
               {pickerOpen ? <ChevronsUpIcon /> : <ChevronsDownIcon />}
@@ -410,7 +414,7 @@ export function BotFormModal({
           <SchedulesList lang={lang} active={ownerFormTab === 'automation'} ownerId={botId} compact />
         ) : null}
         {ownerFormTab === 'memory' ? (
-          <BotMemoryPanel lang={lang} botId={botId} active={ownerFormTab === 'memory'} />
+          <BotMemoryPanel lang={lang} botId={botId} active={ownerFormTab === 'memory'} query={memoryQuery} />
         ) : null}
         {ownerFormTab === 'skills' ? (
           <BotSkillsPanel

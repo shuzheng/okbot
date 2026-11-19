@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'r
 import type { NoteCardMeta, OwnerResourceInfo } from '@okbot/shared';
 import { FileAttachIcon } from '../../components/ui/icons';
 import { t, type UiLang } from '../../i18n';
+import { resolvedClientTheme, stampNoteHtmlTheme } from '../../utils/noteTheme';
 import { NoteHtmlFrame } from '../owner/NoteHtmlFrame';
 import { ResourceFullscreenPreview } from '../owner/ResourceFullscreenPreview';
 
@@ -50,10 +51,13 @@ export function NoteCard({
         }
         const html = res.text;
         if (typeof window.okbot.captureNoteHtmlPreview === 'function') {
-          const cap = await window.okbot.captureNoteHtmlPreview(html, {
-            width: 720,
-            height: 900,
-          });
+          const cap = await window.okbot.captureNoteHtmlPreview(
+            stampNoteHtmlTheme(html, resolvedClientTheme()),
+            {
+              width: 720,
+              height: 900,
+            },
+          );
           if (cancelled) return;
           if (cap?.ok && cap.dataUrl) {
             setShot(cap.dataUrl);

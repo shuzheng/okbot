@@ -536,7 +536,7 @@ export async function startSquadTurn(
         // Silent roster description refresh (agents cadence) — next turn / UI reload.
         try {
           if (!controller.signal.aborted) {
-            await withOwnerMaintenanceLock(squad.id, () =>
+            const ran = await withOwnerMaintenanceLock(squad.id, () =>
               runThrottledPostTurnSquadDescriptionRefresh({
                 storage: ctx.storage,
                 squadId: squad.id,
@@ -547,6 +547,9 @@ export async function startSquadTurn(
                 signal: controller.signal,
               }),
             );
+            if (ran) {
+              emitTurn({ type: 'evolution_complete', botId: squad.id });
+            }
           }
         } catch (err) {
           console.error('[okbot] squad description refresh failed', err);

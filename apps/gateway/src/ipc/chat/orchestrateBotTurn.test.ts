@@ -1052,4 +1052,108 @@ resetSoftSteerStateForTests();
   assert.ok(loaded, 'checkpoint record must remain');
 }
 
+
+{
+  // Concurrent composer chatStart: Q2 must abort in-flight Q1 and start the
+  // replacement without waiting for Q1 to finish its work.
+  resetSoftSteerStateForTests();
+  resetOwnerRunQueuesForTests();
+  resetAutoContinueStateForTests();
+  const botId = 'bot_concurrent_steer';
+  const map: AbortControllerMap = new Map();
+  const events: string[] = [];
+  let q1Started!: () => void;
+  const q1Gate = new Promise<void>((resolve) => {
+    q1Started = resolve;
+  });
+
+  const ctx = {
+    abortControllers: map,
+    storage: {
+      appendMessage: () => undefined,
+      touchBot: () => undefined,
+      getMessageById: () => null,
+      loadTasks: () => [],
+    },
+    sendRuntimeEvent: () => undefined,
+  };
+
+  const startTurn = async (
+    turnCtx: { abortControllers: AbortControllerMap },
+    payload: { softSteered?: boolean },
+    text: string,
+  ) => {
+    const runId = text === '问题1' ? 'run_q1' : 'run_q2';
+    const controller = new AbortController();
+    registerOwnerRun(turnCtx.abortControllers, botId, runId, controller);
+    events.push(`start:${text}:softSteered=${payload.softSteered === true}`);
+    if (text === '问题1') {
+      q1Started();
+      const aborted = await new Promise<boolean>((resolve) => {
+        const onAbort = () => {
+          controller.signal.removeEventListener('abort', onAbort);
+          resolve(true);
+        };
+        if (controller.signal.aborted) {
+          resolve(true);
+          return;
+        }
+        controller.signal.addEventListener('abort', onAbort);
+        setTimeout(() => {
+          controller.signal.removeEventListener('abort', onAbort);
+          resolve(false);
+        }, 15_000);
+      });
+      unregisterOwnerRun(turnCtx.abortControllers, botId, runId, controller);
+      events.push(`end:${text}:${aborted ? 'aborted' : 'finished'}`);
+      return {
+        userMessage: {
+          id: 'u1',
+          role: 'user' as const,
+          content: text,
+          createdAt: '2026-11-16T10:05:22.000Z',
+        },
+        aborted,
+      };
+    }
+    unregisterOwnerRun(turnCtx.abortControllers, botId, runId, controller);
+    events.push(`end:${text}:replacement`);
+    return {
+      userMessage: {
+        id: 'u2',
+        role: 'user' as const,
+        content: text,
+        createdAt: '2026-11-16T10:05:28.000Z',
+      },
+    };
+  };
+
+  const q1Promise = orchestrateBotTurn(
+    ctx as never,
+    { botId, text: '问题1', origin: 'composer' },
+    '问题1',
+    { startTurn, awaitAutoContinue: false },
+  );
+  await q1Gate;
+  const q2StartedAt = Date.now();
+  const q2 = await orchestrateBotTurn(
+    ctx as never,
+    { botId, text: '问题2', origin: 'composer' },
+    '问题2',
+    { startTurn, awaitAutoContinue: false },
+  );
+  const q2Elapsed = Date.now() - q2StartedAt;
+  const q1 = await q1Promise;
+
+  assert.equal(q1.aborted, true, 'Q1 must abort on Q2 soft-steer');
+  assert.ok(q2Elapsed < 3_000, `Q2 replacement must start before Q1 would finish; elapsed=${q2Elapsed}`);
+  assert.deepEqual(events, [
+    'start:问题1:softSteered=false',
+    'end:问题1:aborted',
+    'start:问题2:softSteered=true',
+    'end:问题2:replacement',
+  ]);
+  assert.deepEqual(listOwnerRunIds(map, botId), []);
+}
+
 console.log('orchestrateBotTurn.test.ts OK');

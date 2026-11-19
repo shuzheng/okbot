@@ -165,6 +165,14 @@ export type EmitAssistantMessage = (
   input: EmitAssistantMessageInput,
 ) => Promise<void> | void;
 
+/** Result of `set_status`: ok updates the placeholder; skipped when live text already exists. */
+export type SetAssistantStatusResult = 'ok' | 'skipped_live_content' | 'empty';
+
+/** Show a short step sentence on the next reply placeholder (host must not persist it). */
+export type SetAssistantStatus = (
+  status: string,
+) => Promise<SetAssistantStatusResult> | SetAssistantStatusResult;
+
 export type BuildToolsOptions = {
   /** Required for `read_skill` to return bodies; omit when no skill catalog is bound. */
   skillLookup?: SkillLookup;
@@ -195,8 +203,13 @@ export type BuildToolsOptions = {
    */
   emitAssistantMessage?: EmitAssistantMessage;
   /**
+   * Required for `set_status` to update the next-reply placeholder. 1:1 hosts
+   * bind this; omit on squad (execute returns a clear error).
+   */
+  setAssistantStatus?: SetAssistantStatus;
+  /**
    * Fired at the start of each auto-allow / post-HITL tool execute (except
-   * send_message / ask_assistant). Host seals visible live narration so
+   * send_message / ask_assistant / set_status). Host seals visible live narration so
    * mid-run progress appears without waiting for done/abort.
    */
   onBeforeToolExecute?: () => void | Promise<void>;
@@ -563,7 +576,7 @@ export function buildTools(
       tool({
         name: 'manage_task_progress',
         description:
-          '管理当前助手/小队的多任务（持久 tasks.jsonl：一行一任务；add 追加；update 按任务 id 原地改写该行；list 查看）。主机不判断新任务/更新/取消——由你用本工具维护。任务 status=backlog|pending|in_progress|done（backlog=未做池，仅显式设置；出池设 pending）。步骤 status=pending|in_progress|blocked|succeeded|failed|cancelled（无 backlog；旧 done 已改为 succeeded）。推导：任一步 in_progress/blocked ⇒ 任务 in_progress；全部步骤终态 ⇒ 任务 done；全 pending ⇒ pending。整任务取消：update status=done（未终态步骤→cancelled，任务→done）。backlog 中禁止把步骤标 in_progress。按添加顺序串行推进。软接管后先 list/对照再继续。有可推进的未完成任务时自动继续；步骤 blocked 时暂停自动续跑。未用到的可选字段请省略，不要传 null。对用户只用产品语言（任务/未完成任务），不要说「队列」或工具名/tasks.jsonl。边界：有明确时间点或周期（明天9点、每周一、cron等）→用 manage_schedule，不要建成任务；当场要办或只记需求、无排期 →用本工具（可 backlog）。',
+          '管理当前助手/小队的多任务（持久 tasks.jsonl：一行一任务；add 追加；update 按任务 id 原地改写该行；list 查看）。主机不判断新任务/更新/取消——由你用本工具维护。任务 status=backlog|pending|in_progress|done（backlog=未做池，仅显式设置；出池设 pending）。步骤 status=pending|in_progress|blocked|succeeded|failed|cancelled（无 backlog；旧 done 已改为 succeeded）。推导：任一步 in_progress/blocked ⇒ 任务 in_progress；全部步骤终态 ⇒ 任务 done；全 pending ⇒ pending。整任务取消：update status=done（未终态步骤→cancelled，任务→done）。backlog 中禁止把步骤标 in_progress。按添加顺序串行推进。软接管后先 list/对照再继续。有可推进的未完成任务时自动继续；步骤 blocked 时暂停自动续跑。未用到的可选字段请省略，不要传 null。对用户只用产品语言（任务/未完成任务），不要说「队列」或工具名/tasks.jsonl。边界：有明确时间点或周期（明天9点、每周一、cron等）→用 manage_schedule，不要建成任务；当场要办或只记待办需求、无排期 →用本工具（可 backlog）；规划、设计稿、报告、记录、笔记等持久文档 → manage_note，不要建成任务。',
         parameters: z.object({
           action: z.enum(['add', 'update', 'list']).describe('add / update / list'),
           id: optionalToolId.describe('update：任务 id（ULID）；add：可选，须为 ULID，否则主机自动生成'),
@@ -665,8 +678,8 @@ export function buildTools(
         name: 'manage_note',
         description:
           '管理当前助手/小队的笔记（持久 resources.jsonl + resources/*.html）。action=create|update|list|get。' +
-          '用户只要「记一下 / 维护笔记 / 写设计稿/需求/报告」且无明确排期、也不是要你当场逐步执行的任务清单时，用本工具；不要建成 manage_task_progress 任务。' +
-          'create：传 title 与完整自包含 html（inline CSS，可读浅色/深色优先，无重依赖；非报告类默认文首 TOC/大纲，href="#id" 对齐标题 id）。' +
+          '只要交付物是规划、设计稿、报告、记录、笔记或同类持久文档，就必须用本工具，不要等用户说出「记一下」；有明确排期走 manage_schedule，当场要逐步执行的任务清单走 manage_task_progress，不要把这类文档建成任务。' +
+          'create：传 title 与完整自包含 html（inline CSS，无重依赖；用 :root[data-theme=light|dark] 写浅/深两套以跟随客户端主题，勿只靠 prefers-color-scheme；非报告类默认文首 TOC/大纲，href="#id" 对齐标题 id）。' +
           'update（维护同一篇）：传 id（或 path）与新的完整 html，可选 title。' +
           'list / get：查看已有笔记；不要把整库塞进对用户的回复。' +
           '未用到的可选字段请省略，不要传 null。对用户只用产品语言（笔记/已记下/已维护），不要说工具名或 resources.jsonl。',
@@ -765,7 +778,7 @@ export function buildTools(
       tool({
         name: 'send_message',
         description:
-          '向用户界面回复：① content=markdown 独立气泡（多条进度/确认）；② reactToMessageId+emoji=在用户气泡上放/清表情回应（不新增时间线）。纯表情回应只传 reactToMessageId+emoji，不要再传 content，也不要在最终流式回复里再输出同一个表情；下一轮也禁止把该表情当作正文重发，需表态则再次 react，否则写有字 content。简单确认、轻量情绪优先用表情回应，不必再写「好的/收到」。清除回应时必须显式传 emoji 为空字符串；仅传 reactToMessageId 会报错。不要把同一段文字既写入本工具又在最终流式回复里重复。未用到的可选字段请省略，不要传 null。',
+          '向用户界面回复：① content=markdown 独立气泡。每条用户消息先发一句要做什么（忙时插入则同时说正在做的和要做的）；某步有进展就立刻发一条；一件事做完发短结果，同轮还有其他事则自然带进度。一步一条，不要按字数或句号切碎，也不要在同一批次连发多条。② reactToMessageId+emoji=在用户气泡上放/清表情回应（不新增时间线）。纯表情回应只传 reactToMessageId+emoji，不要再传 content，也不要在最终流式回复里再输出同一个表情；下一轮也禁止把该表情当作正文重发，需表态则再次 react，否则写有字 content。简单确认、轻量情绪优先用表情回应，不必再写「好的/收到」。清除回应时必须显式传 emoji 为空字符串；仅传 reactToMessageId 会报错。send_message 与最终回复是二选一的出口，不是先后两步。已用本工具发过内容则不要再写任何最终回复（含换个说法的收尾）。不要把同一段文字既写入本工具又在最终流式回复里重复。未用到的可选字段请省略，不要传 null。',
         parameters: z.object({
           content: z
             .string()
@@ -826,6 +839,49 @@ export function buildTools(
               return '已回复消息。';
             } catch (err) {
               return `错误：回复消息失败 — ${err instanceof Error ? err.message : String(err)}`;
+            }
+          },
+        ),
+      }),
+    );
+  }
+
+  if (prefs.set_status.enabled) {
+    list.push(
+      tool({
+        name: 'set_status',
+        description:
+          '开始干活或写回复前调用，在下一条回复的占位气泡上显示一句短的产品语言，说明当前步骤（如「正在查看记忆」「正在对比两家餐厅」）。即使只回一条气泡也必须先调用。开场那条发出后，开始第一步前也要再调用。不是正式消息，不会写入聊天记录。再次调用会更新同一占位；有真实回复后占位被替换。当前气泡已有正文时不要改写。不要用它发送正式内容。不要为每个工具都调用。未用到的可选字段请省略，不要传 null。',
+        parameters: z.object({
+          status: z
+            .string()
+            .describe('一句短的产品语言，说明下一步正在做什么'),
+        }),
+        // Never HITL: updating a placeholder must not park an approval card.
+        needsApproval: false,
+        ...guardrailOpts,
+        execute: wrapExec(
+          'set_status',
+          async (args: { status?: string }) => {
+            const setStatus = options?.setAssistantStatus;
+            if (!setStatus) {
+              return '错误：当前会话未绑定 set_status（仅 1:1 助手支持）。';
+            }
+            const status = typeof args?.status === 'string' ? args.status.trim() : '';
+            if (!status) {
+              return '错误：请传一句简短的 status 描述';
+            }
+            try {
+              const result = await setStatus(status);
+              if (result === 'skipped_live_content') {
+                return '当前气泡已有正文，未改写占位。可在下一条气泡前再调用。';
+              }
+              if (result === 'empty') {
+                return '错误：请传一句简短的 status 描述';
+              }
+              return '已更新回复占位。';
+            } catch (err) {
+              return `错误：更新回复占位失败 — ${err instanceof Error ? err.message : String(err)}`;
             }
           },
         ),
@@ -1096,6 +1152,7 @@ export const TOOL_BLURBS: Record<string, string> = {
   manage_note: '管理笔记（resources.jsonl）',
   manage_memory: '置顶/遗忘/提升记忆',
   send_message: '回复消息或表情回应',
+  set_status: '在下一条回复占位上显示当前步骤',
   web_fetch: '拉取网页正文',
   web_search: '第三方网页搜索',
 };

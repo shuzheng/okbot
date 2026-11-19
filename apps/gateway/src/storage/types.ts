@@ -13,6 +13,8 @@ export type SessionRecordV2 = {
     meshExchange?: import('@okbot/shared').MeshExchangeMeta;
     /** Sealed ask_assistant interim (message A); UI hides later SDK dups of this text. */
     meshInterim?: boolean;
+    /** Runner/SDK history row — kept for the model, not a transcript bubble. */
+    uiHidden?: boolean;
     /** Host auto-continue synthetic user row; model sees it, UI transcript hides it. */
     autoContinue?: boolean;
     /** User message quotes another bubble by id (UI only; content stays body-only). */

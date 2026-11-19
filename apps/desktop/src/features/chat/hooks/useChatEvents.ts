@@ -11,8 +11,9 @@ import {
 import { toast } from '../../../components/ui';
 import { t, type UiLang } from '../../../i18n';
 import { formatSystemError } from '../../../utils/formatSystemError';
-import { windowIsFocused } from '../../../utils/systemNotify';
+import { pickNotifyReplyBody, visibleReplyStoreKey } from '../../../utils/notifyReplyBody';
 import { rememberReconciledLocalId } from '../../../utils/optimisticSend';
+import { windowIsFocused } from '../../../utils/systemNotify';
 import { saveLastSelection } from '../../sidebar';
 import { reconcileById } from '../../../utils/reconcileRoster';
 import {
@@ -22,6 +23,11 @@ import {
 } from '../ParallelTasksStrip';
 import type { Selection, ToolCard, TurnPhase } from '../../../types';
 import { SQUAD_CAPTAIN_SPEAKER_ID } from '@okbot/shared';
+import {
+  reduceAssistantStatusPlaceholders,
+  type AssistantStatusPlaceholder,
+} from '../assistantStatusPlaceholder';
+import { armEvolutionWaveIfVisible } from '../memberEvolutionWave';
 
 
 /** True when assistant content has user-visible answer text (think-only counts as empty). */
@@ -58,6 +64,8 @@ export type ChatEventsDeps = {
   setTurnPhaseByBot: Dispatch<SetStateAction<Record<string, TurnPhase>>>;
   setParallelTasksByOwner: Dispatch<SetStateAction<Record<string, ParallelTask[]>>>;
   setOpenTasksByOwner: Dispatch<SetStateAction<Record<string, TaskRecord[]>>>;
+  setStatusPlaceholderByBot: Dispatch<SetStateAction<Record<string, AssistantStatusPlaceholder>>>;
+  setEvolutionWaveNonceByOwner: Dispatch<SetStateAction<Record<string, number>>>;
 };
 
 /**
@@ -85,10 +93,16 @@ export function useChatEvents(deps: ChatEventsDeps): void {
     setTurnPhaseByBot,
     setParallelTasksByOwner,
     setOpenTasksByOwner,
+    setStatusPlaceholderByBot,
+    setEvolutionWaveNonceByOwner,
   } = deps;
 
   const langRef = useRef(lang);
   langRef.current = lang;
+  /** Latest turn_started runId per owner; stale abort events must not clear a new placeholder. */
+  const latestRunIdByBotRef = useRef<Record<string, string>>({});
+  /** Last visible send_message / formal bubble text for the current turn (notify body). */
+  const lastVisibleReplyByRunRef = useRef<Record<string, string>>({});
 
   useEffect(() => {
   type PendingStream = {
@@ -312,9 +326,17 @@ export function useChatEvents(deps: ChatEventsDeps): void {
       return;
     }
 
+    if (event.type === 'evolution_complete') {
+      setEvolutionWaveNonceByOwner((prev) =>
+        armEvolutionWaveIfVisible(prev, event.botId, selectionRef.current?.id),
+      );
+      return;
+    }
+
     if (event.type === 'turn_started') {
       const clientTurnId = (event.clientTurnId || '').trim();
       const runId = (event.runId || '').trim();
+      if (runId) latestRunIdByBotRef.current[event.botId] = runId;
       // Soft-steer restart: mark busy before deltas so aborted peer done cannot
       // leave the owner idle while the replacement turn is already registered.
       setBusyByBot((prev) => (prev[event.botId] ? prev : { ...prev, [event.botId]: true }));
@@ -435,14 +457,40 @@ export function useChatEvents(deps: ChatEventsDeps): void {
       return;
     }
 
+    if (event.type === 'assistant_status') {
+      setStatusPlaceholderByBot((prev) =>
+        reduceAssistantStatusPlaceholders(prev, {
+          type: 'assistant_status',
+          botId: event.botId,
+          messageId: event.messageId,
+          status: event.status,
+          runId: event.runId,
+          latestRunId: latestRunIdByBotRef.current[event.botId],
+        }),
+      );
+      return;
+    }
+
     if (event.type === 'assistant_message') {
       // Full replace: drop coalesced deltas so a pending rAF flush cannot re-append
       // pre-tool think-aloud / ask narration. Never insert blank / think-only rows.
       delete pending.messageDeltas[event.message.id];
       const replaced = event.message.content || '';
       const visible = hasVisibleAssistantText(replaced);
+      setStatusPlaceholderByBot((prev) =>
+        reduceAssistantStatusPlaceholders(prev, {
+          type: 'assistant_message',
+          botId: event.botId,
+          messageId: event.message.id,
+          runId: event.runId,
+          hasVisibleReply: visible,
+          latestRunId: latestRunIdByBotRef.current[event.botId],
+        }),
+      );
       if (visible) {
         streamingPreviewRef.current[event.message.id] = replaced;
+        const runId = (event.runId || latestRunIdByBotRef.current[event.botId] || '').trim();
+        lastVisibleReplyByRunRef.current[visibleReplyStoreKey(event.botId, runId)] = replaced;
       } else {
         delete streamingPreviewRef.current[event.message.id];
         delete pending.previewByBot[event.botId];
@@ -574,6 +622,22 @@ export function useChatEvents(deps: ChatEventsDeps): void {
     }
     if (event.type === 'done' || event.type === 'error') {
       flushPendingStream();
+      if (event.type === 'error' || (event.type === 'done' && event.aborted)) {
+        const runId = (event.runId || latestRunIdByBotRef.current[event.botId] || '').trim();
+        delete lastVisibleReplyByRunRef.current[visibleReplyStoreKey(event.botId, runId)];
+      }
+      setStatusPlaceholderByBot((prev) =>
+        reduceAssistantStatusPlaceholders(prev, {
+          type: event.type,
+          botId: event.botId,
+          messageId: event.messageId,
+          runId: event.runId,
+          aborted: event.type === 'done' ? !!event.aborted : undefined,
+          hasVisibleReply:
+            event.type === 'done' ? hasVisibleAssistantText(event.content) : true,
+          latestRunId: latestRunIdByBotRef.current[event.botId],
+        }),
+      );
       if (event.runId) {
         setParallelTasksByOwner((prev) => ({
           ...prev,
@@ -619,7 +683,13 @@ export function useChatEvents(deps: ChatEventsDeps): void {
           }, 400);
         }
         if (event.type === 'done') {
-          const replyBody = plainTextFromMarkdown(stripThinkContent(event.content || ''));
+          const runId = (event.runId || latestRunIdByBotRef.current[event.botId] || '').trim();
+          const storeKey = visibleReplyStoreKey(event.botId, runId);
+          const replyBody = pickNotifyReplyBody({
+            lastVisibleReply: lastVisibleReplyByRunRef.current[storeKey] || '',
+            doneContent: event.content || '',
+          });
+          delete lastVisibleReplyByRunRef.current[storeKey];
           notifyUnfocusedRef.current(event.botId, 'reply', undefined, event.messageId, replyBody);
         }
       }

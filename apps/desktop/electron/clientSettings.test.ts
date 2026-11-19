@@ -17,19 +17,21 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'okbot-client-settings-'));
   const defaults = loadClientSettings(tmp);
   assert.equal(defaults.theme, 'system');
   assert.equal(defaults.closeAction, 'ask');
-  assert.equal(defaults.translucent, false);
+  assert.equal(defaults.translucent, true);
+  assert.equal(defaults.sidebarDockMagnify, true);
   assert.ok(fs.existsSync(path.join(tmp, 'client.json')));
 }
 
 {
-  // Missing translucent key → default off; explicit true/false preserved.
+  // Missing translucent / sidebarDockMagnify keys → default on; explicit true/false preserved.
   const miss = fs.mkdtempSync(path.join(os.tmpdir(), 'okbot-translucent-miss-'));
   fs.writeFileSync(
     path.join(miss, 'client.json'),
     `${JSON.stringify({ theme: 'dark', language: 'zh' }, null, 2)}\n`,
     'utf8',
   );
-  assert.equal(loadClientSettings(miss).translucent, false);
+  assert.equal(loadClientSettings(miss).translucent, true);
+  assert.equal(loadClientSettings(miss).sidebarDockMagnify, true);
   fs.rmSync(miss, { recursive: true, force: true });
 
   const on = fs.mkdtempSync(path.join(os.tmpdir(), 'okbot-translucent-on-'));
@@ -49,6 +51,24 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'okbot-client-settings-'));
   );
   assert.equal(loadClientSettings(off).translucent, false);
   fs.rmSync(off, { recursive: true, force: true });
+
+  const magOff = fs.mkdtempSync(path.join(os.tmpdir(), 'okbot-magnify-off-'));
+  fs.writeFileSync(
+    path.join(magOff, 'client.json'),
+    `${JSON.stringify({ theme: 'dark', sidebarDockMagnify: false }, null, 2)}\n`,
+    'utf8',
+  );
+  assert.equal(loadClientSettings(magOff).sidebarDockMagnify, false);
+  fs.rmSync(magOff, { recursive: true, force: true });
+
+  const magOn = fs.mkdtempSync(path.join(os.tmpdir(), 'okbot-magnify-on-'));
+  fs.writeFileSync(
+    path.join(magOn, 'client.json'),
+    `${JSON.stringify({ theme: 'dark', sidebarDockMagnify: true }, null, 2)}\n`,
+    'utf8',
+  );
+  assert.equal(loadClientSettings(magOn).sidebarDockMagnify, true);
+  fs.rmSync(magOn, { recursive: true, force: true });
 }
 
 {

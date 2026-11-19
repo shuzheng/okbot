@@ -12,6 +12,11 @@ import {
   readJsonlPage,
   recordToUiMessage,
   writeSessionRecordsAtomic,
+  keepSquadSpeakerMessages,
+  isSendMessageAckFinal,
+  projectDirectSessionMessages,
+  projectSquadSessionMessages,
+  transcriptMetaForSdkAppend,
 } from './sessionJsonl.js';
 import type { SessionRecordV2 } from './types.js';
 
@@ -633,6 +638,179 @@ function ui(id: string, role: 'user' | 'assistant', content: string): SessionRec
       `expected mid-turn prefix strip on ${m.id}, got: ${m.content.slice(0, 40)}`,
     );
   }
+}
+
+{
+  // Untagged SDK captain twin + tagged UI bubble with the same text.
+  // Load path must not dedupe/rewrite; only hide the untagged SDK row.
+  const user = recordToUiMessage(
+    legacyMessageToRecord({
+      id: 'msg_user',
+      role: 'user',
+      content: '大家好',
+      createdAt: '2026-11-16T06:57:46.940Z',
+    }),
+  )!;
+  const sdkTwin = recordToUiMessage({
+    v: 2,
+    id: 'evt_sdk',
+    createdAt: '2026-11-16T06:58:30.555Z',
+    item: {
+      type: 'message',
+      role: 'assistant',
+      status: 'completed',
+      content: [{ type: 'output_text', text: '你好！我是队长，小队成员都在岗。' }],
+    },
+    meta: { uiRole: 'assistant', runId: 'run_x' },
+  })!;
+  const captain = recordToUiMessage(
+    legacyMessageToRecord({
+      id: 'msg_captain',
+      role: 'assistant',
+      content: '你好！我是队长，小队成员都在岗。',
+      createdAt: '2026-11-16T06:58:30.558Z',
+      speakerBotId: '__captain__',
+    }),
+  )!;
+  assert.equal(sdkTwin.speakerBotId, undefined);
+  assert.equal(captain.speakerBotId, '__captain__');
+  const out = projectSquadSessionMessages([user, sdkTwin, captain]);
+  assert.deepEqual(out.map((m) => m.id), ['msg_user', 'msg_captain']);
+  assert.equal(out[1]!.content, '你好！我是队长，小队成员都在岗。');
+}
+
+{
+  // Runner/SDK assistant history is not a transcript bubble.
+  const meta = transcriptMetaForSdkAppend(
+    {
+      type: 'message',
+      role: 'assistant',
+      content: [{ type: 'output_text', text: '开场一句' }],
+    },
+    { runId: 'run_1' },
+  );
+  assert.equal(meta?.uiHidden, true);
+  assert.equal(meta?.uiRole, 'assistant');
+  assert.equal(meta?.runId, 'run_1');
+  const hidden = recordToUiMessage({
+    v: 2,
+    id: 'evt_hidden',
+    createdAt: '2026-11-16T11:30:43.272Z',
+    item: {
+      type: 'message',
+      role: 'assistant',
+      content: [{ type: 'output_text', text: '开场一句' }],
+    },
+    meta,
+  });
+  assert.equal(hidden, null);
+  // Promoting via UI upsert clears uiHidden.
+  const promoted = mergeUiMessageOntoRecord(
+    {
+      v: 2,
+      id: 'evt_hidden',
+      createdAt: '2026-11-16T11:30:43.272Z',
+      item: {
+        type: 'message',
+        role: 'assistant',
+        content: [{ type: 'output_text', text: '正式回答' }],
+      },
+      meta,
+    },
+    {
+      id: 'msg_final',
+      role: 'assistant',
+      content: '正式回答',
+      createdAt: '2026-11-16T11:30:43.272Z',
+    },
+  );
+  assert.equal(promoted.meta?.uiHidden, undefined);
+  assert.equal(recordToUiMessage(promoted)?.content, '正式回答');
+}
+
+{
+  const opening =
+    '我先查公开口径：退市后没有官方员工数，我会核对媒体报道和工商年报里的参保人数这两条。';
+  const openingRec = recordToUiMessage(
+    legacyMessageToRecord({
+      id: 'msg_open',
+      role: 'assistant',
+      content: opening,
+      createdAt: '2026-11-16T11:30:06.355Z',
+      meshInterim: true,
+    }),
+  )!;
+  const conclusion = recordToUiMessage(
+    legacyMessageToRecord({
+      id: 'msg_table',
+      role: 'assistant',
+      content: '结论：公开口径约数千人（示例表）。',
+      createdAt: '2026-11-16T11:30:20.919Z',
+    }),
+  )!;
+  const leftoverAck = recordToUiMessage(
+    legacyMessageToRecord({
+      id: 'msg_ack',
+      role: 'assistant',
+      content: '已发送。',
+      createdAt: '2026-11-16T11:30:41.129Z',
+    }),
+  )!;
+  const sdkTwin = recordToUiMessage({
+    v: 2,
+    id: 'evt_0578126b663543dd',
+    createdAt: '2026-11-16T11:30:43.272Z',
+    item: {
+      type: 'message',
+      role: 'assistant',
+      content: [{ type: 'output_text', text: opening }],
+    },
+    meta: { uiRole: 'assistant', runId: 'run_e5dfd433b57b484b' },
+  })!;
+  const user = recordToUiMessage(
+    legacyMessageToRecord({
+      id: 'msg_user',
+      role: 'user',
+      content: '58同城北京现在有多少正式员工',
+      createdAt: '2026-11-16T11:30:06.342Z',
+    }),
+  )!;
+  assert.equal(isSendMessageAckFinal('已发送。'), true);
+  assert.equal(isSendMessageAckFinal('已发送结论。'), true);
+  assert.equal(isSendMessageAckFinal('已回复消息。'), true);
+  assert.equal(isSendMessageAckFinal('已发送邮件给张三，附件是年报。'), false);
+  const out = projectDirectSessionMessages([user, openingRec, conclusion, leftoverAck, sdkTwin]);
+  assert.deepEqual(
+    out.map((m) => m.id),
+    ['msg_user', 'msg_open', 'msg_table'],
+    'leftover ack and SDK echo must not be visible bubbles',
+  );
+  assert.equal(out[1]!.content, opening);
+  assert.equal(out[2]!.content, '结论：公开口径约数千人（示例表）。');
+}
+
+{
+  // A later different assistant bubble still shows.
+  const a = recordToUiMessage(
+    legacyMessageToRecord({
+      id: 'msg_a',
+      role: 'assistant',
+      content: '先查公开口径。',
+      createdAt: '2026-11-16T11:30:06.355Z',
+      meshInterim: true,
+    }),
+  )!;
+  const b = recordToUiMessage(
+    legacyMessageToRecord({
+      id: 'msg_b',
+      role: 'assistant',
+      content: '结论表在这里。',
+      createdAt: '2026-11-16T11:30:20.919Z',
+    }),
+  )!;
+  const out = projectDirectSessionMessages([a, b]);
+  assert.deepEqual(out.map((m) => m.id), ['msg_a', 'msg_b']);
+  assert.equal(out[1]!.content, '结论表在这里。');
 }
 
 console.log('sessionJsonl.test.ts: ok');

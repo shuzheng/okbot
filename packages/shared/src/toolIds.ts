@@ -2,7 +2,7 @@
 
 import type { AutoApprovalAction } from './approval.js';
 
-export const TOOL_IDS = ['read_file', 'read_skill', 'write_file', 'edit_file', 'run_shell', 'generate_image', 'search_history', 'manage_schedule', 'manage_task_progress', 'manage_note', 'manage_memory', 'send_message', 'web_fetch', 'web_search'] as const;
+export const TOOL_IDS = ['read_file', 'read_skill', 'write_file', 'edit_file', 'run_shell', 'generate_image', 'search_history', 'manage_schedule', 'manage_task_progress', 'manage_note', 'manage_memory', 'send_message', 'set_status', 'web_fetch', 'web_search'] as const;
 export type ToolId = (typeof TOOL_IDS)[number];
 
 export interface ToolPreference {
@@ -49,6 +49,11 @@ export const DEFAULT_TOOL_PREFERENCES: ToolPreferences = {
    * Default allow so the model can ack/progress without approval cards.
    */
   send_message: { enabled: true, approval: 'allow' },
+  /**
+   * Show a short step sentence on the next reply placeholder (1:1). Never HITL.
+   * Not a persisted transcript bubble; real send_message / output_text replaces it.
+   */
+  set_status: { enabled: true, approval: 'allow' },
   /** Fetch a public URL as readable text; default allow (SSRF guards still apply). */
   web_fetch: { enabled: true, approval: 'allow' },
   /** Third-party web search; needs settings.web.search API key. */
@@ -69,6 +74,7 @@ export function normalizeToolPreferences(raw: unknown): ToolPreferences {
     manage_note: { ...DEFAULT_TOOL_PREFERENCES.manage_note },
     manage_memory: { ...DEFAULT_TOOL_PREFERENCES.manage_memory },
     send_message: { ...DEFAULT_TOOL_PREFERENCES.send_message },
+    set_status: { ...DEFAULT_TOOL_PREFERENCES.set_status },
     web_fetch: { ...DEFAULT_TOOL_PREFERENCES.web_fetch },
     web_search: { ...DEFAULT_TOOL_PREFERENCES.web_search },
   };

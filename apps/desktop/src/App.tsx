@@ -37,6 +37,8 @@ import {
   type AttachKind,
   type ComposerAttachment,
 } from './features/chat';
+import { MemberPillEvolutionWave } from './features/chat/MemberPillEvolutionWave';
+import { retainVisibleEvolutionWave } from './features/chat/memberEvolutionWave';
 import { GlobalSearchModal, type GlobalSearchSelect } from './features/search';
 import { SettingsModal, type SettingsTab } from './features/settings';
 import {
@@ -68,10 +70,12 @@ import {
   useParallelTasks,
   useSessions,
 } from './features/chat/hooks';
+import type { AssistantStatusPlaceholder } from './features/chat/assistantStatusPlaceholder';
 import { countAssistantRepliesAfter } from './features/chat/unreadCounts';
 import { applyTheme, subscribeSystemTheme, resolvedOrbTheme } from './utils/theme';
 import { mergeSettingsPatch } from './utils/settingsPatch';
 import { updateScrollFade } from './utils/scrollFade';
+import { lastUserQueryText } from './utils/memoryListMeta';
 import { reconcileById } from './utils/reconcileRoster';
 import { isWindowResizing, subscribeWindowResizeGate } from './utils/windowResizeGate';
 import {
@@ -203,7 +207,11 @@ export function App() {
   const [highlightMessageId, setHighlightMessageId] = useState<string | null>(null);
   const pendingMessageFocusRef = useRef<{ botId: string; messageId: string } | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const memoryQuery = useMemo(() => lastUserQueryText(messages), [messages]);
   const [toolCardsByBot, setToolCardsByBot] = useState<Record<string, ToolCard[]>>({});
+  const [statusPlaceholderByBot, setStatusPlaceholderByBot] = useState<
+    Record<string, AssistantStatusPlaceholder>
+  >({});
   const [promptContextView, setPromptContextView] = useState<null | {
     messageId: string;
     text: string;
@@ -249,6 +257,8 @@ export function App() {
     wrapping_up: 'solving',
   };
   const [turnPhaseByBot, setTurnPhaseByBot] = useState<Record<string, TurnPhase>>({});
+  const [evolutionWaveNonceByOwner, setEvolutionWaveNonceByOwner] = useState<Record<string, number>>({});
+  const evolutionWaveConsumedRef = useRef<Record<string, number>>({});
   const [settingsOpen, setSettingsOpen] = useState(false);
   const settingsOpenRef = useRef(false);
   settingsOpenRef.current = settingsOpen;
@@ -457,7 +467,7 @@ export function App() {
   }, [narrow]);
 
   useEffect(() => {
-    if (settings?.sidebarDockMagnify !== true) {
+    if (settings?.sidebarDockMagnify === false) {
       lastDockYRef.current = null;
       setDockScales({});
     }
@@ -690,7 +700,7 @@ export function App() {
       title: name || 'OkBot',
       body:
         kind === 'reply'
-          ? replyText || t(lang, 'notifyReplyDone')
+          ? replyText
           : t(lang, 'notifyApprovalWaiting', { tool: toolName || '' }),
       tag: idPart ? `${ownerId}:${kind}:${idPart}` : `${ownerId}:${kind}`,
       onClick: () => {
@@ -1187,7 +1197,7 @@ export function App() {
 
   useEffect(() => {
     document.documentElement.dataset.translucent =
-      settings?.translucent === true ? 'true' : 'false';
+      settings?.translucent !== false ? 'true' : 'false';
   }, [settings?.translucent]);
 
   // `system` theme: keep concrete data-theme in sync with OS (matchMedia + main nativeTheme).
@@ -1209,7 +1219,7 @@ export function App() {
       // Keep client chrome (theme/translucent) in sync even while Settings is open.
       applyTheme(next.theme);
       document.documentElement.dataset.translucent =
-        next.translucent === true ? 'true' : 'false';
+        next.translucent !== false ? 'true' : 'false';
       // Skip replacing full App settings while the modal holds unsaved drafts,
       // but still patch tray-writable client chrome so Settings drafts cannot
       // autosave a stale theme over a menu-bar theme change.
@@ -1316,7 +1326,15 @@ export function App() {
     setTurnPhaseByBot,
     setParallelTasksByOwner,
     setOpenTasksByOwner,
+    setStatusPlaceholderByBot,
+    setEvolutionWaveNonceByOwner,
   });
+
+  useEffect(() => {
+    const ownerId =
+      selection?.kind === 'bot' || selection?.kind === 'squad' ? selection.id : undefined;
+    setEvolutionWaveNonceByOwner((prev) => retainVisibleEvolutionWave(prev, ownerId));
+  }, [selection?.id]);
 
 
   const pinMessagesToBottom = useCallback(() => {
@@ -3005,6 +3023,12 @@ async function handleSend(retry?: {
         delete next[ownerId];
         return next;
       });
+      setStatusPlaceholderByBot((prev) => {
+        if (!(ownerId in prev)) return prev;
+        const next = { ...prev };
+        delete next[ownerId];
+        return next;
+      });
       requestAnimationFrame(() => composerRef.current?.focus({ preventScroll: true }));
     })();
   }
@@ -3279,8 +3303,8 @@ async function handleSend(retry?: {
     if (!list) return;
     // Pins sit outside the scrollport; measure the whole session-pane.
     const root = list.closest('.session-pane') ?? list;
-    // Setting default OFF: only magnify when explicitly enabled in General settings.
-    if (settings?.sidebarDockMagnify !== true) {
+    // Setting default ON: only skip magnify when explicitly disabled in General settings.
+    if (settings?.sidebarDockMagnify === false) {
       lastDockYRef.current = null;
       setDockScales((prev) => (Object.keys(prev).length ? {} : prev));
       return;
@@ -3810,15 +3834,21 @@ async function handleSend(retry?: {
             <div className="chat-header-cluster">
               <ChatGatewaySwitcher lang={lang} />
               {selectedBot ? (
+              <MemberPillEvolutionWave
+                key={selectedBot.id}
+                ownerId={selectedBot.id}
+                nonce={evolutionWaveNonceByOwner[selectedBot.id] ?? 0}
+                consumedRef={evolutionWaveConsumedRef}
+              >
               <button
                 type="button"
-                key={selectedBot.id}
                 className={`chat-member-pill${busy ? ' is-busy' : ''}`}
                 title={t(lang, 'profile')}
                 aria-label={t(lang, 'profile')}
                 onClick={() => setProfileBot(selectedBot)}
               >
                 <span className="chat-member-pill-main">
+                  <span className="chat-member-pill-source">
                   <FlatAvatar
                     key={selectedBot.id}
                     className="header-avatar"
@@ -3828,6 +3858,7 @@ async function handleSend(retry?: {
                     botAvatarType={selectedBot.botAvatarType}
                     busy={botIsWorking(selectedBot.id)}
                   />
+                  </span>
                   <span className="chat-member-pill-name">{selectedBot.name}</span>
                 </span>
                 <span
@@ -3855,7 +3886,14 @@ async function handleSend(retry?: {
                   <ChevronRightIcon />
                 </span>
               </button>
+              </MemberPillEvolutionWave>
             ) : selectedSquad ? (
+              <MemberPillEvolutionWave
+                key={selectedSquad.id}
+                ownerId={selectedSquad.id}
+                nonce={evolutionWaveNonceByOwner[selectedSquad.id] ?? 0}
+                consumedRef={evolutionWaveConsumedRef}
+              >
               <button
                 type="button"
                 className={`chat-member-pill${busy ? ' is-busy' : ''}`}
@@ -3904,12 +3942,16 @@ async function handleSend(retry?: {
                   <ChevronRightIcon />
                 </span>
               </button>
+              </MemberPillEvolutionWave>
             ) : null}
             </div>
             <ChatTranscript
               lang={lang}
               messages={messages}
               toolCards={toolCards}
+              statusPlaceholder={
+                chatOwnerId ? statusPlaceholderByBot[chatOwnerId] ?? null : null
+              }
               bots={bots}
               mentionCatalog={mentionCatalog}
               selectedBot={selectedBot}
@@ -4620,6 +4662,7 @@ async function handleSend(retry?: {
           autoApply
           botId={profileBot.id}
           developerMode={settings?.developerMode === true}
+          memoryQuery={memoryQuery}
           providers={normalizeModelSettings(settings?.model).providers}
           defaultProviderId={normalizeModelSettings(settings?.model).defaultProviderId}
           defaultModelId={normalizeModelSettings(settings?.model).defaultModelId}
@@ -4698,6 +4741,7 @@ async function handleSend(retry?: {
           squads={squads}
           initialTab={settingsFocus?.tab}
           focusSection={settingsFocus?.sectionId}
+          memoryQuery={memoryQuery}
           onClose={() => {
             setSettingsOpen(false);
             setSettingsFocus(null);

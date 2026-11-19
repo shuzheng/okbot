@@ -142,6 +142,7 @@ export function createAgentAndRunner(input: {
   taskProgressManage?: import('./tools.js').TaskProgressManage;
   memoryManage?: import('./tools.js').MemoryManage;
   emitAssistantMessage?: import('./tools.js').EmitAssistantMessage;
+  setAssistantStatus?: import('./tools.js').SetAssistantStatus;
   /** Seal live narration at auto-allow tool boundaries (see BuildToolsOptions). */
   onBeforeToolExecute?: () => void | Promise<void>;
   memoriesText?: string;
@@ -151,7 +152,7 @@ export function createAgentAndRunner(input: {
   resumeContextText?: string;
   /** settings.instructions.assistantRoleTemplate */
   assistantRoleTemplate?: string;
-  /** User-chosen default assistant (identity hint in system prompt). */
+  /** User-chosen primary assistant (identity hint in system prompt). */
   isDefaultAssistant?: boolean;
   /** New-assistant onboarding guide while onboarding is incomplete. */
   onboardingGuide?: string;
@@ -257,6 +258,7 @@ export function createAgentAndRunner(input: {
       taskProgressManage: input.taskProgressManage,
           noteManage: input.noteManage,
       emitAssistantMessage: input.emitAssistantMessage,
+      setAssistantStatus: input.setAssistantStatus,
       onBeforeToolExecute: input.onBeforeToolExecute,
       imageApi,
       imageAssets:

@@ -296,8 +296,6 @@ export function createTurnEmitter(ctx: TurnContext, turnRunId: string) {
 export type LiveAssistantState = {
   assistantId: string;
   assistantMsg: ChatMessage;
-  /** Last user-visible assistant text emitted this turn (for consecutive-ack dedupe). */
-  lastEmittedVisible?: string;
   /** Emojis placed via send_message reaction this turn (suppress emoji-only final bubble). */
   reactedEmojisThisTurn?: string[];
 };
@@ -312,115 +310,13 @@ export type LiveAssistantHost = {
   noteCommitted?: (text: string) => void;
 };
 
-/**
- * Normalize assistant text for near-identical ack comparison:
- * strip think, collapse whitespace/punct, lowercase.
- */
-export function normalizeAssistantAckKey(text: string): string {
-  return stripThinkContent(text || '')
-    .replace(/\s+/g, '')
-    .replace(/[。.!！？?~～、，,;；:：…·\-—_]/g, '')
-    .toLowerCase();
-}
-
-/** Includes mid-run「继续」 for short↔short near-dup checks. */
-const OPENING_ACK_RE = /^(收到|好的|继续|明白|了解|好|嗯|ok|okay|got\s*it)/i;
-
-/** Turn-opening only (excludes「继续」) — used for short→long opening-window dedupe. */
-const STRICT_OPENING_ACK_RE = /^(收到|好的|明白|了解|好|嗯|ok|okay|got\s*it)/i;
-
-/**
- * True when two assistant bubbles are consecutive near-identical opening acks
- * (e.g. streamed「收到，开始 Kimi…」+ send_message「收到，Kimi 调研分 5 步…」).
- * Also true when a short strict opening (收到/好的/…) was already emitted and a
- * later sealed/final again starts with the same class — even if the second is a
- * long bullet-plan intro (>120 chars). Mid-run「继续」+ progress stays distinct.
- */
-export function isDuplicateOpeningAck(a: string, b: string): boolean {
-  const va = stripThinkContent(a || '').trim();
-  const vb = stripThinkContent(b || '').trim();
-  if (!va || !vb) return false;
-  const na = normalizeAssistantAckKey(va);
-  const nb = normalizeAssistantAckKey(vb);
-  if (!na || !nb) return false;
-  if (na === nb) return true;
-
-  // Short vs short opening-ack shaped (includes「继续」).
-  if (va.length <= 120 && vb.length <= 120) {
-    if (!OPENING_ACK_RE.test(va) || !OPENING_ACK_RE.test(vb)) return false;
-    return true;
-  }
-
-  // Short strict opening already out + later text also opens with 收到/好的/…
-  // (covers bullet-plan second bubble that the ≤120 gate used to miss).
-  const short = va.length <= 120 ? va : vb.length <= 120 ? vb : null;
-  const other = short === va ? vb : short === vb ? va : null;
-  if (
-    short &&
-    other &&
-    STRICT_OPENING_ACK_RE.test(short) &&
-    STRICT_OPENING_ACK_RE.test(other)
-  ) {
-    return true;
-  }
-  return false;
-}
-
-/**
- * Strip a leading turn-opening ack sentence/line (收到/好的/…).
- * Multiline: drop the first line when it is an opening ack and keep the body.
- */
-export function stripLeadingOpeningAckSentence(text: string): string {
-  const v = stripThinkContent(text || '').trim();
-  if (!STRICT_OPENING_ACK_RE.test(v)) return v;
-  const nl = v.search(/\r?\n/);
-  if (nl >= 0) {
-    const first = v.slice(0, nl).trim();
-    const rest = v.slice(nl).replace(/^\r?\n/, '').trim();
-    if (STRICT_OPENING_ACK_RE.test(first) && rest) return rest;
-  }
-  const m = v.match(
-    /^(?:收到|好的|明白|了解|好|嗯|ok|okay|got\s*it)[^。.!！？?\n]*(?:[。.!！？?]\s*|[：:]\s*)?/i,
-  );
-  if (m) return v.slice(m[0].length).trim();
-  return v;
-}
-
-/**
- * Seal current live text as its own persisted bubble and rotate to a fresh
- * streaming id. No-op when live content is empty. Returns whether a bubble was sealed.
- */
 export async function commitLiveAssistantBubble(
   state: LiveAssistantState,
   host: LiveAssistantHost,
   opts?: { meshInterim?: boolean; logLabel?: string },
 ): Promise<boolean> {
-  let raw = state.assistantMsg.content || '';
+  const raw = state.assistantMsg.content || '';
   if (!raw.trim()) return false;
-  let visible = stripThinkContent(raw).trim();
-  if (visible && state.lastEmittedVisible && isDuplicateOpeningAck(state.lastEmittedVisible, visible)) {
-    const last = stripThinkContent(state.lastEmittedVisible).trim();
-    // Short opening already emitted; longer re-open → strip leading 收到, keep body.
-    if (
-      last.length <= 120 &&
-      STRICT_OPENING_ACK_RE.test(last) &&
-      STRICT_OPENING_ACK_RE.test(visible)
-    ) {
-      const rest = stripLeadingOpeningAckSentence(visible);
-      if (rest && rest !== visible) {
-        raw = rest;
-        visible = rest;
-        state.assistantMsg.content = rest;
-      } else {
-        state.assistantMsg.content = '';
-        return false;
-      }
-    } else {
-      // Consecutive near-identical opening ack — drop without emitting.
-      state.assistantMsg.content = '';
-      return false;
-    }
-  }
   const sealed = persistAssistantContent(raw, host.showThinking, {
     ownerId: host.ownerId,
     storage: host.storage,
@@ -444,7 +340,6 @@ export async function commitLiveAssistantBubble(
     message: { ...state.assistantMsg },
   });
   host.noteCommitted?.(sealed);
-  if (visible) state.lastEmittedVisible = visible;
   state.assistantId = createId('msg');
   state.assistantMsg = {
     id: state.assistantId,
@@ -456,8 +351,20 @@ export async function commitLiveAssistantBubble(
 }
 
 /**
- * send_message host: seal any live text, persist a new bubble from `content`,
- * emit to UI, rotate live streaming id (allowRebind: false on emitted rows).
+ * When send_message already delivered this turn, leftover streamed output_text
+ * is not a transcript bubble (including short acks like 「已发送。」).
+ */
+export function dropLeftoverFinalAfterSendMessage(
+  state: LiveAssistantState,
+  sentMessageThisTurn: boolean,
+): void {
+  if (sentMessageThisTurn) state.assistantMsg.content = '';
+}
+
+/**
+ * send_message host: persist a new bubble from tool `content`, emit to UI,
+ * rotate live streaming id (allowRebind: false on emitted rows).
+ * Streamed leftover is discarded, not sealed as a second bubble.
  */
 export async function emitAssistantMessageBubble(
   state: LiveAssistantState,
@@ -467,26 +374,10 @@ export async function emitAssistantMessageBubble(
   const text = (content || '').trim();
   if (!text) return;
 
-  const liveVisible = stripThinkContent(state.assistantMsg.content || '').trim();
-  if (liveVisible && isDuplicateOpeningAck(liveVisible, text)) {
-    // Streamed ack ≈ send_message ack: discard live; send_message is canonical.
+  // Visible bubbles come only from send_message content — do not promote
+  // leftover live output_text into its own row.
+  if ((state.assistantMsg.content || '').trim()) {
     state.assistantMsg.content = '';
-  } else {
-    // Preserve distinct pre-tool streamed narration as its own bubble.
-    await commitLiveAssistantBubble(state, host, {
-      meshInterim: true,
-      logLabel: 'commit live before send_message',
-    });
-  }
-
-  const sendVisible = stripThinkContent(text).trim();
-  if (
-    sendVisible &&
-    state.lastEmittedVisible &&
-    isDuplicateOpeningAck(state.lastEmittedVisible, sendVisible)
-  ) {
-    // Other tool already sealed a near-identical opening ack this turn.
-    return;
   }
 
   const sealed = persistAssistantContent(text, host.showThinking, {
@@ -511,7 +402,6 @@ export async function emitAssistantMessageBubble(
     message: { ...state.assistantMsg },
   });
   host.noteCommitted?.(sealed);
-  if (sendVisible) state.lastEmittedVisible = sendVisible;
 
   state.assistantId = createId('msg');
   state.assistantMsg = {
@@ -524,17 +414,19 @@ export async function emitAssistantMessageBubble(
 
 /**
  * Tool-interrupt live reset (non-streaming friendly):
- * - User-visible narration → seal as its own bubble (`assistant_message`), rotate id.
+ * - Default: discard streamed live text (send_message is the only visible bubble).
+ * - persistVisible: seal user-visible narration as its own bubble (send_message off).
  * - Think-only / empty → discard silently (never emit a blank UI row).
  */
 export async function clearLiveAssistantForTools(
   state: LiveAssistantState,
   host: LiveAssistantHost,
+  opts?: { persistVisible?: boolean },
 ): Promise<void> {
   const raw = state.assistantMsg.content || '';
   if (!raw.trim()) return;
   const visible = stripThinkContent(raw).trim();
-  if (visible) {
+  if (visible && opts?.persistVisible) {
     await commitLiveAssistantBubble(state, host, {
       meshInterim: true,
       logLabel: 'commit live before tools',
@@ -544,3 +436,61 @@ export async function clearLiveAssistantForTools(
   state.assistantMsg.content = '';
 }
 
+/** Max product-language length shown on the next-reply placeholder. */
+export const ASSISTANT_STATUS_MAX_CHARS = 80;
+
+export type AssistantStatusHost = Pick<LiveAssistantHost, 'ownerId' | 'emit'> & { runId?: string };
+
+/**
+ * Emit an ephemeral next-reply placeholder (`assistant_status`).
+ * Does not persist or write into the live assistant bubble.
+ * Skips when the live bubble already has visible (non-think) text.
+ */
+export function emitAssistantStatusPlaceholder(
+  state: LiveAssistantState,
+  status: string,
+  host: AssistantStatusHost,
+): 'ok' | 'skipped_live_content' | 'empty' {
+  const text = (status || '').trim().replace(/\s+/g, ' ');
+  if (!text) return 'empty';
+  const clipped =
+    text.length > ASSISTANT_STATUS_MAX_CHARS
+      ? `${text.slice(0, ASSISTANT_STATUS_MAX_CHARS)}…`
+      : text;
+  const visible = stripThinkContent(state.assistantMsg.content || '').trim();
+  if (visible) return 'skipped_live_content';
+  host.emit({
+    type: 'assistant_status',
+    botId: host.ownerId,
+    messageId: state.assistantId,
+    status: clipped,
+    ...(host.runId ? { runId: host.runId } : {}),
+  });
+  return 'ok';
+}
+
+/** Clear the ephemeral placeholder. Not a transcript row; safe at abort / empty done. */
+export function clearAssistantStatusPlaceholder(
+  state: LiveAssistantState,
+  host: AssistantStatusHost,
+): void {
+  host.emit({
+    type: 'assistant_status',
+    botId: host.ownerId,
+    messageId: state.assistantId,
+    status: '',
+    ...(host.runId ? { runId: host.runId } : {}),
+  });
+}
+
+/**
+ * Soft-steer abort keeps the last `set_status` placeholder so the replacement
+ * turn can update it. Stop / successful finish still clear.
+ */
+export function shouldClearAssistantStatusOnTurnEnd(opts: {
+  aborted: boolean;
+  softSteerHandoff: boolean;
+}): boolean {
+  if (opts.aborted && opts.softSteerHandoff) return false;
+  return true;
+}

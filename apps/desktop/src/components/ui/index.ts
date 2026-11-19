@@ -1,4 +1,4 @@
-export { FlatAvatar, SquadAvatar, type SquadAvatarMember } from './avatars';
+export { AVATAR_PREVIEW_SIZE_PX, FlatAvatar, SquadAvatar, type SquadAvatarMember } from './avatars';
 export {
   ThemeModeIcon,
   CopyIcon,

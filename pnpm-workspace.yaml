@@ -2,10 +2,17 @@ packages:
   - 'apps/*'
   - 'packages/*'
 
+overrides:
+  openai: 7.59.0
+
 allowBuilds:
   electron: true
   electron-winstaller: true
   esbuild: true
+
+minimumReleaseAgeExclude:
+  - openai@7.59.0
+  - distortion-waves@0.1.0
 
 onlyBuiltDependencies:
   - electron

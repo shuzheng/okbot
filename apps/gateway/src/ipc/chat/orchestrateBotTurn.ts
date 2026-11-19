@@ -14,7 +14,10 @@
  * next_step_interruption / next_step_run_again (HITL / resume boundaries), not
  * mid-token-stream. Soft-steer abort+restart is the closest safe equivalent that
  * still feeds new composer messages into a single active run without N parallel
- * composer turns. Soft-steer lock serializes rapid supplements (FIFO).
+ * composer turns. The replacement turn starts a fresh model run with session
+ * history plus resume context (checkpoint digest); it does not continue the
+ * interrupted RunState, which would finish the previous plan before seeing the
+ * new message. Soft-steer lock serializes rapid supplements (FIFO).
  *
  * - Busy + schedule/api → never soft-steer (do not abort the user's turn); start
  *   parallel under the existing gate (strip UI gutted; infra kept).

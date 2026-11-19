@@ -11,6 +11,7 @@ import {
 import { t, type UiLang } from '../../i18n';
 import { QuickTip } from '../../components/ui/QuickTip';
 import type { ToolCard } from '../../types';
+import type { AssistantStatusPlaceholder } from './assistantStatusPlaceholder';
 import { FlatAvatar } from '../../components/ui/avatars';
 import { BotMentionChip } from '../../components/ui/BotMentionChip';
 import {
@@ -65,6 +66,8 @@ export type ChatTranscriptProps = {
   lang: UiLang;
   messages: ChatMessage[];
   toolCards: ToolCard[];
+  /** Ephemeral next-reply placeholder from set_status (not a transcript message). */
+  statusPlaceholder?: AssistantStatusPlaceholder | null;
   bots: Bot[];
   /** Multi-kind @ mention catalog for chips / markdown. */
   mentionCatalog?: readonly MentionEntityRef[];
@@ -413,6 +416,7 @@ export const ChatTranscript = memo(function ChatTranscript({
   lang,
   messages,
   toolCards,
+  statusPlaceholder = null,
   bots,
   mentionCatalog,
   selectedBot,
@@ -614,7 +618,7 @@ export const ChatTranscript = memo(function ChatTranscript({
           ) : null}
           {messages.map((m, index) => {
             const cardsForMsg = toolCards.filter(
-              (c) => c.messageId === m.id && c.toolName !== 'ask_assistant' && c.toolName !== 'send_message',
+              (c) => c.messageId === m.id && c.toolName !== 'ask_assistant' && c.toolName !== 'send_message' && c.toolName !== 'set_status',
             );
             // Hide blank shells and think-only rows (showThinking off → no visible answer).
             const hideEmptyAssistant =
@@ -858,10 +862,26 @@ export const ChatTranscript = memo(function ChatTranscript({
           {toolCards
             .filter(
               (c) =>
-                c.toolName !== 'ask_assistant' && c.toolName !== 'send_message' &&
+                c.toolName !== 'ask_assistant' && c.toolName !== 'send_message' && c.toolName !== 'set_status' &&
                 !messages.some((m) => m.id === c.messageId),
             )
             .map((card) => renderToolCard(card))}
+          {statusPlaceholder?.status ? (
+            <div className="bubble-row assistant is-status-placeholder-row">
+              <div
+                className="status-placeholder"
+                role="status"
+                aria-live="polite"
+              >
+                <span className="status-placeholder-loader" aria-hidden="true">
+                  <span className="status-placeholder-dot" />
+                  <span className="status-placeholder-dot" />
+                  <span className="status-placeholder-dot" />
+                </span>
+                <span className="chat-turn-status-text">{statusPlaceholder.status}</span>
+              </div>
+            </div>
+          ) : null}
           <div ref={bottomRef} />
           </div>
         </div>

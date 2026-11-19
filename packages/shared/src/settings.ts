@@ -528,7 +528,7 @@ export function normalizeMaintenanceSettings(raw: unknown): MaintenanceSettings 
 }
 
 /**
- * User-chosen default assistant (`settings.json` → `defaultAssistantId`).
+ * User-chosen primary assistant (`settings.json` → `defaultAssistantId`).
  * Empty / unknown id → none. Validated against current bot ids when provided.
  */
 
@@ -939,7 +939,7 @@ export interface ClientSettings {
   theme: ThemeMode;
   /**
    * Frost / glass translucency (sidebar vibrancy, drawers, pills, transparent
-   * BrowserWindow on darwin). Default false; missing on disk = off.
+   * BrowserWindow on darwin). Default true; missing on disk = on.
    * Explicit true/false on disk is preserved.
    */
   translucent: boolean;
@@ -953,7 +953,7 @@ export interface ClientSettings {
   autoUpdate: boolean;
   /**
    * Mac Dock–style icon magnification while the session sidebar is collapsed.
-   * Default false (off).
+   * Default true (on). Missing on disk = on. Explicit true/false is preserved.
    */
   sidebarDockMagnify: boolean;
   /**
@@ -990,12 +990,12 @@ export interface ClientSettings {
 
 export const DEFAULT_CLIENT_SETTINGS: ClientSettings = {
   theme: 'system',
-  translucent: false,
+  translucent: true,
   language: 'system',
   microphoneId: '',
   hardwareAcceleration: true,
   autoUpdate: true,
-  sidebarDockMagnify: false,
+  sidebarDockMagnify: true,
   closeAction: 'ask',
   notifications: true,
   developerMode: false,
@@ -1024,8 +1024,8 @@ export function normalizeClientSettings(raw: unknown): ClientSettings {
     microphoneId: typeof src.microphoneId === 'string' ? src.microphoneId : '',
     hardwareAcceleration: src.hardwareAcceleration !== false,
     autoUpdate: src.autoUpdate !== false,
-    sidebarDockMagnify: src.sidebarDockMagnify === true,
-    translucent: src.translucent === true,
+    sidebarDockMagnify: src.sidebarDockMagnify !== false,
+    translucent: src.translucent !== false,
     developerMode: src.developerMode === true,
     notifications: src.notifications !== false,
     closeAction: normalizeCloseAction(src.closeAction),
@@ -1142,12 +1142,12 @@ export interface AppSettings {
   autoUpdate: boolean;
   /**
    * Mac Dock–style icon magnification while the session sidebar is collapsed.
-   * Default false (off).
+   * Default true (on). Missing on disk = on. Explicit true/false is preserved.
    */
   sidebarDockMagnify: boolean;
   /**
    * Frost / glass translucency (sidebar vibrancy, drawers, pills, transparent
-   * BrowserWindow on darwin). Default false; missing on disk = off.
+   * BrowserWindow on darwin). Default true; missing on disk = on.
    * Explicit true/false on disk is preserved.
    */
   translucent: boolean;
@@ -1197,7 +1197,7 @@ export interface AppSettings {
    */
   defaultComputerId: string;
   /**
-   * User-chosen default assistant bot id (identity / UI only).
+   * User-chosen primary assistant bot id (identity / UI only).
    * Empty string = none. Cleared when that bot is deleted or missing.
    */
   defaultAssistantId: string;
@@ -1628,8 +1628,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   microphoneId: '',
   hardwareAcceleration: true,
   autoUpdate: true,
-  sidebarDockMagnify: false,
-  translucent: false,
+  sidebarDockMagnify: true,
+  translucent: true,
   developerMode: false,
   settingsNavTab: 'general',
   settingsClientGroupExpanded: true,
@@ -1649,6 +1649,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     manage_note: { ...DEFAULT_TOOL_PREFERENCES.manage_note },
     manage_memory: { ...DEFAULT_TOOL_PREFERENCES.manage_memory },
     send_message: { ...DEFAULT_TOOL_PREFERENCES.send_message },
+    set_status: { ...DEFAULT_TOOL_PREFERENCES.set_status },
     web_fetch: { ...DEFAULT_TOOL_PREFERENCES.web_fetch },
     web_search: { ...DEFAULT_TOOL_PREFERENCES.web_search },
   },

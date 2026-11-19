@@ -58,18 +58,24 @@ import { libraryWriteGateForOwner } from '../sameTopicArtifactGate';
 import {
   buildInterruptedRunResumeContext,
   formatRunCheckpointToolDigest,
+  shouldResumeSerializedRunState,
   type InterruptedRunReason,
 } from './softSteerResumeContext';
 import {
   clearSoftSteerCheckpointHandoff,
+  hasSoftSteerCheckpointHandoff,
   shouldKeepRunCheckpointOnTurnEnd,
 } from '../softSteerGate';
 import { applyAssistantSendMessage, applyEmojiOnlyFinalGuard } from '../messageReaction';
 import {
+  clearAssistantStatusPlaceholder,
   clearLiveAssistantForTools,
   commitLiveAssistantBubble,
   createTurnEmitter,
+  dropLeftoverFinalAfterSendMessage,
   emitAssistantMessageBubble,
+  emitAssistantStatusPlaceholder,
+  shouldClearAssistantStatusOnTurnEnd,
   persistAssistantContent,
   resolveQuoteFields,
   isQuietChatOrigin,
@@ -162,6 +168,7 @@ export async function startBotTurn(
       const emitTurnRaw = createTurnEmitter(ctx, turnRunId);
       /** Last reply bubble sealed this turn (quick-choice fallback target). */
       let lastSealedAssistant: ChatMessage | null = null;
+      let sentMessageThisTurn = false;
       const emitTurn: typeof emitTurnRaw = (event) => {
         if (
           event.type === 'assistant_message' &&
@@ -194,6 +201,7 @@ export async function startBotTurn(
       }
 
       const settings = ctx.storage.getSettings();
+      const sendMessageEnabled = settings.tools?.send_message?.enabled !== false;
       const modelConfig = resolveModelConfig(settings.model, { providerId: bot.providerId, modelId: bot.modelId });
       const guards = createRunGuards({
         controller,
@@ -344,7 +352,10 @@ export async function startBotTurn(
                     runId: steeredCheckpoint.runId,
                     createdAt: steeredCheckpoint.createdAt,
                     toolDigest: steeredToolDigest,
-                    resumedFromRunState: true,
+                    resumedFromRunState: shouldResumeSerializedRunState({
+                      softSteered: payload.softSteered,
+                      hasSerializedRunState: true,
+                    }),
                   }
                 : null,
             })
@@ -440,7 +451,7 @@ export async function startBotTurn(
               storage: ctx.storage,
               emit: emitTurn,
               noteCommitted: (t) => meshFollowUp.noteCommitted(t),
-            });
+            }, { persistVisible: !sendMessageEnabled });
           },
           onCommitLiveAssistant: async () => {
             await commitLiveAssistantBubble(live, {
@@ -466,6 +477,7 @@ export async function startBotTurn(
                   emit: emitTurn,
                   noteCommitted: (t) => meshFollowUp.noteCommitted(t),
                 });
+                sentMessageThisTurn = true;
               },
               {
                 onReacted: (emoji) => {
@@ -474,6 +486,12 @@ export async function startBotTurn(
               },
             );
           },
+          setAssistantStatus: (status) =>
+            emitAssistantStatusPlaceholder(live, status, {
+              ownerId: bot.id,
+              runId: turnRunId,
+              emit: emitTurn,
+            }),
           onDelta: (delta) => {
             const piece = meshFollowUp.acceptDelta(delta);
             if (piece == null) return; // still matching repeated interim prefix
@@ -531,10 +549,17 @@ export async function startBotTurn(
           },
         };
 
-        const result = steeredCheckpoint
+        // Soft-steer keeps the checkpoint for digest/resume context, but must
+        // start a fresh model turn with the new user message as current input.
+        // Resuming mid-run RunState continues the interrupted plan first, so
+        // the insert appears queued behind the previous question.
+        const result = shouldResumeSerializedRunState({
+          softSteered: payload.softSteered,
+          hasSerializedRunState: Boolean(steeredCheckpoint),
+        })
           ? await resumeAgentChatFromCheckpoint({
               ...agentTurnInput,
-              serializedRunState: steeredCheckpoint.serializedRunState,
+              serializedRunState: steeredCheckpoint!.serializedRunState,
             } satisfies ResumeAgentChatFromCheckpointInput)
           : await runAgentChat({
               ...agentTurnInput,
@@ -575,6 +600,7 @@ export async function startBotTurn(
             targetUserMessageId: userMsg.id,
           },
         );
+        dropLeftoverFinalAfterSendMessage(live, sentMessageThisTurn);
         if (result.usage) live.assistantMsg.usage = result.usage;
         // Quick-choice + note preview cards: attach to the final reply when it has
         // content; otherwise merge both onto the last bubble sealed this turn.
@@ -662,13 +688,13 @@ export async function startBotTurn(
           // Quiet origins must not evolve SOUL from host seed text (UI-hide
           // split in 3ddeb4dc accidentally narrowed this to auto_continue only).
           if (shouldScheduleOnboardingEvolution(payload.origin) && !controller.signal.aborted) {
-            void scheduleOnboardingEvolution(ctx.storage, bot.id, text);
+            void scheduleOnboardingEvolution(ctx.storage, bot.id, text, emitTurn);
           }
         } else {
           // Silent SOUL.md / skills / memory maintenance (throttled) — next turn reloads from disk.
           try {
             if (!controller.signal.aborted) {
-              await withOwnerMaintenanceLock(bot.id, () =>
+              const ran = await withOwnerMaintenanceLock(bot.id, () =>
                 runThrottledPostTurnMaintenance({
                   storage: ctx.storage,
                   botId: bot.id,
@@ -679,6 +705,9 @@ export async function startBotTurn(
                   signal: controller.signal,
                 }),
               );
+              if (ran) {
+                emitTurn({ type: 'evolution_complete', botId: bot.id });
+              }
             }
           } catch (err) {
             console.error('[okbot] SOUL.md/skills/memory refresh failed', err);
@@ -696,6 +725,7 @@ export async function startBotTurn(
               aborted: true,
             }),
           );
+          dropLeftoverFinalAfterSendMessage(live, sentMessageThisTurn);
           if (abortTrace && (live.assistantMsg.content || '').trim()) {
             live.assistantMsg.trace = abortTrace;
             try {
@@ -740,6 +770,18 @@ export async function startBotTurn(
         });
         throw err;
       } finally {
+        if (
+          shouldClearAssistantStatusOnTurnEnd({
+            aborted: controller.signal.aborted,
+            softSteerHandoff: hasSoftSteerCheckpointHandoff(bot.id),
+          })
+        ) {
+          clearAssistantStatusPlaceholder(live, {
+            ownerId: bot.id,
+            runId: turnRunId,
+            emit: emitTurn,
+          });
+        }
         guards.dispose();
         unregisterOwnerRun(ctx.abortControllers, bot.id, parallelGate.runId, controller);
         releaseRunApprovals(ctx, bot.id, parkedRequestIds, '已结束');

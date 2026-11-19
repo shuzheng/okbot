@@ -1,7 +1,7 @@
 import { memo, useCallback, useLayoutEffect, useMemo, useState, type KeyboardEvent, type RefObject } from 'react';
 import { BorderBeam } from 'border-beam';
-import { ThinkingOrb } from 'thinking-orbs';
 import { VoiceBeam } from 'voice-glow';
+import { VoiceRing } from 'voice-ring';
 import { t, type UiLang } from '../../i18n';
 import {
   CloseIcon,
@@ -396,11 +396,12 @@ export const ChatComposer = memo(function ChatComposer({
         </div>
       ) : null}
       {listening ? (
-        <ThinkingOrb
+        <VoiceRing
           className="composer-orb"
           state="listening"
           size={20}
           theme={resolvedOrbTheme()}
+          stream={micStream}
           aria-label={t(lang, 'listeningAria')}
         />
       ) : (
@@ -503,27 +504,15 @@ export const ChatComposer = memo(function ChatComposer({
         {listening ? <MicStopIcon /> : <MicIcon />}
       </button>
       {showStop ? (
-        // 特效库 BorderBeam pulse-outside：忙碌/可停止时外圈发光；idle 卸掉。
-        <BorderBeam
-          className="composer-send-beam"
-          size="pulse-outside"
-          theme={resolvedOrbTheme()}
-          colorVariant="ocean"
-          strength={0.85}
-          borderRadius={14}
-          duration={2.3}
-          active
+        <button
+          className="send stop"
+          type="button"
+          onClick={() => onStop()}
+          title={t(lang, 'stopGeneration')}
+          aria-label={t(lang, 'stopGeneration')}
         >
-          <button
-            className="send stop"
-            type="button"
-            onClick={() => onStop()}
-            title={t(lang, 'stopGeneration')}
-            aria-label={t(lang, 'stopGeneration')}
-          >
-            <MicStopIcon />
-          </button>
-        </BorderBeam>
+          <MicStopIcon />
+        </button>
       ) : null}
       {showSend ? (
         <button
@@ -577,9 +566,8 @@ export const ChatComposer = memo(function ChatComposer({
           // Swapping BorderBeam ↔ div remounted the textarea and stole focus + height.
           <BorderBeam
             className="composer-beam"
-            size="md"
+            size="pulse-outside"
             theme={resolvedOrbTheme()}
-            colorVariant="ocean"
             strength={0.95}
             borderRadius={20}
             duration={2.4}

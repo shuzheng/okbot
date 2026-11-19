@@ -137,6 +137,7 @@ export class SettingsStore {
           manage_note: { ...DEFAULT_SETTINGS.tools.manage_note },
           manage_memory: { ...DEFAULT_SETTINGS.tools.manage_memory },
           send_message: { ...DEFAULT_SETTINGS.tools.send_message },
+          set_status: { ...DEFAULT_SETTINGS.tools.set_status },
           web_fetch: { ...DEFAULT_SETTINGS.tools.web_fetch },
           web_search: { ...DEFAULT_SETTINGS.tools.web_search },
         },

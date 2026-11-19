@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { scoreMemoryRelevance, selectMemoriesForPrompt } from './dist/memoryRecall.js';
+import { computeMemoryInjectionScore, scoreMemoryRelevance, selectMemoriesForPrompt } from './dist/memoryRecall.js';
 
 assert.ok(scoreMemoryRelevance('用户偏好中文回复', '中文 偏好') > 0.3);
 
@@ -57,5 +57,24 @@ const capped = selectMemoriesForPrompt(
 );
 assert.equal(capped.selectedIds.length, 16);
 assert.deepEqual(capped.softHitIds, []);
+
+
+{
+  const base = {
+    memory: '用户喜欢简体中文',
+    hits: 2,
+    scope: 'bot',
+    createdAt: '2020-01-01T00:00:00.000Z',
+  };
+  const standing = computeMemoryInjectionScore(base);
+  // No query → R=0; score = 0 + 0 + 3*2 + 0 + T (T in (0, 1])
+  assert.ok(standing >= 6 && standing < 7, 'standing score is 3H + T with R=0');
+  const withQuery = computeMemoryInjectionScore({ ...base, query: '简体中文' });
+  assert.ok(withQuery > standing + 10, 'query relevance increases score via 100R');
+  const pinned = computeMemoryInjectionScore({ ...base, pinned: true });
+  assert.ok(pinned >= 1_000_000, 'pinned adds P=1e6');
+  const globalRow = computeMemoryInjectionScore({ ...base, scope: 'global' });
+  assert.ok(Math.abs(globalRow - standing - 1) < 1e-9, 'global adds G=1');
+}
 
 console.log('memoryRecall.test.mjs: ok');

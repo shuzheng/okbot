@@ -42,6 +42,7 @@ deploy/helm/okbot/     网关 Helm chart（单副本 + PVC）
 | 扩展面（工具 / MCP / skills / 供应商 / 电脑） | [`docs/extension-surfaces.md`](./docs/extension-surfaces.md)；无独立 plugin runtime |
 | 产品行为说明 | `GUIDE.md` 对应章节。不要把开发向边界写进 README |
 | `~/.okbot` 文件/字段格式 | [`docs/design/okbot-data-schema.md`](./docs/design/okbot-data-schema.md)；改存储时同改 |
+| 记忆如何选进提示词 | [`docs/design/memory-loading.md`](./docs/design/memory-loading.md) |
 
 `out/`、`dist/`、`node_modules/` 是构建结果。不要手改。
 

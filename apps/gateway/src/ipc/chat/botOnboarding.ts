@@ -12,6 +12,7 @@ import {
   resolveModelConfig,
   type Bot,
   type QuickChoice,
+  type RuntimeEvent,
 } from '@okbot/shared';
 import {
   buildAskChoiceTool,
@@ -150,6 +151,7 @@ export function scheduleOnboardingEvolution(
   storage: FileStorage,
   botId: string,
   userText: string,
+  emit?: (event: RuntimeEvent) => void,
 ): Promise<void> {
   const running = evolutionState.get(botId);
   if (running) {
@@ -170,7 +172,7 @@ export function scheduleOnboardingEvolution(
           modelId: bot.modelId,
         });
         try {
-          await runThrottledPostTurnMaintenance({
+          const ran = await runThrottledPostTurnMaintenance({
             storage,
             botId,
             botName: bot.name,
@@ -179,6 +181,7 @@ export function scheduleOnboardingEvolution(
             userText: state.userText,
             forceSoul: true,
           });
+          if (ran) emit?.({ type: 'evolution_complete', botId });
         } catch (err) {
           console.error('[okbot] onboarding evolution failed', botId, err);
         }

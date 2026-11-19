@@ -41,8 +41,21 @@ const onBefore = async () => {
 }
 
 {
+  calls.length = 0;
+  const exec = wrapToolExecute(
+    'set_status',
+    budget,
+    async () => 'ok',
+    onBefore,
+  );
+  assert.equal(await exec({}), 'ok');
+  assert.deepEqual(calls, [], 'set_status must skip onBeforeToolExecute');
+}
+
+{
   assert.equal(TOOLS_SEAL_THEMSELVES.has('send_message'), true);
   assert.equal(TOOLS_SEAL_THEMSELVES.has('ask_assistant'), true);
+  assert.equal(TOOLS_SEAL_THEMSELVES.has('set_status'), true);
   assert.equal(TOOLS_SEAL_THEMSELVES.has('web_fetch'), false);
 }
 

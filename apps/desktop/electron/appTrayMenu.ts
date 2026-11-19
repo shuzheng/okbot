@@ -40,7 +40,7 @@ export type AppTrayCallbacks = {
   theme: AppTrayThemeMode;
   /** Persist + apply settings.translucent (same path as Settings → 半透明). */
   setTranslucent: (translucent: boolean) => void;
-  /** Current settings.translucent for radio checkmarks (default off). */
+  /** Current settings.translucent for radio checkmarks (default on). */
   translucent: boolean;
   labels: AppTrayLabels;
   pinned: TraySessionEntry[];

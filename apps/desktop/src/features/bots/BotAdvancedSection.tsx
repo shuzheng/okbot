@@ -163,10 +163,13 @@ export function BotMemoryPanel({
   lang,
   botId,
   active,
+  query,
 }: {
   lang: UiLang;
   botId: string | null;
   active: boolean;
+  /** Current/last user message for memory list injection score; omit for standing score. */
+  query?: string;
 }) {
   const [loaded, setLoaded] = useState(false);
   const [memories, setMemories] = useState<MemoryEntry[]>([]);
@@ -247,6 +250,8 @@ export function BotMemoryPanel({
       addLabel={t(lang, 'globalMemoriesAdd')}
       emptyLabel={t(lang, 'botMemoriesEmpty')}
       placeholder={t(lang, 'botMemoryPlaceholder')}
+      scope="bot"
+      query={query}
       scrollOuterSelector=".form-drawer-body"
       newBotId={botId}
       onCommit={commitMemory}

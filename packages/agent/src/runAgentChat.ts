@@ -118,7 +118,7 @@ export async function runAgentChat(input: RunAgentChatInput): Promise<RunChatRes
     /**
      * Auto-allow tool boundary: seal host live text (progress/ack) and clear the
      * stream accumulator so done/abort does not re-dump sealed narration.
-     * send_message / ask_assistant skip this (TOOLS_SEAL_THEMSELVES).
+     * send_message / ask_assistant / set_status skip this (TOOLS_SEAL_THEMSELVES).
      */
     onBeforeToolExecute: async () => {
       await input.onClearLiveText?.();
@@ -185,7 +185,7 @@ export async function resumeAgentChatAfterHitl(
     /**
      * Auto-allow tool boundary: seal host live text (progress/ack) and clear the
      * stream accumulator so done/abort does not re-dump sealed narration.
-     * send_message / ask_assistant skip this (TOOLS_SEAL_THEMSELVES).
+     * send_message / ask_assistant / set_status skip this (TOOLS_SEAL_THEMSELVES).
      */
     onBeforeToolExecute: async () => {
       await input.onClearLiveText?.();
@@ -255,7 +255,7 @@ export async function resumeAgentChatFromCheckpoint(
     /**
      * Auto-allow tool boundary: seal host live text (progress/ack) and clear the
      * stream accumulator so done/abort does not re-dump sealed narration.
-     * send_message / ask_assistant skip this (TOOLS_SEAL_THEMSELVES).
+     * send_message / ask_assistant / set_status skip this (TOOLS_SEAL_THEMSELVES).
      */
     onBeforeToolExecute: async () => {
       await input.onClearLiveText?.();

@@ -215,6 +215,18 @@ export type RuntimeEvent =
   | { type: 'user_message'; botId: string; message: ChatMessage; runId?: string }
   | { type: 'assistant_message'; botId: string; message: ChatMessage; runId?: string }
   | {
+      /**
+       * Ephemeral next-reply placeholder text from `set_status`.
+       * Not a transcript bubble. Empty `status` clears the placeholder.
+       * Replaced when real `assistant_message` / `done` content arrives.
+       */
+      type: 'assistant_status';
+      botId: string;
+      messageId: string;
+      status: string;
+      runId?: string;
+    }
+  | {
       /** In-place message field update (e.g. reaction); not a new timeline row. */
       type: 'message_updated';
       botId: string;
@@ -279,6 +291,16 @@ export type RuntimeEvent =
       botId: string;
       /** Open tasks snapshot (pending/in_progress). */
       tasks: TaskRecord[];
+    }
+  | {
+      /**
+       * Post-turn self-evolution (SOUL / skills / memory, or onboarding /
+       * squad description refresh) finished for this owner. Not emitted when
+       * the maintenance plan skipped the run or the turn was aborted.
+       */
+      type: 'evolution_complete';
+      botId: string;
+      runId?: string;
     };
 
 /** About dialog / clipboard blob. */

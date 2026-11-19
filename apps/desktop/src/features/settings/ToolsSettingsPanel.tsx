@@ -72,6 +72,7 @@ export function ToolsSettingsPanel({
                 manage_note: 'toolManageNote',
                 manage_memory: 'toolManageMemory',
                 send_message: 'toolSendMessage',
+                set_status: 'toolSetStatus',
                 web_fetch: 'toolWebFetch',
                 web_search: 'toolWebSearch',
               } as const

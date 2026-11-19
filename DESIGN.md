@@ -71,7 +71,7 @@ gatewayHttpApi          网关 HTTP。不是独立服务
 
 网关 HTTP 在进程内直接调 `startChatTurn`，不再绕一圈 IPC。
 
-1:1 忙碌发送经 `orchestrateBotTurn`（`apps/gateway/src/ipc/chat/orchestrateBotTurn.ts`）：composer（含看似空闲）经 `softSteerGate` 取消 auto-continue 并 abort 该 owner 全部在途回合后重启（把新用户消息并入同一活跃上下文；不按意图分叉并行 composer 回合）。**软接管 abort 后的替换回合**（及冷恢复 / 检查点续跑）由主机注入不可见的 `resumeContextText`（未完成任务摘要 + 资料库 path/title/type 清单 + 须就地续做说明；见 `softSteerResumeContext.ts`），优先结构化主机注入而非只靠提示词散文。软接管 abort **与手动 Stop** 均 **保留** mid-run `run-checkpoint.json`（成功结束 / consume-once / 强制退出仍清除；软接管替换失败于 consume 前仍 abandon）；替换回合或 Stop 后的下次 composer「继续」**读取并 consume-once**：有检查点则 `resumeAgentChatFromCheckpoint` 续跑 RunState，并把工具调用摘要与打断原文注入 resume 块。**同题产物门闩**：本 owner 上 `write_file` 新建（非同路径覆盖）与 `manage_note` create 若资料库已有同文件名/同标题，工具直接报错并要求 `edit_file` / `manage_note` update（`sameTopicArtifactGate.ts`）；故意更新/同路径覆盖不拦。schedule/api 忙碌时不软改向，走既有并行门闩。干净 `done` 后若 `task-progress` 仍有 pending/in_progress，主机静默 auto-continue（无可见用户气泡、不限次数；Stop/abort/composer 软改向/硬错误则停；进度指纹连续两次未变则停，中间一次加严提示）。助手气泡非流式：主机不推送 token `delta`；`send_message` / 自动允许与 HITL 工具边界可见旁白（`onBeforeToolExecute`→`clearLiveAssistantForTools`）/ `done` 时整条显示；同轮开场「收到」去重（含短确认后的长 bullet 开场）；禁止插入空白或仅 `<think>` 行。小队仍直接 `startSquadTurn`。真·队列/不 abort（layer 3）未做。
+1:1 忙碌发送经 `orchestrateBotTurn`（`apps/gateway/src/ipc/chat/orchestrateBotTurn.ts`）：composer（含看似空闲）经 `softSteerGate` 取消 auto-continue 并 abort 该 owner 全部在途回合后重启（把新用户消息并入同一活跃上下文；不按意图分叉并行 composer 回合）。**软接管 abort 后的替换回合**（及冷恢复 / 检查点续跑）由主机注入不可见的 `resumeContextText`（未完成任务摘要 + 资料库 path/title/type 清单 + 须就地续做说明；见 `softSteerResumeContext.ts`），优先结构化主机注入而非只靠提示词散文。软接管 abort **与手动 Stop** 均 **保留** mid-run `run-checkpoint.json`（成功结束 / consume-once / 强制退出仍清除；软接管替换失败于 consume 前仍 abandon）；替换回合与 Stop 后的下次 composer「继续」均 **读取并 consume-once** 检查点，并把工具调用摘要与打断原文注入 resume 块。软接管替换回合**不**续跑中断中的 RunState（避免把新消息排到旧计划做完之后），而是带着完整会话与 resume 块新开一轮，便于先短说全部当前问题现状再接着干；手动 Stop 后的「继续」与冷恢复仍 `resumeAgentChatFromCheckpoint` 续跑 RunState。**同题产物门闩**：本 owner 上 `write_file` 新建（非同路径覆盖）与 `manage_note` create 若资料库已有同文件名/同标题，工具直接报错并要求 `edit_file` / `manage_note` update（`sameTopicArtifactGate.ts`）；故意更新/同路径覆盖不拦。schedule/api 忙碌时不软改向，走既有并行门闩。干净 `done` 后若 `task-progress` 仍有 pending/in_progress，主机静默 auto-continue（无可见用户气泡、不限次数；Stop/abort/composer 软改向/硬错误则停；进度指纹连续两次未变则停，中间一次加严提示）。助手气泡非流式：主机不推送 token `delta`；可见助手气泡只由模型调用 `send_message` 产生。程序不代写、不复制已发出的回复，也不把 SDK 运行记录或残留最终 `output_text`（含「已发送。」这类收尾）落成正式气泡，不改写已发出的正文，加载会话时也不去重或改写已落盘的正式回复。可见回复先 `send_message` 一句要做什么（忙时插入则同时说正在做的和要做的），再 `set_status` 开始第一步；某步有进展就立刻发一条，然后再 `set_status` 下一步（如有）；一件事做完发短结果，同轮还有其他未完成事项则自然带进度。一步一条，不按字数或句号切碎。`send_message` 与最终回复是二选一的出口：本轮已用 `send_message` 发过内容，则不再把最终 `output_text` 封成气泡；本轮未调用时，结束时仍可将最终 `output_text` 落成一条可见回复。禁止插入空白或仅 `<think>` 行。`set_status` 只更新下一条回复的临时占位（`assistant_status`，不写入 session.jsonl）；开始干活或写回复前必须调用（即使只回一条气泡）；有真实回复后替换；本轮正常结束或手动停止且无后续正式回复时清除。软接管中止保留已有占位，替换回合可继续 `set_status` 更新；旧回合迟到的结束事件不得清掉新回合的占位。小队仍直接 `startSquadTurn`。真·队列/不 abort（layer 3）未做。
 
 助手、小队、记忆、技能、助手市场（含 GitHub URL 导入）、模型探测这些操作写在 `apps/gateway/src/entityOps.ts`（`createEntityOps(ctx)`），不带传输层。`apps/gateway/src/ipc/registerEntity.ts` 的 IPC 和网关 `POST /v1/rpc/:op` 都调它，两边行为一致。模型探测的实现在 `apps/gateway/src/modelProbe.ts`。
 
@@ -116,7 +116,7 @@ gatewayHttpApi          网关 HTTP。不是独立服务
 `packages/agent/src/computerSelection.ts` 决定 shell/文件工具去哪。`LOCAL_COMPUTER_ID` 是 `local`。
 
 - 设置里的默认电脑是 `settings.defaultComputerId`。**空等于本机**（`local`）。已设置但未知或已禁用的 id 不会偷偷改回本机执行。
-- 用户选定的默认助手是 `settings.defaultAssistantId`（空=无）。仅身份/UI；删除对应 bot 时清空。读写走 `SettingsStore`，与花名册校验在侧栏右键 / 保存与 `deleteOwner`（通用设置页不再展示该下拉）。
+- 用户选定的主助手是 `settings.defaultAssistantId`（空=无）。仅身份/UI；删除对应 bot 时清空。读写走 `SettingsStore`，与花名册校验在侧栏右键 / 保存与 `deleteOwner`（通用设置页不再展示该下拉）。
 - 用户时区偏好是 `settings.timezone`（空=自动检测主机本地 IANA）。定时任务在 job 未指定 timezone 时，经 `resolveScheduleTimezone` 回退到该值再回退主机本地。
 - 侧栏置顶顺序是 `settings.pinnedOwnerIds`（bot/squad owner id 有序数组；可多选）。删除对应 owner 时从数组移除。与 `defaultAssistantId` 独立。
 - 本轮 HTTP 的 `computerId` 低于对话里点名的电脑。
@@ -131,7 +131,7 @@ gatewayHttpApi          网关 HTTP。不是独立服务
 
 ## 磁盘
 
-产品侧目录一览与备份行为见 [`GUIDE.md` §12](./GUIDE.md#12-数据目录一览)。**每文件格式、字段与 ID 约定**以 [`docs/design/okbot-data-schema.md`](./docs/design/okbot-data-schema.md) 为权威（改 `~/.okbot` 布局或持久化字段时同改该文档）。本节只写架构边界与关键路径角色。
+产品侧目录一览与备份行为见 [`GUIDE.md` §12](./GUIDE.md#12-数据目录一览)。**每文件格式、字段与 ID 约定**以 [`docs/design/okbot-data-schema.md`](./docs/design/okbot-data-schema.md) 为权威（改 `~/.okbot` 布局或持久化字段时同改该文档）。本节只写架构边界与关键路径角色。 每轮如何挑选并注入记忆见 [`docs/design/memory-loading.md`](./docs/design/memory-loading.md)。
 
 
 `FileStorage`（`apps/gateway/src/storage/FileStorage.ts`；**不在** `apps/desktop`）是薄门面：共享根路径、组装域 Store（`SettingsStore` / `SessionStore` / `RosterStore` / `SkillsStore` / `MemoryStore` / `ScheduleStore` / `PendingHitlStore` / `AssistantPackageStore`），并保持原有调用面。墓碑与 session 写锁集中在 `ownerLifecycle.ts`（`OwnerLifecycle`）；各 Store 的写路径自行调用，不在门面复制。根目录默认 `~/.okbot`（`path.join(homedir, '.okbot')`）。构造时 `chmod` 目录 `0700`。`server.json`（网关设置）经 `writeJson(..., { mode: 0o600 })` 写出，并在创建/读到已有文件后再 `chmod` `0600`。`chmod` 失败会 `console.error`，不抛。进程锁为同目录下的 `runtime.json`（旧名曾为 `server.json`）。

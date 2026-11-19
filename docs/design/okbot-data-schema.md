@@ -130,7 +130,7 @@ Top-level keys (final-state `AppSettings` after normalize — client chrome keys
 | `gatewayHttpApi` | object | port, bindLan, serveUi, `apiTokens[]` (**token secrets**), legacy `token`/`adminToken` mirrors |
 | `computers` | `ComputerEntry[]` | remote sandbox agents; **token secrets**; ids `computer_…` |
 | `defaultComputerId` | string | `'local'` or a computers id |
-| `defaultAssistantId` | string | bot id or `''` |
+| `defaultAssistantId` | string | primary assistant bot id or `''` |
 | `pinnedOwnerIds` / `hiddenOwnerIds` | string[] | owner ids |
 | `ownerGroups` | `{id,name}[]` | group ids `ogroup_…` |
 | `ownerGroupOrder` | string[] | includes virtual ungrouped id |

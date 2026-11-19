@@ -8,7 +8,7 @@ import type {
 } from '@okbot/shared';
 import type { Session, SessionInputCallback, Tool } from '@openai/agents';
 import type { ToolRunBudget } from './toolRunBudget.js';
-import type { EmitAssistantMessage, HistorySearch, MemoryManage, ScheduleManage, SkillLookup, TaskProgressManage } from './tools.js';
+import type { EmitAssistantMessage, HistorySearch, MemoryManage, ScheduleManage, SetAssistantStatus, SkillLookup, TaskProgressManage } from './tools.js';
 import type { ExecutionBackend } from './executionBackend.js';
 import type { ComputerRoute } from './computerSelection.js';
 
@@ -32,6 +32,8 @@ export interface RunChatInput {
   noteManage?: import('./tools.js').NoteManage;
   /** Emit a standalone assistant bubble mid-run (`send_message`). */
   emitAssistantMessage?: EmitAssistantMessage;
+  /** 1:1 set_status: update the next-reply placeholder (not persisted). */
+  setAssistantStatus?: SetAssistantStatus;
   /**
    * Internal: seal live narration at auto-allow tool starts (wired in runAgentChat).
    * Hosts use onClearLiveText; do not set this from desktop.
@@ -52,7 +54,7 @@ export interface RunChatInput {
   resumeContextText?: string;
   /** settings.instructions.assistantRoleTemplate (`{name}` → botName). */
   assistantRoleTemplate?: string;
-  /** User-chosen default assistant (identity hint in system prompt). */
+  /** User-chosen primary assistant (identity hint in system prompt). */
   isDefaultAssistant?: boolean;
   /** New-assistant onboarding guide (system prompt) while onboarding is incomplete. */
   onboardingGuide?: string;
@@ -180,6 +182,8 @@ export interface RunAgentChatInput extends RunChatInput {
   onCommitLiveAssistant?: () => void | Promise<void>;
   /** 1:1 send_message host hook (see HitlLoopHooks.emitAssistantMessage). */
   emitAssistantMessage?: EmitAssistantMessage;
+  /** 1:1 set_status: update the next-reply placeholder (not persisted). */
+  setAssistantStatus?: SetAssistantStatus;
   onModelTurnStart?: () => void | string;
   onModelTurnEnd?: (info: { ok: boolean; error?: string; spanId?: string }) => void;
   onApprovalWaitStart?: (toolName: string) => void | string;
@@ -205,6 +209,8 @@ export interface ResumeAgentChatAfterHitlInput {
   noteManage?: import('./tools.js').NoteManage;
   /** Emit a standalone assistant bubble mid-run (`send_message`). */
   emitAssistantMessage?: EmitAssistantMessage;
+  /** 1:1 set_status: update the next-reply placeholder (not persisted). */
+  setAssistantStatus?: SetAssistantStatus;
   /**
    * Internal: seal live narration at auto-allow tool starts (wired in runAgentChat).
    * Hosts use onClearLiveText; do not set this from desktop.
@@ -218,7 +224,7 @@ export interface ResumeAgentChatAfterHitlInput {
   /** Host soft-steer / cold-restore resume block (system-side). */
   resumeContextText?: string;
   assistantRoleTemplate?: string;
-  /** User-chosen default assistant (identity hint in system prompt). */
+  /** User-chosen primary assistant (identity hint in system prompt). */
   isDefaultAssistant?: boolean;
   /** New-assistant onboarding guide (system prompt) while onboarding is incomplete. */
   onboardingGuide?: string;
@@ -319,7 +325,7 @@ export type HitlLoopHooks = {
   onDelta?: (delta: string) => void;
   /**
    * Fired at tool boundaries: HITL interruptions and each auto-allow / post-HITL
-   * tool start (via onBeforeToolExecute; skipped for send_message / ask_assistant).
+   * tool start (via onBeforeToolExecute; skipped for send_message / ask_assistant / set_status).
    * Hosts should seal any user-visible pre-tool narration as its own bubble, or
    * discard think-only/empty without emitting a blank row; then reset the live
    * buffer so only the post-tool formal reply remains.
@@ -336,6 +342,8 @@ export type HitlLoopHooks = {
    * then rotate the live streaming id (host also seals any prior live text).
    */
   emitAssistantMessage?: EmitAssistantMessage;
+  /** 1:1 set_status: update the next-reply placeholder (not persisted). */
+  setAssistantStatus?: SetAssistantStatus;
   /** When set, duration budget pauses while waiting for tool approval (HITL). */
   toolRunBudget?: ToolRunBudget;
   /** Optional turn-span hooks (desktop RunTraceRecorder → message.trace waterfall). */

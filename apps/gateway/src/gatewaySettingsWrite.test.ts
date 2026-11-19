@@ -187,7 +187,7 @@ const current = {
 }
 
 {
-  // Sidebar pin/hide/groups + default assistant are gateway-writable.
+  // Sidebar pin/hide/groups + primary assistant are gateway-writable.
   const decision = resolveGatewaySettingsWrite(current, {
     pinnedOwnerIds: ['bot_a'],
     hiddenOwnerIds: ['bot_b'],

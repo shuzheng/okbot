@@ -317,6 +317,8 @@ export function mergeUiMessageOntoRecord(prev: SessionRecordV2, msg: ChatMessage
   if ((msg as ChatMessage & { reaction?: unknown }).reaction === null) {
     delete meta.reaction;
   }
+  // UI upsert promotes this row into the transcript (fallback final after no send_message).
+  delete meta.uiHidden;
   return {
     v: 2,
     id: msg.id,
@@ -348,6 +350,7 @@ export function extractItemText(item: Record<string, unknown>): string {
 
 /** Project a v2 row to a UI bubble; tool-only rows return null. */
 export function recordToUiMessage(rec: SessionRecordV2): ChatMessage | null {
+  if (rec.meta?.uiHidden === true) return null;
   const item = rec.item;
   const roleFromMeta = rec.meta?.uiRole;
   const roleRaw = roleFromMeta ?? (typeof item.role === 'string' ? item.role : '');
@@ -591,6 +594,101 @@ export function filterRecordsForModelSession(records: SessionRecordV2[]): Sessio
  * same interim text. Drop those exact duplicates so reload matches live A → chip → B.
  * Also handles legacy rows (no meshInterim flag): assistant(T) → mesh chip → assistant(T).
  */
+/**
+ * Squad UI transcript is only user rows + assistant rows tagged with speakerBotId.
+ * Untagged SDK/runner assistant fragments stay on disk for the model, but must
+ * not become chat bubbles.
+ */
+export function keepSquadSpeakerMessages(messages: ChatMessage[]): ChatMessage[] {
+  return messages.filter(
+    (m) => m.role === 'user' || (m.role === 'assistant' && !!m.speakerBotId?.trim()),
+  );
+}
+
+/**
+ * Project squad history for the chat transcript.
+ * Hide untagged SDK/runner assistant rows (not real bubbles). Do not dedupe,
+ * strip, or rewrite assistant text — replies are shown as persisted.
+ */
+export function projectSquadSessionMessages(messages: ChatMessage[]): ChatMessage[] {
+  return keepSquadSpeakerMessages(messages);
+}
+
+/**
+ * Meta for Runner/SDK Session.appendItems / replaceHistory rows.
+ * Assistant message items are model history, not transcript bubbles, unless
+ * they carry a squad speaker tag (those rows are authored as UI exchanges).
+ */
+export function transcriptMetaForSdkAppend(
+  item: Record<string, unknown>,
+  meta?: SessionRecordV2['meta'],
+): SessionRecordV2['meta'] {
+  const role = typeof item.role === 'string' ? item.role : undefined;
+  const uiRole = role === 'user' || role === 'assistant' ? role : meta?.uiRole;
+  const speakerBotId =
+    typeof meta?.speakerBotId === 'string' && meta.speakerBotId.trim()
+      ? meta.speakerBotId.trim()
+      : undefined;
+  const hideAssistant =
+    (uiRole === 'assistant' || role === 'assistant') &&
+    isAssistantMessageItem(item) &&
+    !speakerBotId;
+  return {
+    ...(uiRole ? { uiRole } : {}),
+    ...(meta?.runId ? { runId: meta.runId } : {}),
+    ...(speakerBotId ? { speakerBotId } : {}),
+    ...(hideAssistant ? { uiHidden: true } : {}),
+  };
+}
+
+/** Short leftover acks the model writes after send_message (not real replies). */
+export function isSendMessageAckFinal(text: string): boolean {
+  const t = (text || '').trim().replace(/[\s。．.!?！]+$/u, '').trim();
+  if (!t || t.length > 20) return false;
+  return /^(已发送(结论|消息|完毕|完成)?|已回复(消息)?|消息已发送)$/u.test(t);
+}
+
+function normalizeBubbleText(text: string): string {
+  return (text || '').trim().replace(/\s+/g, ' ');
+}
+
+/**
+ * 1:1 UI transcript: show send_message / host-upserted bubbles as written.
+ * Hide later SDK event copies of an already-visible assistant bubble in the
+ * same user turn, and leftover send_message acks (「已发送。」). Does not
+ * rewrite remaining text or drop speaker-tagged squad rows.
+ */
+export function projectDirectSessionMessages(messages: ChatMessage[]): ChatMessage[] {
+  const out: ChatMessage[] = [];
+  const seenInSegment = new Set<string>();
+  for (const m of messages) {
+    if (m.role === 'user') {
+      seenInSegment.clear();
+      out.push(m);
+      continue;
+    }
+    if (m.role !== 'assistant' || m.meshExchange) {
+      out.push(m);
+      continue;
+    }
+    if (m.speakerBotId?.trim()) {
+      out.push(m);
+      continue;
+    }
+    const key = normalizeBubbleText(m.content || '');
+    const ackAfterContent = isSendMessageAckFinal(m.content || '') && seenInSegment.size > 0;
+    const sdkEcho =
+      !m.meshInterim &&
+      m.id.startsWith('evt_') &&
+      !!key &&
+      seenInSegment.has(key);
+    if (ackAfterContent || sdkEcho) continue;
+    if (key) seenInSegment.add(key);
+    out.push(m);
+  }
+  return out;
+}
+
 export function dedupeMeshInterimMessages(messages: ChatMessage[]): ChatMessage[] {
   if (messages.length < 2) return messages;
   const interimTexts = new Set<string>();

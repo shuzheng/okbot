@@ -73,6 +73,29 @@ function bulletLen(row: MemoryRecallRow): number {
   return 8 + pin + row.id.length + row.memory.length + exp;
 }
 
+/**
+ * Injection ranking score: P + 100R + 3H + G + T.
+ * P = 1_000_000 if pinned else 0; R is lexical relevance 0..1 (0 when query is empty);
+ * H is hits; G is 1 if global else 0; T is almost-flat recency from lastHitAt||createdAt.
+ * Does not filter by injectable/candidate — callers decide what to inject.
+ */
+export function computeMemoryInjectionScore(input: {
+  memory: string;
+  pinned?: boolean;
+  hits?: number;
+  lastHitAt?: string | null;
+  createdAt?: string | null;
+  scope: 'global' | 'bot';
+  query?: string;
+}): number {
+  const pinned = input.pinned === true;
+  const hits = typeof input.hits === 'number' && Number.isFinite(input.hits) ? input.hits : 0;
+  const rel = scoreMemoryRelevance(input.memory, input.query);
+  const last = Date.parse(input.lastHitAt || input.createdAt || '') || 0;
+  const recency = last > 0 ? Math.min(1, last / 1e13) : 0;
+  return (pinned ? 1_000_000 : 0) + rel * 100 + hits * 3 + (input.scope === 'global' ? 1 : 0) + recency;
+}
+
 function toScored(
   scope: 'global' | 'bot',
   entries: MemoryRecallRow[],
@@ -83,17 +106,15 @@ function toScored(
     const pinned = e.pinned === true;
     const tier: MemoryTier = e.tier === 'candidate' ? 'candidate' : 'durable';
     if (!isMemoryInjectable(tier, pinned)) continue;
-    const hits = typeof e.hits === 'number' && Number.isFinite(e.hits) ? e.hits : 0;
-    const rel = scoreMemoryRelevance(e.memory, query);
-    // Prefer: pin >> relevance >> hits >> global slightly >> recency via lastHitAt.
-    const last = Date.parse(e.lastHitAt || e.createdAt || '') || 0;
-    const recency = last > 0 ? Math.min(1, last / 1e13) : 0;
-    const score =
-      (pinned ? 1_000_000 : 0) +
-      rel * 100 +
-      hits * 3 +
-      (scope === 'global' ? 1 : 0) +
-      recency;
+    const score = computeMemoryInjectionScore({
+      memory: e.memory,
+      pinned,
+      hits: e.hits,
+      lastHitAt: e.lastHitAt,
+      createdAt: e.createdAt,
+      scope,
+      query,
+    });
     out.push({
       ...e,
       scope,

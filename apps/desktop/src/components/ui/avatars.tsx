@@ -15,8 +15,11 @@ export type SquadAvatarMember = {
   botAvatarType?: BotAvatarShape;
 };
 
+/** Form preview footprint in CSS px. Keep in sync with --avatar-preview-size. */
+export const AVATAR_PREVIEW_SIZE_PX = 56;
+
 /** Infer canvas px from common avatar classNames when `size` is omitted. */
-function inferBotAvatarSize(className: string): number {
+export function inferBotAvatarSize(className: string): number {
   if (className.includes('header-avatar') || className.includes('dock-tip-avatar')) return 22;
   if (className.includes('global-search-avatar') || className.includes('bubble-speaker-avatar')) return 28;
   if (className.includes('bot-picker-chip-avatar')) return 20;
@@ -24,7 +27,7 @@ function inferBotAvatarSize(className: string): number {
   if (className.includes('squad-member')) return 28;
   if (className.includes('avatar-preview')) return 36;
   if (className.includes('bot-avatar-type-preview')) return 36;
-  if (className.includes('session-pin-avatar')) return 56;
+  if (className.includes('session-pin-avatar')) return AVATAR_PREVIEW_SIZE_PX;
   if (className.includes('session-avatar')) return 36;
   return 36;
 }
@@ -76,7 +79,7 @@ export function FlatAvatar({
    * Use to limit concurrent canvas loops in dense lists/grids.
    */
   animate?: boolean;
-  /** Bottom-right circular star mark for the user-chosen default assistant. */
+  /** Bottom-right circular star mark for the user-chosen primary assistant. */
   showDefaultMark?: boolean;
   defaultMarkTitle?: string;
 }) {
@@ -139,7 +142,7 @@ function cellBotSize(n: number, hostHintPx: number): number {
 function inferSquadHostSize(className: string): number {
   if (className.includes('header-avatar') || className.includes('dock-tip-avatar')) return 22;
   if (className.includes('global-search-avatar')) return 28;
-  if (className.includes('session-pin-avatar')) return 56;
+  if (className.includes('session-pin-avatar')) return AVATAR_PREVIEW_SIZE_PX;
   if (className.includes('session-avatar')) return 36;
   return 36;
 }

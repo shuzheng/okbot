@@ -20,8 +20,11 @@ import {
   readJsonlPage,
   legacyMessageToRecord,
   isSessionRecordV2,
-  dedupeMeshInterimMessages,
   filterRecordsForModelSession,
+  keepSquadSpeakerMessages,
+  projectDirectSessionMessages,
+  projectSquadSessionMessages,
+  transcriptMetaForSdkAppend,
 } from './sessionJsonl';
 import { isSquadOwnerId } from './ids';
 import type { SessionRecordV2 } from './types';
@@ -106,18 +109,12 @@ export class SessionStore {
     const file = this.deps.sessionFile(botId);
     const chunks: string[] = [];
     for (const item of items) {
-      const role = typeof item.role === 'string' ? item.role : undefined;
-      const uiRole = role === 'user' || role === 'assistant' ? role : meta?.uiRole;
       const rec: SessionRecordV2 = {
         v: 2,
         id: createId('evt'),
         createdAt: new Date().toISOString(),
         item,
-        meta: {
-          ...(uiRole ? { uiRole } : {}),
-          ...(meta?.runId ? { runId: meta.runId } : {}),
-          ...(meta?.speakerBotId ? { speakerBotId: meta.speakerBotId } : {}),
-        },
+        meta: transcriptMetaForSdkAppend(item, meta),
       };
       chunks.push(`${JSON.stringify(rec)}\n`);
     }
@@ -146,17 +143,13 @@ export class SessionStore {
         !!r.meta?.meshExchange ||
         r.meta?.meshInterim === true,
     );
-    const records: SessionRecordV2[] = items.map((item) => {
-      const role = typeof item.role === 'string' ? item.role : undefined;
-      const uiRole = role === 'user' || role === 'assistant' ? role : undefined;
-      return {
-        v: 2,
-        id: createId('evt'),
-        createdAt: new Date().toISOString(),
-        item,
-        meta: uiRole ? { uiRole } : undefined,
-      };
-    });
+    const records: SessionRecordV2[] = items.map((item) => ({
+      v: 2,
+      id: createId('evt'),
+      createdAt: new Date().toISOString(),
+      item,
+      meta: transcriptMetaForSdkAppend(item),
+    }));
     if (!preserved.length) {
       this.writeSessionRecords(botId, records);
       return;
@@ -282,9 +275,7 @@ export class SessionStore {
    */
   toSquadUiMessages(botId: string, messages: ChatMessage[]): ChatMessage[] {
     if (!isSquadOwnerId(botId)) return messages;
-    return messages.filter(
-      (m) => m.role === 'user' || (m.role === 'assistant' && !!m.speakerBotId?.trim()),
-    );
+    return keepSquadSpeakerMessages(messages);
   }
 
   getMessages(botId: string): ChatMessage[] {
@@ -292,7 +283,11 @@ export class SessionStore {
       .map(recordToUiMessage)
       .filter((m): m is ChatMessage => m != null)
       .filter((m) => m.autoContinue !== true);
-    return this.toSquadUiMessages(botId, dedupeMeshInterimMessages(all));
+    // Show persisted send_message / host-upserted bubbles as-is. Do not rewrite
+    // assistant text. Hide SDK bookkeeping copies and leftover send_message acks.
+    return isSquadOwnerId(botId)
+      ? projectSquadSessionMessages(all)
+      : projectDirectSessionMessages(all);
   }
 
   /**
@@ -311,7 +306,7 @@ export class SessionStore {
       const page = readJsonlPage(file, limit, opts?.beforeMessageId);
       return {
         ...page,
-        messages: dedupeMeshInterimMessages(
+        messages: projectDirectSessionMessages(
           page.messages.filter((m) => m.autoContinue !== true),
         ),
       };
@@ -322,9 +317,8 @@ export class SessionStore {
     const fetchLimit = Math.min(Math.max(limit * 5, limit), 250);
     const page = readJsonlPage(file, fetchLimit, opts?.beforeMessageId);
     return {
-      messages: this.toSquadUiMessages(
-        botId,
-        dedupeMeshInterimMessages(page.messages.filter((m) => m.autoContinue !== true)),
+      messages: projectSquadSessionMessages(
+        page.messages.filter((m) => m.autoContinue !== true),
       ),
       hasMore: page.hasMore,
       nextBeforeMessageId: page.nextBeforeMessageId,
